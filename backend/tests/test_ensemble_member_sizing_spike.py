@@ -328,6 +328,52 @@ def test_parse_fhs() -> None:
         spike._parse_fhs("", scheduled)
 
 
+# ── Herbie cache isolation ───────────────────────────────────────────
+def test_isolate_herbie_cache_overrides_env(tmp_path, monkeypatch) -> None:
+    # Simulate the prod shell env pointing at the scheduler's cache.
+    monkeypatch.setenv("HERBIE_SAVE_DIR", "/opt/cartosky/herbie_cache")
+    monkeypatch.setenv("CARTOSKY_HERBIE_SAVE_DIR", "/opt/cartosky/herbie_cache")
+    run_dir = tmp_path / "20260705_12z"
+    cache_dir = spike.isolate_herbie_cache(run_dir, None)
+    assert cache_dir == run_dir / "herbie_cache"
+    assert cache_dir.is_dir()
+    import os
+
+    assert os.environ["HERBIE_SAVE_DIR"] == str(cache_dir)
+    assert os.environ["CARTOSKY_HERBIE_SAVE_DIR"] == str(cache_dir)
+
+
+def test_isolate_herbie_cache_honors_explicit_override(tmp_path) -> None:
+    override = tmp_path / "custom_cache"
+    cache_dir = spike.isolate_herbie_cache(tmp_path / "run", str(override))
+    assert cache_dir == override
+    assert override.is_dir()
+
+
+# ── Fetch interruption ───────────────────────────────────────────────
+def test_fetch_member_field_stops_immediately_on_stop_event(tmp_path) -> None:
+    """A set stop_event short-circuits the fetch without touching the network."""
+    import threading
+    import time
+    from datetime import datetime
+
+    ctx = spike.SpikeContext(
+        plugin=None, region="na", run_id="test", run_date=datetime(2026, 1, 1),
+        capability=None, var_spec=None, colormap_spec={},
+        resampling="bilinear", search_patterns=[":TMP:"],
+        guards=spike.Guards(data_root=tmp_path, canary_root=tmp_path,
+                            disk_floor_bytes=0, rss_limit_bytes=1 << 62),
+        fetch_stats=spike.FetchStats(), stop_event=threading.Event(),
+    )
+    ctx.stop_event.set()
+    started = time.perf_counter()
+    with pytest.raises(spike.FetchFailed, match="interrupted"):
+        spike.fetch_member_field(ctx, "m01", 0)
+    # No backoff sleeps were served (Event.wait returns instantly when set).
+    assert time.perf_counter() - started < 1.0
+    assert ctx.fetch_stats.requests_attempted == 0
+
+
 # ── Fetch bookkeeping ────────────────────────────────────────────────
 def test_status_code_extraction() -> None:
     assert spike._status_code_from_error(RuntimeError("HTTP 429 Too Many Requests")) == 429

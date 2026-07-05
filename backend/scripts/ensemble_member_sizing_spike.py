@@ -43,7 +43,8 @@ Gate A — dry run (2 members × 3 fhs = 6 frames, ~2–5 min)::
     Return to the agent: {canary_root}/{run_id}/results.json and spike.log.
 
 Gate B — full spike (31 members × 65 fhs ≈ 2,015 fetches; expect roughly
-45–120 min wall depending on upstream; scratch usage ≈ 2–3 GB)::
+45–120 min wall depending on upstream; scratch usage ≈ 2–3 GB slim +
+comparison trees, plus ~0.5 GB Herbie subset cache)::
 
     nice -n 10 ionice -c2 -n7 /opt/cartosky/.venv/bin/python3 \
         backend/scripts/ensemble_member_sizing_spike.py \
@@ -53,6 +54,13 @@ Gate B — full spike (31 members × 65 fhs ≈ 2,015 fetches; expect roughly
 
     (--resume is safe on a fresh tree; after any interruption re-run the
     exact same command and completed frames are skipped.)
+
+The spike uses its OWN Herbie cache at {canary_run_dir}/herbie_cache
+(override: --herbie-save-dir). It deliberately ignores any HERBIE_SAVE_DIR
+in the shell env: the production scheduler's cache may not be writable by
+the operator user (this failed the first Gate B attempt with EACCES), and
+sharing it would let cache hits skew the fetch-timing measurement.
+--cleanup removes this cache along with the member trees.
 
 Optional memory-cap bonus (measurement 3): wrap the same command in a scope
 with the GEFS caps and afterwards record the cgroup high-throttle counter::
@@ -225,6 +233,32 @@ DEFAULT_STATS_THRESHOLD = 32.0  # arbitrary; measures RSS/wall, not product outp
 STATS_PERCENTILES = [10, 25, 50, 75, 90]
 
 _HTTP_STATUS_RE = re.compile(r"\b(4\d{2}|5\d{2})\b")
+
+
+# ── Herbie cache isolation ───────────────────────────────────────────
+def isolate_herbie_cache(canary_run_dir: Path, override: str | None) -> Path:
+    """Point Herbie (and the fetch module's cache roots) at a spike-local dir.
+
+    The production scheduler's Herbie cache can be owned by another user —
+    the first Gate B attempt failed with EACCES writing member subsets into
+    /opt/cartosky/herbie_cache — and sharing it would also let cache hits
+    skew the fetch-timing measurement. Both env names are overridden because
+    the fetch module prefers CARTOSKY_HERBIE_SAVE_DIR. Must run before the
+    first fetch; herbie reads HERBIE_SAVE_DIR when its config loads, so warn
+    loudly if something already imported it.
+    """
+    cache_dir = (Path(override).expanduser() if override
+                 else canary_run_dir / "herbie_cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    if any(name == "herbie" or name.startswith("herbie.") for name in sys.modules):
+        logger.warning(
+            "herbie was already imported before cache isolation — "
+            "HERBIE_SAVE_DIR override may not take effect"
+        )
+    os.environ["HERBIE_SAVE_DIR"] = str(cache_dir)
+    os.environ["CARTOSKY_HERBIE_SAVE_DIR"] = str(cache_dir)
+    logger.info("Herbie cache isolated to %s", cache_dir)
+    return cache_dir
 
 
 # ── Errors / control flow ───────────────────────────────────────────
@@ -701,7 +735,9 @@ def fetch_member_field(
                     "Backoff %.0fs before retry %d for %s fh%03d",
                     delay, attempt_idx, member, fh,
                 )
-                time.sleep(delay)
+                # Event.wait so a SIGINT cuts the backoff short instead of
+                # sitting out the full sleep.
+                ctx.stop_event.wait(delay)
             if ctx.stop_event.is_set():
                 raise FetchFailed(f"interrupted before fetch of {member} fh{fh:03d}", attempts)
             with ctx.fetch_stats.lock:
@@ -1542,7 +1578,7 @@ def run_cleanup(canary_run_dir: Path) -> int:
         logger.error("Canary run dir not found: %s", canary_run_dir)
         return 1
     targets = ["slim", "comparison_full", "comparison_3x", "eps_control_check",
-               "scratch_promote", "scratch_retention_copy"]
+               "scratch_promote", "scratch_retention_copy", "herbie_cache"]
     record: dict[str, Any] = {"cleaned_at_utc": _utc_now_iso(), "trees": {}}
     for name in targets:
         tree = canary_run_dir / name
@@ -1739,6 +1775,9 @@ def main() -> int:
                         help="Fetch parallelism (sequential by default; bare flag = 2; max 4)")
     parser.add_argument("--resume", action="store_true",
                         help="Skip (member, fh) frames whose slim .bin + meta already exist and are size-sane")
+    parser.add_argument("--herbie-save-dir", default=None,
+                        help="Herbie cache dir for the spike (default: {canary_run_dir}/herbie_cache; "
+                             "never the production scheduler's cache)")
     parser.add_argument("--disk-floor-gb", type=float, default=DEFAULT_DISK_FLOOR_GB,
                         help="Abort if free disk drops below this (default: 100)")
     parser.add_argument("--rss-limit-gb", type=float, default=DEFAULT_RSS_LIMIT_GB,
@@ -1787,6 +1826,7 @@ def main() -> int:
     canary_run_dir.mkdir(parents=True, exist_ok=True)
     _setup_logging(canary_run_dir / "spike.log", args.verbose)
     logger.info("Ensemble member sizing spike starting: run=%s canary_dir=%s", run_id, canary_run_dir)
+    herbie_cache_dir = isolate_herbie_cache(canary_run_dir, args.herbie_save_dir)
 
     try:
         members = _parse_members(args.members)
@@ -1806,8 +1846,11 @@ def main() -> int:
 
     def _on_sigint(signum: int, frame: Any) -> None:  # noqa: ARG001
         if interrupted["flag"]:
-            logger.warning("Second SIGINT — exiting immediately")
-            raise SystemExit(130)
+            # A raised SystemExit would still wait for the thread pool to
+            # drain its queued tasks; hard-exit is what "immediately" means.
+            logger.warning("Second SIGINT — exiting immediately (no partial results)")
+            logging.shutdown()
+            os._exit(130)
         interrupted["flag"] = True
         stop_event.set()
         logger.warning("SIGINT received — finishing current frame, then writing partial results")
@@ -1935,6 +1978,7 @@ def main() -> int:
         "4_fetch": {
             **ctx.fetch_stats.asdict(),
             "members_with_written_frames": len(main_summary.get("per_member_frame_times", {})),
+            "herbie_cache": measure_tree(herbie_cache_dir),
             "control_member_kwarg": repr(ctx.control_kwarg_resolved),
             "member_kwarg_scheme": "int 1..30 -> gepNN; control candidates tried in order: "
                                    + ", ".join(repr(c) for c in CONTROL_MEMBER_KWARG_CANDIDATES),
