@@ -6,7 +6,8 @@ import { Link } from "react-router-dom";
 import type { LegendPayload } from "@/components/map-legend";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { clerkJwtTemplate } from "@/lib/admin-api";
-import { captureProductAnalyticsEvent } from "@/lib/analytics";
+import { captureProductAnalyticsEvent, type AnalyticsEventProperties } from "@/lib/analytics";
+import type { ShareChannel } from "@/lib/analytics-types";
 import { API_ORIGIN, SERVER_SCREENSHOT_ENABLED } from "@/lib/config";
 import type { ScreenshotExportState } from "@/lib/screenshot_export";
 import { uploadShareMedia } from "@/lib/share_media";
@@ -49,6 +50,10 @@ type ApiErrorInfo = {
   code?: string;
   message: string;
 };
+
+function captureShareCompleted(channel: ShareChannel, extra: AnalyticsEventProperties = {}): void {
+  captureProductAnalyticsEvent("share_completed", { success: true, channel, ...extra });
+}
 
 type SharePostResult = {
   postId: number;
@@ -1335,10 +1340,7 @@ export function TwfShareModal({
           setSubmitError({ message: "Unexpected response from server." });
           return;
         }
-        captureProductAnalyticsEvent("share_completed", {
-          success: true,
-          share_mode: shareMode,
-        });
+        captureShareCompleted("twf_post", { share_mode: shareMode });
         setSubmitTopicSuccess(result);
         setSubmitTopicTitle(result.title);
       } else {
@@ -1347,10 +1349,7 @@ export function TwfShareModal({
           setSubmitError({ message: "Unexpected response from server." });
           return;
         }
-        captureProductAnalyticsEvent("share_completed", {
-          success: true,
-          share_mode: shareMode,
-        });
+        captureShareCompleted("twf_post", { share_mode: shareMode });
         setSubmitSuccess(result);
         setSubmitTopicTitle(selectedTopicTitle ?? "Selected topic");
       }
@@ -1375,6 +1374,7 @@ export function TwfShareModal({
   const handleCopyLink = async () => {
     const ok = await writeClipboard(payload.permalink);
     if (ok) {
+      captureShareCompleted("copy", { copy_variant: "link" });
       setShowCopyMenu(false);
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 1500);
@@ -1385,6 +1385,7 @@ export function TwfShareModal({
     const text = `${content.trim() || payload.summary}\n${payload.permalink}`;
     const ok = await writeClipboard(text);
     if (ok) {
+      captureShareCompleted("copy", { copy_variant: "text_link" });
       setShowCopyMenu(false);
       setTextCopied(true);
       setTimeout(() => setTextCopied(false), 1500);
@@ -1557,6 +1558,7 @@ export function TwfShareModal({
                             document.body.appendChild(link);
                             link.click();
                             link.remove();
+                            captureShareCompleted("download");
                           }}
                           className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65"
                           aria-label="Download screenshot"

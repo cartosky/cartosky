@@ -19,3 +19,13 @@ export type AnalyticsEventProperties = Record<
   string,
   string | number | boolean | null | undefined
 >;
+
+// Channel taxonomy for share_completed (share modal overhaul Phase 0).
+// native_share and gif land with the Phase 1/3 UI; the values are fixed now so
+// dashboards can segment the funnel without a later rename.
+export type ShareChannel =
+  | "download"
+  | "copy"
+  | "native_share"
+  | "twf_post"
+  | "gif";

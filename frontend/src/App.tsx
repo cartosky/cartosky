@@ -56,6 +56,7 @@ import {
 import { useFeedbackContext } from "@/lib/feedback-context";
 import { buildRunOptions, formatRunLabel, latestRunLabel, pickLatestRunId, sortRunIdsDescending } from "@/lib/run-options";
 import { isViewerScreenshotReady, type ScreenshotExportState } from "@/lib/screenshot_export";
+import { logScreenshotGateEvent } from "@/lib/screenshot_gate_log";
 import {
   deriveObservedSourceStatus,
   frameIssueTime,
@@ -2398,7 +2399,15 @@ export default function App() {
     variableRef.current = variable;
     selectionSupportsGridRef.current = selectionSupportsGrid;
     selectionSupportsRasterRgbRef.current = selectionSupportsRasterRgb;
-  }, [model, variable, selectionSupportsGrid, selectionSupportsRasterRgb]);
+    logScreenshotGateEvent("substrates_updated", {
+      model,
+      variable,
+      supportsGrid: selectionSupportsGrid,
+      supportsRasterRgb: selectionSupportsRasterRgb,
+      capabilitiesResolved: selectionCapabilitiesResolved,
+      viewerReadySet: document.documentElement.getAttribute("data-viewer-ready") === "1",
+    });
+  }, [model, variable, selectionSupportsGrid, selectionSupportsRasterRgb, selectionCapabilitiesResolved]);
 
   useEffect(() => {
     regionRef.current = region;
@@ -4307,6 +4316,16 @@ export default function App() {
         selectionSupportsRasterRgb: selectionSupportsRasterRgbRef.current,
       })
     ) {
+      if (document.documentElement.getAttribute("data-viewer-ready") !== "1") {
+        logScreenshotGateEvent("viewer_ready_set", {
+          mapIdle: mapIdleRef.current,
+          gridFrameReady: gridFrameReadyRef.current,
+          rgbFrameReady: rgbFrameReadyRef.current,
+          cityLabelsReady: cityLabelsReadyRef.current,
+          supportsGrid: selectionSupportsGridRef.current,
+          supportsRasterRgb: selectionSupportsRasterRgbRef.current,
+        });
+      }
       document.documentElement.setAttribute("data-viewer-ready", "1");
     }
   }, []);
@@ -4315,6 +4334,11 @@ export default function App() {
     if (!screenshotModeRef.current) {
       return;
     }
+    logScreenshotGateEvent("selection_reset", {
+      selectionKey,
+      hadViewerReady: document.documentElement.getAttribute("data-viewer-ready") === "1",
+      mapIdle: mapIdleRef.current,
+    });
     gridFrameReadyRef.current = false;
     rgbFrameReadyRef.current = false;
     cityLabelsReadyRef.current = false;
@@ -4330,6 +4354,7 @@ export default function App() {
       // would satisfy the basemap gate prematurely, defeating the dual gate.)
       map.once("idle", () => {
         mapIdleRef.current = true;
+        logScreenshotGateEvent("map_idle", {});
         maybeSignalViewerReady();
       });
     }
@@ -4559,6 +4584,9 @@ export default function App() {
       bumpGridReadyVersion();
     }
     if (screenshotModeRef.current) {
+      if (!gridFrameReadyRef.current) {
+        logScreenshotGateEvent("grid_frame_ready", {});
+      }
       gridFrameReadyRef.current = true;
       maybeSignalViewerReady();
     }
@@ -4577,6 +4605,9 @@ export default function App() {
     rgbReadyFrameUrlsRef.current.add(normalized);
     bumpRgbReadyVersion();
     if (screenshotModeRef.current) {
+      if (!rgbFrameReadyRef.current) {
+        logScreenshotGateEvent("rgb_frame_ready", {});
+      }
       rgbFrameReadyRef.current = true;
       maybeSignalViewerReady();
     }
@@ -5522,6 +5553,7 @@ export default function App() {
           pointLabelsEnabled={pointLabelsEnabled}
           cityLabelMode={cityLabelMode}
           onCityLabelsReady={() => {
+            logScreenshotGateEvent("city_labels_ready", {});
             cityLabelsReadyRef.current = true;
             maybeSignalViewerReady();
           }}

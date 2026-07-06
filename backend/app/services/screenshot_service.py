@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import logging
 import time
 from collections import deque
@@ -18,6 +19,19 @@ SCREENSHOT_CONCURRENCY = 2
 SCREENSHOT_TIMEOUT_MS = 30_000
 SCREENSHOT_VIEWPORT_WIDTH = 1280
 SCREENSHOT_VIEWPORT_HEIGHT = 720
+
+
+async def _read_gate_log(page) -> list | None:
+    """Read the viewer's screenshot gate-state event log (Phase 0 diagnosis).
+
+    Written by frontend/src/lib/screenshot_gate_log.ts in screenshot mode.
+    Best-effort: never raises, returns None when unavailable.
+    """
+    try:
+        events = await page.evaluate("() => window.__cartoskyGateLog ?? null")
+    except Exception:
+        return None
+    return events if isinstance(events, list) else None
 
 
 def _compare_screenshot_mode(url: str) -> str | None:
@@ -72,6 +86,7 @@ class ScreenshotService:
         t_acquired = time.monotonic()
         marks: dict[str, float] = {}
         error_type: str | None = None
+        gate_log: list | None = None
         try:
             browser = await self._ensure_browser()
             context = await browser.new_context(
@@ -167,11 +182,17 @@ class ScreenshotService:
                     # Wait for the viewer to signal that both the basemap (idle)
                     # and the grid texture are fully composited, rather than a
                     # blind sleep. 28s stays inside the 30s hard timeout.
-                    await page.wait_for_selector(
-                        ':root[data-viewer-ready="1"]',
-                        timeout=28_000,
-                    )
-                    marks["ready"] = time.monotonic()
+                    try:
+                        await page.wait_for_selector(
+                            ':root[data-viewer-ready="1"]',
+                            timeout=28_000,
+                        )
+                        marks["ready"] = time.monotonic()
+                    finally:
+                        # Gate-state diagnosis (share overhaul Phase 0): read the
+                        # viewer's readiness event log even when the ready wait
+                        # times out — the stuck gate is the interesting case.
+                        gate_log = await _read_gate_log(page)
                     await page.wait_for_timeout(150)
                     marks["settled"] = time.monotonic()
 
@@ -207,6 +228,7 @@ class ScreenshotService:
                 marks=marks,
                 t_done=time.monotonic(),
                 error_type=error_type,
+                gate_log=gate_log,
             )
 
     def _record_render(
@@ -220,6 +242,7 @@ class ScreenshotService:
         marks: dict[str, float],
         t_done: float,
         error_type: str | None,
+        gate_log: list | None = None,
     ) -> None:
         """Emit the structured timing log line, Prometheus metrics, and ring-buffer entry."""
 
@@ -251,6 +274,19 @@ class ScreenshotService:
         else:
             logger.info(line)
 
+        if gate_log is not None:
+            # Separate line so the phase_timings format stays parse-stable.
+            try:
+                gate_json = json.dumps(gate_log, separators=(",", ":"))
+            except (TypeError, ValueError):
+                gate_json = str(gate_log)
+            logger.info(
+                "screenshot gate_states path=%s url=%s events=%s",
+                path,
+                truncated_url,
+                gate_json,
+            )
+
         try:
             prometheus_metrics.observe_screenshot_render(
                 path=path,
@@ -271,6 +307,7 @@ class ScreenshotService:
                 "error": error_type,
                 "total": phases["total"],
                 "phases": {phase: phases[phase] for phase in _SCREENSHOT_PHASES},
+                "gate_log": gate_log,
             }
         )
 

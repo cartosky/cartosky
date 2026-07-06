@@ -20,10 +20,12 @@ from app.services.wpc_source import WPCSourceField
 
 try:
     from app.services.builder.pipeline import build_sidecar_json as _shared_build_sidecar_json
+    from app.services.builder.pipeline import check_pre_encode_value_sanity
 except ModuleNotFoundError as exc:
     if exc.name != "brotli":
         raise
     _shared_build_sidecar_json = None
+    check_pre_encode_value_sanity = None
 
 try:
     from app.services.grid import build_grid_manifests_for_run_root, write_grid_frames_for_run_root
@@ -139,6 +141,36 @@ def _write_wpc_frame(
     var_capability = WPC_MODEL.get_var_capability(var_id)
     if var_capability is None or not var_capability.color_map_id:
         raise ValueError(f"Missing WPC color map registration for {var_id}")
+    var_spec_colormap = get_color_map_spec(str(var_capability.color_map_id))
+    var_spec_model = WPC_MODEL.get_var(var_id)
+    if check_pre_encode_value_sanity is not None:
+        # Phase C shadow gate (COG->binary sampling migration): log-only on
+        # every frame. Enforcement + the value-COG skip are Phase 4's
+        # separate, allowlist-gated step, gated on the shadow evidence this
+        # logging accumulates.
+        try:
+            if not check_pre_encode_value_sanity(
+                values,
+                var_spec_colormap,
+                var_spec_model=var_spec_model,
+                var_capability=var_capability,
+                label=f"{WPC_MODEL_ID}/{var_id}/fh{fh:03d}",
+            ):
+                logger.warning(
+                    "Phase C shadow gate failed: pre-encode value sanity "
+                    "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                    WPC_MODEL_ID,
+                    var_id,
+                    fh,
+                )
+        except Exception:
+            logger.exception(
+                "Phase C shadow gate errored: pre-encode value sanity "
+                "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                WPC_MODEL_ID,
+                var_id,
+                fh,
+            )
     _, colorize_meta = float_to_rgba(values, str(var_capability.color_map_id), meta_var_key=var_id)
     write_value_cog(values, value_path, model=WPC_MODEL_ID, region=WPC_REGION_ID)
 
@@ -150,8 +182,8 @@ def _write_wpc_frame(
         fh=fh,
         run_date=frame.issue_time.astimezone(timezone.utc),
         colorize_meta=colorize_meta,
-        var_spec=get_color_map_spec(str(var_capability.color_map_id)),
-        var_spec_model=WPC_MODEL.get_var(var_id),
+        var_spec=var_spec_colormap,
+        var_spec_model=var_spec_model,
         value_downsample_factor=1,
         valid_time_override=frame.valid_time.astimezone(timezone.utc),
         extra_metadata={
