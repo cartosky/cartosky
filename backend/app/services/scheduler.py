@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -22,7 +23,7 @@ from PIL import Image, ImageFilter
 from rasterio.enums import Resampling
 
 from app.models.registry import MODEL_REGISTRY
-from app.config import binary_sampling_models, grid_build_enabled
+from app.config import binary_sampling_models, grid_build_enabled, member_publish_models
 from app.services import climatology
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder import fetch as builder_fetch
@@ -2539,6 +2540,135 @@ def _process_run(
     return run_id, available, total
 
 
+# ---------------------------------------------------------------------------
+# Ensemble member publish pass (member pipeline plan Phase 3, design R4/R5/R8)
+# ---------------------------------------------------------------------------
+
+# How often the member pass re-probes upstream for a newer run. The stop check
+# runs between every (member, fh) frame (design D4); the underlying discovery
+# probe is throttled so ~0.7 s frames don't turn preemption into a probe storm.
+MEMBER_PASS_PROBE_INTERVAL_SECONDS = 60.0
+
+
+def _make_newer_run_probe(plugin: Any, probe_var: str | None, current_run_id: str) -> Any:
+    """Throttled should_stop callback: True once a newer run is discovered."""
+    state: dict[str, Any] = {"last_checked": 0.0, "newer": False}
+    lock = threading.Lock()
+
+    def _probe() -> bool:
+        if state["newer"]:
+            return True
+        with lock:
+            if state["newer"]:
+                return True
+            now = time.monotonic()
+            if now - float(state["last_checked"]) < MEMBER_PASS_PROBE_INTERVAL_SECONDS:
+                return False
+            state["last_checked"] = now
+            try:
+                run_dt = _resolve_run_dt(None, plugin=plugin, probe_var=probe_var)
+                newer = _run_id_from_dt(run_dt) != current_run_id
+            except Exception:
+                # A probe hiccup must never kill the pass; the outer poll loop
+                # remains the authoritative run-discovery path.
+                return False
+            if newer:
+                logger.info(
+                    "Member pass preempted: newer run detected (current=%s)", current_run_id,
+                )
+                state["newer"] = True
+            return newer
+
+    return _probe
+
+
+def _maybe_run_member_pass(
+    *,
+    plugin: Any,
+    model_id: str,
+    run_id: str,
+    data_root: Path,
+    probe_var: str | None,
+    pinned_run: bool,
+) -> None:
+    """Run the member publish pass when enabled and work remains.
+
+    Called only when the run's mean catchup is complete ("strictly after mean
+    publish" is structural). Never raises: member work must not take down the
+    mean scheduler loop. Writes go to STAGING; completed work is carried to
+    published via the same manifest-build + promote machinery the mean path
+    uses (design R5).
+    """
+    if model_id not in member_publish_models():
+        return
+    # Lazy import keeps the member machinery off the scheduler's hot path for
+    # non-member models.
+    from app.services.builder.members import (
+        member_pass_pending,
+        member_promote_pending,
+        run_member_pass,
+    )
+
+    try:
+        build_pending = member_pass_pending(
+            plugin=plugin, model_id=model_id, run_id=run_id, data_root=data_root,
+        )
+        # Covers a crash between a completed pass and its promote — staged
+        # member frames must never be stranded once the run is complete
+        # (there are no further mean promotes to ride).
+        promote_pending = member_promote_pending(
+            plugin=plugin, model_id=model_id, run_id=run_id, data_root=data_root,
+        )
+    except Exception:
+        logger.exception("Member pass pending-scan failed: run=%s model=%s", run_id, model_id)
+        return
+    if not build_pending and not promote_pending:
+        return
+
+    written = 0
+    member_var_ids: tuple[str, ...] = ()
+    summary = None
+    if build_pending:
+        should_stop = None if pinned_run else _make_newer_run_probe(plugin, probe_var, run_id)
+        try:
+            summary = run_member_pass(
+                plugin=plugin,
+                model_id=model_id,
+                run_id=run_id,
+                data_root=data_root,
+                region=_default_build_region(plugin),
+                should_stop=should_stop,
+            )
+        except Exception:
+            logger.exception("Member pass failed: run=%s model=%s", run_id, model_id)
+            return
+        written = int(summary.counts.get("written", 0))
+        member_var_ids = tuple(summary.member_var_ids)
+
+    if written <= 0 and not promote_pending:
+        return
+    try:
+        if grid_build_enabled():
+            manifest_ok = build_grid_manifests_for_run_root(
+                run_root=data_root / "staging" / model_id / run_id,
+                model=model_id,
+                run=run_id,
+                variables=member_var_ids or None,
+            )
+            logger.info(
+                "member grid manifest build: run=%s model=%s manifests=%d",
+                run_id, model_id, manifest_ok,
+            )
+        _promote_run(data_root, model_id, run_id)
+        logger.info(
+            "Member frames promoted: run=%s model=%s written=%d complete=%s",
+            run_id, model_id, written,
+            summary.complete if summary is not None else True,
+        )
+    except Exception:
+        logger.exception("Member frame promotion failed: run=%s model=%s", run_id, model_id)
+
+
 def run_scheduler(
     *,
     model: str,
@@ -2635,6 +2765,16 @@ def run_scheduler(
 
             run_complete = last_run_total > 0 and last_run_available >= last_run_total
             if last_run_id == run_id and not run_arg and run_complete:
+                # Resume/continue any pending member publish work while idle
+                # between runs (no-op presence scan when already complete).
+                _maybe_run_member_pass(
+                    plugin=plugin,
+                    model_id=model,
+                    run_id=run_id,
+                    data_root=data_root,
+                    probe_var=resolved_probe_var,
+                    pinned_run=False,
+                )
                 logger.info("No new run yet (latest=%s complete); sleeping %ss", run_id, poll_seconds)
                 time.sleep(poll_seconds)
                 continue
@@ -2692,6 +2832,20 @@ def run_scheduler(
             last_run_available = available
             last_run_total = total
             logger.info("Run summary: %s available=%d/%d", processed_run_id, available, total)
+
+            # Member publish pass: strictly after the run's mean catchup is
+            # complete (member pipeline plan §3.6). Runs before the potential
+            # process restart / one-shot return below so --once/--run modes
+            # include member work; interrupted passes resume on later polls.
+            if run_now_complete:
+                _maybe_run_member_pass(
+                    plugin=plugin,
+                    model_id=model,
+                    run_id=processed_run_id,
+                    data_root=data_root,
+                    probe_var=resolved_probe_var,
+                    pinned_run=bool(run_arg),
+                )
 
             if run_now_complete and not run_was_complete_before_processing:
                 _perform_successful_run_memory_cleanup(run_id=processed_run_id, model_id=model)

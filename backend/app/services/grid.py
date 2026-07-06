@@ -6,6 +6,7 @@ import gzip
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -1574,8 +1575,43 @@ def ensure_grid_brotli_sidecar(
     return write_grid_brotli_sidecar(frame_path, payload, quality=quality)
 
 
+# Ensemble member runtime ids: {var}__m{NN} (zero-padded 2-digit) or
+# {var}__control (member pipeline plan Section 4.1).
+_MEMBER_PACK_SUFFIX_RE = re.compile(r"^(?P<base>.+)__(?:m\d{2}|control)$")
+
+
+def normalize_grid_pack_var_id(var: str) -> str:
+    """Map an ensemble-member runtime id to its packing twin.
+
+    ``tmp2m__m07`` / ``tmp2m__control`` -> ``tmp2m__mean``; every other id is
+    returned unchanged. Members and mean MUST share packing constants — they
+    quantize the same physical field (member pipeline plan Section 3.4).
+    Percentile ``__p{NN}`` -> base mapping is specified by the same plan
+    section but is wired only when Tier 2's precondition is met; probability
+    grids get explicit packing entries and never resolve through here.
+    """
+    normalized = str(var or "").strip().lower()
+    match = _MEMBER_PACK_SUFFIX_RE.match(normalized)
+    if match:
+        return f"{match.group('base')}__mean"
+    return normalized
+
+
 def _packing_config(model: str, var: str) -> dict[str, Any] | None:
-    return _PACKING_BY_MODEL_VAR.get((str(model).strip().lower(), str(var).strip().lower()))
+    model_norm = str(model).strip().lower()
+    var_norm = str(var).strip().lower()
+    exact = _PACKING_BY_MODEL_VAR.get((model_norm, var_norm))
+    if exact is not None:
+        return exact
+    # Member-suffix fallback (member pipeline plan Section 3.4): member ids
+    # resolve to their __mean twin's entry instead of registering hundreds of
+    # duplicate entries. This is the single seam that makes grid_supported,
+    # manifest iteration, and the binary sampler member-aware (Phase 2 design
+    # R3); it changes nothing for ids without a member suffix.
+    pack_var = normalize_grid_pack_var_id(var_norm)
+    if pack_var != var_norm:
+        return _PACKING_BY_MODEL_VAR.get((model_norm, pack_var))
+    return None
 
 
 def _encode_values(values: np.ndarray, *, scale: float, offset: float, nodata: int, dtype: str) -> np.ndarray:
@@ -1636,39 +1672,50 @@ def _decode_values(encoded: np.ndarray, *, model: str, var: str) -> np.ndarray:
     return decoded
 
 
-def write_grid_frame_for_run_root(
+def _grid_frame_bounds(
     *,
-    run_root: Path,
+    values_array: np.ndarray,
     model: str,
     var: str,
     fh: int,
-    values: np.ndarray,
-    level: int = GRID_LEVEL,
-    transform: Affine | None = None,
-    bbox: list[float] | tuple[float, float, float, float] | None = None,
-    projection: str = GRID_PROJECTION,
-) -> dict[str, Any]:
-    packing = _packing_config(model, var)
-    if packing is None:
-        raise ValueError(f"Unsupported grid pack target: {model}/{var}")
-    packing_dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
-
-    values_array = np.asarray(values, dtype=np.float32)
-
-    # Compute bbox from original (pre-display-prep) dimensions so that
-    # upscaling in prepare_grid_display_values does not inflate the extent.
+    transform: Affine | None,
+    bbox: list[float] | tuple[float, float, float, float] | None,
+) -> list[float]:
+    """Geographic bounds from an explicit bbox or the pre-upscale array dims."""
     if bbox is None:
         if transform is None:
             raise ValueError(f"Missing transform/bbox for grid frame: {model}/{var}/fh{int(fh):03d}")
         orig_h, orig_w = values_array.shape[:2]
         left, bottom, right, top = array_bounds(orig_h, orig_w, transform)
-        bounds = [float(left), float(bottom), float(right), float(top)]
-    else:
-        bounds = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+        return [float(left), float(bottom), float(right), float(top)]
+    return [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
 
-    display_values, prep_meta = prepare_grid_display_values(model=model, var=var, values=values_array)
+
+def _write_grid_frame_artifacts(
+    *,
+    run_root: Path,
+    var: str,
+    fh: int,
+    values: np.ndarray,
+    bounds: list[float],
+    level: int,
+    projection: str,
+    packing: dict[str, Any],
+    gzip_sidecar: bool,
+    brotli_sidecar: bool,
+    display_prep_meta: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Shared frame-artifact writer: encode -> atomic ``.bin`` -> optional
+    compression sidecars -> meta JSON.
+
+    ``bounds`` must come from the PRE-upscale dims when an upscale was applied
+    (the caller's responsibility), while the effective transform is derived
+    from the encoded (post-upscale) shape — the math both the full and slim
+    profiles share (member pipeline plan Section 3.2 / Phase 2 design R1).
+    """
+    packing_dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
     encoded = _encode_values(
-        display_values,
+        values,
         scale=float(packing["scale"]),
         offset=float(packing["offset"]),
         nodata=int(packing["nodata"]),
@@ -1686,9 +1733,9 @@ def write_grid_frame_for_run_root(
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
     tmp_path.write_bytes(encoded_bytes)
     tmp_path.replace(out_path)
-    if GRID_GZIP_SIDECARS_ENABLED:
+    if gzip_sidecar:
         write_grid_gzip_sidecar(out_path, encoded_bytes)
-    if GRID_BROTLI_SIDECARS_ENABLED:
+    if brotli_sidecar:
         write_grid_brotli_sidecar(out_path, encoded_bytes)
 
     # Persist the *effective* encoded-frame transform: derived from the same
@@ -1718,10 +1765,92 @@ def write_grid_frame_for_run_root(
         ],
         "projection": crs_text,
     }
-    if prep_meta:
-        frame_meta["display_prep"] = prep_meta
+    if display_prep_meta:
+        frame_meta["display_prep"] = display_prep_meta
     write_json_atomic(grid_frame_meta_path_for_run_root(run_root, var, fh, level=level), frame_meta)
     return frame_meta
+
+
+def write_grid_frame_for_run_root(
+    *,
+    run_root: Path,
+    model: str,
+    var: str,
+    fh: int,
+    values: np.ndarray,
+    level: int = GRID_LEVEL,
+    transform: Affine | None = None,
+    bbox: list[float] | tuple[float, float, float, float] | None = None,
+    projection: str = GRID_PROJECTION,
+) -> dict[str, Any]:
+    packing = _packing_config(model, var)
+    if packing is None:
+        raise ValueError(f"Unsupported grid pack target: {model}/{var}")
+
+    values_array = np.asarray(values, dtype=np.float32)
+
+    # Compute bbox from original (pre-display-prep) dimensions so that
+    # upscaling in prepare_grid_display_values does not inflate the extent.
+    bounds = _grid_frame_bounds(
+        values_array=values_array, model=model, var=var, fh=fh, transform=transform, bbox=bbox,
+    )
+
+    display_values, prep_meta = prepare_grid_display_values(model=model, var=var, values=values_array)
+    return _write_grid_frame_artifacts(
+        run_root=run_root,
+        var=var,
+        fh=fh,
+        values=display_values,
+        bounds=bounds,
+        level=level,
+        projection=projection,
+        packing=packing,
+        gzip_sidecar=GRID_GZIP_SIDECARS_ENABLED,
+        brotli_sidecar=GRID_BROTLI_SIDECARS_ENABLED,
+        display_prep_meta=prep_meta,
+    )
+
+
+def write_slim_grid_frame_for_run_root(
+    *,
+    run_root: Path,
+    model: str,
+    var: str,
+    fh: int,
+    values: np.ndarray,
+    level: int = GRID_LEVEL,
+    transform: Affine | None = None,
+    bbox: list[float] | tuple[float, float, float, float] | None = None,
+    projection: str = GRID_PROJECTION,
+) -> dict[str, Any]:
+    """Slim member profile (member pipeline plan Section 3.2, Phase 2 design R1):
+    ``.bin`` + meta only — no display prep, no compression sidecars regardless
+    of the process-global env flags (those stay authoritative for non-member
+    frames via :func:`write_grid_frame_for_run_root`). Packing resolves
+    through the member-suffix fallback, so member frames are byte-compatible
+    with their ``__mean`` twin's decode path.
+    """
+    packing = _packing_config(model, var)
+    if packing is None:
+        raise ValueError(f"Unsupported grid pack target: {model}/{var}")
+
+    values_array = np.asarray(values, dtype=np.float32)
+    bounds = _grid_frame_bounds(
+        values_array=values_array, model=model, var=var, fh=fh, transform=transform, bbox=bbox,
+    )
+    return _write_grid_frame_artifacts(
+        run_root=run_root,
+        var=var,
+        fh=fh,
+        values=values_array,
+        bounds=bounds,
+        level=level,
+        projection=projection,
+        packing=packing,
+        gzip_sidecar=False,
+        brotli_sidecar=False,
+        display_prep_meta=None,
+    )
 
 
 def write_grid_frames_for_run_root(

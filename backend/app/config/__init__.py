@@ -100,6 +100,22 @@ def binary_sampling_models() -> frozenset[str]:
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
+def member_publish_models() -> frozenset[str]:
+    """Models whose scheduler runs the ensemble member publish pass.
+
+    Comma-separated model allowlist (``CARTOSKY_MEMBER_PUBLISH_MODELS=gefs``);
+    empty (the default) means member publishing is off everywhere. Removing a
+    model is the kill switch — already-published member frames age out with
+    run retention (member pipeline plan Phase 3 / Phase 2 design R8). Same
+    per-model-list pattern and no-cache rationale as
+    :func:`binary_sampling_models`.
+    """
+    raw = _env_value("CARTOSKY_MEMBER_PUBLISH_MODELS").strip().lower()
+    if not raw:
+        return frozenset()
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
 @lru_cache(maxsize=1)
 def grid_build_enabled() -> bool:
     return True

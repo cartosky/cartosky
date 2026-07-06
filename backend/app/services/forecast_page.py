@@ -3048,17 +3048,32 @@ def _variable_units(model: str, var: str, sidecar_units: str | None) -> str:
     return ""
 
 
+# Whether this module's payload builder can emit per-member series. The
+# member pipeline's Phase 3 publishes member frames and repoints the probe
+# below at the ensemble.members descriptor (Phase 2 design D1 — the old
+# supported_views probe would have returned 400 forever), but the meteogram
+# payload itself gains member series only in Phase 5. Until then this stays
+# False so include_members=true is honestly rejected instead of silently
+# returning a mean-only payload. Phase 5 flips this constant — no probe
+# rework needed.
+_MEMBER_SERIES_PAYLOAD_SUPPORTED = False
+
+
 def _model_supports_members(model: str) -> bool:
+    """Does this model publish per-member data the meteogram can serve?
+
+    Reads the ensemble.members descriptor on the model's capability catalog
+    (member pipeline Phase 2 design R7/D1) — supported_views intentionally
+    stays ["mean"] and is not consulted.
+    """
+    if not _MEMBER_SERIES_PAYLOAD_SUPPORTED:
+        return False
     try:
+        from ..models.base import ensemble_member_descriptors
         from ..models.registry import get_model
 
         plugin = get_model(model)
-        if not hasattr(plugin, "supported_ensemble_views"):
-            return False
-        # No canonical var is required to know members are unsupported repo-wide
-        # in Phase 1A/2; probe the plugin's declared views for any variable.
-        views = plugin.supported_ensemble_views("tmp2m") if hasattr(plugin, "supported_ensemble_views") else []
-        return "members" in (views or [])
+        return bool(ensemble_member_descriptors(plugin))
     except Exception:
         return False
 

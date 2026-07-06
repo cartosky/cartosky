@@ -702,6 +702,13 @@ GEFS_VARIABLE_CATALOG = {
             "supported_views": ["mean"],
             "default_view": "mean",
             "artifact_map": {"mean": "tmp2m__mean"},
+            # Per-member slim publish (member pipeline plan Phase 3, design
+            # R7): members are registered as metadata under the canonical var
+            # — tmp2m__m01..m30 + tmp2m__control — never as catalog entries.
+            # The scheduler member pass and the meteogram members probe both
+            # enumerate from this descriptor. Publishing itself additionally
+            # requires the model on CARTOSKY_MEMBER_PUBLISH_MODELS.
+            "members": {"count": 30, "control": True, "prefix": "m", "enabled": True},
         },
     ),
     "tmp2m__mean": VariableCapability(

@@ -4,7 +4,9 @@
 >
 > **Status (2026-07-04):** Design/pre-spike. **Nothing in this plan may start until Phase 0's prerequisites pass** — in particular, GEFS and EPS must complete the binary-sampling migration (`docs/VALUE_COG_TO_BINARY_SAMPLING_MIGRATION_PLAN.md`) and be live on `CARTOSKY_BINARY_SAMPLING_MODELS` with COG writes off.
 >
-> **Hard gate (unchanged from the original Model Guidance plan):** no member scheduler work of any kind — beyond the explicitly scoped sizing spike — until the spike is complete and Brian's go-ahead is recorded in the spike doc.
+> **Status update (2026-07-06):** Phase 0 and Phase 1 (sizing spike) are **complete**. Brian's decision is recorded in `docs/ENSEMBLE_MEMBER_SIZING_SPIKE.md` Section 10: **Tier 1 GO at 6-run parity retention; Tier 2 CONDITIONAL GO, also at 6-run parity (performant percentile implementation required first — see Phase 6 precondition); Tier 3 NO GO (server cannot support it until resources are expanded); global coverage deferred for ALL tiers**, with the standing requirement that design/planning keep global support a first-class future path. Spike-measured corrections are folded into this document in place, dated 2026-07-06 — the largest being that **EPS has no upstream control member (roster = 50, not 51; §2.2)**.
+>
+> **Hard gate (unchanged from the original Model Guidance plan):** no member scheduler work of any kind — beyond the explicitly scoped sizing spike — until the spike is complete and Brian's go-ahead is recorded in the spike doc. **Satisfied 2026-07-06** (scope of the go-ahead per the status update above).
 >
 > **Document lineage:** This plan supersedes the "Individual member data pipeline" section and Phase 3 scheduler/storage material of `docs/MODEL_GUIDANCE_IMPLEMENTATION_PLAN.md`, which were written pre-migration and specified member **value COGs** — an artifact allowlisted models no longer produce. This document follows the migration plan's convention: corrections are documented in place, and claims verified against code are marked as such.
 
@@ -18,11 +20,11 @@ Per-member ensemble data is **shared infrastructure with three consumer families
 |---|-----------------|---------------|--------------|
 | 1 | **Meteogram members** (Model Guidance Phase 3: spaghetti plumes, snowfall member histogram/detail) | Server-side point sampling of member binaries; members never leave the server as rasters | Cheapest; slim member artifacts suffice |
 | 2 | **Derived stats grids for maps** (percentile maps e.g. snow P25/P50/P75; probability-of-exceedance maps e.g. P(QPF > 1.0"); MSLP member low locations) | Computed **from** members, published **as ordinary single grid artifacts** through the normal pipeline — colorize, sidecar, grid binary, WebGL, Cloudflare caching all unchanged. Client never touches a member raster. | Cheap (~one extra "variable" per stat); highest winter user value |
-| 3 | **Per-member browse maps** (WB-style: scrub through individual member snowfall maps in the viewer) | Members become first-class **served** artifacts: brotli sidecars, sidecar JSON with colormap meta, manifest entries, CF `HIT` | Expensive (31–51× served-artifact surface); supported by design, **not scheduled** — see Appendix A |
+| 3 | **Per-member browse maps** (WB-style: scrub through individual member snowfall maps in the viewer) | Members become first-class **served** artifacts: brotli sidecars, sidecar JSON with colormap meta, manifest entries, CF `HIT` | Expensive (31–50× served-artifact surface); supported by design, **NO GO recorded 2026-07-06** — see Appendix A |
 
 Two standing design constraints from the roadmap:
 
-- **Global map support is planned.** The binary migration was partly motivated by it. Nothing in this pipeline may hardcode CONUS or `na` assumptions — region is always a parameter (it already is, via `MODEL_REGISTRY` + `get_grid_params`), the per-frame meta transform is the geometry authority, and all footprint budgets in this doc carry a global multiplier (Section 6) so decisions made now survive the region expansion. When global regions land, retention and member-variable scope must be re-evaluated against that multiplier — that re-evaluation is an explicit checklist item, not an assumption.
+- **Global map support is planned.** The binary migration was partly motivated by it. Nothing in this pipeline may hardcode CONUS or `na` assumptions — region is always a parameter (it already is, via `MODEL_REGISTRY` + `get_grid_params`), the per-frame meta transform is the geometry authority, and all footprint budgets in this doc carry a global multiplier (Section 6) so decisions made now survive the region expansion. When global regions land, retention and member-variable scope must be re-evaluated against that multiplier — that re-evaluation is an explicit checklist item, not an assumption. **Decision (Brian, 2026-07-06): global coverage is NOT supported for any member tier at this time; this design constraint stands in full so incorporation is straightforward when global support arrives.**
 - **Mean-product freshness is untouchable.** Member work never delays mean publish. The map's core promise (fresh mean/deterministic guidance) outranks every member product.
 
 ---
@@ -44,9 +46,13 @@ Both models publish exclusively under `__mean` runtime ids via `resolve_runtime_
 
 **Consequence:** per-member EPS has **near-zero incremental fetch cost** if member encoding happens in the same frame build, iterating the bands of the already-downloaded subset. The expensive-looking model (51 members) is the cheap one for fetch. The EPS **control** member is *not* in the pf subset (the filter excludes `type == "cf"`); control fetch is a small new inventory selection.
 
+**Correction (spike-verified 2026-07-06):** the EPS control member **does not exist upstream at all**. The ECMWF open-data enfo `ef` index contains only `type == "pf"` rows — members 1–50, contiguous, zero `cf` rows — verified in the spike's prod mini-check (azure mirror) and against the live index on `data.ecmwf.int` for two cycles (2026-07-05 12z fh0: 8,500 rows, all pf; 00z fh24: same). There is no cf row for the pf filter to exclude and no control fetch to build. **EPS member roster = 50 perturbed members; every "51 incl. control" figure in this document is corrected to 50** (≈2% footprint reduction). The `type == "cf"` selection mechanism was implemented and works — there is simply nothing for it to select. Resolves open decision #2 negatively.
+
 ### 2.3 The GEFS reality: members are net-new fetch load
 
 GEFS mean uses the upstream **precomputed `geavg` product** (`herbie_kwargs["member"] = "mean"`, verified in `gefs.py`'s `herbie_request`). Member fields live in separate upstream files (`gep01`–`gep30`, `gec00`). Per-member GEFS therefore requires ~31 Herbie subset downloads × 65 fh per run — **~2,015 HTTP fetches per member-variable per run if fetched per-variable**. Request count, not bytes, is the risk (upstream rate limits). Mitigation is member-bundled fetch (Section 3.6).
+
+**Spike measurement (2026-07-06):** the full per-var 31×65 pattern (2,009 fresh fetches) completed with **zero failures, zero retries, and no throttling** at parallelism 2 (~0.7 s/fetch, aws served every request on attempt 1; batch wall 12.2 min). The rate-limit risk did not materialize at this scale on a single run; member-bundled fetch remains the multi-var design (Section 3.6). GEFS roster confirmed 30 pf + 1 control; control kwarg `member=0` → `gec00` (herbie 2026.3.0) — resolves open decision #3.
 
 ### 2.4 What a frame build does today (and what members don't need)
 
@@ -87,7 +93,9 @@ Why a profile and not a hardcoded slim path: consumer family 3 (browse maps) wou
 
 Percentile and probability grids are computed by **reading published member `.bin` frames** (decode via `_decode_values` → per-pixel stats across the member axis → publish the result as an ordinary derived variable through the **normal, full-profile** pipeline). Not computed inline during fetch/warp.
 
-Why: decouples stats entirely from the member build profile and fetch orchestration; tolerates a late/backfilled member frame; reuses the decode primitive exactly as the migration designed; and the memory cost is trivial — all members of one fh in float32 ≈ **~175 MB for EPS (51 × ~3.4 MB)**, **~56 MB for GEFS (31 × ~1.8 MB)** at `na` resolution. Quantization noise from 0.1-precision decoded inputs is irrelevant at these product scales. Stats outputs are grid binaries served like any other frame — **they must get `CF-Cache-Status: HIT`**, same rules as every grid binary.
+Why: decouples stats entirely from the member build profile and fetch orchestration; tolerates a late/backfilled member frame; reuses the decode primitive exactly as the migration designed; and the memory cost is trivial — all members of one fh in float32 ≈ **~170 MB for EPS (50 × ~3.4 MB; corrected to the 50-member roster)**, **~56 MB for GEFS (31 × ~1.8 MB)** at `na` resolution. Quantization noise from 0.1-precision decoded inputs is irrelevant at these product scales. Stats outputs are grid binaries served like any other frame — **they must get `CF-Cache-Status: HIT`**, same rules as every grid binary.
+
+**Spike measurement (2026-07-06):** memory confirmed trivial (GEFS 31-member stack 53 MiB, +145 MiB process RSS, decode 0.10 s) — but the naive `np.nanpercentile` compute took **13.7 s for one fh** (per-pixel Python fallback in the presence of NaNs; pixel-count-bound, not member-count-bound). This is the basis of the Tier 2 CONDITIONAL GO: a performant nan-aware percentile implementation is a Phase 6 precondition.
 
 **Runtime completeness gate (required):** before publishing a stat frame for an fh, the stats pass verifies the **full expected member set** is present for that fh (member count per `scheduled_fhs_for_var` and the model's member roster). If incomplete — e.g. the scheduler unit was `MemoryMax`-killed mid-member-loop, or a member frame failed the pre-encode gate — skip that fh and retry on the next pass; never publish a percentile/probability grid computed from a partial member set. Silently-wrong stats on the map is the worst failure mode this pipeline can produce.
 
@@ -119,7 +127,7 @@ No hardcoded bboxes, region names, or grid dims anywhere in member/stats code: r
 | Kind | Pattern | Examples |
 |------|---------|----------|
 | Perturbation member | `{var}__m{NN}` (zero-padded 2-digit) | `tmp2m__m01` … `tmp2m__m30` (GEFS), `…__m50` (EPS) |
-| Control | `{var}__control` (distinct from `m01`) | `tmp2m__control` |
+| Control | `{var}__control` (distinct from `m01`) — **GEFS only**; EPS has no upstream control (§2.2 correction, 2026-07-06) | `tmp2m__control` |
 | Percentile stat | `{var}__p{NN}` | `snowfall_total__p25`, `snowfall_total__p50`, `snowfall_total__p75` (set: p10/p25/p50/p75/p90) |
 | Probability of exceedance | `{var}__prob_gt_{threshold}` — threshold in the variable's display units, decimal point as `p` | `precip_total__prob_gt_0p50`, `snowfall_total__prob_gt_6p0` |
 
@@ -147,7 +155,7 @@ published/
       snowfall_total__p50/fh000.l0.u16.bin (+ full-profile artifacts)   # stats: normal pipeline
       precip_total__prob_gt_1p0/…
   eps/
-    {run}/  (same pattern; m01–m50 + control)
+    {run}/  (same pattern; m01–m50 — no control; §2.2 correction 2026-07-06)
 ```
 
 ### 4.4 Manifest
@@ -156,7 +164,9 @@ Register member/stat runtime vars so `list_frames` and the meteogram's frame enu
 
 ---
 
-## 5. Retention (OPEN DECISION — resolved by the spike)
+## 5. Retention (RESOLVED — Brian, 2026-07-06: **6-run parity** for Tier 1 members)
+
+**Decision (2026-07-06):** Tier 1 slim members retained at **6-run parity** with mean products (spike-measured cost ≈ 98 GB at `na` for 3 member vars across both models — 9% of free space at spike time). **Tier 2 stats grids, when their conditional GO is exercised, also run at 6-run parity — not 2-run.** The per-view fallback below stays documented as the lever if the footprint picture changes; it is not needed now.
 
 **Target: parity with mean retention (6 runs).** If the spike's extrapolation shows parity is not comfortably affordable (Section 6 budget), fall back to **per-view retention**: members retained for the latest 1–2 runs while mean products keep 6. That lever cuts member footprint 3–6× and is product-defensible (meteograms use `latest_per_model` only; the run selector simply shows fewer runs for member views). Stats grids are cheap and follow normal retention regardless.
 
@@ -170,7 +180,9 @@ The retention/cleanup job must handle member directories under whichever policy 
 
 **Everything below is a planning estimate — the spike replaces these numbers with measurements.** Basis: `na` region grid dims ≈ 680×655 px (GEFS 25 km) and ≈ 945×910 px (EPS 18 km); uint16 → ~0.9 MB (GEFS) / ~1.7 MB (EPS) raw per frame; slim profile = 2 files/frame (`.bin` + meta), no compression sidecars, no display-prep upscale.
 
-| Tier | GEFS (31 members) | EPS (51 incl. control) | Combined, 3 member vars, 6-run retention |
+**Spike measurements (2026-07-06, full detail in `docs/ENSEMBLE_MEMBER_SIZING_SPIKE.md`):** GEFS slim member frame = 896,148 B `.bin` (682×657, exact) → **1.81 GB/run/var measured** — the estimate below confirmed. Compression sidecars **×1.68 measured** (gz 35.7% + br 32.2% of bin); 3× display-prep **×9.0 measured**. EPS column corrected to the 50-member roster (§2.2): Tier 1 combined ≈ **98 GB at 6-run parity / 33 GB at 2-run** (`na`). Spike-process peak RSS 489 MiB including a 31-member stats pass; promote rename <1 ms; retention sweep 0.76 s per 4,030 files; the concurrent 18z mean build showed no delay vs. the previous day's baseline cycle. Tier 3 extrapolates to ≈456 GB `na` / ≈2.65 TB global at 6-run — the recorded **Tier 3 NO GO** stands until server resources are expanded; **global is deferred for all tiers** (design keeps the global path first-class per Section 1).
+
+| Tier | GEFS (31 members) | EPS (50 members — corrected 2026-07-06, no control) | Combined, 3 member vars, 6-run retention |
 |------|-------------------|------------------------|------------------------------------------|
 | **Tier 1 — meteogram-only (slim, 1×)** | ~1.8 GB/run/var (65 fh) | ~5.3 GB synoptic / ~2.2 GB off-cycle per run/var | **~100 GB** (GEFS ~32 GB + EPS ~68 GB) |
 | **Tier 2 — + stats grids** (≈5 percentiles + ≈4–6 prob thresholds per var, full profile) | +~0.5–1 GB/run total | +~1–2 GB/run total | **+~10–20 GB** — noise relative to Tier 1 |
@@ -186,6 +198,8 @@ Per-view retention fallback (members latest 2 runs): Tier 1 drops to roughly **~
 
 ## 7. Sizing spike protocol (binary edition)
 
+> **COMPLETE (2026-07-06).** Executed as specified against `gefs/20260705_12z` via `backend/scripts/ensemble_member_sizing_spike.py` (2,015/2,015 frames, zero gate/fetch failures). The deliverable exists with all seven measurements and the recorded decision: **Tier 1 GO at 6-run parity; Tier 2 CONDITIONAL GO at 6-run parity (performant percentile first); Tier 3 NO GO; global deferred for all tiers.** Operational note for future member tooling run outside the scheduler unit: use an isolated Herbie cache (the scheduler's cache is not writable by the operator user; the spike script does this automatically).
+
 One-run GEFS `tmp2m` member publish (`tmp2m__m01`–`__m30` + `tmp2m__control`, all 65 fh), slim profile, via the deploy workflow (never patched on the server), member loop at reduced priority. **Deliverable:** `docs/ENSEMBLE_MEMBER_SIZING_SPIKE.md` with Brian's explicit go/no-go recorded.
 
 > **Warning — stale predecessor script:** `backend/scripts/phase3_sizing_spike.py` is the **value-COG-era** spike from the original Model Guidance plan. It writes member COGs and predates the binary migration. **Do not reuse or extend it for this plan.** Write the binary-era spike fresh (it may crib fetch scaffolding, but its artifact writing, measurement targets, and output schema are obsolete); recommend renaming or banner-deprecating the old script when the new one lands.
@@ -200,7 +214,7 @@ Measure and document:
 6. **EPS `snowfall_total` feasibility** (direct GRIB field vs derivation complexity) — flag, don't block.
 7. Extrapolation table: Tier 1/2/3 × {parity retention, 2-run retention} × {`na`, global ~5.8×}, against the ~1.1 TB free budget.
 
-**Gate:** Brian's sign-off on a specific tier + retention combination, recorded in the spike doc, before any work beyond the spike.
+**Gate:** Brian's sign-off on a specific tier + retention combination, recorded in the spike doc, before any work beyond the spike. **Satisfied 2026-07-06** (spike doc Section 10).
 
 ---
 
@@ -215,21 +229,23 @@ Each phase gates on the previous. Recommend-first: Phases 2's design doc goes to
 - [x] One post-cutover run per model measured on prod — **done (2026-07-05, runs `gefs/20260705_00z` and `eps/20260705_00z`, first fully binary-only run each; distinct from the migration's COG-era item 7).** Full per-variable `du` output retained in ops notes; headline figures: **GEFS** typical Group 1 variable 74–104 MB/run (≈ 1.1–1.6 MB/frame full profile → ≈ 0.85–0.9 MB raw `.bin`), Group 2 confirmed as the outliers exactly as predicted — `precip_total__mean` 717 MB (≈11 MB/frame) and `snowfall_total__mean` 536 MB (≈8.2 MB/frame), the 3×-upscale ≈ 9×-pixel cost measured; GEFS per-run binary total ≈ 2.77 GB. **EPS** typical variable 129–181 MB/run synoptic (≈ 2.1–3.0 MB/frame → ≈ 1.65–1.7 MB raw `.bin`), `precip_total__mean` an unremarkable 150 MB — empirically confirming EPS has no display-prep entries; EPS synoptic per-run total ≈ 1.9 GB. Constraint-windowed anomaly vars show their expected reduced/single-frame sizes (`precip_16d/15d_anom__mean` at 2–3 MB). **Section 6's estimate basis is validated — slim-member math (≈0.9 / ≈1.7 MB raw per frame) stands; the Tier 3 warning about 3× member display-prep is now a measured fact (≈15 GB/run/var), not a projection.** Cross-check against the migration's item 7: GEFS 2.77 GB vs 4.5 GB COG-era (−38% ≈ the 41% COG share), EPS 1.9 GB vs 4.5 GB (−58% = the 58% share exactly) — the migration storage win is confirmed end-to-end. *Minor open observation, not a gate:* `wspd850`/`wspd300` (≈3.3 MB/frame) and `hgt500_anom` (≈2.5 GEFS / ≈4.5 EPS MB/frame) run heavier than bin+sidecars alone explains — likely contour/vector artifacts co-located in the var directory; an `ls` on one fh would make the artifact inventory exact. Irrelevant to slim members (bin+meta only).
 - [x] This document's locked decisions re-confirmed — **confirmed by Brian, 2026-07-05. Phase 0 complete.** Independent design review (Codex, 2026-07-05) approved the locked decisions as the design baseline with no changes, flagging three execution risks now folded into this plan: the profile-aware write path (Section 3.2), EPS interleave memory placement (Section 3.6 — already visible), and the stale COG-era spike script (Section 7 warning).
 
-**Phase 1 — Sizing spike** (Section 7). Gate: recorded sign-off on tier + retention.
+**Phase 1 — Sizing spike** (Section 7) — **done (2026-07-06)**. Gate satisfied: **Tier 1 GO at 6-run parity retention; Tier 2 CONDITIONAL GO at the same 6-run parity (performant percentile implementation is a Phase 6 precondition); Tier 3 NO GO until server resources are expanded; global coverage deferred for all tiers** while design continues to keep global support first-class (Sections 1/3.7).
 
-**Phase 2 — Scheduler design doc** (short, recommend-first): profile-parameterized member build through `build_frame`/`write_grid_frame_for_run_root`; EPS interleaved member encode from the pf subset + control fetch; GEFS decoupled, member-bundled, deprioritized loop; packing suffix fallback + probability packing entry; manifest member registration shape; retention implementation per the chosen policy; `supported_views` extension to `["mean", "members"]`. Gate: Brian approves before any implementation agent starts.
+**Phase 2 — Scheduler design doc** (short, recommend-first) — **done (2026-07-06): `docs/ENSEMBLE_MEMBER_SCHEDULER_DESIGN.md`, APPROVED same day (Brian, concurring with independent Codex review; decisions D1–D5 recorded there).** Covers: profile-parameterized member build through `build_frame`/`write_grid_frame_for_run_root` (shared-internals writer + slim variant); EPS interleaved member encode from the pf subset (~~+ control fetch~~ — no EPS control exists upstream, §2.2 correction 2026-07-06); GEFS decoupled, deprioritized in-scheduler member pass (control via `member=0` → `gec00`, spike-confirmed; member-bundled fetch is a hard prerequisite for the second member variable, per D5); packing suffix fallback (+ probability packing entry specified, deferred to Tier 2); manifest member registration shape (open decision #5 resolved: members-as-metadata + per-member grid manifests); retention per the resolved 6-run parity policy (parity by construction — run-dir retention); ~~`supported_views` extension to `["mean", "members"]`~~ **superseded by design D1: `supported_views` stays `["mean"]`, members exposed via an `ensemble.members` descriptor — with the required Phase 3 follow-through of repointing the meteogram's `_model_supports_members` probe at the descriptor.** Scope per the 2026-07-06 sign-off: Tier 1 only (slim members); the design must not preclude Tier 2 stats or future global regions, but implements neither. Gate: Brian approves before any implementation agent starts — **satisfied 2026-07-06.**
 
 **Phase 3 — GEFS member publish:** `tmp2m` first (matches spike config), verify against the acceptance criteria below, then extend to `precip_total` and `snowfall_total`. Gate: criteria green across ≥2 consecutive runs.
 
-**Phase 4 — EPS member publish:** interleaved design; control included; off-cycle schedule handling (25-frame runs; anomaly vars aren't member targets, but frame-count expectations must key off `scheduled_fhs_for_var`, never constants). `snowfall_total` scoped per spike finding #6 — separately if derivation is nontrivial. Gate: criteria green across one synoptic **and** one off-cycle run.
+**Phase 4 — EPS member publish:** interleaved design; ~~control included~~ **no control member (corrected 2026-07-06 — upstream exposes 50 pf rows only, §2.2; the stats completeness gate's expected EPS member set is 50)**; off-cycle schedule handling (25-frame runs; anomaly vars aren't member targets, but frame-count expectations must key off `scheduled_fhs_for_var`, never constants). `snowfall_total` scoped per spike finding #6 — **spike (2026-07-06): enfo exposes a direct per-member `sf` (snowfall accumulation) field, plus `sd`/`asn`; no GFS-style csnow/apcp derivation chain is required, so scope reduces to units/accumulation-window/SLR conversion and plugin wiring.** Gate: criteria green across one synoptic **and** one off-cycle run.
 
 **Phase 5 — Meteogram members:** hand back to `MODEL_GUIDANCE_IMPLEMENTATION_PLAN.md` Section 7 (its `include_members` contract and chart specs stand; its pipeline gates now point here).
 
-**Phase 6 — Derived stats grids + map products:** second-pass stats service (Section 3.3) publishing percentile and probability variables per Section 4; viewer exposure as ordinary variables; CF `HIT` verified on stats binaries. **MSLP + member low locations is scoped here but double-gated** (net-new variable for both models → its own data-source sizing spike first; low detection reuses the existing pressure-center machinery across member fields, output aggregated into one vector-overlay payload). Gate: stats values spot-checked against a manual member tally at test points (same bar as the Model Guidance Phase 3 checklist).
+**Phase 6 — Derived stats grids + map products:** second-pass stats service (Section 3.3) publishing percentile and probability variables per Section 4; viewer exposure as ordinary variables; CF `HIT` verified on stats binaries. **Precondition from the Phase 1 sign-off (Tier 2 CONDITIONAL GO at 6-run parity retention, 2026-07-06):** before any stats publishing, replace the naive `np.nanpercentile` approach with a performant nan-aware percentile — the spike measured 13.7 s/fh (pixel-bound Python fallback), which at 65 fh would be ~15 min/run/var; memory is a non-issue (Section 3.3 measurement). **MSLP + member low locations is scoped here but double-gated** (net-new variable for both models → its own data-source sizing spike first; low detection reuses the existing pressure-center machinery across member fields, output aggregated into one vector-overlay payload). Gate: stats values spot-checked against a manual member tally at test points (same bar as the Model Guidance Phase 3 checklist).
 
 **Acceptance criteria (Phases 3–4):** all expected member frames present per `scheduled_fhs_for_var` for the run's cycle hour; zero pre-encode gate bypasses (any member frame failing the gate is rejected, never published); mean publish latency unchanged vs. pre-member baseline; RSS within the capped budget; disk delta per run within the signed-off tier; retention sweep removes member directories on schedule; binary sampler successfully samples member frames at interior/near-edge/out-of-coverage points (out-of-coverage = expected-missing, not error).
 
 ## Appendix A — Per-member browse maps (supported by design, not scheduled)
+
+> **NO GO recorded (Brian, 2026-07-06):** Tier 3 is not something the server can support until resources are expanded. Spike extrapolation: ≈456 GB `na` / ≈2.65 TB global at 6-run parity. Revisiting requires a fresh budget sign-off after resource expansion; nothing below is committed.
 
 WB-style panel browsing maps onto CartoSky's viewer as a **member selector scrubbing frames** — the WebGL pipeline is indifferent to whether the next frame URL is `fh+6` or `m+1`, so this is feasible without compromising the sub-100ms frame-load bar. What it costs: flipping affected member variables to full profile (sidecar JSON with colormap meta, brotli sidecars, manifest/bootstrap exposure, CF cache rules — binaries must be `HIT`), deciding display-prep resolution per variable (Section 3.2 fork), and Tier 3 storage with its own explicit budget sign-off. Frontend surface (member selector UX, entitlements, mobile behavior) would be its own recommend-first plan. Nothing in Phases 0–6 forecloses this; nothing in it is committed.
 
@@ -239,15 +255,15 @@ WB-style panel browsing maps onto CartoSky's viewer as a **member selector scrub
 
 | # | Decision | Resolved by | Notes |
 |---|----------|-------------|-------|
-| 1 | Member retention count (target: parity, 6 runs) | Phase 1 spike + Brian sign-off | Per-view retention (1–2 runs) is the fallback lever |
-| 2 | EPS control Herbie `member`/inventory selection | Phase 1 spike (item 4) | `cf` rows excluded by current pf filter; small new fetch code |
-| 3 | GEFS upstream member count + control kwarg | Phase 1 spike (item 4) | Expect 30 pf + 1 control |
-| 4 | EPS `snowfall_total` derivation complexity | Phase 1 spike (item 6) | Plugin + derive deliverable before member deliverable; scope separately if nontrivial |
-| 5 | Manifest member registration shape | Phase 2 design doc | Metadata-under-canonical-var vs. full var entries |
-| 6 | Display-prep resolution for *served* member maps (1× vs 3× on GEFS precip/snow) | Deferred until browse maps are scheduled; spike measures both | Mixed resolution is safe meanwhile |
-| 7 | Tier 3 (browse maps) budget | Its own sign-off if ever scheduled | Appendix A |
-| 8 | Global-region re-approval | At global rollout | ~5.8× per-frame multiplier; re-run Section 6 math |
+| 1 | Member retention count | **RESOLVED 2026-07-06: 6-run parity** (Brian sign-off, spike doc §10) | Per-view retention (1–2 runs) remains the documented fallback lever |
+| 2 | EPS control Herbie `member`/inventory selection | **RESOLVED 2026-07-06 (negative):** no `cf` rows exist upstream — EPS roster = 50 pf members, no `__control` artifact (§2.2 correction) | The cf selection mechanism was built and verified; nothing to select |
+| 3 | GEFS upstream member count + control kwarg | **RESOLVED 2026-07-06:** 30 pf + 1 control confirmed (all 31 fetched); control kwarg `member=0` → `gec00` (herbie 2026.3.0) | Spike measurement 4 |
+| 4 | EPS `snowfall_total` derivation complexity | **RESOLVED at inventory level 2026-07-06:** direct per-member `sf` field exists (also `sd`, `asn`); no csnow-style derivation chain needed | Remaining scope (units/SLR/plugin wiring) lands in Phase 4 |
+| 5 | Manifest member registration shape | **RESOLVED 2026-07-06 (Phase 2 design, approved):** metadata-under-canonical-var (`ensemble.members` descriptor) + ordinary per-member grid manifests; no per-member catalog entries | Includes the D1 follow-through: meteogram `_model_supports_members` probe repointed at the descriptor (Phase 3 checklist item) |
+| 6 | Display-prep resolution for *served* member maps (1× vs 3× on GEFS precip/snow) | Moot while Tier 3 is NO GO (2026-07-06); spike measured both factors (×1.68 sidecars, ×9.0 upscale) | Mixed resolution is safe meanwhile |
+| 7 | Tier 3 (browse maps) budget | **NO GO recorded 2026-07-06** — server cannot support until resources expanded; fresh sign-off required if revisited | Appendix A |
+| 8 | Global-region re-approval | **Decision 2026-07-06: global deferred for ALL tiers.** Design/planning must keep global support first-class (no `na` hardcoding — Sections 1/3.7) so incorporation is straightforward later | ~5.8× per-frame multiplier; Tier 1 global ≈ 571 GB (6-run) / 190 GB (2-run); Tier 3 global exceeds the budget outright |
 
 ---
 
-*Document version: 2026-07-04 (initial). Code-verified findings dated 2026-07-04 against `gefs.py`, `eps.py`, `scheduler.py`, `grid.py`, `builder/pipeline.py`, `builder/fetch.py`.*
+*Document version: 2026-07-04 (initial). Code-verified findings dated 2026-07-04 against `gefs.py`, `eps.py`, `scheduler.py`, `grid.py`, `builder/pipeline.py`, `builder/fetch.py`. Updated 2026-07-06 with Phase 1 spike measurements, the EPS 50-member correction, and Brian's recorded tier/retention decision (`docs/ENSEMBLE_MEMBER_SIZING_SPIKE.md` §10).*

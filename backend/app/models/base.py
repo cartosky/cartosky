@@ -385,3 +385,52 @@ class BaseModelPlugin:
 
     def ensure_latest_cycles(self, keep_cycles: int, *, cache_dir: Path | None = None) -> dict[str, int]:
         raise NotImplementedError("ensure_latest_cycles is not implemented for this model")
+
+
+def ensemble_member_descriptors(plugin: Any) -> dict[str, dict[str, Any]]:
+    """Canonical var_key -> enabled ``ensemble.members`` descriptor.
+
+    The member pipeline's registration shape (Phase 2 design R7 / plan open
+    decision #5): per-member data is declared as metadata under the canonical
+    buildable variable's capability — e.g. GEFS tmp2m carries
+    ``ensemble.members = {"count": 30, "control": True, "prefix": "m",
+    "enabled": True}`` — never as per-member catalog entries. Consumers
+    (scheduler member pass, meteogram members probe) enumerate member ids
+    deterministically from this descriptor instead of globbing directories.
+
+    Only buildable entries with ``enabled: true`` and a positive ``count``
+    are returned.
+    """
+    catalog = getattr(getattr(plugin, "capabilities", None), "variable_catalog", None)
+    if not isinstance(catalog, dict):
+        return {}
+    descriptors: dict[str, dict[str, Any]] = {}
+    for var_key, capability in catalog.items():
+        if not bool(getattr(capability, "buildable", False)):
+            continue
+        ensemble = getattr(capability, "ensemble", None)
+        members = ensemble.get("members") if isinstance(ensemble, dict) else None
+        if not isinstance(members, dict):
+            continue
+        try:
+            count = int(members.get("count", 0))
+        except (TypeError, ValueError):
+            continue
+        if bool(members.get("enabled", False)) and count > 0:
+            descriptors[str(var_key).strip().lower()] = members
+    return descriptors
+
+
+def ensemble_member_ids(descriptor: dict[str, Any]) -> list[str]:
+    """Deterministic member id list for a descriptor: ``m01..mNN`` (+
+    ``control`` when the descriptor says so). Zero-padded 2-digit, matching
+    the member pipeline plan Section 4.1 naming."""
+    try:
+        count = int(descriptor.get("count", 0))
+    except (TypeError, ValueError):
+        return []
+    prefix = str(descriptor.get("prefix", "m") or "m").strip().lower()
+    members = [f"{prefix}{i:02d}" for i in range(1, count + 1)]
+    if bool(descriptor.get("control", False)):
+        members.append("control")
+    return members
