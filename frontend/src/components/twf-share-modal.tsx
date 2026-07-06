@@ -718,11 +718,21 @@ export function TwfShareModal({
         binary += String.fromCharCode(...chunk);
       }
       const dataUrl = `data:image/png;base64,${btoa(binary)}`;
+      // Use the returned image's real dimensions so the compose keeps its
+      // aspect (no cover-crop). Viewer renders are 1280×720, but compare split
+      // composites are wider than 16:9 — hardcoding 1280×720 cropped their
+      // left/right edges (no-silent-crop rule).
+      const captureDims = await new Promise<{ width: number; height: number } | null>((resolve) => {
+        const image = new Image();
+        image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        image.onerror = () => resolve(null);
+        image.src = dataUrl;
+      });
       const stateWithCapture: ScreenshotExportState = {
         ...state,
         capturedMapDataUrl: dataUrl,
-        viewportWidth: 1280,
-        viewportHeight: 720,
+        viewportWidth: captureDims?.width ?? 1280,
+        viewportHeight: captureDims?.height ?? 720,
         isMobile: false,
       };
       const { exportViewerScreenshotPng } = await import("@/lib/screenshot_export");

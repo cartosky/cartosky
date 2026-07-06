@@ -1055,13 +1055,22 @@ export default function Compare() {
   const captureComparePng = useCallback(async (): Promise<string | null> => {
     const capturePanelDataUrl = (map: MapLibreMap | null): Promise<string | null> => {
       if (!map) {
+        console.warn("[compare-capture] panel map ref is null");
         return Promise.resolve(null);
       }
       return new Promise((resolve) => {
+        // A map that was removed mid-capture (panel remount) never fires
+        // "render" again — resolve null instead of hanging the share modal.
+        const timeoutId = window.setTimeout(() => {
+          console.warn("[compare-capture] render event timed out");
+          resolve(null);
+        }, 2000);
         map.once("render", () => {
+          window.clearTimeout(timeoutId);
           try {
             resolve(map.getCanvas().toDataURL("image/png"));
-          } catch {
+          } catch (error) {
+            console.warn("[compare-capture] toDataURL failed", error);
             resolve(null);
           }
         });
@@ -1077,14 +1086,30 @@ export default function Compare() {
         image.src = src;
       });
 
-    if (selectionStateRef.current.mode === "diff") {
-      return capturePanelDataUrl(leftMapRef.current);
-    }
+    // Refs are read per attempt: a panel remount (run resolution, modal-open
+    // resize) invalidates the map mid-capture, so one short retry against the
+    // fresh refs covers the observed intermittent first-attempt failure.
+    const captureUrls = async (): Promise<[string | null, string | null]> => {
+      if (selectionStateRef.current.mode === "diff") {
+        const url = await capturePanelDataUrl(leftMapRef.current);
+        return [url, url];
+      }
+      return [
+        await capturePanelDataUrl(leftMapRef.current),
+        await capturePanelDataUrl(rightMapRef.current),
+      ];
+    };
 
-    const leftUrl = await capturePanelDataUrl(leftMapRef.current);
-    const rightUrl = await capturePanelDataUrl(rightMapRef.current);
+    let [leftUrl, rightUrl] = await captureUrls();
+    if (!leftUrl || !rightUrl) {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      [leftUrl, rightUrl] = await captureUrls();
+    }
     if (!leftUrl || !rightUrl) {
       return null;
+    }
+    if (selectionStateRef.current.mode === "diff") {
+      return leftUrl;
     }
     const [leftImage, rightImage] = await Promise.all([
       loadPanelImage(leftUrl),
@@ -1117,7 +1142,8 @@ export default function Compare() {
   }, []);
 
   useEffect(() => {
-    if (!isScreenshotMode) {
+    // Also registered in dev so the capture is testable from the console.
+    if (!isScreenshotMode && !import.meta.env.DEV) {
       return;
     }
     window.__cartoskyCompareCapture = captureComparePng;

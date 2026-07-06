@@ -148,4 +148,66 @@ Per plan §3.6 and the §2.2 correction (50 pf members, no control, no cf fetch)
 
 Sign-off: Brian Austin (recorded at Brian's direction, concurring with Codex review) — Date: 2026-07-06
 
-*Document version: 2026-07-06 (draft → approved same day with review tweaks: D1 API-probe note, D3 clarification, D5 bundling prerequisite).*
+---
+
+## 12. Addendum — derived member variables + bundled fetch (pre-implementation, awaiting D6)
+
+> Added 2026-07-06, before enabling `precip_total`/`snowfall_total` members.
+> The original Section 5 treated bundled fetch as a fetch-shape change; this
+> addendum covers what it actually entails, because **both remaining member
+> variables are derived**, which the R2 build shape (fetch → convert → warp →
+> gate → write) does not handle.
+
+**Problem (code-verified 2026-07-06):**
+- `precip_total` = cumulative APCP sum over all steps up to fh (kg/m² → in);
+  `snowfall_total` = 10:1 cumulative with csnow endpoint sampling
+  (`step_endpoints`, `skip_zero_hour_sample`, `min_step_lwe_kgm2=0.01`, SLR
+  10 — hints on the GEFS var specs). A member's fh-384 frame depends on that
+  member's fields at every prior step.
+- The production derive strategies cannot be reused as-is for members:
+  (a) component fetches resolve the MEAN artifacts — `apcp_step__mean`'s
+  search pattern contains `":ens mean:"`, which member (`gepNN`) files do
+  not carry; (b) the FetchContext cumulative caches
+  (`resolved_apcp_cache`, `kuchera_cumulative_cache`) are keyed
+  `(model, run, var, fh, grid_key)` with **no member identity** — reuse
+  would silently mix members' accumulations, the exact silently-wrong-stats
+  failure class the plan treats as worst-case.
+
+**Option A — member-sequential derive loop in `builder/members.py` (RECOMMENDED):**
+- Per member, process fhs in ascending order holding running cumulative
+  state (precip kg/m² sum; snow inches sum) on the native grid.
+- Per (member, fh), ONE bundled subset download — combined search pattern
+  (TMP + APCP + CSNOW), band→field mapping from GRIB band tags — which IS
+  D5's bundled fetch: 31×65 requests for all three variables. tmp2m writes
+  directly from the TMP field; precip/snow update the running sums and
+  write warped cumulative frames.
+- Cumulative semantics are **parameterized from the same GEFS var-spec
+  hints the mean path reads** (slr, sample mode, min_step_lwe), so a future
+  hint change flows to both; only the loop mechanics are member-local.
+- **Mandatory parity test:** identical synthetic APCP/CSNOW step inputs fed
+  through the production derive strategies and the member loop must produce
+  equal fields — converting the duplicate-semantics divergence risk into a
+  tested invariant.
+- Resume for cumulative vars mirrors production practice (production itself
+  reloads prior cumulative bases from staged artifacts): the resume base is
+  the decode of the member's own last complete cumulative frame; the
+  packing quantization (0.01 in precip / 0.1 in snow) is a one-time base
+  offset, not a compounding error.
+- Parallelism shifts to per-member (a member's fh sequence is
+  order-dependent); workers=2 → two members in flight. Frame counts and
+  preemption/resume semantics otherwise unchanged. precip/snow schedules
+  have `min_fh=6` (64 fhs); the fh-0 bundle carries TMP only.
+- A bundle fetch failure marks that (member, fh) absent for all three vars;
+  retried next pass, as today.
+
+**Option B — thread member identity through production derive/fetch (REJECTED):**
+single source of derive truth, but it modifies the hottest mean-path
+machinery, requires member-aware FetchContext cache keys (today's keys
+would silently cross-contaminate members), and still needs member-pattern
+component specs — a much larger blast radius for the same output.
+
+| # | Decision | Recommendation | Approved? |
+|---|----------|----------------|-----------|
+| D6 | Derived member variables via Option A (member-sequential derive + bundled multi-field fetch in members.py, hint-parameterized semantics, production-parity test required) | Yes | ☐ |
+
+*Document version: 2026-07-06 (draft → approved same day with review tweaks: D1 API-probe note, D3 clarification, D5 bundling prerequisite; Section 12 addendum added pending D6).*
