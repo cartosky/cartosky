@@ -38,6 +38,12 @@ import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diag
 import type { SampleTooltipState } from "@/lib/use-sample-tooltip";
 
 const IS_HIDPI = typeof window !== "undefined" && window.devicePixelRatio > 1;
+// Headless render mode (?screenshot=1): drives the capture hook registration
+// and disables tile/symbol fades so captures never land mid-transition.
+const SCREENSHOT_MODE =
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("screenshot") === "1";
+export type MapCaptureFormat = "draft" | "png";
 const CARTO_TILE_SUFFIX = IS_HIDPI ? "@2x" : "";
 const CARTO_TILE_SIZE = 256;
 
@@ -1341,8 +1347,7 @@ type MapCanvasProps = {
   scrubLagBurstActive?: boolean;
   scrubProtectedFetchUrlsRef?: { current: string[] };
   onMapReady?: (map: maplibregl.Map) => void;
-  onLatestMapDataUrl?: (getter: (() => string | null) | null) => void;
-  onCaptureDraft?: (capture: (() => Promise<string | null>) | null) => void;
+  onCaptureDraft?: (capture: ((format?: MapCaptureFormat) => Promise<string | null>) | null) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number, tooltip?: Exclude<SampleTooltipState, null>) => void;
   onMapHoverEnd?: () => void;
   onAnchorClick?: (anchor: { id: string; city: string; state: string; st: string }) => void;
@@ -1423,7 +1428,6 @@ export function MapCanvas({
   scrubLagBurstActive = false,
   scrubProtectedFetchUrlsRef = undefined,
   onMapReady,
-  onLatestMapDataUrl,
   onCaptureDraft,
   onMapHover,
   onMapHoverEnd,
@@ -1436,7 +1440,6 @@ export function MapCanvas({
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapSlotRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const latestMapDataUrlRef = useRef<string | null>(null);
   const gridWebglControllerRef = useRef<GridWebglLayerController | null>(null);
   if (!gridWebglControllerRef.current) {
     gridWebglControllerRef.current = new GridWebglLayerController();
@@ -1512,8 +1515,6 @@ export function MapCanvas({
   const scrubDirectionRef = useRef<1 | -1 | 0>(0);
   const onMapReadyRef = useRef(onMapReady);
   onMapReadyRef.current = onMapReady;
-  const onLatestMapDataUrlRef = useRef(onLatestMapDataUrl);
-  onLatestMapDataUrlRef.current = onLatestMapDataUrl;
   const onCaptureDraftRef = useRef(onCaptureDraft);
   onCaptureDraftRef.current = onCaptureDraft;
   const onViewportChangeRef = useRef(onViewportChange);
@@ -2392,25 +2393,21 @@ export function MapCanvas({
   }, []);
 
   useEffect(() => {
-    onLatestMapDataUrlRef.current?.(() => latestMapDataUrlRef.current);
-
-    return () => {
-      onLatestMapDataUrlRef.current?.(null);
-    };
-  }, []);
-
-  useEffect(() => {
-    const captureDraftDataUrl = (): Promise<string | null> => {
+    // The live map keeps preserveDrawingBuffer disabled, so toDataURL() must
+    // run inside a render callback (before the buffer swap) to capture pixels.
+    const captureDraftDataUrl = (format: MapCaptureFormat = "draft"): Promise<string | null> => {
       const map = mapRef.current;
       if (!map) {
         return Promise.resolve(null);
       }
-      // The live map keeps preserveDrawingBuffer disabled, so toDataURL() must
-      // run inside a render callback (before the buffer swap) to capture pixels.
       return new Promise((resolve) => {
         map.once("render", () => {
           try {
-            resolve(map.getCanvas().toDataURL("image/jpeg", 0.7));
+            resolve(
+              format === "png"
+                ? map.getCanvas().toDataURL("image/png")
+                : map.getCanvas().toDataURL("image/jpeg", 0.7),
+            );
           } catch {
             resolve(null);
           }
@@ -2423,30 +2420,13 @@ export function MapCanvas({
     // Headless capture hook: screenshot_service.py calls this instead of a
     // cold canvas.toDataURL(), which reads a cleared drawing buffer once the
     // compositor has presented the frame (confirmed blank-capture root cause).
-    const screenshotMode =
-      new URLSearchParams(window.location.search).get("screenshot") === "1";
-    if (screenshotMode) {
-      window.__cartoskyViewerCapture = (): Promise<string | null> => {
-        const map = mapRef.current;
-        if (!map) {
-          return Promise.resolve(null);
-        }
-        return new Promise((resolve) => {
-          map.once("render", () => {
-            try {
-              resolve(map.getCanvas().toDataURL("image/png"));
-            } catch {
-              resolve(null);
-            }
-          });
-          map.triggerRepaint();
-        });
-      };
+    if (SCREENSHOT_MODE) {
+      window.__cartoskyViewerCapture = () => captureDraftDataUrl("png");
     }
 
     return () => {
       onCaptureDraftRef.current?.(null);
-      if (screenshotMode) {
+      if (SCREENSHOT_MODE) {
         delete window.__cartoskyViewerCapture;
       }
     };
@@ -2471,6 +2451,8 @@ export function MapCanvas({
       dragRotate: false,
       touchPitch: false,
       attributionControl: false,
+      // Deterministic headless captures: no tile/symbol cross-fades to land in.
+      ...(SCREENSHOT_MODE ? { fadeDuration: 0 } : {}),
     });
 
     map.touchZoomRotate.disableRotation();
@@ -2557,12 +2539,6 @@ export function MapCanvas({
       setIsLoaded(false);
     };
   }, [enforceLayerOrder, scheduleCityLabelRefresh]);
-
-  // Viewer map keeps preserveDrawingBuffer disabled for pan performance, so canvas
-  // snapshots are not cached here. screenshot_export.ts rebuilds an offscreen map.
-  useEffect(() => {
-    latestMapDataUrlRef.current = null;
-  }, [isAnimating, isLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;

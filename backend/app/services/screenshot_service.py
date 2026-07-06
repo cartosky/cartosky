@@ -118,7 +118,29 @@ class ScreenshotService:
                     await page.wait_for_timeout(1500)
                     marks["settled"] = time.monotonic()
 
-                    if is_compare_diff:
+                    # Prefer the compare page's repaint-then-read capture hook —
+                    # the compare maps also run preserveDrawingBuffer:false, so
+                    # the cold reads below can hit a cleared buffer (same root
+                    # cause as the viewer path). Cold reads remain as fallback
+                    # for older frontend bundles.
+                    data_url = await page.evaluate(
+                        """async () => {
+                            const hook = window.__cartoskyCompareCapture;
+                            if (typeof hook !== 'function') return null;
+                            try {
+                                const viaHook = await Promise.race([
+                                    hook(),
+                                    new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+                                ]);
+                                if (typeof viaHook === 'string' && viaHook.startsWith('data:image/png')) {
+                                    return viaHook;
+                                }
+                            } catch {}
+                            return null;
+                        }"""
+                    )
+                    capture_mode = "repaint_hook" if data_url else "cold_read"
+                    if not data_url and is_compare_diff:
                         data_url = await page.evaluate(
                             """() => {
                                 const canvas = document.querySelector(
@@ -127,7 +149,7 @@ class ScreenshotService:
                                 return canvas ? canvas.toDataURL('image/png') : null;
                             }"""
                         )
-                    else:
+                    elif not data_url:
                         data_url = await page.evaluate(
                             """() => {
                                 const canvases = Array.from(

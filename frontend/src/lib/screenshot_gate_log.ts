@@ -13,9 +13,11 @@ export type ScreenshotGateEvent = {
 declare global {
   interface Window {
     __cartoskyGateLog?: ScreenshotGateEvent[];
-    // Repaint-then-read canvas capture exposed by map-canvas.tsx in screenshot
-    // mode; called by screenshot_service.py in place of a cold toDataURL().
+    // Repaint-then-read canvas captures exposed in screenshot mode; called by
+    // screenshot_service.py in place of cold toDataURL() reads. Viewer hook
+    // lives in map-canvas.tsx; compare hook (split compose / diff) in compare.tsx.
     __cartoskyViewerCapture?: () => Promise<string | null>;
+    __cartoskyCompareCapture?: () => Promise<string | null>;
   }
 }
 

@@ -1,11 +1,11 @@
-import maplibregl from "maplibre-gl";
 import type { LegendPayload } from "@/components/map-legend";
 import { BRAND_LOGO_SRC } from "@/lib/branding";
 import type { TimeAxisMode } from "@/lib/time-axis";
 import { formatObservedCompactTime, formatObservedValidTime, formatValidTime, validAxisLabel } from "@/lib/time-axis";
 
 export type ScreenshotExportState = {
-  style: any;
+  /** Unused by the compose-only exporter; kept optional for legacy callers. */
+  style?: any;
   center: [number, number];
   zoom: number;
   bearing?: number;
@@ -18,7 +18,8 @@ export type ScreenshotExportState = {
   run: string;
   variable: { key: string; label: string };
   fh: number;
-  gridReady: boolean;
+  /** Unused by the compose-only exporter; kept optional for legacy callers. */
+  gridReady?: boolean;
   timeAxisMode?: TimeAxisMode;
   runTimeISO?: string | null;
   validTimeISO?: string | null;
@@ -28,14 +29,6 @@ export type ScreenshotExportState = {
   region?: { id: string; label: string };
   animationEnabled: boolean;
   capturedMapDataUrl?: string;
-  anchors?: Array<{ lngLat: [number, number]; label: string; cityName: string }>;
-};
-
-type ProjectedScreenshotAnchor = {
-  x: number;
-  y: number;
-  label: string;
-  cityName: string;
 };
 
 export type ScreenshotExportOptions = {
@@ -72,18 +65,8 @@ const PORTRAIT_OUTPUT_WIDTH = 720;
 const DEFAULT_WIDTH = NORMALIZED_OUTPUT_WIDTH;
 const DEFAULT_HEIGHT = Math.round(NORMALIZED_OUTPUT_WIDTH * 9 / 16);
 const DEFAULT_PIXEL_RATIO = 2;
-const MAP_SETTLE_DELAY_MS = 150;
-const MAP_SETTLE_DELAY_GRID_NOT_READY_MS = 800;
-const MAP_LOAD_TIMEOUT_MS = 15_000;
-const MAP_IDLE_TIMEOUT_MS = 15_000;
 const IMAGE_LOAD_TIMEOUT_MS = 5_000;
 const SCREENSHOT_LOGO_SRC = BRAND_LOGO_SRC;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
-}
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -112,19 +95,6 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     };
     image.src = src;
   });
-}
-
-async function snapshotCanvasImage(canvas: HTMLCanvasElement): Promise<HTMLImageElement> {
-  let dataUrl: string;
-  try {
-    dataUrl = canvas.toDataURL("image/png");
-  } catch (error) {
-    const message = error instanceof Error && error.message
-      ? error.message
-      : "Failed to snapshot the screenshot map canvas.";
-    throw new Error(message);
-  }
-  return loadImage(dataUrl);
 }
 
 function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
@@ -163,130 +133,6 @@ function drawRoundedRect(
   ctx.lineTo(x, y + r);
   ctx.quadraticCurveTo(x, y, x + r, y);
   ctx.closePath();
-}
-
-function waitForMapLoad(map: maplibregl.Map): Promise<void> {
-  if (map.loaded()) {
-    return Promise.resolve();
-  }
-  return new Promise((resolve, reject) => {
-    let done = false;
-    let timeoutId: number | null = null;
-
-    const finish = () => {
-      if (done) return;
-      done = true;
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-      map.off("load", onLoad);
-      map.off("error", onError);
-      resolve();
-    };
-
-    const fail = (message: string) => {
-      if (done) return;
-      done = true;
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-      map.off("load", onLoad);
-      map.off("error", onError);
-      reject(new Error(message));
-    };
-
-    const onLoad = () => finish();
-    const onError = (event: { error?: unknown }) => {
-      const reason = event.error instanceof Error && event.error.message
-        ? event.error.message
-        : "Map failed to load for screenshot export.";
-      fail(reason);
-    };
-
-    map.on("load", onLoad);
-    map.on("error", onError);
-    timeoutId = window.setTimeout(() => {
-      fail("Timed out while loading the screenshot map.");
-    }, MAP_LOAD_TIMEOUT_MS);
-  });
-}
-
-function waitForMapIdle(map: maplibregl.Map): Promise<void> {
-  return new Promise((resolve) => {
-    let done = false;
-    let timeoutId: number | null = null;
-
-    const finish = () => {
-      if (done) {
-        return;
-      }
-      done = true;
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-      map.off("idle", onIdle);
-      resolve();
-    };
-
-    const onIdle = () => finish();
-    map.on("idle", onIdle);
-    timeoutId = window.setTimeout(finish, MAP_IDLE_TIMEOUT_MS);
-
-    if (map.loaded() && map.areTilesLoaded()) {
-      finish();
-    }
-  });
-}
-
-async function projectAnchorsForScreenshot(
-  state: ScreenshotExportState,
-  width: number,
-  height: number
-): Promise<ProjectedScreenshotAnchor[]> {
-  const anchors = state.anchors ?? [];
-  if (anchors.length === 0 || typeof document === "undefined") {
-    return [];
-  }
-
-  const container = document.createElement("div");
-  container.style.position = "fixed";
-  container.style.left = "-10000px";
-  container.style.top = "0";
-  container.style.width = `${width}px`;
-  container.style.height = `${height}px`;
-  container.style.pointerEvents = "none";
-  container.style.opacity = "0";
-
-  document.body.appendChild(container);
-
-  const map = new maplibregl.Map({
-    container,
-    style: { version: 8, sources: {}, layers: [] },
-    center: state.center,
-    zoom: state.zoom,
-    bearing: state.bearing ?? 0,
-    pitch: state.pitch ?? 0,
-    interactive: false,
-    attributionControl: false,
-  } as maplibregl.MapOptions);
-
-  try {
-    await waitForMapLoad(map);
-    return anchors
-      .map((anchor) => {
-        const projected = map.project(anchor.lngLat);
-        return {
-          x: projected.x,
-          y: projected.y,
-          label: anchor.label,
-          cityName: anchor.cityName,
-        };
-      })
-      .filter((anchor) => Number.isFinite(anchor.x) && Number.isFinite(anchor.y));
-  } finally {
-    map.remove();
-    container.remove();
-  }
 }
 
 function buildCpcValidLine(state: ScreenshotExportState): string | null {
@@ -1161,76 +1007,6 @@ async function drawLogo(ctx: CanvasRenderingContext2D, width: number, scaleFacto
   ctx.restore();
 }
 
-function drawAnchors(
-  ctx: CanvasRenderingContext2D,
-  anchors: ProjectedScreenshotAnchor[],
-  width: number,
-  height: number,
-  isMobileLayout = false,
-  scaleFactor = 1
-): void {
-  if (anchors.length === 0) {
-    return;
-  }
-
-  const margin = 10 * scaleFactor;
-  const occupiedRects: Array<{ x: number; y: number; width: number; height: number }> = [];
-  const intersects = (rect: { x: number; y: number; width: number; height: number }) =>
-    occupiedRects.some((other) =>
-      rect.x < other.x + other.width &&
-      rect.x + rect.width > other.x &&
-      rect.y < other.y + other.height &&
-      rect.y + rect.height > other.y
-    );
-
-  ctx.save();
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  for (const anchor of anchors) {
-    if (!anchor.label.trim() || !anchor.cityName.trim()) {
-      continue;
-    }
-    if (anchor.x < margin || anchor.x > width - margin || anchor.y < margin || anchor.y > height - margin) {
-      continue;
-    }
-
-    const chipPaddingX = 8 * scaleFactor;
-    const chipHeight = 22 * scaleFactor;
-    ctx.font = `700 ${12 * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
-    const chipWidth = Math.max(30 * scaleFactor, Math.ceil(ctx.measureText(anchor.label).width) + chipPaddingX * 2);
-    const chipX = anchor.x - chipWidth / 2;
-    const chipY = isMobileLayout ? anchor.y - chipHeight / 2 : anchor.y - 30 * scaleFactor;
-    const chipRect = {
-      x: chipX - 2 * scaleFactor,
-      y: chipY - 2 * scaleFactor,
-      width: chipWidth + 4 * scaleFactor,
-      height: chipHeight + (isMobileLayout ? 4 : 20) * scaleFactor,
-    };
-    if (isMobileLayout && intersects(chipRect)) {
-      continue;
-    }
-    occupiedRects.push(chipRect);
-
-    drawDarkCard(ctx, chipX, chipY, chipWidth, chipHeight, 11 * scaleFactor);
-    ctx.fillStyle = "rgba(255,255,255,0.98)";
-    ctx.fillText(anchor.label, anchor.x, chipY + chipHeight / 2 + 0.5 * scaleFactor);
-
-    if (isMobileLayout) {
-      continue;
-    }
-
-    ctx.font = `600 ${11 * scaleFactor}px system-ui, -apple-system, Segoe UI, sans-serif`;
-    ctx.lineWidth = 4 * scaleFactor;
-    ctx.strokeStyle = "rgba(33,38,49,0.82)";
-    ctx.strokeText(anchor.cityName, anchor.x, anchor.y - 8 * scaleFactor);
-    ctx.fillStyle = "rgba(255,255,255,0.92)";
-    ctx.fillText(anchor.cityName, anchor.x, anchor.y - 8 * scaleFactor);
-  }
-
-  ctx.restore();
-}
-
 export async function exportViewerScreenshotPng(
   state: ScreenshotExportState,
   opts: ScreenshotExportOptions = {}
@@ -1273,7 +1049,6 @@ export async function exportViewerScreenshotPng(
     : DEFAULT_PIXEL_RATIO;
   const scaleFactor = width / NORMALIZED_OUTPUT_WIDTH;
   const overlayLines = (opts.overlayLines ?? defaultOverlayLines(state, opts.legend)).filter(Boolean);
-  const projectedAnchors = await projectAnchorsForScreenshot(state, width, height);
 
   const composeScreenshot = async (mapImage: CanvasImageSource): Promise<Blob> => {
     const outputCanvas = document.createElement("canvas");
@@ -1292,7 +1067,10 @@ export async function exportViewerScreenshotPng(
     if (isCompareScreenshotState(state)) {
       drawCompareDivider(outputCtx, width, height, scaleFactor);
     }
-    drawAnchors(outputCtx, projectedAnchors, width, height, state.isMobile, scaleFactor);
+    // No anchor-chip compositing: the capture is WYSIWYG and already contains
+    // the in-map city value labels. The old chips were a second label system
+    // with its own thinning, drawn blind over the baked-in labels — the direct
+    // cause of the overlapping/cut-off city values seen in prod captures.
     drawOverlay(outputCtx, overlayLines, width, scaleFactor);
 
     try {
@@ -1310,45 +1088,14 @@ export async function exportViewerScreenshotPng(
     return canvasToPngBlob(outputCanvas);
   };
 
-  if (state.capturedMapDataUrl) {
-    const liveMapImage = await loadImage(state.capturedMapDataUrl);
-    return composeScreenshot(liveMapImage);
+  // Compose-only: the offscreen style-rebuild path was deleted (share overhaul
+  // Phase 1). It rendered basemap/vectors but never the WebGL weather grid
+  // (§2.1 of the plan), so its output was data-less and misleading. All callers
+  // must supply a captured map image; failing loudly here beats silently
+  // shipping a basemap-only share image.
+  if (!state.capturedMapDataUrl) {
+    throw new Error("Map capture unavailable. Retry the screenshot.");
   }
-
-  const container = document.createElement("div");
-  container.style.position = "fixed";
-  container.style.left = "-10000px";
-  container.style.top = "0";
-  container.style.width = `${width}px`;
-  container.style.height = `${height}px`;
-  container.style.pointerEvents = "none";
-  container.style.opacity = "0";
-
-  document.body.appendChild(container);
-
-  const map = new maplibregl.Map({
-    container,
-    style: state.style,
-    center: state.center,
-    zoom: state.zoom,
-    bearing: state.bearing ?? 0,
-    pitch: state.pitch ?? 0,
-    interactive: false,
-    attributionControl: false,
-    preserveDrawingBuffer: true,
-    pixelRatio,
-  } as maplibregl.MapOptions);
-
-  try {
-    await waitForMapLoad(map);
-    await waitForMapIdle(map);
-    await sleep(state.gridReady ? MAP_SETTLE_DELAY_MS : MAP_SETTLE_DELAY_GRID_NOT_READY_MS);
-
-    const capturedMapCanvas = map.getCanvas();
-    const capturedMapImage = await snapshotCanvasImage(capturedMapCanvas);
-    return composeScreenshot(capturedMapImage);
-  } finally {
-    map.remove();
-    container.remove();
-  }
+  const liveMapImage = await loadImage(state.capturedMapDataUrl);
+  return composeScreenshot(liveMapImage);
 }

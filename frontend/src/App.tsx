@@ -3,7 +3,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { AlertCircle } from "lucide-react";
 
 import { BottomForecastControls } from "@/components/bottom-forecast-controls";
-import { MapCanvas, buildMapStyle, type BasemapMode, type VectorHazardSelection } from "@/components/map-canvas";
+import { MapCanvas, type BasemapMode, type MapCaptureFormat, type VectorHazardSelection } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/twf-share-modal";
 import { ViewerSiteHeaderFallback } from "@/components/ViewerSiteHeaderFallback";
@@ -42,7 +42,6 @@ import {
   anchorBatchPointsFromGeoJson,
   buildAnchorDisplayGeoJson,
   buildInactiveAnchorFeatureCollection,
-  getActiveAnchorLabels,
   resolveCityLabelMode,
   shouldEnableAnchorValueDisplay,
   type AnchorFeatureCollection,
@@ -614,8 +613,7 @@ export default function App() {
   const runsLoadedForModelRef = useRef<string>("");
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
   const manualLocationJumpRef = useRef(false);
-  const latestMapDataUrlGetterRef = useRef<(() => string | null) | null>(null);
-  const captureDraftRef = useRef<(() => Promise<string | null>) | null>(null);
+  const captureDraftRef = useRef<((format?: MapCaptureFormat) => Promise<string | null>) | null>(null);
   const screenshotModeRef = useRef(
     typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get("screenshot") === "1",
@@ -4397,13 +4395,12 @@ export default function App() {
     }
   }, [telemetryRunId, region, forecastHour, maybeSignalViewerReady]);
 
-  const handleLatestMapDataUrl = useCallback((getter: (() => string | null) | null) => {
-    latestMapDataUrlGetterRef.current = getter;
-  }, []);
-
-  const handleCaptureDraft = useCallback((capture: (() => Promise<string | null>) | null) => {
-    captureDraftRef.current = capture;
-  }, []);
+  const handleCaptureDraft = useCallback(
+    (capture: ((format?: MapCaptureFormat) => Promise<string | null>) | null) => {
+      captureDraftRef.current = capture;
+    },
+    [],
+  );
 
   const handleViewportChange = useCallback((payload: { lat: number; lon: number; z: number }) => {
     if (!Number.isFinite(payload.lat) || !Number.isFinite(payload.lon) || !Number.isFinite(payload.z)) {
@@ -5246,22 +5243,7 @@ export default function App() {
     if (!Number.isFinite(center.lng) || !Number.isFinite(center.lat) || !Number.isFinite(zoom)) {
       return null;
     }
-    // The viewer map keeps preserveDrawingBuffer disabled for pan performance, so
-    // live canvas reads are unreliable. Use a settled-frame cache when available;
-    // otherwise screenshot_export.ts rebuilds an offscreen map for capture.
-    const capturedMapDataUrl = latestMapDataUrlGetterRef.current?.() ?? undefined;
-    const anchors = getActiveAnchorLabels(anchorDisplayGeoJson, zoom)
-      .map((anchor) => ({
-        lngLat: anchor.lngLat,
-        label: anchor.label,
-        cityName: anchor.cityName,
-      }));
-
-    const style = buildMapStyle(contourGeoJsonUrl, vectorGeoJsonUrl, basemapMode, opacity, variable);
-    const gridReady = gridReadyVersion > 0 && isGridHourReady(resolvedGridDisplayHour);
-
     return {
-      style,
       center: [center.lng, center.lat],
       zoom,
       bearing: map.getBearing(),
@@ -5277,7 +5259,6 @@ export default function App() {
       },
       fh: Number.isFinite(displayedForecastHour) ? Math.round(displayedForecastHour) : 0,
       isMobile: viewerLayoutMode !== "desktop",
-      gridReady,
       timeAxisMode: selectedTimeAxisMode,
       runTimeISO: runDateTimeISO,
       validTimeISO: displayedValidTimeISO,
@@ -5289,8 +5270,6 @@ export default function App() {
         label: selectedRegionLabel || region || "Region",
       },
       animationEnabled: false,
-      capturedMapDataUrl,
-      anchors,
     };
   }, [
     selectedModelLabel,
@@ -5298,15 +5277,9 @@ export default function App() {
     selectedRunLabel,
     run,
     variable,
-    contourGeoJsonUrl,
-    vectorGeoJsonUrl,
     basemapMode,
-    anchorDisplayGeoJson,
     selectedVariableLabel,
     displayedForecastHour,
-    gridReadyVersion,
-    isGridHourReady,
-    resolvedGridDisplayHour,
     selectedTimeAxisMode,
     displayedValidTimeISO,
     runDateTimeISO,
@@ -5593,7 +5566,6 @@ export default function App() {
           onZoomRoutingSignal={handleZoomRoutingSignal}
           onViewportChange={handleViewportChange}
           onMapReady={handleMapReady}
-          onLatestMapDataUrl={handleLatestMapDataUrl}
           onCaptureDraft={handleCaptureDraft}
           onMapHover={handleMapHover}
           onMapHoverEnd={handleMapHoverEnd}
@@ -5736,6 +5708,7 @@ export default function App() {
             buildScreenshotState={buildScreenshotExportState}
             getLegend={() => legend}
             getDraftDataUrl={() => captureDraftRef.current?.() ?? Promise.resolve(null)}
+            captureMapPng={() => captureDraftRef.current?.("png") ?? Promise.resolve(null)}
           />
         </Suspense>
       ) : null}

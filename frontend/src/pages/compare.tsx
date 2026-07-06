@@ -1046,6 +1046,86 @@ export default function Compare() {
     setDiffMapReady(true);
   }, []);
 
+  // Repaint-then-read capture (share overhaul Phase 1): the compare maps run
+  // with preserveDrawingBuffer disabled, so cold canvas reads hit a cleared
+  // buffer (the confirmed viewer-path blank-capture root cause). Capture each
+  // panel inside a render callback and compose the split view. Used by both
+  // the headless capture hook (screenshot_service.py) and the share modal's
+  // signed-out local image path.
+  const captureComparePng = useCallback(async (): Promise<string | null> => {
+    const capturePanelDataUrl = (map: MapLibreMap | null): Promise<string | null> => {
+      if (!map) {
+        return Promise.resolve(null);
+      }
+      return new Promise((resolve) => {
+        map.once("render", () => {
+          try {
+            resolve(map.getCanvas().toDataURL("image/png"));
+          } catch {
+            resolve(null);
+          }
+        });
+        map.triggerRepaint();
+      });
+    };
+
+    const loadPanelImage = (src: string): Promise<HTMLImageElement | null> =>
+      new Promise((resolve) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => resolve(null);
+        image.src = src;
+      });
+
+    if (selectionStateRef.current.mode === "diff") {
+      return capturePanelDataUrl(leftMapRef.current);
+    }
+
+    const leftUrl = await capturePanelDataUrl(leftMapRef.current);
+    const rightUrl = await capturePanelDataUrl(rightMapRef.current);
+    if (!leftUrl || !rightUrl) {
+      return null;
+    }
+    const [leftImage, rightImage] = await Promise.all([
+      loadPanelImage(leftUrl),
+      loadPanelImage(rightUrl),
+    ]);
+    if (!leftImage || !rightImage) {
+      return null;
+    }
+
+    // Same side-by-side composition (incl. divider gutter) that
+    // screenshot_service.py's legacy cold-read evaluate performed.
+    const width = leftImage.width + rightImage.width;
+    const height = Math.max(leftImage.height, rightImage.height);
+    const out = document.createElement("canvas");
+    out.width = width;
+    out.height = height;
+    const ctx = out.getContext("2d");
+    if (!ctx) {
+      return null;
+    }
+    const splitX = leftImage.width;
+    ctx.drawImage(leftImage, 0, 0);
+    ctx.drawImage(rightImage, splitX, 0);
+    const gutterW = 4;
+    ctx.fillStyle = "#07111f";
+    ctx.fillRect(splitX - Math.floor(gutterW / 2), 0, gutterW, height);
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillRect(splitX, 0, 1, height);
+    return out.toDataURL("image/png");
+  }, []);
+
+  useEffect(() => {
+    if (!isScreenshotMode) {
+      return;
+    }
+    window.__cartoskyCompareCapture = captureComparePng;
+    return () => {
+      delete window.__cartoskyCompareCapture;
+    };
+  }, [captureComparePng, isScreenshotMode]);
+
   const handleSwap = useCallback(() => {
     setLModel(rModel);
     setLVariable(rVariable);
@@ -1149,11 +1229,23 @@ export default function Compare() {
   const buildShareScreenshotState = useCallback((): ScreenshotExportState | null => {
     const leftVarLabel = variableCatalog.find(v => v.value === lVariable)?.label ?? lVariable;
     const rightVarLabel = variableCatalog.find(v => v.value === rVariable)?.label ?? rVariable;
+    // Composite capture dimensions, so the exporter normalizes to the split
+    // view's aspect instead of cover-cropping it into 16:9 (no-silent-crop rule).
+    const leftCanvas = leftMapRef.current?.getCanvas();
+    const rightCanvas = rightMapRef.current?.getCanvas();
+    const viewportWidth = mode === "diff"
+      ? leftCanvas?.width
+      : leftCanvas && rightCanvas
+        ? leftCanvas.width + rightCanvas.width
+        : undefined;
+    const viewportHeight = leftCanvas?.height;
     return {
       style: {},
       center: [lon, lat],
       zoom: z,
       basemapMode,
+      viewportWidth,
+      viewportHeight,
       isMobile: false,
       model: `${lModel.toUpperCase()} vs ${rModel.toUpperCase()}`,
       run: leftLoader.resolvedRun,
@@ -1163,7 +1255,7 @@ export default function Compare() {
       region: { id: region, label: region },
       animationEnabled: false,
     };
-  }, [lon, lat, z, basemapMode, lModel, rModel, lVariable, rVariable, leftLoader.resolvedRun, forecastHour, region, variableCatalog]);
+  }, [lon, lat, z, basemapMode, lModel, rModel, lVariable, rVariable, leftLoader.resolvedRun, forecastHour, mode, region, variableCatalog]);
 
   const handleShare = useCallback(() => {
     setShareOpen(true);
@@ -1743,6 +1835,7 @@ export default function Compare() {
           onClose={() => setShareOpen(false)}
           payload={sharePayload}
           buildScreenshotState={buildShareScreenshotState}
+          captureMapPng={captureComparePng}
         />
       ) : null}
 

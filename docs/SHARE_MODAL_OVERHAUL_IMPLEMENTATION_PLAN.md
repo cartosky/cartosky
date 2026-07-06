@@ -1,6 +1,6 @@
 # Share Modal Overhaul & GIF Export — Implementation Plan
 
-**Status:** Phase 0 complete (2026-07-06). Gate passed: blank capture reproduced on prod with healthy gate states → root cause = cold WebGL read-back, not the readiness gate (see §2.2 field evidence); analytics channel breakdown verified end to end in Mixpanel (`copy`/`download`/`twf_post`). Capstone fix implemented: `window.__cartoskyViewerCapture` repaint-then-read hook + `screenshot_service.py` prefers it (`capture_mode=` logged, cold read kept as fallback). Compare-path cold read still unfixed — fold into Phase 1/2. Next: Phase 1.
+**Status:** Phase 1 implemented (2026-07-06) — gate verification pending. Landed: live-canvas capture as the signed-out image path (compose-only exporter; offscreen rebuild deleted), Download / Copy image / native Share signed-out, compare-path repaint-hook capture (split + diff, server hook and signed-out local share), exporter anchor-chip compositing deleted (root cause of overlapping/cut-off city labels — see §3.4), `fadeDuration: 0` in screenshot mode. Signed-in flow unchanged (server render = TWF post artifact, preview-as-artifact holds until Phase 2 tabs). Phase 0 complete: blank-capture root cause (cold WebGL read-back) confirmed and fixed via `window.__cartoskyViewerCapture`; analytics channels verified in Mixpanel.
 **Priority:** GIF export is the highest-priority busy-season feature (October feature freeze target). The anonymous image path (Phase 1) is a prerequisite for GIF and the primary share-funnel fix.
 **Owner:** Brian Austin (sole production operator). Implementation via Codex/Claude Code agents; Brian executes all production commands and verifies each phase gate before the next proceeds.
 
@@ -109,7 +109,7 @@ Tabs: **Image | GIF | Link**.
 - Screenshot-trust rule extended to the new paths: **no share flow ever silently produces a basemap-only image** — fail loudly with retry.
 - **Preview-as-artifact:** the modal preview must always show the exact artifact (image or encoded GIF) that will be downloaded/copied/posted.
 - **Never less extent than the screen:** any aspect normalization uses contain semantics (bounds-fit adds margin), never crop. Silent crop is a hard failure.
-- **City value label collision (added 2026-07-06, prod observation):** in captures, close-together cities overlap and clip each other's value labels (e.g., Des Moines/Cedar Rapids, Denver/Cheyenne at CONUS zoom). Root cause: the city label symbol layers set `text-allow-overlap: true` / `icon-allow-overlap: true` (`city-labels.ts`), which disables MapLibre's built-in collision engine entirely. Direction: re-enable collision (drop the overlap flags) with `symbol-sort-key` priority (e.g., by city population/rank) so the engine hides the lower-priority label instead of stacking — scoped to screenshot mode first if live-map behavior is intentional. Caveat: the screenshot readiness gate waits on `city_labels_ready`; collision placement settles asynchronously (symbol fade), so verify the gate still signals after placement stabilizes, not before.
+- **City value label collision — RESOLVED in Phase 1 (diagnosis corrected 2026-07-06):** the overlapping/cut-off labels in captures were NOT the in-map city label system colliding with itself. They were **two independent label systems drawn on top of each other**: the exporter (`exportViewerScreenshotPng`) composited legacy anchor chips (`drawAnchors`, thinned by km-radius in `getActiveAnchorLabels`) over a capture that already contained the in-map city value pills (thinned by screen-rect in `queryVisibleCityPoints`). Different thinning algorithms picked different winners, so chip-for-city-A landed on pill-for-city-B — the exact pairs in the prod PNG (visible as gray "twin" labels under each white chip). The live map never rendered the chips at all (`getActiveAnchorLabels` had exactly one caller: the screenshot state builder). Fix: the anchor-chip compositing was deleted; captures are WYSIWYG and show only the in-map, collision-managed labels. The `text-allow-overlap` flags in `city-labels.ts` were left untouched — the in-map pre-thinning has not been observed to leak, and naive engine collision would break the pill/name two-layer pairing (a city's own name would collide with its own pill). Revisit only if in-map pill-vs-pill overlap is actually observed.
 
 ### 3.5 Post-freeze option: client-side fixed-viewport render for TWF posts
 
@@ -146,13 +146,13 @@ Each phase is a separate agent implementation prompt with: explicit execution-mo
 
 **Gate:** blank-basemap reproduction with logged gate states, or a documented ruled-out list. Analytics events visible end to end.
 
-### Phase 1 — Anonymous image path
-- Live-canvas capture wired into the `capturedMapDataUrl` compose path.
-- Download / Copy / native Share available signed-out.
-- Delete or demote the data-less offscreen rebuild.
-- Land the §3.4 readiness fixes confirmed by Phase 0.
-- **Compare-path capture fix (carried from Phase 0):** the compare branch of `screenshot_service.py` still does cold `canvas.toDataURL()` reads — the confirmed blank-capture root cause (§2.2). Apply the repaint-then-read hook pattern to both compare panels (split composes two canvases, so each needs a fresh-buffer read). May ride with Phase 2 if Phase 1 scope is tight, but must not slip past it.
-- **City value label overlap in captures (§3.4):** nearby city labels render on top of each other and clip values (observed prod 2026-07-06: Des Moines/Cedar Rapids, Denver/Cheyenne, Lincoln/Omaha at CONUS zoom). Add collision handling — see §3.4 bullet for direction.
+### Phase 1 — Anonymous image path (implemented 2026-07-06, gate pending)
+- [x] Live-canvas capture wired into the `capturedMapDataUrl` compose path (`captureMapPng` prop → repaint-then-read PNG; signed-out and dev default; signed-in keeps the server render until Phase 2 tabs split the channels).
+- [x] Download / Copy image / native Share available signed-out (`share_completed` channels wired; native Share button renders only where `navigator.share` exists).
+- [x] Data-less offscreen rebuild deleted — `exportViewerScreenshotPng` is compose-only and throws without a captured image (no silent basemap-only output). The anchor-projection offscreen map went with it.
+- [x] §3.4 fixes confirmed by Phase 0: capture read-back fixed (Phase 0 capstone); tri-state race ruled out, so the tri-state/`mapIdleRef` hardening was intentionally skipped; `fadeDuration: 0` in screenshot mode for deterministic captures.
+- [x] Compare-path capture fix: `window.__cartoskyCompareCapture` (split compose + diff) preferred by `screenshot_service.py` (`capture_mode=` logged, cold reads kept as fallback); the same capture powers the compare page's signed-out local share with composite-aspect output (no crop).
+- [x] City label overlap: fixed by deleting the exporter's duplicate anchor-chip compositing — diagnosis corrected, see §3.4.
 
 **Gate:** signed-out user on prod gets a correct data image in <~2s p90 with zero authenticated requests. Screenshot regression pass across: grid variables, RGB/satellite, compare mode, SPC/CPC categorical legends, observed-mode products, portrait mobile.
 

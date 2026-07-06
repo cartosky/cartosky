@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@clerk/react";
-import { CheckCircle2, ChevronDown, Copy, Download, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, Copy, Download, ExternalLink, Loader2, RefreshCw, Share2, X } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import type { LegendPayload } from "@/components/map-legend";
@@ -83,6 +83,8 @@ type TwfShareModalProps = {
   buildScreenshotState?: () => ScreenshotExportState | null;
   getLegend?: () => LegendPayload | null;
   getDraftDataUrl?: () => Promise<string | null>;
+  /** Repaint-then-read PNG capture of the live map canvas (WYSIWYG local share). */
+  captureMapPng?: () => Promise<string | null>;
 };
 
 const TWF_PERMALINK_LABEL = "View map on CartoSky";
@@ -421,6 +423,7 @@ export function TwfShareModal({
   buildScreenshotState,
   getLegend,
   getDraftDataUrl,
+  captureMapPng,
 }: TwfShareModalProps) {
   const { getToken, isLoaded: clerkLoaded, isSignedIn } = useAuth();
   const initialSharePrefs = useMemo(() => getSharePrefs(), []);
@@ -462,6 +465,7 @@ export function TwfShareModal({
   const [submitTopicTitle, setSubmitTopicTitle] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [textCopied, setTextCopied] = useState(false);
+  const [imageCopied, setImageCopied] = useState(false);
   const [contentDirty, setContentDirty] = useState(false);
   const [screenshotBusy, setScreenshotBusy] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
@@ -602,14 +606,16 @@ export function TwfShareModal({
   const canPrepareScreenshot = Boolean(buildScreenshotState);
   const postButtonDisabled = submitBusy || screenshotBusy || screenshotUploadBusy;
 
-  const generatePreviewScreenshot = useCallback(async (): Promise<{
+  // WYSIWYG local capture (share overhaul Phase 1): read the live map canvas
+  // and compose overlay/legend/logo on top. Works signed-out, no server render.
+  const generateClientScreenshot = useCallback(async (): Promise<{
     blob: Blob;
     blobUrl: string;
     filename: string;
     state: ScreenshotExportState;
   } | null> => {
     setScreenshotError(null);
-    if (!buildScreenshotState) {
+    if (!buildScreenshotState || !captureMapPng) {
       setScreenshotError("Screenshot export is unavailable right now.");
       return null;
     }
@@ -622,14 +628,19 @@ export function TwfShareModal({
 
     setScreenshotBusy(true);
     try {
+      const capturedMapDataUrl = await captureMapPng();
+      if (!capturedMapDataUrl) {
+        throw new Error("Map capture unavailable. Retry the screenshot.");
+      }
+      const stateWithCapture: ScreenshotExportState = { ...state, capturedMapDataUrl };
       const { exportViewerScreenshotPng } = await import("@/lib/screenshot_export");
-      const blob = await exportViewerScreenshotPng(state, {
+      const blob = await exportViewerScreenshotPng(stateWithCapture, {
         legend: getLegend?.() ?? null,
       });
       const objectUrl = URL.createObjectURL(blob);
       const filename = screenshotFilename(state);
       setScreenshotBlob(blob);
-      setScreenshotStateSnapshot(state);
+      setScreenshotStateSnapshot(stateWithCapture);
       setScreenshotFilenameValue(filename);
       setScreenshotUploadError(null);
       setScreenshotUrl(null);
@@ -641,11 +652,12 @@ export function TwfShareModal({
         }
         return objectUrl;
       });
+      setDraftDataUrl(null);
       return {
         blob,
         blobUrl: objectUrl,
         filename,
-        state,
+        state: stateWithCapture,
       };
     } catch (error) {
       const message = error instanceof Error && error.message
@@ -656,7 +668,7 @@ export function TwfShareModal({
     } finally {
       setScreenshotBusy(false);
     }
-  }, [buildScreenshotState, getLegend]);
+  }, [buildScreenshotState, captureMapPng, getLegend]);
 
   const generateServerScreenshot = useCallback(async (): Promise<{
     blob: Blob;
@@ -780,6 +792,7 @@ export function TwfShareModal({
     setContentDirty(false);
     setLinkCopied(false);
     setTextCopied(false);
+    setImageCopied(false);
     setShowCopyMenu(false);
     setStatusResolved(false);
     setSubmitError(null);
@@ -874,16 +887,26 @@ export function TwfShareModal({
     if (!open || hasAttemptedAutoScreenshot || !canPrepareScreenshot) {
       return;
     }
+    // Wait for the auth state before picking a capture path: signed-in keeps
+    // the server render (its preview doubles as the TWF post artifact), while
+    // signed-out uses the instant live-canvas capture.
+    if (!clerkLoaded) {
+      return;
+    }
     if (screenshotBusy || screenshotUploadBusy || screenshotBlobUrl) {
       return;
     }
     setHasAttemptedAutoScreenshot(true);
-    void (SERVER_SCREENSHOT_ENABLED ? generateServerScreenshot() : generatePreviewScreenshot());
+    void (SERVER_SCREENSHOT_ENABLED && isSignedIn
+      ? generateServerScreenshot()
+      : generateClientScreenshot());
   }, [
     canPrepareScreenshot,
+    clerkLoaded,
     generateServerScreenshot,
-    generatePreviewScreenshot,
+    generateClientScreenshot,
     hasAttemptedAutoScreenshot,
+    isSignedIn,
     open,
     screenshotBlobUrl,
     screenshotBusy,
@@ -1222,7 +1245,9 @@ export function TwfShareModal({
     if (screenshotBusy || screenshotUploadBusy) {
       return;
     }
-    await (SERVER_SCREENSHOT_ENABLED ? generateServerScreenshot() : generatePreviewScreenshot());
+    await (SERVER_SCREENSHOT_ENABLED && isSignedIn
+      ? generateServerScreenshot()
+      : generateClientScreenshot());
   };
 
   const ensurePreparedScreenshot = async (): Promise<string | null> => {
@@ -1244,7 +1269,7 @@ export function TwfShareModal({
         }
       : await (SERVER_SCREENSHOT_ENABLED
           ? generateServerScreenshot()
-          : generatePreviewScreenshot());
+          : generateClientScreenshot());
     if (!generated) {
       return null;
     }
@@ -1389,6 +1414,53 @@ export function TwfShareModal({
       setShowCopyMenu(false);
       setTextCopied(true);
       setTimeout(() => setTextCopied(false), 1500);
+    }
+  };
+
+  const canCopyImage =
+    typeof ClipboardItem !== "undefined" &&
+    typeof navigator !== "undefined" &&
+    Boolean(navigator.clipboard) &&
+    "write" in navigator.clipboard;
+  const canNativeShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+
+  const handleCopyImage = async () => {
+    if (!screenshotBlob) {
+      return;
+    }
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": screenshotBlob }),
+      ]);
+      captureShareCompleted("copy", { copy_variant: "image" });
+      setImageCopied(true);
+      setTimeout(() => setImageCopied(false), 1500);
+    } catch {
+      // Clipboard write denied or unsupported at call time — no state change.
+    }
+  };
+
+  const handleNativeShare = async () => {
+    if (!screenshotBlob) {
+      return;
+    }
+    const file = new File(
+      [screenshotBlob],
+      screenshotFilenameValue || "cartosky-map-screenshot.png",
+      { type: "image/png" },
+    );
+    const fileShare: ShareData = { files: [file] };
+    try {
+      if (typeof navigator.canShare !== "function" || navigator.canShare(fileShare)) {
+        await navigator.share(fileShare);
+        captureShareCompleted("native_share", { share_payload: "image" });
+        return;
+      }
+      // File sharing unsupported — share the permalink instead.
+      await navigator.share({ url: payload.permalink, text: payload.summary });
+      captureShareCompleted("native_share", { share_payload: "link" });
+    } catch {
+      // AbortError (user dismissed the share sheet) or unsupported — no event.
     }
   };
 
@@ -1568,6 +1640,42 @@ export function TwfShareModal({
                       </TooltipTrigger>
                       <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
                         Download screenshot
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                  {screenshotBlob && canCopyImage && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyImage()}
+                          className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65"
+                          aria-label="Copy image to clipboard"
+                        >
+                          {imageCopied
+                            ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
+                            : <Copy className="h-3.5 w-3.5" />}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
+                        {imageCopied ? "Copied" : "Copy image"}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                  {screenshotBlob && canNativeShare && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => void handleNativeShare()}
+                          className="flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65"
+                          aria-label="Share image"
+                        >
+                          <Share2 className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
+                        Share image
                       </TooltipContent>
                     </Tooltip>
                   )}
