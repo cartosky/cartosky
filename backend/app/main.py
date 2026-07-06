@@ -1611,7 +1611,7 @@ class TelemetryEventBase(BaseModel):
     forecast_hour: int | None = Field(default=None, ge=0, le=999)
     device_type: str | None = Field(default=None, max_length=24)
     viewport_bucket: str | None = Field(default=None, max_length=24)
-    page: str | None = Field(default=None, max_length=120)
+    page: str | None = Field(default=None, max_length=300)
     meta: dict[str, Any] | None = None
 
 

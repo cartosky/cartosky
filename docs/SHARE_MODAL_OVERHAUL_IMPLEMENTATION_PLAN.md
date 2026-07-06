@@ -109,6 +109,7 @@ Tabs: **Image | GIF | Link**.
 - Screenshot-trust rule extended to the new paths: **no share flow ever silently produces a basemap-only image** — fail loudly with retry.
 - **Preview-as-artifact:** the modal preview must always show the exact artifact (image or encoded GIF) that will be downloaded/copied/posted.
 - **Never less extent than the screen:** any aspect normalization uses contain semantics (bounds-fit adds margin), never crop. Silent crop is a hard failure.
+- **City value label collision (added 2026-07-06, prod observation):** in captures, close-together cities overlap and clip each other's value labels (e.g., Des Moines/Cedar Rapids, Denver/Cheyenne at CONUS zoom). Root cause: the city label symbol layers set `text-allow-overlap: true` / `icon-allow-overlap: true` (`city-labels.ts`), which disables MapLibre's built-in collision engine entirely. Direction: re-enable collision (drop the overlap flags) with `symbol-sort-key` priority (e.g., by city population/rank) so the engine hides the lower-priority label instead of stacking — scoped to screenshot mode first if live-map behavior is intentional. Caveat: the screenshot readiness gate waits on `city_labels_ready`; collision placement settles asynchronously (symbol fade), so verify the gate still signals after placement stabilizes, not before.
 
 ### 3.5 Post-freeze option: client-side fixed-viewport render for TWF posts
 
@@ -150,6 +151,8 @@ Each phase is a separate agent implementation prompt with: explicit execution-mo
 - Download / Copy / native Share available signed-out.
 - Delete or demote the data-less offscreen rebuild.
 - Land the §3.4 readiness fixes confirmed by Phase 0.
+- **Compare-path capture fix (carried from Phase 0):** the compare branch of `screenshot_service.py` still does cold `canvas.toDataURL()` reads — the confirmed blank-capture root cause (§2.2). Apply the repaint-then-read hook pattern to both compare panels (split composes two canvases, so each needs a fresh-buffer read). May ride with Phase 2 if Phase 1 scope is tight, but must not slip past it.
+- **City value label overlap in captures (§3.4):** nearby city labels render on top of each other and clip values (observed prod 2026-07-06: Des Moines/Cedar Rapids, Denver/Cheyenne, Lincoln/Omaha at CONUS zoom). Add collision handling — see §3.4 bullet for direction.
 
 **Gate:** signed-out user on prod gets a correct data image in <~2s p90 with zero authenticated requests. Screenshot regression pass across: grid variables, RGB/satellite, compare mode, SPC/CPC categorical legends, observed-mode products, portrait mobile.
 

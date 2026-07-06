@@ -694,7 +694,7 @@ def record_perf_event(payload: dict[str, Any], *, member_id: int | None = None) 
                 _normalize_forecast_hour(payload.get("forecast_hour")),
                 _normalize_text(payload.get("device_type"), max_length=24),
                 _normalize_text(payload.get("viewport_bucket"), max_length=24),
-                _normalize_text(payload.get("page"), max_length=120),
+                _normalize_text(payload.get("page"), max_length=300),
                 _serialize_meta(payload.get("meta")),
             ),
         )
@@ -794,7 +794,7 @@ def record_usage_event(payload: dict[str, Any], *, member_id: int | None = None)
                 _normalize_forecast_hour(payload.get("forecast_hour")),
                 _normalize_text(payload.get("device_type"), max_length=24),
                 _normalize_text(payload.get("viewport_bucket"), max_length=24),
-                _normalize_text(payload.get("page"), max_length=120),
+                _normalize_text(payload.get("page"), max_length=300),
                 _serialize_meta(payload.get("meta")),
             ),
         )
@@ -862,7 +862,7 @@ def record_rum_metric(payload: dict[str, Any], *, member_id: int | None = None) 
                 _normalize_forecast_hour(payload.get("forecast_hour")),
                 _normalize_text(payload.get("device_type"), max_length=24),
                 _normalize_text(payload.get("viewport_bucket"), max_length=24),
-                _normalize_text(payload.get("page"), max_length=120),
+                _normalize_text(payload.get("page"), max_length=300),
                 _serialize_meta(payload.get("meta")),
             ),
         )
