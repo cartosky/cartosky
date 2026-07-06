@@ -4,6 +4,7 @@
 // useGifExport; this component is presentation + small copy-action state.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import * as SliderPrimitive from "@radix-ui/react-slider";
 import { useAuth } from "@clerk/react";
 import { CheckCircle2, Copy, Download, ExternalLink, Film, Link2, Loader2, RefreshCw, Share2, X } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -11,6 +12,7 @@ import { Link } from "react-router-dom";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { clerkJwtTemplate } from "@/lib/admin-api";
 import { SERVER_SCREENSHOT_ENABLED } from "@/lib/config";
+import { uploadShareMedia } from "@/lib/share_media";
 import type { LegendPayload } from "@/components/map-legend";
 import type { ScreenshotExportState } from "@/lib/screenshot_export";
 import {
@@ -107,19 +109,6 @@ export function ShareModal({
     twfFetch,
   });
 
-  const posting = useTwfPosting({
-    open,
-    onClose,
-    payload,
-    clerkLoaded,
-    isSignedIn,
-    twfFetch,
-    includeScreenshotInPost: screenshot.includeScreenshotInPost,
-    ensurePreparedScreenshot: screenshot.ensurePreparedScreenshot,
-    screenshotUploadError: screenshot.screenshotUploadError,
-    screenshotError: screenshot.screenshotError,
-  });
-
   const gif = useGifExport({
     open,
     frameDriver: gifFrameDriver,
@@ -128,6 +117,65 @@ export function ShareModal({
   });
 
   const [activeTab, setActiveTab] = useState<ShareTab>("image");
+
+  const gifFilename = (): string => {
+    const state = buildScreenshotState?.();
+    const base = state ? screenshotFilename(state).replace(/\.png$/, "") : "cartosky-map";
+    return `${base}.gif`;
+  };
+
+  // TWF posts from the GIF tab upload the encoded GIF instead of the still
+  // (§3.3: TWF is a destination inside the Image AND GIF tabs). Cached per
+  // blob so post retries don't re-upload.
+  const gifUploadCacheRef = useRef<{ blob: Blob; url: string } | null>(null);
+  const ensurePreparedGifUrl = async (): Promise<string | null> => {
+    const blob = gif.gifBlob;
+    if (!blob) {
+      return null;
+    }
+    if (gifUploadCacheRef.current?.blob === blob) {
+      return gifUploadCacheRef.current.url;
+    }
+    try {
+      if (!clerkLoaded || !isSignedIn) {
+        return null;
+      }
+      const token = await getToken({ template: clerkJwtTemplate() });
+      if (!token) {
+        return null;
+      }
+      const state = buildScreenshotState?.() ?? null;
+      const result = await uploadShareMedia({
+        blob,
+        filename: gifFilename(),
+        authToken: token,
+        model: state?.model ?? null,
+        run: state?.run ?? null,
+        fh: state?.fh ?? null,
+        variable: state?.variable.key || state?.variable.label || null,
+        region: state?.region?.id ?? null,
+      });
+      gifUploadCacheRef.current = { blob, url: result.url };
+      return result.url;
+    } catch {
+      return null;
+    }
+  };
+
+  const posting = useTwfPosting({
+    open,
+    onClose,
+    payload,
+    clerkLoaded,
+    isSignedIn,
+    twfFetch,
+    includeScreenshotInPost: activeTab === "gif" ? true : screenshot.includeScreenshotInPost,
+    ensurePreparedScreenshot:
+      activeTab === "gif" ? ensurePreparedGifUrl : screenshot.ensurePreparedScreenshot,
+    screenshotUploadError: screenshot.screenshotUploadError,
+    screenshotError:
+      activeTab === "gif" ? "Generate a GIF before posting." : screenshot.screenshotError,
+  });
   const [linkCopied, setLinkCopied] = useState(false);
   const [textCopied, setTextCopied] = useState(false);
   const [imageCopied, setImageCopied] = useState(false);
@@ -232,12 +280,6 @@ export function ShareModal({
     }
   };
 
-  const gifFilename = (): string => {
-    const state = buildScreenshotState?.();
-    const base = state ? screenshotFilename(state).replace(/\.png$/, "") : "cartosky-map";
-    return `${base}.gif`;
-  };
-
   const handleGifDownload = () => {
     if (!gif.gifBlobUrl) {
       return;
@@ -268,9 +310,45 @@ export function ShareModal({
     }
   };
 
+  const rangePreviewTimerRef = useRef<number | null>(null);
+  const lastRangeRef = useRef<[number, number] | null>(null);
+  const handleGifRangeChange = (value: number[]) => {
+    const hours = gif.availableHours;
+    if (hours.length < 2 || value.length < 2) {
+      return;
+    }
+    const startIdx = Math.min(value[0], value[1]);
+    const endIdx = Math.max(value[0], value[1]);
+    gif.updateSettings({ startHour: hours[startIdx], endHour: hours[endIdx] });
+    // Step the live map to the handle being dragged (debounced) so the user
+    // sees which frame each end of the range points at.
+    const previous = lastRangeRef.current;
+    const movedIdx = previous && previous[0] !== startIdx ? startIdx : endIdx;
+    lastRangeRef.current = [startIdx, endIdx];
+    if (rangePreviewTimerRef.current !== null) {
+      window.clearTimeout(rangePreviewTimerRef.current);
+    }
+    rangePreviewTimerRef.current = window.setTimeout(() => {
+      rangePreviewTimerRef.current = null;
+      gif.previewFrame(hours[movedIdx]);
+    }, 140);
+  };
+
   if (!open) {
     return null;
   }
+
+  const gifHours = gif.availableHours;
+  const gifStartIdx = (() => {
+    if (gif.settings.startHour === null) return 0;
+    const index = gifHours.indexOf(gif.settings.startHour);
+    return index === -1 ? 0 : index;
+  })();
+  const gifEndIdx = (() => {
+    if (gif.settings.endHour === null) return Math.max(0, gifHours.length - 1);
+    const index = gifHours.indexOf(gif.settings.endHour);
+    return index === -1 ? Math.max(0, gifHours.length - 1) : index;
+  })();
 
   const isPosted = Boolean(posting.submitSuccess || posting.submitTopicSuccess);
   const signedOutLoginUrl = loginRouteForCurrentPage();
@@ -287,230 +365,10 @@ export function ShareModal({
     { id: "link", label: "Link", icon: Link2 },
   ];
 
-  return (
-    <div
-      className="viewer-mobile-backdrop fixed inset-0 z-[80] flex items-end justify-center sm:items-center sm:p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Share"
-      onClick={onClose}
-    >
-      <div
-        className="viewer-mobile-surface w-full max-w-[580px] flex flex-col overflow-hidden rounded-t-3xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
-        style={{ maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px))" }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        {/* Drag handle */}
-        <div className="flex justify-center pb-1 pt-3">
-          <div className="h-1 w-9 rounded-full bg-white/20" />
-        </div>
-
-        {/* Title + close */}
-        <div className="flex items-center justify-between px-4 pt-2 pb-2">
-          <div className="text-base font-semibold text-white">Share this view</div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-white/[0.08] text-white/70 transition-colors hover:bg-white/[0.12]"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Tabs */}
-        <div className="px-4 pb-3" role="tablist" aria-label="Share format">
-          <div className="flex items-center gap-1 rounded-xl bg-white/[0.06] p-1">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={[
-                  "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
-                  activeTab === tab.id
-                    ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
-                    : "text-white/60 hover:bg-white/[0.07] hover:text-white/85",
-                ].join(" ")}
-              >
-                <tab.icon className="h-3.5 w-3.5" />
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {activeTab === "image" && (
-            <>
-              {/* Screenshot preview */}
-              <TooltipProvider delayDuration={250}>
-                <div className="px-4">
-                  <div className="relative aspect-[16/9] max-h-[160px] w-full overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] sm:max-h-none">
-                    {screenshot.screenshotBlobUrl ? (
-                      <img
-                        src={screenshot.screenshotBlobUrl}
-                        alt="Screenshot preview"
-                        className="h-full w-full object-contain"
-                      />
-                    ) : screenshot.screenshotBusy && screenshot.draftDataUrl ? (
-                      <>
-                        <img
-                          src={screenshot.draftDataUrl}
-                          alt="Draft preview"
-                          className="h-full w-full object-contain"
-                        />
-                        <div className="absolute bottom-2 left-2 rounded-md bg-black/70 px-2 py-1 text-xs text-white/80 backdrop-blur-sm">
-                          Generating forum image…
-                        </div>
-                      </>
-                    ) : screenshot.screenshotBusy ? (
-                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
-                        <div
-                          role="status"
-                          aria-live="polite"
-                          aria-label="Generating screenshot"
-                          className="glass-overlay flex min-w-36 flex-col items-center gap-3 rounded-2xl px-5 py-4 shadow-[0_22px_64px_rgba(0,0,0,0.26)]"
-                        >
-                          <div className="relative h-11 w-11">
-                            <div className="absolute inset-0 rounded-full border border-cyan-200/18" />
-                            <div className="absolute inset-1 animate-spin rounded-full border-2 border-white/10 border-t-cyan-200" />
-                            <div className="absolute inset-[0.95rem] rounded-full bg-cyan-200/80 shadow-[0_0_22px_rgba(103,232,249,0.42)]" />
-                          </div>
-                          <div className="text-center text-xs font-medium text-white/76">
-                            Generating screenshot
-                          </div>
-                        </div>
-                      </div>
-                    ) : screenshot.screenshotError ? (
-                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
-                        <div
-                          role="alert"
-                          className="glass-overlay flex min-w-36 flex-col items-center gap-3 rounded-2xl px-5 py-4 shadow-[0_22px_64px_rgba(0,0,0,0.26)]"
-                        >
-                          <div className="text-center text-xs font-medium text-white/76">
-                            {screenshot.screenshotError.length > 80
-                              ? `${screenshot.screenshotError.slice(0, 80)}…`
-                              : screenshot.screenshotError}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => void screenshot.handlePrepareScreenshot()}
-                            disabled={!screenshot.canPrepareScreenshot}
-                            className={`${secondaryButtonClass} disabled:opacity-50`}
-                          >
-                            Retry
-                          </button>
-                          {SERVER_SCREENSHOT_ENABLED && (
-                            <div className="text-center text-xs text-white/50">
-                              Forum image unavailable — retry or post without image.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="h-full w-full bg-gradient-to-br from-[#0d1e35] to-[#0a1628]" />
-                    )}
-                  </div>
-
-                  <div className="mt-1.5 flex items-center justify-between gap-3 px-1">
-                    {screenshot.screenshotBlobUrl ? (
-                      <div className="flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
-                        <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                        Screenshot ready
-                      </div>
-                    ) : (
-                      <div />
-                    )}
-                    <div className="flex items-center gap-1.5">
-                      {screenshot.screenshotBlobUrl && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const link = document.createElement("a");
-                                link.href = screenshot.screenshotBlobUrl!;
-                                link.download = screenshot.screenshotFilenameValue;
-                                link.rel = "noopener";
-                                document.body.appendChild(link);
-                                link.click();
-                                link.remove();
-                                captureShareCompleted("download");
-                              }}
-                              className={previewActionButtonClass}
-                              aria-label="Download screenshot"
-                            >
-                              <Download className="h-3.5 w-3.5" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
-                            Download screenshot
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {screenshot.screenshotBlob && canCopyImage && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              onClick={() => void handleCopyImage()}
-                              className={previewActionButtonClass}
-                              aria-label="Copy image to clipboard"
-                            >
-                              {imageCopied
-                                ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
-                                : <Copy className="h-3.5 w-3.5" />}
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
-                            {imageCopied ? "Copied" : "Copy image"}
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {screenshot.screenshotBlob && canNativeShare && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              onClick={() => void handleNativeShare()}
-                              className={previewActionButtonClass}
-                              aria-label="Share image"
-                            >
-                              <Share2 className="h-3.5 w-3.5" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
-                            Share image
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              screenshot.setHasAttemptedAutoScreenshot(false);
-                              void screenshot.handlePrepareScreenshot();
-                            }}
-                            disabled={!screenshot.canPrepareScreenshot || screenshot.screenshotBusy}
-                            className={`${previewActionButtonClass} disabled:opacity-50`}
-                            aria-label="Refresh screenshot"
-                          >
-                            <RefreshCw className="h-3.5 w-3.5" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
-                          Regenerate screenshot
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </div>
-                </div>
-              </TooltipProvider>
-
+  // Rendered on both the Image and GIF tabs (§3.3: TWF is a destination
+  // inside each shareable-artifact tab, never a gate).
+  const twfSection = (
+    <>
               {/* TWF destination section — composer when linked, quiet connect row otherwise */}
               {posting.twfStatus.linked === true ? (
                 <div className="mt-3 px-4">
@@ -775,20 +633,250 @@ export function ShareModal({
                   {posting.statusError}
                 </div>
               )}
+    </>
+  );
+
+  return (
+    <div
+      className="viewer-mobile-backdrop fixed inset-0 z-[80] flex items-end justify-center sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Share"
+      onClick={onClose}
+    >
+      <div
+        className="viewer-mobile-surface w-full max-w-[580px] flex flex-col overflow-hidden rounded-t-3xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
+        style={{ maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px))" }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {/* Drag handle */}
+        <div className="flex justify-center pb-1 pt-3">
+          <div className="h-1 w-9 rounded-full bg-white/20" />
+        </div>
+
+        {/* Title + close */}
+        <div className="flex items-center justify-between px-4 pt-2 pb-2">
+          <div className="text-base font-semibold text-white">Share this view</div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-white/[0.08] text-white/70 transition-colors hover:bg-white/[0.12]"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div className="px-4 pb-3" role="tablist" aria-label="Share format">
+          <div className="flex items-center gap-1 rounded-xl bg-white/[0.06] p-1">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={[
+                  "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                  activeTab === tab.id
+                    ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
+                    : "text-white/60 hover:bg-white/[0.07] hover:text-white/85",
+                ].join(" ")}
+              >
+                <tab.icon className="h-3.5 w-3.5" />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {activeTab === "image" && (
+            <>
+              {/* Screenshot preview */}
+              <TooltipProvider delayDuration={250}>
+                <div className="px-4">
+                  <div className="relative aspect-[16/9] max-h-[160px] w-full overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] sm:max-h-none">
+                    {screenshot.screenshotBlobUrl ? (
+                      <img
+                        src={screenshot.screenshotBlobUrl}
+                        alt="Screenshot preview"
+                        className="h-full w-full object-contain"
+                      />
+                    ) : screenshot.screenshotBusy && screenshot.draftDataUrl ? (
+                      <>
+                        <img
+                          src={screenshot.draftDataUrl}
+                          alt="Draft preview"
+                          className="h-full w-full object-contain"
+                        />
+                        <div className="absolute bottom-2 left-2 rounded-md bg-black/70 px-2 py-1 text-xs text-white/80 backdrop-blur-sm">
+                          Generating forum image…
+                        </div>
+                      </>
+                    ) : screenshot.screenshotBusy ? (
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
+                        <div
+                          role="status"
+                          aria-live="polite"
+                          aria-label="Generating screenshot"
+                          className="glass-overlay flex min-w-36 flex-col items-center gap-3 rounded-2xl px-5 py-4 shadow-[0_22px_64px_rgba(0,0,0,0.26)]"
+                        >
+                          <div className="relative h-11 w-11">
+                            <div className="absolute inset-0 rounded-full border border-cyan-200/18" />
+                            <div className="absolute inset-1 animate-spin rounded-full border-2 border-white/10 border-t-cyan-200" />
+                            <div className="absolute inset-[0.95rem] rounded-full bg-cyan-200/80 shadow-[0_0_22px_rgba(103,232,249,0.42)]" />
+                          </div>
+                          <div className="text-center text-xs font-medium text-white/76">
+                            Generating screenshot
+                          </div>
+                        </div>
+                      </div>
+                    ) : screenshot.screenshotError ? (
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#0d1e35] to-[#0a1628]">
+                        <div
+                          role="alert"
+                          className="glass-overlay flex min-w-36 flex-col items-center gap-3 rounded-2xl px-5 py-4 shadow-[0_22px_64px_rgba(0,0,0,0.26)]"
+                        >
+                          <div className="text-center text-xs font-medium text-white/76">
+                            {screenshot.screenshotError.length > 80
+                              ? `${screenshot.screenshotError.slice(0, 80)}…`
+                              : screenshot.screenshotError}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void screenshot.handlePrepareScreenshot()}
+                            disabled={!screenshot.canPrepareScreenshot}
+                            className={`${secondaryButtonClass} disabled:opacity-50`}
+                          >
+                            Retry
+                          </button>
+                          {SERVER_SCREENSHOT_ENABLED && (
+                            <div className="text-center text-xs text-white/50">
+                              Forum image unavailable — retry or post without image.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="h-full w-full bg-gradient-to-br from-[#0d1e35] to-[#0a1628]" />
+                    )}
+                  </div>
+
+                  <div className="mt-1.5 flex items-center justify-between gap-3 px-1">
+                    {screenshot.screenshotBlobUrl ? (
+                      <div className="flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
+                        <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                        Screenshot ready
+                      </div>
+                    ) : (
+                      <div />
+                    )}
+                    <div className="flex items-center gap-1.5">
+                      {screenshot.screenshotBlobUrl && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const link = document.createElement("a");
+                                link.href = screenshot.screenshotBlobUrl!;
+                                link.download = screenshot.screenshotFilenameValue;
+                                link.rel = "noopener";
+                                document.body.appendChild(link);
+                                link.click();
+                                link.remove();
+                                captureShareCompleted("download");
+                              }}
+                              className={previewActionButtonClass}
+                              aria-label="Download screenshot"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
+                            Download screenshot
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {screenshot.screenshotBlob && canCopyImage && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => void handleCopyImage()}
+                              className={previewActionButtonClass}
+                              aria-label="Copy image to clipboard"
+                            >
+                              {imageCopied
+                                ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
+                                : <Copy className="h-3.5 w-3.5" />}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
+                            {imageCopied ? "Copied" : "Copy image"}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {screenshot.screenshotBlob && canNativeShare && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => void handleNativeShare()}
+                              className={previewActionButtonClass}
+                              aria-label="Share image"
+                            >
+                              <Share2 className="h-3.5 w-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
+                            Share image
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              screenshot.setHasAttemptedAutoScreenshot(false);
+                              void screenshot.handlePrepareScreenshot();
+                            }}
+                            disabled={!screenshot.canPrepareScreenshot || screenshot.screenshotBusy}
+                            className={`${previewActionButtonClass} disabled:opacity-50`}
+                            aria-label="Refresh screenshot"
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="left" className="border-white/10 bg-[#07111f] text-white">
+                          Regenerate screenshot
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </div>
+                </div>
+              </TooltipProvider>
+
+              {twfSection}
             </>
           )}
 
           {activeTab === "gif" && (
+            <>
             <div className="px-4">
               {gif.status === "ready" && gif.gifBlobUrl ? (
                 <>
                   {/* Preview-as-artifact: this <img> plays the exact encoded
-                      GIF the user downloads/shares. */}
-                  <div className="relative w-full overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
+                      GIF the user downloads/shares. Height-clamped so the
+                      actions below stay visible on portrait phone captures. */}
+                  <div className="flex max-h-[38dvh] w-full items-center justify-center overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] sm:max-h-[420px]">
                     <img
                       src={gif.gifBlobUrl}
                       alt="Animated GIF preview"
-                      className="h-auto w-full"
+                      className="h-auto max-h-full w-auto max-w-full"
                     />
                   </div>
                   <div className="mt-1.5 flex items-center justify-between gap-3 px-1">
@@ -870,32 +958,36 @@ export function ShareModal({
                         </div>
                       )}
                       <div className="flex w-full max-w-[360px] flex-col gap-2">
-                        <div className="flex items-center gap-2">
-                          <label className="flex flex-1 flex-col gap-1 text-left">
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-white/45">From</span>
-                            <select
-                              value={String(gif.settings.startHour ?? gif.availableHours[0] ?? "")}
-                              onChange={(event) => gif.updateSettings({ startHour: Number(event.target.value) })}
-                              className={fieldClass}
-                            >
-                              {gif.availableHours.map((hour) => (
-                                <option key={hour} value={String(hour)}>FH {hour}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="flex flex-1 flex-col gap-1 text-left">
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-white/45">To</span>
-                            <select
-                              value={String(gif.settings.endHour ?? gif.availableHours[gif.availableHours.length - 1] ?? "")}
-                              onChange={(event) => gif.updateSettings({ endHour: Number(event.target.value) })}
-                              className={fieldClass}
-                            >
-                              {gif.availableHours.map((hour) => (
-                                <option key={hour} value={String(hour)}>FH {hour}</option>
-                              ))}
-                            </select>
-                          </label>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-white/45">Range</span>
+                          <span className="text-xs font-medium text-white/70">
+                            FH {gifHours[gifStartIdx] ?? "—"} – FH {gifHours[gifEndIdx] ?? "—"}
+                          </span>
                         </div>
+                        {/* Dragging a handle steps the live map (visible behind
+                            the modal) to that frame, so the range is picked
+                            visually rather than from a blind dropdown. */}
+                        <SliderPrimitive.Root
+                          min={0}
+                          max={Math.max(1, gifHours.length - 1)}
+                          step={1}
+                          minStepsBetweenThumbs={1}
+                          value={[gifStartIdx, gifEndIdx]}
+                          onValueChange={handleGifRangeChange}
+                          className="relative flex h-5 w-full touch-none select-none items-center"
+                        >
+                          <SliderPrimitive.Track className="relative h-1.5 w-full grow overflow-hidden rounded-full bg-white/10">
+                            <SliderPrimitive.Range className="absolute h-full bg-gradient-to-r from-cyan-700 to-cyan-500" />
+                          </SliderPrimitive.Track>
+                          <SliderPrimitive.Thumb
+                            aria-label="First forecast hour"
+                            className="block h-4 w-4 rounded-full border-2 border-cyan-900 bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.35)] focus:outline-none"
+                          />
+                          <SliderPrimitive.Thumb
+                            aria-label="Last forecast hour"
+                            className="block h-4 w-4 rounded-full border-2 border-cyan-900 bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.35)] focus:outline-none"
+                          />
+                        </SliderPrimitive.Root>
                         <div className="flex items-center justify-center gap-1.5">
                           {GIF_SPEED_PRESETS.map((preset) => (
                             <button
@@ -946,6 +1038,8 @@ export function ShareModal({
                 </div>
               )}
             </div>
+            {twfSection}
+            </>
           )}
 
           {activeTab === "link" && (
@@ -981,16 +1075,22 @@ export function ShareModal({
           className="flex items-center justify-end px-4 pt-3"
           style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
         >
-          {activeTab === "image" && posting.twfStatus.linked === true ? (
+          {(activeTab === "image" || activeTab === "gif") && posting.twfStatus.linked === true ? (
             <button
               type="button"
               onClick={() => { void posting.handleSubmitPost(); }}
-              disabled={postButtonDisabled || isPosted}
+              disabled={postButtonDisabled || isPosted || (activeTab === "gif" && gif.status !== "ready")}
               className={primaryButtonClass}
             >
               {posting.submitBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {isPosted && <CheckCircle2 className="h-3.5 w-3.5" />}
-              {posting.submitBusy ? "Posting…" : isPosted ? "Posted!" : "Post →"}
+              {posting.submitBusy
+                ? "Posting…"
+                : isPosted
+                  ? "Posted!"
+                  : activeTab === "gif"
+                    ? "Post GIF →"
+                    : "Post →"}
             </button>
           ) : (
             <button type="button" onClick={onClose} className={secondaryButtonClass}>

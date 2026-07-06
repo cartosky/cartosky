@@ -126,6 +126,9 @@ export function useGifExport({
   const abortedRef = useRef(false);
   const runningRef = useRef(false);
   const workerRef = useRef<Worker | null>(null);
+  // Timeline snapshot from BEFORE the first driver interaction this open
+  // (range preview or generate); restored on generate end and on modal close.
+  const originalTimelineRef = useRef<unknown | null>(null);
 
   const availableHours = frameDriver?.listFrameHours() ?? [];
   const available = Boolean(frameDriver) && availableHours.length >= 2;
@@ -133,6 +136,19 @@ export function useGifExport({
   const updateSettings = useCallback((update: Partial<GifExportSettings>) => {
     setSettings((current) => ({ ...current, ...update }));
   }, []);
+
+  /** Step the live map to `hour` so the user sees what a range handle points
+   * at. Fire-and-forget; the original timeline is restored on modal close. */
+  const previewFrame = useCallback((hour: number) => {
+    if (!frameDriver || runningRef.current) {
+      return;
+    }
+    if (originalTimelineRef.current === null) {
+      originalTimelineRef.current = frameDriver.getRestoreTarget();
+    }
+    frameDriver.begin();
+    void frameDriver.showFrame(hour);
+  }, [frameDriver]);
 
   /** Pre-generate summary shown in the idle state (§3.2: estimated size up front). */
   const buildPlan = useCallback((): GifExportPlan | null => {
@@ -203,7 +219,9 @@ export function useGifExport({
     setStatus("capturing");
     setProgress({ done: 0, total: selected.length });
 
-    const restoreTarget = frameDriver.getRestoreTarget();
+    if (originalTimelineRef.current === null) {
+      originalTimelineRef.current = frameDriver.getRestoreTarget();
+    }
     frameDriver.begin();
     const legend = getLegend?.() ?? null;
     const { buildShareOverlayLines, composeShareFrame } = await import("@/lib/screenshot_export");
@@ -263,6 +281,8 @@ export function useGifExport({
           overlayLines: buildShareOverlayLines(frameState, legend),
           isMobile: baseState.isMobile,
           chromeScale: Math.max(dims.width / 1280, GIF_CHROME_SCALE_FLOOR),
+          // Soft shadows quantize into dark banding in the GIF palette.
+          chromeShadows: false,
         });
         const composeCtx = composeCanvas!.getContext("2d");
         if (!composeCtx) {
@@ -327,7 +347,9 @@ export function useGifExport({
       runningRef.current = false;
       worker?.terminate();
       workerRef.current = null;
-      frameDriver.restore(restoreTarget);
+      if (originalTimelineRef.current !== null) {
+        frameDriver.restore(originalTimelineRef.current);
+      }
     }
   }, [buildScreenshotState, frameDriver, getLegend, releaseGif, settings]);
 
@@ -346,7 +368,12 @@ export function useGifExport({
     setError(null);
     setProgress({ done: 0, total: 0 });
     setSettings(DEFAULT_GIF_SETTINGS);
-  }, [open, releaseGif]);
+    // Undo any range-preview stepping that never went through generate().
+    if (originalTimelineRef.current !== null) {
+      frameDriver?.restore(originalTimelineRef.current);
+      originalTimelineRef.current = null;
+    }
+  }, [frameDriver, open, releaseGif]);
 
   useEffect(() => {
     return () => {
@@ -360,6 +387,7 @@ export function useGifExport({
     availableHours,
     settings,
     updateSettings,
+    previewFrame,
     status,
     progress,
     error,

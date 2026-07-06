@@ -114,7 +114,7 @@ async def test_share_media_upload_rejects_invalid_content_type(client: httpx.Asy
     assert response.json() == {
         "error": {
             "code": "INVALID_CONTENT_TYPE",
-            "message": "Only PNG uploads are supported.",
+            "message": "Only PNG or GIF uploads are supported.",
         }
     }
 
@@ -131,10 +131,52 @@ async def test_share_media_upload_rejects_invalid_png_signature(client: httpx.As
     assert response.status_code == 400
     assert response.json() == {
         "error": {
-            "code": "INVALID_PNG",
-            "message": "Uploaded file is not a valid PNG image.",
+            "code": "INVALID_IMAGE",
+            "message": "Uploaded file does not match its image type.",
         }
     }
+
+
+async def test_share_media_upload_accepts_valid_gif(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _authenticate_clerk_user()
+    captured: dict[str, object] = {}
+    gif_bytes = b"GIF89a" + b"\x00" * 32
+
+    def fake_upload_share_png(*, data: bytes, filename_hint: str | None, content_type: str) -> dict[str, str]:
+        captured["data"] = data
+        captured["content_type"] = content_type
+        return {
+            "key": "share/2026/07/06/cartosky_hrrr_deadbeef.gif",
+            "url": "https://cdn.cartosky.com/share/2026/07/06/cartosky_hrrr_deadbeef.gif",
+        }
+
+    monkeypatch.setattr(main_module.share_media_service, "upload_share_png", fake_upload_share_png)
+
+    response = await client.post(
+        "/api/v4/share/media",
+        headers={"Authorization": "Bearer test-token"},
+        files={"file": ("share.gif", gif_bytes, "image/gif")},
+    )
+
+    assert response.status_code == 200
+    assert captured["data"] == gif_bytes
+    assert captured["content_type"] == "image/gif"
+
+
+async def test_share_media_upload_rejects_mismatched_gif_signature(client: httpx.AsyncClient) -> None:
+    _authenticate_clerk_user()
+
+    response = await client.post(
+        "/api/v4/share/media",
+        headers={"Authorization": "Bearer test-token"},
+        files={"file": ("share.gif", PNG_BYTES, "image/gif")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_IMAGE"
 
 
 async def test_share_media_upload_rejects_oversized_png(client: httpx.AsyncClient) -> None:
@@ -151,7 +193,7 @@ async def test_share_media_upload_rejects_oversized_png(client: httpx.AsyncClien
     assert response.json() == {
         "error": {
             "code": "FILE_TOO_LARGE",
-            "message": "PNG upload exceeds the 10 MB limit.",
+            "message": "Upload exceeds the 10 MB limit.",
         }
     }
 

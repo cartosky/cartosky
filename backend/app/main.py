@@ -2556,16 +2556,16 @@ async def share_media_upload(
         return _share_media_error_response(
             status_code=400,
             code="MISSING_FILE",
-            message="A PNG file upload is required.",
+            message="A PNG or GIF file upload is required.",
         )
 
     content_type = (file.content_type or "").strip().lower()
-    if content_type != share_media_service.PNG_CONTENT_TYPE:
+    if content_type not in share_media_service.SUPPORTED_SHARE_MEDIA:
         await file.close()
         return _share_media_error_response(
             status_code=400,
             code="INVALID_CONTENT_TYPE",
-            message="Only PNG uploads are supported.",
+            message="Only PNG or GIF uploads are supported.",
         )
 
     data = await file.read(share_media_service.MAX_SHARE_PNG_BYTES + 1)

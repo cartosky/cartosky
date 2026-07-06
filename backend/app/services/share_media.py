@@ -12,7 +12,18 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 PNG_CONTENT_TYPE = "image/png"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+GIF_CONTENT_TYPE = "image/gif"
+GIF_SIGNATURES = (b"GIF87a", b"GIF89a")
 MAX_SHARE_PNG_BYTES = 10 * 1024 * 1024
+
+# Share overhaul Phase 3 gate feedback: TWF posts can carry client-generated
+# GIFs, so the media upload accepts both formats (same 10 MB cap — the GIF
+# frame caps keep real exports a few MB at most).
+SUPPORTED_SHARE_MEDIA: dict[str, dict] = {
+    PNG_CONTENT_TYPE: {"signatures": (PNG_SIGNATURE,), "extension": ".png"},
+    GIF_CONTENT_TYPE: {"signatures": GIF_SIGNATURES, "extension": ".gif"},
+}
+_KNOWN_EXTENSIONS = (".png", ".gif")
 _FILENAME_SAFE_RE = re.compile(r"[^a-z0-9_-]+")
 _SLUG_SAFE_RE = re.compile(r"[^a-z0-9-]+")
 _RUN_SAFE_RE = re.compile(r"[^a-z0-9_]+")
@@ -100,11 +111,12 @@ def validate_share_png_upload(data: bytes, *, content_type: str) -> None:
 
 def _validate_upload(data: bytes, *, content_type: str) -> None:
     normalized_content_type = (content_type or "").strip().lower()
-    if normalized_content_type != PNG_CONTENT_TYPE:
+    media_spec = SUPPORTED_SHARE_MEDIA.get(normalized_content_type)
+    if media_spec is None:
         raise ShareMediaError(
             status_code=400,
             code="INVALID_CONTENT_TYPE",
-            message="Only PNG uploads are supported.",
+            message="Only PNG or GIF uploads are supported.",
         )
     if not data:
         raise ShareMediaError(
@@ -116,13 +128,13 @@ def _validate_upload(data: bytes, *, content_type: str) -> None:
         raise ShareMediaError(
             status_code=413,
             code="FILE_TOO_LARGE",
-            message="PNG upload exceeds the 10 MB limit.",
+            message="Upload exceeds the 10 MB limit.",
         )
-    if not data.startswith(PNG_SIGNATURE):
+    if not any(data.startswith(signature) for signature in media_spec["signatures"]):
         raise ShareMediaError(
             status_code=400,
-            code="INVALID_PNG",
-            message="Uploaded file is not a valid PNG image.",
+            code="INVALID_IMAGE",
+            message="Uploaded file does not match its image type.",
         )
 
 
@@ -144,18 +156,20 @@ def _r2_settings() -> dict[str, str]:
     return settings
 
 
-def _build_object_name(filename_hint: str | None, *, now: datetime) -> str:
+def _build_object_name(filename_hint: str | None, *, now: datetime, extension: str = ".png") -> str:
     random_suffix = secrets.token_hex(4)
     if filename_hint:
         stem = filename_hint.strip().rsplit("/", 1)[-1]
-        if stem.lower().endswith(".png"):
-            stem = stem[:-4]
+        for known_extension in _KNOWN_EXTENSIONS:
+            if stem.lower().endswith(known_extension):
+                stem = stem[: -len(known_extension)]
+                break
         stem = _sanitize_filename_token(stem)
         if stem:
-            return f"{stem}_{random_suffix}.png"
+            return f"{stem}_{random_suffix}{extension}"
 
     timestamp = now.strftime("%Y%m%dT%H%M%SZ").lower()
-    return f"cartosky_{timestamp}_{random_suffix}.png"
+    return f"cartosky_{timestamp}_{random_suffix}{extension}"
 
 
 def upload_share_png(
@@ -165,9 +179,11 @@ def upload_share_png(
     content_type: str = PNG_CONTENT_TYPE,
 ) -> dict[str, str]:
     _validate_upload(data, content_type=content_type)
+    normalized_content_type = (content_type or "").strip().lower()
+    extension = SUPPORTED_SHARE_MEDIA[normalized_content_type]["extension"]
     settings = _r2_settings()
     now = datetime.now(UTC)
-    object_name = _build_object_name(filename_hint, now=now)
+    object_name = _build_object_name(filename_hint, now=now, extension=extension)
     key = f"share/{now.strftime('%Y/%m/%d')}/{object_name}"
     url = f"{settings['public_base']}/{key}"
 
@@ -185,7 +201,7 @@ def upload_share_png(
             Bucket=settings["bucket"],
             Key=key,
             Body=data,
-            ContentType=PNG_CONTENT_TYPE,
+            ContentType=normalized_content_type,
             CacheControl="public, max-age=31536000, immutable",
         )
     except (BotoCoreError, ClientError) as exc:

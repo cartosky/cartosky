@@ -113,6 +113,12 @@ function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
+// GIF encoding quantizes the soft card shadows into visible dark banding (a
+// smudgy halo around the overlay/logo/legend), so the GIF compose flattens
+// them. Module-level because the card helpers are called deep inside the
+// legend/overlay draw stack; composeShareFrame sets/restores it per frame.
+let chromeShadowsEnabled = true;
+
 function drawRoundedRect(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -236,9 +242,11 @@ function drawGlassCard(
   radius: number
 ): void {
   ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.35)";
-  ctx.shadowBlur = 32;
-  ctx.shadowOffsetY = 8;
+  if (chromeShadowsEnabled) {
+    ctx.shadowColor = "rgba(0,0,0,0.35)";
+    ctx.shadowBlur = 32;
+    ctx.shadowOffsetY = 8;
+  }
   ctx.fillStyle = "rgba(0,0,0,0.38)";
   drawRoundedRect(ctx, x, y, width, height, radius);
   ctx.fill();
@@ -272,9 +280,11 @@ function drawDarkCard(
   radius: number
 ): void {
   ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.38)";
-  ctx.shadowBlur = 28;
-  ctx.shadowOffsetY = 8;
+  if (chromeShadowsEnabled) {
+    ctx.shadowColor = "rgba(0,0,0,0.38)";
+    ctx.shadowBlur = 28;
+    ctx.shadowOffsetY = 8;
+  }
   const bgGradient = ctx.createLinearGradient(x, y, x + width, y + height);
   bgGradient.addColorStop(0, "rgba(28,32,42,0.90)");
   bgGradient.addColorStop(1, "rgba(52,58,72,0.84)");
@@ -986,18 +996,28 @@ async function drawLogo(ctx: CanvasRenderingContext2D, width: number, scaleFacto
   const cardPaddingY = 8 * scaleFactor;
   const cardWidth = drawWidth + cardPaddingX * 2;
   const cardHeight = drawHeight + cardPaddingY * 2;
-  const cardX = width - padding - cardWidth;
-  const cardY = padding;
+  // Integer positions: fractional coordinates resample the bitmap, which reads
+  // as pixelation at GIF sizes (pixelRatio 1); harmless at the stills' 2×.
+  const cardX = Math.round(width - padding - cardWidth);
+  const cardY = Math.round(padding);
 
   drawDarkCard(ctx, cardX, cardY, cardWidth, cardHeight, 11 * scaleFactor);
 
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
-  ctx.shadowColor = "rgba(0,0,0,0.42)";
-  ctx.shadowBlur = 18;
-  ctx.shadowOffsetY = 4;
-  ctx.drawImage(logo, cardX + cardPaddingX, cardY + cardPaddingY, drawWidth, drawHeight);
+  if (chromeShadowsEnabled) {
+    ctx.shadowColor = "rgba(0,0,0,0.42)";
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 4;
+  }
+  ctx.drawImage(
+    logo,
+    Math.round(cardX + cardPaddingX),
+    Math.round(cardY + cardPaddingY),
+    drawWidth,
+    drawHeight,
+  );
   ctx.restore();
 }
 
@@ -1021,6 +1041,9 @@ export type ShareFrameComposeOptions = {
    * frames render at 720px with pixelRatio 1, where the default 720/1280
    * scale makes the chrome small and blurry — a higher floor keeps it crisp. */
   chromeScale?: number;
+  /** Soft card shadows quantize into dark banding in GIF output — pass false
+   * to render flat chrome (default true, matching the stills). */
+  chromeShadows?: boolean;
 };
 
 /**
@@ -1050,20 +1073,25 @@ export async function composeShareFrame(
   outputCtx.imageSmoothingQuality = "high";
   outputCtx.save();
   outputCtx.scale(pixelRatio, pixelRatio);
-  drawMapImageCover(outputCtx, mapImage, width, height);
-  drawOverlay(outputCtx, opts.overlayLines, width, scaleFactor);
-
+  chromeShadowsEnabled = opts.chromeShadows ?? true;
   try {
-    await drawLogo(outputCtx, width, scaleFactor);
-  } catch (error) {
-    console.warn("[screenshot] Logo load failed; continuing without logo.", error);
-  }
+    drawMapImageCover(outputCtx, mapImage, width, height);
+    drawOverlay(outputCtx, opts.overlayLines, width, scaleFactor);
 
-  const bottomPadding = 18 * scaleFactor;
-  if (opts.legend) {
-    drawBottomLegend(outputCtx, opts.legend, width, height, bottomPadding, opts.isMobile, scaleFactor);
+    try {
+      await drawLogo(outputCtx, width, scaleFactor);
+    } catch (error) {
+      console.warn("[screenshot] Logo load failed; continuing without logo.", error);
+    }
+
+    const bottomPadding = 18 * scaleFactor;
+    if (opts.legend) {
+      drawBottomLegend(outputCtx, opts.legend, width, height, bottomPadding, opts.isMobile, scaleFactor);
+    }
+  } finally {
+    chromeShadowsEnabled = true;
+    outputCtx.restore();
   }
-  outputCtx.restore();
 }
 
 export async function exportViewerScreenshotPng(
