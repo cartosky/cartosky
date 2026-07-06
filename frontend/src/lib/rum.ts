@@ -3,6 +3,13 @@ import { getTelemetrySessionId, isSampledSession, trackRumMetric } from "@/lib/t
 
 let initialized = false;
 
+// Headless share renders (?screenshot=1) must not report RUM: the metrics
+// describe the screenshot browser, not a real user, and the long render URL
+// exceeds the backend's `page` length bound so every post is rejected 400.
+const screenshotMode =
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("screenshot") === "1";
+
 function finalizeOnce(fn: () => void): () => void {
   let finalized = false;
   return () => {
@@ -91,7 +98,7 @@ function observeInteractionToNextPaint(onValue: (value: number) => void): Perfor
 }
 
 export function initRumTelemetry(): void {
-  if (initialized || typeof window === "undefined" || typeof document === "undefined") {
+  if (initialized || screenshotMode || typeof window === "undefined" || typeof document === "undefined") {
     return;
   }
   initialized = true;
@@ -162,7 +169,7 @@ export function initRumTelemetry(): void {
 }
 
 export function shouldTrackRumDiagnostics(): boolean {
-  return isRumEnabled() && isSampledSession(getRumDiagnosticsSampleRate());
+  return !screenshotMode && isRumEnabled() && isSampledSession(getRumDiagnosticsSampleRate());
 }
 
 export function trackRumDiagnosticMetric(params: {
