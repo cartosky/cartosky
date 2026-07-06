@@ -87,6 +87,7 @@ class ScreenshotService:
         marks: dict[str, float] = {}
         error_type: str | None = None
         gate_log: list | None = None
+        png_size: int | None = None
         try:
             browser = await self._ensure_browser()
             context = await browser.new_context(
@@ -211,6 +212,9 @@ class ScreenshotService:
                 png_bytes = base64.b64decode(data_url.split(",", 1)[1])
                 # Capture phase covers the canvas read-back (page.evaluate) and decode.
                 marks["captured"] = time.monotonic()
+                # Blank/empty captures compress to a few KB; a real map is
+                # hundreds of KB — the logged size flags bad read-backs.
+                png_size = len(png_bytes)
                 return png_bytes
             finally:
                 await context.close()
@@ -229,6 +233,7 @@ class ScreenshotService:
                 t_done=time.monotonic(),
                 error_type=error_type,
                 gate_log=gate_log,
+                png_size=png_size,
             )
 
     def _record_render(
@@ -243,6 +248,7 @@ class ScreenshotService:
         t_done: float,
         error_type: str | None,
         gate_log: list | None = None,
+        png_size: int | None = None,
     ) -> None:
         """Emit the structured timing log line, Prometheus metrics, and ring-buffer entry."""
 
@@ -267,7 +273,7 @@ class ScreenshotService:
         )
         line = (
             f"screenshot phase_timings path={path} queue_depth={queue_depth} "
-            f"{fields} url={truncated_url}"
+            f"{fields} bytes={png_size if png_size is not None else 'n/a'} url={truncated_url}"
         )
         if error_type is not None:
             logger.warning("%s error=%s", line, error_type)
@@ -308,6 +314,7 @@ class ScreenshotService:
                 "total": phases["total"],
                 "phases": {phase: phases[phase] for phase in _SCREENSHOT_PHASES},
                 "gate_log": gate_log,
+                "png_size": png_size,
             }
         )
 

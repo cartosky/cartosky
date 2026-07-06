@@ -4324,6 +4324,9 @@ export default function App() {
           cityLabelsReady: cityLabelsReadyRef.current,
           supportsGrid: selectionSupportsGridRef.current,
           supportsRasterRgb: selectionSupportsRasterRgbRef.current,
+          // Live tile state at signal time — the idle latch only proves tiles
+          // were loaded once; errored tiles also count as "complete" to idle.
+          tilesLoaded: mapInstanceRef.current?.areTilesLoaded() ?? null,
         });
       }
       document.documentElement.setAttribute("data-viewer-ready", "1");
@@ -4356,6 +4359,15 @@ export default function App() {
         mapIdleRef.current = true;
         logScreenshotGateEvent("map_idle", {});
         maybeSignalViewerReady();
+      });
+      // Basemap/source failures (e.g. errored CDN tiles) still count as
+      // "complete" for idle, so record them for the gate-state diagnosis.
+      map.on("error", (event) => {
+        const { error, sourceId } = event as { error?: { message?: string }; sourceId?: string };
+        logScreenshotGateEvent("map_error", {
+          message: String(error?.message ?? "unknown").slice(0, 120),
+          sourceId: sourceId ?? null,
+        });
       });
     }
     const center = map.getCenter();

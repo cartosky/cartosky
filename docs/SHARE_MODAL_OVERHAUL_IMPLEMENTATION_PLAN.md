@@ -38,6 +38,8 @@ Secondary hazards noted during audit:
 
 Phase 0 instruments and confirms before any fix lands. Do not fix on hypothesis alone.
 
+**Phase 0 field evidence (2026-07-06, 2 prod samples):** one bad capture (no map at all) and one good capture minutes apart, same permalink shape — and **both gate logs were healthy** (substrates resolved → grid_frame_ready → map_idle → viewer_ready_set with all gates true, ~5s). The readiness gate held; the failure is downstream of the gate. New prime suspect: the server capture does a cold `canvas.toDataURL()` on a `preserveDrawingBuffer:false` WebGL canvas after idle+settle — if no repaint lands before the read, the buffer contents are undefined (intermittent blank). The client draft path avoids exactly this by forcing a repaint and reading synchronously in the same frame; the server path does not. `bytes=` added to `phase_timings` to flag blank captures (blank PNG ≈ a few KB vs hundreds of KB for a real map). Tri-state race (§2.2 above) not yet observed in the wild — keep collecting gate logs before ruling it in/out. Candidate §3.4 fix if confirmed: trigger a repaint inside the capture `page.evaluate` and read in the same frame, mirroring `captureDraftDataUrl`.
+
 ### 2.3 Component health
 
 `twf-share-modal.tsx` is ~1,500 lines with ~35 `useState` hooks and interdependent effects. Adding tabs + GIF state to this component as-is is how the next generation of dep-array bugs happens. The overhaul includes a behavior-preserving hook extraction (Phase 2) before new feature surface lands.

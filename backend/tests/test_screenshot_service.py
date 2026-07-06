@@ -63,6 +63,8 @@ def test_record_render_includes_gate_log_in_recent_stats() -> None:
         t_done=1.5,
         error_type=None,
         gate_log=gate_log,
+        png_size=482_113,
     )
     entry = service.recent_stats()[0]
     assert entry["gate_log"] == gate_log
+    assert entry["png_size"] == 482_113
