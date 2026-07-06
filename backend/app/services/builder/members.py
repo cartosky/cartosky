@@ -48,6 +48,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import statistics
 import threading
 import time
@@ -120,6 +121,13 @@ MEMBER_CSNOW_PATTERN = r":CSNOW:surface:"
 
 # GRIB band element -> bundle field key (rasterio GRIB driver band tags).
 _BUNDLE_ELEMENT_TO_FIELD = {"TMP": "tmp2m", "APCP": "apcp", "CSNOW": "csnow"}
+
+
+def _normalize_grib_element(element: str) -> str:
+    """GDAL's GRIB driver suffixes accumulation elements with their window
+    (APCP over 6 h -> ``APCP06``, prod-observed 2026-07-06); strip trailing
+    digits to the base element name."""
+    return re.sub(r"\d+$", "", str(element or "").strip().upper())
 
 _KGM2_TO_INCHES = 0.03937007874015748  # 1 kg/m^2 == 1 mm LWE
 
@@ -468,7 +476,7 @@ def _map_bundle_bands(
     """GRIB band element names -> bundle field keys -> 1-based band index."""
     mapping: dict[str, int] = {}
     for band_index, element in enumerate(band_elements, start=1):
-        key = _BUNDLE_ELEMENT_TO_FIELD.get(str(element or "").strip().upper())
+        key = _BUNDLE_ELEMENT_TO_FIELD.get(_normalize_grib_element(element))
         if key is None or key not in expected_fields:
             continue
         if key in mapping:

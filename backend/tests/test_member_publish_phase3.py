@@ -599,6 +599,10 @@ def test_map_bundle_bands() -> None:
     fields = {"tmp2m": "p1", "apcp": "p2", "csnow": "p3"}
     mapping = members._map_bundle_bands(["TMP", "APCP", "CSNOW"], fields)
     assert mapping == {"tmp2m": 1, "apcp": 2, "csnow": 3}
+    # GDAL suffixes accumulation elements with their window (prod-observed
+    # 2026-07-06: APCP over 6 h reports as "APCP06").
+    mapping = members._map_bundle_bands(["TMP", "APCP06", "CSNOW"], fields)
+    assert mapping == {"tmp2m": 1, "apcp": 2, "csnow": 3}
     # Order-independent, unknown elements ignored.
     mapping = members._map_bundle_bands(["UGRD", "CSNOW", "TMP", "APCP"], fields)
     assert mapping == {"csnow": 2, "tmp2m": 3, "apcp": 4}
