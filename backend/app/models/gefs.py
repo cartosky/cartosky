@@ -1168,6 +1168,9 @@ GEFS_VARIABLE_CATALOG = {
             "supported_views": ["mean"],
             "default_view": "mean",
             "artifact_map": {"mean": "snowfall_total__mean"},
+            # Per-member slim publish (design §12/D6): built by the member
+            # pass's sequential cumulative loop from bundled APCP+CSNOW.
+            "members": {"count": 30, "control": True, "prefix": "m", "enabled": True},
         },
     ),
     "snowfall_total__mean": VariableCapability(
@@ -1251,6 +1254,9 @@ GEFS_VARIABLE_CATALOG = {
             "supported_views": ["mean"],
             "default_view": "mean",
             "artifact_map": {"mean": "precip_total__mean"},
+            # Per-member slim publish (design §12/D6): built by the member
+            # pass's sequential cumulative loop from bundled APCP steps.
+            "members": {"count": 30, "control": True, "prefix": "m", "enabled": True},
         },
     ),
     "precip_total__mean": VariableCapability(

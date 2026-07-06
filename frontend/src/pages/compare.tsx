@@ -837,6 +837,10 @@ export default function Compare() {
 
   // Readiness gate step 4: the diff MapCanvas has rendered + gone idle.
   const [diffMapReady, setDiffMapReady] = useState(false);
+  // Readiness gate step 5 (screenshot mode): diff city value labels applied.
+  // Without it the headless capture races the diff sampling and ships a
+  // screenshot with no city values (observed prod 2026-07-06).
+  const [diffCityLabelsReady, setDiffCityLabelsReady] = useState(false);
 
   // Force the full desktop layout when the page is rendered for a server-side
   // screenshot (?screenshot=1), regardless of the headless viewport width.
@@ -852,6 +856,7 @@ export default function Compare() {
     leftFrameReadyRef.current = false;
     rightFrameReadyRef.current = false;
     setDiffMapReady(false);
+    setDiffCityLabelsReady(false);
     if (typeof document !== "undefined") {
       document.documentElement.removeAttribute("data-compare-ready");
     }
@@ -892,9 +897,9 @@ export default function Compare() {
     clearCompareReadySignal,
   ]);
 
-  // Diff-mode four-step readiness gate: left fetched, right fetched, compute
-  // done (all from useCompareDiff), plus the diff MapCanvas rendered + idle.
-  // Fail closed — only set when all four are simultaneously true.
+  // Diff-mode readiness gate: left fetched, right fetched, compute done (all
+  // from useCompareDiff), the diff MapCanvas rendered + idle, and city value
+  // labels applied. Fail closed — only set when all are simultaneously true.
   useEffect(() => {
     if (!isScreenshotMode || mode !== "diff") {
       return;
@@ -904,10 +909,11 @@ export default function Compare() {
       && diff.readySteps.rightFetched
       && diff.readySteps.computeDone
       && diffMapReady
+      && diffCityLabelsReady
     ) {
       document.documentElement.setAttribute("data-compare-ready", "1");
     }
-  }, [isScreenshotMode, mode, diff.readySteps, diffMapReady]);
+  }, [isScreenshotMode, mode, diff.readySteps, diffMapReady, diffCityLabelsReady]);
 
   // Track desktop vs mobile so the split width / divider only apply >= 768px.
   const [isDesktop, setIsDesktop] = useState(() => {
@@ -941,12 +947,47 @@ export default function Compare() {
   const selectionStateRef = useRef({ lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, mode });
   selectionStateRef.current = { lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, mode };
 
+  // Camera to apply to each map when it becomes ready. The compare maps
+  // historically initialized at the region fit and IGNORED the permalink
+  // lat/lon/z — shared links (and headless share renders) opened at a
+  // different extent than the sender's view; at 1280×720 the region fit sits
+  // below the city-label min zoom, so server diff screenshots had no city
+  // values. Explicit = the permalink carried coords, or the user has panned.
+  const hasExplicitCameraRef = useRef(
+    initial.lat != null && initial.lon != null && initial.z != null,
+  );
+  const cameraStateRef = useRef({ lat, lon, z });
+  cameraStateRef.current = { lat, lon, z };
+
+  // Consumed by MapCanvas's one-shot region-fit effect (manualLocationJumpRef):
+  // when set, the fit that runs after load is skipped once, so the camera
+  // applied at map-ready wins. One ref per MapCanvas instance — the effect
+  // consumes the flag, so panels must not share one.
+  const leftRegionFitSuppressRef = useRef(false);
+  const rightRegionFitSuppressRef = useRef(false);
+  const diffRegionFitSuppressRef = useRef(false);
+
+  const applyCameraToMap = useCallback((map: MapLibreMap, suppressRef: { current: boolean }) => {
+    if (!hasExplicitCameraRef.current) {
+      return;
+    }
+    const camera = cameraStateRef.current;
+    if (!Number.isFinite(camera.lat) || !Number.isFinite(camera.lon) || !Number.isFinite(camera.z)) {
+      return;
+    }
+    suppressRef.current = true;
+    isSyncingRef.current = true;
+    map.jumpTo({ center: [camera.lon, camera.lat], zoom: camera.z });
+    isSyncingRef.current = false;
+  }, []);
+
   // Commit the viewport (from whichever map emitted moveend) to state + URL.
   const handleMapMoveEnd = useCallback((map: MapLibreMap) => {
     const center = map.getCenter();
     const nextLat = center.lat;
     const nextLon = center.lng;
     const nextZ = map.getZoom();
+    hasExplicitCameraRef.current = true;
     setLat(nextLat);
     setLon(nextLon);
     setZ(nextZ);
@@ -1011,17 +1052,19 @@ export default function Compare() {
     (map: MapLibreMap) => {
       leftMapSyncCleanupRef.current?.();
       leftMapRef.current = map;
+      applyCameraToMap(map, leftRegionFitSuppressRef);
       leftMapSyncCleanupRef.current = attachSyncedMapListeners(map, () => rightMapRef.current);
     },
-    [attachSyncedMapListeners],
+    [applyCameraToMap, attachSyncedMapListeners],
   );
   const handleRightMapReady = useCallback(
     (map: MapLibreMap) => {
       rightMapSyncCleanupRef.current?.();
       rightMapRef.current = map;
+      applyCameraToMap(map, rightRegionFitSuppressRef);
       rightMapSyncCleanupRef.current = attachSyncedMapListeners(map, () => leftMapRef.current);
     },
-    [attachSyncedMapListeners],
+    [applyCameraToMap, attachSyncedMapListeners],
   );
 
   useEffect(() => {
@@ -1038,12 +1081,16 @@ export default function Compare() {
   const handleDiffMapReady = useCallback(
     (map: MapLibreMap) => {
       leftMapRef.current = map;
+      applyCameraToMap(map, diffRegionFitSuppressRef);
       attachSyncedMapListeners(map, () => null);
     },
-    [attachSyncedMapListeners],
+    [applyCameraToMap, attachSyncedMapListeners],
   );
   const handleDiffMapRenderReady = useCallback(() => {
     setDiffMapReady(true);
+  }, []);
+  const handleDiffCityLabelsReady = useCallback(() => {
+    setDiffCityLabelsReady(true);
   }, []);
 
   // Repaint-then-read capture (share overhaul Phase 1): the compare maps run
@@ -1147,6 +1194,12 @@ export default function Compare() {
       return;
     }
     window.__cartoskyCompareCapture = captureComparePng;
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__cartoskyCompareMaps = {
+        get left() { return leftMapRef.current; },
+        get right() { return rightMapRef.current; },
+      };
+    }
     return () => {
       delete window.__cartoskyCompareCapture;
     };
@@ -1645,6 +1698,7 @@ export default function Compare() {
             showLegend={showLegends}
             onMapReady={handleLeftMapReady}
             onFirstFrameReady={handleLeftFirstFrameReady}
+            manualLocationJumpRef={leftRegionFitSuppressRef}
             onMapHover={handleLeftHover}
             onMapHoverEnd={handleHoverEnd}
             resolvedRun={leftLoader.resolvedRun}
@@ -1719,6 +1773,7 @@ export default function Compare() {
             showLegend={showLegends}
             onMapReady={handleRightMapReady}
             onFirstFrameReady={handleRightFirstFrameReady}
+            manualLocationJumpRef={rightRegionFitSuppressRef}
             onMapHover={handleRightHover}
             onMapHoverEnd={handleHoverEnd}
             resolvedRun={rightLoader.resolvedRun}
@@ -1762,6 +1817,8 @@ export default function Compare() {
               error={diff.error}
               onMapReady={handleDiffMapReady}
               onDiffMapReady={handleDiffMapRenderReady}
+              onCityLabelsReady={handleDiffCityLabelsReady}
+              manualLocationJumpRef={diffRegionFitSuppressRef}
               onMapHover={handleDiffHover}
               onMapHoverEnd={handleHoverEnd}
             />

@@ -36,6 +36,10 @@ export type CompareDiffPanelProps = {
   onMapReady?: (map: MapLibreMap) => void;
   /** Fires once the diff frame has rendered + map is idle (readiness gate step 4). */
   onDiffMapReady?: () => void;
+  /** Fires once city value labels are applied (readiness gate step 5 in screenshot mode). */
+  onCityLabelsReady?: () => void;
+  /** Pass-through to MapCanvas: skips the one-shot region fit after load. */
+  manualLocationJumpRef?: { current: boolean };
   onMapHover?: (lat: number, lon: number, x: number, y: number) => void;
   onMapHoverEnd?: () => void;
 };
@@ -55,6 +59,8 @@ export function CompareDiffPanel({
   error,
   onMapReady,
   onDiffMapReady,
+  onCityLabelsReady,
+  manualLocationJumpRef,
   onMapHover,
   onMapHoverEnd,
 }: CompareDiffPanelProps) {
@@ -174,6 +180,8 @@ export function CompareDiffPanel({
         basemapMode={basemapMode}
         onMapReady={handleMapReady}
         onGridFrameReady={handleGridFrameReady}
+        onCityLabelsReady={onCityLabelsReady}
+        manualLocationJumpRef={manualLocationJumpRef}
         onMapHover={mapHoverHandler}
         onMapHoverEnd={onMapHoverEnd}
       />

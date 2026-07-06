@@ -208,6 +208,16 @@ component specs — a much larger blast radius for the same output.
 
 | # | Decision | Recommendation | Approved? |
 |---|----------|----------------|-----------|
-| D6 | Derived member variables via Option A (member-sequential derive + bundled multi-field fetch in members.py, hint-parameterized semantics, production-parity test required) | Yes | ☐ |
+| D6 | Derived member variables via Option A (member-sequential derive + bundled multi-field fetch in members.py, hint-parameterized semantics, production-parity test required) | Yes | **APPROVED (Brian, 2026-07-06)** — implemented same day; parity tests pin the member step math to the production derive strategies |
 
-*Document version: 2026-07-06 (draft → approved same day with review tweaks: D1 API-probe note, D3 clarification, D5 bundling prerequisite; Section 12 addendum added pending D6).*
+Implementation notes recorded post-D6 (2026-07-06): cumulative state accumulates in
+target-grid (warped) space — bilinear warping is linear, so accumulating warped
+steps equals warping the accumulated sum up to nodata-edge effects; this is what
+makes the approved decode-based resume rebase possible and halves the warp count.
+The member APCP search pattern is deliberately NOT end-anchored (member idx lines
+carry an ENS suffix, unlike deterministic GFS lines — a silent-mismatch trap).
+A bundle failure at a cumulative step aborts that member's remaining fhs for the
+pass (the chain cannot continue past a missing step); the next pass rebases and
+continues.
+
+*Document version: 2026-07-06 (draft → approved same day with review tweaks: D1 API-probe note, D3 clarification, D5 bundling prerequisite; Section 12 addendum approved and implemented same day).*

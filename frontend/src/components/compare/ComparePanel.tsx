@@ -28,6 +28,8 @@ type ComparePanelProps = {
   showLegend: boolean;
   onMapReady: (map: maplibregl.Map) => void;
   onFirstFrameReady?: () => void;
+  /** Pass-through to MapCanvas: skips the one-shot region fit after load. */
+  manualLocationJumpRef?: { current: boolean };
   onMapHover?: (lat: number, lon: number, x: number, y: number) => void;
   onMapHoverEnd?: () => void;
   // Derived from loader in parent — no loader runs inside this component
@@ -64,6 +66,7 @@ export function ComparePanel({
   showLegend,
   onMapReady,
   onFirstFrameReady,
+  manualLocationJumpRef,
   onMapHover,
   onMapHoverEnd,
   resolvedRun,
@@ -254,6 +257,7 @@ export function ComparePanel({
         basemapMode={basemapMode}
         onMapReady={handleMapReady}
         onGridFrameReady={handleGridFrameReady}
+        manualLocationJumpRef={manualLocationJumpRef}
         onMapHover={onMapHover ? (lat, lon, x, y) => onMapHover(lat, lon, x, y) : undefined}
         onMapHoverEnd={onMapHoverEnd}
       />
