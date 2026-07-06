@@ -44,6 +44,10 @@ const SCREENSHOT_MODE =
   typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).get("screenshot") === "1";
 export type MapCaptureFormat = "draft" | "png";
+// City-label retry budget for the no-fallback-sampler mismatch case (compare
+// maps): 10 × 250ms ≈ 2.5s before giving up and proceeding without values.
+const CITY_LABEL_FALLBACK_MAX_RETRIES = 10;
+const CITY_LABEL_FALLBACK_RETRY_MS = 250;
 const CARTO_TILE_SUFFIX = IS_HIDPI ? "@2x" : "";
 const CARTO_TILE_SIZE = 256;
 
@@ -1506,6 +1510,10 @@ export function MapCanvas({
   // Per-selection latch: fire onCityLabelsReady once per selection (reset on
   // selectionKey change), same pattern as App's gridFrameReadyRef.
   const cityLabelsReadyFiredRef = useRef(false);
+  // Bounded retry budget for the no-fallback-sampler mismatch case (compare
+  // maps); reset per selection and on the first direct sampling outcome.
+  const cityLabelFallbackRetriesRef = useRef(0);
+  const scheduleCityLabelRefreshRef = useRef<() => void>(() => {});
   const [vectorCacheRevision, setVectorCacheRevision] = useState(0);
   const [pressureCenterScreenLabels, setPressureCenterScreenLabels] = useState<PressureCenterScreenLabel[]>([]);
 
@@ -2014,6 +2022,7 @@ export function MapCanvas({
       sampled: citySampled,
     });
     if (outcome.kind === "direct") {
+      cityLabelFallbackRetriesRef.current = 0;
       updateCityValueLabels(
         map,
         cityPoints,
@@ -2026,12 +2035,24 @@ export function MapCanvas({
       const fallback = onCityFrameSampledRef.current;
       if (fallback) {
         fallback(outcome.payload);
+        // Frame bytes may be evicted while the texture is still visible — proceed
+        // without city values rather than hanging server screenshot capture.
+        markCityLabelsReady();
+      } else if (cityLabelFallbackRetriesRef.current < CITY_LABEL_FALLBACK_MAX_RETRIES) {
+        // No fallback sampler (compare maps): the mismatch is usually a boot
+        // transient (sampler still keyed to a prior compute/selection). Retry
+        // briefly instead of marking ready — marking here is what let headless
+        // diff captures pass the readiness gate without city values.
+        cityLabelFallbackRetriesRef.current += 1;
+        window.setTimeout(() => {
+          scheduleCityLabelRefreshRef.current();
+        }, CITY_LABEL_FALLBACK_RETRY_MS);
       } else {
+        // Retries exhausted (e.g. genuinely evicted frame bytes) — proceed
+        // without city values rather than hanging the capture.
         clearCityValueLabels(map);
+        markCityLabelsReady();
       }
-      // Frame bytes may be evicted while the texture is still visible — proceed
-      // without city values rather than hanging server screenshot capture.
-      markCityLabelsReady();
     }
   }, []);
 
@@ -2044,6 +2065,7 @@ export function MapCanvas({
       refreshCityValueLabels();
     });
   }, [refreshCityValueLabels]);
+  scheduleCityLabelRefreshRef.current = scheduleCityLabelRefresh;
 
   const emitGridFrameVisible = useCallback((
     payload: GridFrameVisiblePayload,
@@ -3178,6 +3200,7 @@ export function MapCanvas({
     }
     latestCitySamplingRef.current = null;
     cityLabelsReadyFiredRef.current = false;
+    cityLabelFallbackRetriesRef.current = 0;
     clearCityValueLabels(map);
     if (shouldRefreshCityLabelsAfterSelectionReset({
       cityLabelMode: cityLabelModeRef.current,
