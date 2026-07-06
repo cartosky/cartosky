@@ -88,6 +88,7 @@ class ScreenshotService:
         error_type: str | None = None
         gate_log: list | None = None
         png_size: int | None = None
+        capture_mode: str | None = None
         try:
             browser = await self._ensure_browser()
             context = await browser.new_context(
@@ -197,14 +198,36 @@ class ScreenshotService:
                     await page.wait_for_timeout(150)
                     marks["settled"] = time.monotonic()
 
-                    data_url = await page.evaluate(
-                        """() => {
-                            const canvas = document.querySelector(
-                                'div[role="img"][aria-label="Weather map"] canvas'
-                            );
-                            return canvas ? canvas.toDataURL('image/png') : null;
+                    # Prefer the viewer's repaint-then-read capture hook: a cold
+                    # toDataURL() reads a cleared drawing buffer once the frame
+                    # has been presented (preserveDrawingBuffer is off), which
+                    # was the confirmed blank-capture root cause. The cold read
+                    # remains as a fallback for older frontend bundles.
+                    capture_result = await page.evaluate(
+                        """async () => {
+                            const coldRead = () => {
+                                const canvas = document.querySelector(
+                                    'div[role="img"][aria-label="Weather map"] canvas'
+                                );
+                                return canvas ? canvas.toDataURL('image/png') : null;
+                            };
+                            const hook = window.__cartoskyViewerCapture;
+                            if (typeof hook === 'function') {
+                                try {
+                                    const viaHook = await Promise.race([
+                                        hook(),
+                                        new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+                                    ]);
+                                    if (typeof viaHook === 'string' && viaHook.startsWith('data:image/png')) {
+                                        return { dataUrl: viaHook, mode: 'repaint_hook' };
+                                    }
+                                } catch {}
+                            }
+                            return { dataUrl: coldRead(), mode: 'cold_read' };
                         }"""
                     )
+                    data_url = (capture_result or {}).get("dataUrl")
+                    capture_mode = (capture_result or {}).get("mode")
 
                 if not data_url or not data_url.startswith("data:image/png;base64,"):
                     raise ValueError("Canvas data URL not available")
@@ -234,6 +257,7 @@ class ScreenshotService:
                 error_type=error_type,
                 gate_log=gate_log,
                 png_size=png_size,
+                capture_mode=capture_mode,
             )
 
     def _record_render(
@@ -249,6 +273,7 @@ class ScreenshotService:
         error_type: str | None,
         gate_log: list | None = None,
         png_size: int | None = None,
+        capture_mode: str | None = None,
     ) -> None:
         """Emit the structured timing log line, Prometheus metrics, and ring-buffer entry."""
 
@@ -273,7 +298,8 @@ class ScreenshotService:
         )
         line = (
             f"screenshot phase_timings path={path} queue_depth={queue_depth} "
-            f"{fields} bytes={png_size if png_size is not None else 'n/a'} url={truncated_url}"
+            f"{fields} bytes={png_size if png_size is not None else 'n/a'} "
+            f"capture_mode={capture_mode if capture_mode is not None else 'n/a'} url={truncated_url}"
         )
         if error_type is not None:
             logger.warning("%s error=%s", line, error_type)
@@ -315,6 +341,7 @@ class ScreenshotService:
                 "phases": {phase: phases[phase] for phase in _SCREENSHOT_PHASES},
                 "gate_log": gate_log,
                 "png_size": png_size,
+                "capture_mode": capture_mode,
             }
         )
 

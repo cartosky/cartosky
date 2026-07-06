@@ -2420,8 +2420,35 @@ export function MapCanvas({
     };
     onCaptureDraftRef.current?.(captureDraftDataUrl);
 
+    // Headless capture hook: screenshot_service.py calls this instead of a
+    // cold canvas.toDataURL(), which reads a cleared drawing buffer once the
+    // compositor has presented the frame (confirmed blank-capture root cause).
+    const screenshotMode =
+      new URLSearchParams(window.location.search).get("screenshot") === "1";
+    if (screenshotMode) {
+      window.__cartoskyViewerCapture = (): Promise<string | null> => {
+        const map = mapRef.current;
+        if (!map) {
+          return Promise.resolve(null);
+        }
+        return new Promise((resolve) => {
+          map.once("render", () => {
+            try {
+              resolve(map.getCanvas().toDataURL("image/png"));
+            } catch {
+              resolve(null);
+            }
+          });
+          map.triggerRepaint();
+        });
+      };
+    }
+
     return () => {
       onCaptureDraftRef.current?.(null);
+      if (screenshotMode) {
+        delete window.__cartoskyViewerCapture;
+      }
     };
   }, []);
 

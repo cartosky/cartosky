@@ -111,10 +111,12 @@ function enrichPayload<T extends TelemetryBase>(payload: T): T & {
   viewport_bucket: string;
   page: string;
 } {
-  const page =
+  const page = (
     typeof window === "undefined"
       ? "/"
-      : `${window.location.pathname}${window.location.search || ""}`;
+      : `${window.location.pathname}${window.location.search || ""}`
+  // Backend TelemetryEventBase caps page at 120 chars; longer values 400 the whole payload.
+  ).slice(0, 120);
   return {
     ...payload,
     session_id: payload.session_id || getTelemetrySessionId(),
