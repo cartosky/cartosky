@@ -2499,15 +2499,24 @@ def product_hour_has_any_idx(
                     source="readiness_probe_exception",
                 )
                 continue
-            logger.debug(
-                "Herbie readiness probe failed (%s %s fh%03d; priority=%s): %s",
+            # Fail CLOSED: an unclassified probe error must never be read as
+            # "run exists". This branch previously returned True, which let a
+            # NOMADS 403 block / herbie's azure KeyError('href') invent a
+            # phantom run 90 minutes early (2026-07-06 incident): the
+            # scheduler camped on the nonexistent cycle, hammering upstream
+            # and stalling downstream work, until the real run arrived. A
+            # probe that cannot verify a run reports it not-ready and lets
+            # the next poll retry; the build path already handles late
+            # discovery gracefully.
+            logger.warning(
+                "Herbie readiness probe errored (%s %s fh%03d; priority=%s): %s — treating as not ready",
                 model_id,
                 product,
                 int(fh),
                 priority,
-                exc,
+                f"{type(exc).__name__}: {exc}",
             )
-            return True
+            continue
         if not idx_ref:
             if allow_grib_without_idx and getattr(H, "grib", None):
                 logger.info(

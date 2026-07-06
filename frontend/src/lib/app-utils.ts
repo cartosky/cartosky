@@ -20,7 +20,7 @@ import type {
 } from "@/lib/api";
 import { readCapabilityRenderSubstrates } from "@/lib/api";
 import type { LegendPayload } from "@/components/map-legend";
-import type { SharePayload } from "@/components/twf-share-modal";
+import type { SharePayload } from "@/components/share/share-utils";
 import type { BasemapMode } from "@/components/map-canvas";
 import type { WeatherSubstrate } from "@/lib/config";
 import {

@@ -5,7 +5,7 @@ import { AlertCircle } from "lucide-react";
 import { BottomForecastControls } from "@/components/bottom-forecast-controls";
 import { MapCanvas, type BasemapMode, type MapCaptureFormat, type VectorHazardSelection } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
-import type { SharePayload } from "@/components/twf-share-modal";
+import type { SharePayload } from "@/components/share/share-utils";
 import { ViewerSiteHeaderFallback } from "@/components/ViewerSiteHeaderFallback";
 
 const ViewerSiteHeader = lazy(() => import("@/components/ViewerSiteHeader"));
@@ -150,8 +150,8 @@ import {
   type AnchorBatchRequestContext,
 } from "@/lib/app-utils";
 
-const TwfShareModal = lazy(() =>
-  import("@/components/twf-share-modal").then((module) => ({ default: module.TwfShareModal }))
+const ShareModal = lazy(() =>
+  import("@/components/share/ShareModal").then((module) => ({ default: module.ShareModal }))
 );
 const NwsCityModal = lazy(() =>
   import("@/components/nws-city-modal").then((module) => ({ default: module.NwsCityModal }))
@@ -5701,7 +5701,7 @@ export default function App() {
 
       {isShareModalOpen ? (
         <Suspense fallback={null}>
-          <TwfShareModal
+          <ShareModal
             open={isShareModalOpen}
             onClose={() => setIsShareModalOpen(false)}
             payload={sharePayload}

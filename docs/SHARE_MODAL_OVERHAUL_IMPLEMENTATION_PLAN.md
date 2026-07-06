@@ -1,6 +1,6 @@
 # Share Modal Overhaul & GIF Export — Implementation Plan
 
-**Status:** Phase 1 implemented (2026-07-06) — gate verification pending. Landed: live-canvas capture as the signed-out image path (compose-only exporter; offscreen rebuild deleted), Download / Copy image / native Share signed-out, compare-path repaint-hook capture (split + diff, server hook and signed-out local share), exporter anchor-chip compositing deleted (root cause of overlapping/cut-off city labels — see §3.4), `fadeDuration: 0` in screenshot mode. Signed-in flow unchanged (server render = TWF post artifact, preview-as-artifact holds until Phase 2 tabs). Phase 0 complete: blank-capture root cause (cold WebGL read-back) confirmed and fixed via `window.__cartoskyViewerCapture`; analytics channels verified in Mixpanel.
+**Status:** Phase 2 implemented (2026-07-06) — gate (prod TWF posting flow) pending. Phase 1 complete: gate passed on prod (signed-out image path, compare capture, city-label/divider/crop/diff-values fixes all verified by Brian). Landed: live-canvas capture as the signed-out image path (compose-only exporter; offscreen rebuild deleted), Download / Copy image / native Share signed-out, compare-path repaint-hook capture (split + diff, server hook and signed-out local share), exporter anchor-chip compositing deleted (root cause of overlapping/cut-off city labels — see §3.4), `fadeDuration: 0` in screenshot mode. Signed-in flow unchanged (server render = TWF post artifact, preview-as-artifact holds until Phase 2 tabs). Phase 0 complete: blank-capture root cause (cold WebGL read-back) confirmed and fixed via `window.__cartoskyViewerCapture`; analytics channels verified in Mixpanel.
 **Priority:** GIF export is the highest-priority busy-season feature (October feature freeze target). The anonymous image path (Phase 1) is a prerequisite for GIF and the primary share-funnel fix.
 **Owner:** Brian Austin (sole production operator). Implementation via Codex/Claude Code agents; Brian executes all production commands and verifies each phase gate before the next proceeds.
 
@@ -158,9 +158,10 @@ Each phase is a separate agent implementation prompt with: explicit execution-mo
 
 **Gate:** signed-out user on prod gets a correct data image in <~2s p90 with zero authenticated requests. Screenshot regression pass across: grid variables, RGB/satellite, compare mode, SPC/CPC categorical legends, observed-mode products, portrait mobile.
 
-### Phase 2 — Modal restructure
-- Tabs + hook extraction: `ShareModal` shell, `useScreenshotCapture`, `useTwfPosting` (owns forum/topic/prefs logic unchanged), `useGifExport` (stub).
-- TWF composer moved into Image tab as destination section; Link tab.
+### Phase 2 — Modal restructure (implemented 2026-07-06, gate pending)
+- [x] Tabs + hook extraction: `components/share/` now holds `ShareModal.tsx` (shell), `useScreenshotCapture.ts`, `useTwfPosting.ts` (forum/topic/prefs/submit logic moved verbatim — dep arrays untouched), `useGifExport.ts` (stub), `share-utils.ts` (types + pure helpers). `twf-share-modal.tsx` deleted; App/compare mounts updated.
+- [x] TWF composer moved into the Image tab as a "Post to The Weather Forums" destination section (linked users); everyone else sees the quiet one-row connect prompt — never blocking Download/Copy/Share. Link tab = copy link / copy text+link (replaces the old bottom Copy menu). GIF tab renders the stub; hidden on /compare (`gifTabEnabled={false}`, per §7 open decision).
+- Note: the old single open-reset effect was split per-hook with identical open-transition guards; `share_initiated` still fires once per open. Playwright coverage of posting is thin (share-button reachability only), so the prod gate below is the real regression check.
 
 **Gate:** full TWF post flow (existing topic, new topic, forum switching, prefs persistence, rate-limit handling) verified against prod TWF. No behavior change in posting.
 

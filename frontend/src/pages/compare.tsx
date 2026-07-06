@@ -11,7 +11,7 @@ import CompareModeToggle, { type CompareMode } from "@/components/compare/Compar
 import CompareMobileSummaryBar from "@/components/compare/CompareMobileSummaryBar";
 import CompareMobileDrawer from "@/components/compare/CompareMobileDrawer";
 import { CompareTooltip } from "@/components/compare/CompareTooltip";
-import { TwfShareModal, type SharePayload } from "@/components/twf-share-modal";
+import { ShareModal, type SharePayload } from "@/components/share/ShareModal";
 import type { BasemapMode } from "@/components/map-canvas";
 import type { ScreenshotExportState } from "@/lib/screenshot_export";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -1913,12 +1913,13 @@ export default function Compare() {
       , document.body) : null}
 
       {shareOpen ? (
-        <TwfShareModal
+        <ShareModal
           open={shareOpen}
           onClose={() => setShareOpen(false)}
           payload={sharePayload}
           buildScreenshotState={buildShareScreenshotState}
           captureMapPng={captureComparePng}
+          gifTabEnabled={false}
         />
       ) : null}
 
