@@ -3048,34 +3048,97 @@ def _variable_units(model: str, var: str, sidecar_units: str | None) -> str:
     return ""
 
 
-# Whether this module's payload builder can emit per-member series. The
-# member pipeline's Phase 3 publishes member frames and repoints the probe
-# below at the ensemble.members descriptor (Phase 2 design D1 — the old
-# supported_views probe would have returned 400 forever), but the meteogram
-# payload itself gains member series only in Phase 5. Until then this stays
-# False so include_members=true is honestly rejected instead of silently
-# returning a mean-only payload. Phase 5 flips this constant — no probe
-# rework needed.
-_MEMBER_SERIES_PAYLOAD_SUPPORTED = False
+# Whether this module's payload builder can emit per-member series. Flipped
+# to True with the Phase 5 backend (member series sampled from member grid
+# binaries via the seek sampler); kept as an explicit kill switch for the
+# member payload path independent of member publishing.
+_MEMBER_SERIES_PAYLOAD_SUPPORTED = True
 
 
 def _model_supports_members(model: str) -> bool:
     """Does this model publish per-member data the meteogram can serve?
 
-    Reads the ensemble.members descriptor on the model's capability catalog
-    (member pipeline Phase 2 design R7/D1) — supported_views intentionally
-    stays ["mean"] and is not consulted.
+    Requires the ensemble.members descriptor on the model's capability
+    catalog (member pipeline Phase 2 design R7/D1 — supported_views
+    intentionally stays ["mean"] and is not consulted) AND the model on the
+    binary-sampling allowlist: member frames exist only as grid binaries, so
+    a model on the COG path has no substrate to serve them from.
     """
     if not _MEMBER_SERIES_PAYLOAD_SUPPORTED:
+        return False
+    normalized = str(model or "").strip().lower()
+    if normalized not in config.binary_sampling_models():
         return False
     try:
         from ..models.base import ensemble_member_descriptors
         from ..models.registry import get_model
 
-        plugin = get_model(model)
+        plugin = get_model(normalized)
         return bool(ensemble_member_descriptors(plugin))
     except Exception:
         return False
+
+
+def _member_series_for_model_var(
+    model: str,
+    run_id: str,
+    var: str,
+    *,
+    lat: float,
+    lon: float,
+    region: str | None,
+    mean_result: dict[str, Any],
+) -> dict[str, Any] | None:
+    """``variables[var]["members"]`` block per the Model Guidance Section 7
+    contract: ``{"mean": {...}, "control": {...}, "m01": {...}, ...}``.
+
+    Returns None when the variable carries no member descriptor (the caller
+    omits the key — e.g. a requested variable without member publishing).
+    The "mean" entry reuses the already-sampled main series. Member series
+    are sampled from the member grid binaries via the seek sampler (one-pixel
+    reads — the fan-out is members × fhs frames per variable), using the MEAN
+    series' forecast hours as the candidate frame list: member vars are not
+    registered in the run manifest (they are metadata under the canonical var
+    — design R7), members share the mean's schedule, and an individually
+    absent member frame simply drops out via ``present=False``. Member
+    ``valid_time`` reuses the mean point's (identical by construction), with
+    run_id + fh as the fallback.
+    """
+    mean_points = mean_result.get("points") or []
+    if not mean_points:
+        return None
+    try:
+        from ..models.base import ensemble_member_descriptors, ensemble_member_ids
+        from ..models.registry import get_model
+
+        plugin = get_model(model)
+        canonical = plugin.normalize_var_id(var)
+        descriptor = ensemble_member_descriptors(plugin).get(canonical)
+    except Exception:
+        logger.exception("Member descriptor resolution failed: %s/%s", model, var)
+        return None
+    if not descriptor:
+        return None
+
+    run_dt = parse_run_id_datetime(run_id)
+    candidate_frames: list[tuple[int, str | None]] = [
+        (int(point["fh"]), point.get("valid_time")) for point in mean_points
+    ]
+    members_block: dict[str, Any] = {"mean": {"points": mean_result.get("points")}}
+    for member in ensemble_member_ids(descriptor):
+        member_var = f"{canonical}__{member}"
+        points: list[dict[str, Any]] = []
+        for fh, valid_time in candidate_frames:
+            present, value = sampling.sample_binary_value_seek(
+                model, run_id, member_var, fh, lat=lat, lon=lon, region=region,
+            )
+            if not present:
+                continue
+            if valid_time is None and run_dt is not None:
+                valid_time = _isoformat(run_dt + timedelta(hours=int(fh)))
+            points.append({"fh": fh, "valid_time": valid_time, "value": value})
+        members_block[member] = {"points": points or None}
+    return members_block
 
 
 def get_forecast_meteogram(
@@ -3208,6 +3271,7 @@ def get_forecast_meteogram(
             # matches the COG assembly below, so status/series handling is
             # shared. Non-allowlisted models in the same request still take the
             # COG fan-out.
+            attach_members = include_members and _model_supports_members(model)
             for var in norm_vars:
                 result = _sample_variable_series_binary(
                     model, run_id, var, lat=lat, lon=lon, region=region
@@ -3217,6 +3281,13 @@ def get_forecast_meteogram(
                     vars_with_values_by_model[model] = (
                         vars_with_values_by_model.get(model, 0) + 1
                     )
+                if attach_members and points:
+                    members_block = _member_series_for_model_var(
+                        model, run_id, var,
+                        lat=lat, lon=lon, region=region, mean_result=result,
+                    )
+                    if members_block is not None:
+                        result["members"] = members_block
                 var_results_by_model.setdefault(model, {})[var] = result
             continue
         for var in norm_vars:

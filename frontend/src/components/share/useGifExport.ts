@@ -46,8 +46,41 @@ type WorkerOutMessage =
 const GIF_OUTPUT_WIDTH = 720;
 const GIF_FRAME_CAP_DESKTOP = 60;
 const GIF_FRAME_CAP_MOBILE = 30;
-const GIF_FRAME_DELAY_MS = 200;
+const GIF_DEFAULT_FRAME_DELAY_MS = 200;
 const GIF_END_HOLD_MS = 1200;
+// GIF frames render at 720px/pixelRatio 1; the still exporter's width-derived
+// chrome scale (720/1280 ≈ 0.56) leaves overlay/logo/legend small and blurry.
+const GIF_CHROME_SCALE_FLOOR = 0.8;
+
+/** User-tunable generation settings (GIF tab controls). */
+export type GifExportSettings = {
+  /** First forecast hour to include; null = first available. */
+  startHour: number | null;
+  /** Last forecast hour to include; null = last available. */
+  endHour: number | null;
+  /** Per-frame delay in ms (speed control). */
+  delayMs: number;
+};
+
+export const GIF_SPEED_PRESETS: Array<{ id: string; label: string; delayMs: number }> = [
+  { id: "slow", label: "Slow", delayMs: 350 },
+  { id: "normal", label: "Normal", delayMs: GIF_DEFAULT_FRAME_DELAY_MS },
+  { id: "fast", label: "Fast", delayMs: 120 },
+];
+
+const DEFAULT_GIF_SETTINGS: GifExportSettings = {
+  startHour: null,
+  endHour: null,
+  delayMs: GIF_DEFAULT_FRAME_DELAY_MS,
+};
+
+function applyHourRange(hours: number[], settings: GifExportSettings): number[] {
+  return hours.filter(
+    (hour) =>
+      (settings.startHour === null || hour >= settings.startHour) &&
+      (settings.endHour === null || hour <= settings.endHour),
+  );
+}
 // Rough per-frame size heuristic for the pre-generate estimate (720px map
 // frames typically land 30–60KB after palette encoding).
 const GIF_ESTIMATED_BYTES_PER_FRAME = 45_000;
@@ -88,19 +121,25 @@ export function useGifExport({
   const [gifBlob, setGifBlob] = useState<Blob | null>(null);
   const [gifBlobUrl, setGifBlobUrl] = useState<string | null>(null);
   const [gifFrameCount, setGifFrameCount] = useState(0);
+  const [settings, setSettings] = useState<GifExportSettings>(DEFAULT_GIF_SETTINGS);
 
   const abortedRef = useRef(false);
   const runningRef = useRef(false);
   const workerRef = useRef<Worker | null>(null);
 
-  const available = Boolean(frameDriver) && (frameDriver?.listFrameHours().length ?? 0) >= 2;
+  const availableHours = frameDriver?.listFrameHours() ?? [];
+  const available = Boolean(frameDriver) && availableHours.length >= 2;
+
+  const updateSettings = useCallback((update: Partial<GifExportSettings>) => {
+    setSettings((current) => ({ ...current, ...update }));
+  }, []);
 
   /** Pre-generate summary shown in the idle state (§3.2: estimated size up front). */
   const buildPlan = useCallback((): GifExportPlan | null => {
     if (!frameDriver) {
       return null;
     }
-    const hours = frameDriver.listFrameHours();
+    const hours = applyHourRange(frameDriver.listFrameHours(), settings);
     if (hours.length < 2) {
       return null;
     }
@@ -110,9 +149,9 @@ export function useGifExport({
       frameCount,
       totalHours: hours.length,
       estimatedBytes: frameCount * GIF_ESTIMATED_BYTES_PER_FRAME,
-      playSeconds: ((frameCount - 1) * GIF_FRAME_DELAY_MS + GIF_END_HOLD_MS) / 1000,
+      playSeconds: ((frameCount - 1) * settings.delayMs + GIF_END_HOLD_MS) / 1000,
     };
-  }, [buildScreenshotState, frameDriver]);
+  }, [buildScreenshotState, frameDriver, settings]);
 
   const releaseGif = useCallback(() => {
     setGifBlob(null);
@@ -149,7 +188,7 @@ export function useGifExport({
       setError("Map is still loading. Try again in a moment.");
       return;
     }
-    const hours = frameDriver.listFrameHours();
+    const hours = applyHourRange(frameDriver.listFrameHours(), settings);
     if (hours.length < 2) {
       setStatus("error");
       setError("This selection doesn't have enough frames to animate.");
@@ -223,6 +262,7 @@ export function useGifExport({
           legend,
           overlayLines: buildShareOverlayLines(frameState, legend),
           isMobile: baseState.isMobile,
+          chromeScale: Math.max(dims.width / 1280, GIF_CHROME_SCALE_FLOOR),
         });
         const composeCtx = composeCanvas!.getContext("2d");
         if (!composeCtx) {
@@ -234,7 +274,7 @@ export function useGifExport({
           {
             type: "frame",
             buffer: imageData.data.buffer,
-            delay: isLast ? GIF_END_HOLD_MS : GIF_FRAME_DELAY_MS,
+            delay: isLast ? Math.max(GIF_END_HOLD_MS, settings.delayMs) : settings.delayMs,
             index: written,
           },
           [imageData.data.buffer],
@@ -289,7 +329,7 @@ export function useGifExport({
       workerRef.current = null;
       frameDriver.restore(restoreTarget);
     }
-  }, [buildScreenshotState, frameDriver, getLegend, releaseGif]);
+  }, [buildScreenshotState, frameDriver, getLegend, releaseGif, settings]);
 
   // Abort + release everything when the modal closes or the component unmounts.
   // The in-flight generate() loop notices abortedRef and restores the timeline
@@ -305,6 +345,7 @@ export function useGifExport({
     setStatus("idle");
     setError(null);
     setProgress({ done: 0, total: 0 });
+    setSettings(DEFAULT_GIF_SETTINGS);
   }, [open, releaseGif]);
 
   useEffect(() => {
@@ -316,6 +357,9 @@ export function useGifExport({
 
   return {
     available,
+    availableHours,
+    settings,
+    updateSettings,
     status,
     progress,
     error,

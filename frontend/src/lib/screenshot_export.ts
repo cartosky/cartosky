@@ -1017,6 +1017,10 @@ export type ShareFrameComposeOptions = {
   legend?: LegendPayload | null;
   overlayLines: string[];
   isMobile: boolean;
+  /** Overrides the width-derived scale for overlay/logo/legend chrome. GIF
+   * frames render at 720px with pixelRatio 1, where the default 720/1280
+   * scale makes the chrome small and blurry — a higher floor keeps it crisp. */
+  chromeScale?: number;
 };
 
 /**
@@ -1034,7 +1038,7 @@ export async function composeShareFrame(
   opts: ShareFrameComposeOptions,
 ): Promise<void> {
   const { width, height, pixelRatio } = opts;
-  const scaleFactor = width / NORMALIZED_OUTPUT_WIDTH;
+  const scaleFactor = opts.chromeScale ?? width / NORMALIZED_OUTPUT_WIDTH;
   outputCanvas.width = Math.max(1, Math.round(width * pixelRatio));
   outputCanvas.height = Math.max(1, Math.round(height * pixelRatio));
   const outputCtx = outputCanvas.getContext("2d");

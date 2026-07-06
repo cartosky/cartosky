@@ -263,6 +263,92 @@ def sample_binary_point_value(
     return round(float(value), 1)
 
 
+def read_binary_sample_value_seek(
+    frame_path: Path,
+    meta_path: Path,
+    *,
+    model: str,
+    var: str,
+    lat: float,
+    lon: float,
+) -> tuple[float | None, bool]:
+    """Point sample via a single seek + itemsize-byte read of the frame file.
+
+    Result-identical to :func:`read_binary_sample_value` (pinned by an
+    equality test) but avoids the full-frame read + decode, which matters for
+    the ensemble-member fan-out: ``include_members`` samples members × fhs
+    frames per variable per request (~2,000 for GEFS), where full-frame
+    decodes would dominate the meteogram latency budget. Decode still flows
+    through :func:`_decode_values` on the one-element code array, preserving
+    the migration plan's single decode authority.
+
+    The file size is validated against the meta dims exactly like the
+    full-read path, so a truncated frame raises rather than mis-addressing.
+    """
+    meta = _load_binary_frame_meta(meta_path)
+    row, col = _sample_binary_frame_index(meta, lon=lon, lat=lat)
+    height = int(meta["height"])
+    width = int(meta["width"])
+    if row < 0 or row >= height or col < 0 or col >= width:
+        return None, True
+
+    resolved_dtype, encoded_dtype = _binary_encoded_dtype(model, var)
+    itemsize = int(np.dtype(encoded_dtype).itemsize)
+    expected_size = expected_grid_frame_size_bytes(width=width, height=height, dtype=resolved_dtype)
+    actual_size = Path(frame_path).stat().st_size
+    if actual_size != expected_size:
+        raise ValueError(
+            f"Grid frame byte size mismatch: {frame_path} "
+            f"actual={actual_size} expected={expected_size}"
+        )
+
+    offset = (row * width + col) * itemsize
+    with open(frame_path, "rb") as handle:
+        handle.seek(offset)
+        payload = handle.read(itemsize)
+    if len(payload) != itemsize:
+        raise ValueError(f"Short read at offset {offset} in grid frame: {frame_path}")
+
+    code = np.frombuffer(payload, dtype=encoded_dtype)
+    value = float(_decode_values(code, model=model, var=var)[0])
+    if np.isnan(value):
+        return None, True
+    return value, False
+
+
+def sample_binary_value_seek(
+    model: str,
+    run_id: str,
+    var: str,
+    fh: int,
+    *,
+    lat: float,
+    lon: float,
+    region: str | None = None,
+) -> tuple[bool, float | None]:
+    """Seek-read twin of :func:`sample_binary_value`: same ``(present, value)``
+    shape and rounding, resolved through the same runtime-var path, but reads
+    one pixel instead of the whole frame. Used by the meteogram member
+    fan-out."""
+    resolved = _resolve_binary_grid_frame(model, run_id, var, fh, region=region)
+    if resolved is None:
+        return (False, None)
+    frame_path, meta_path, runtime_var = resolved
+    try:
+        value, no_data = read_binary_sample_value_seek(
+            frame_path,
+            meta_path,
+            model=model,
+            var=runtime_var,
+            lat=lat,
+            lon=lon,
+        )
+        return (True, None if (no_data or value is None) else round(float(value), 1))
+    except Exception:
+        logger.exception("Binary seek sample failed: %s/%s/%s/fh%03d", model, run_id, var, fh)
+        return (True, None)
+
+
 def sample_binary_batch_values(
     frame_path: Path,
     meta_path: Path,

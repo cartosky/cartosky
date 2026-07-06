@@ -23,7 +23,7 @@ import {
   type SharePayload,
   type ShareMode,
 } from "@/components/share/share-utils";
-import { useGifExport, type GifFrameDriver } from "@/components/share/useGifExport";
+import { GIF_SPEED_PRESETS, useGifExport, type GifFrameDriver } from "@/components/share/useGifExport";
 import { useScreenshotCapture } from "@/components/share/useScreenshotCapture";
 import { useTwfPosting } from "@/components/share/useTwfPosting";
 
@@ -853,7 +853,7 @@ export function ShareModal({
                   )}
                 </div>
               ) : (
-                <div className="flex aspect-[16/9] max-h-[220px] w-full flex-col items-center justify-center gap-3 rounded-2xl border border-[rgba(255,255,255,0.08)] bg-gradient-to-br from-[#0d1e35] to-[#0a1628] px-6 text-center">
+                <div className="flex w-full flex-col items-center justify-center gap-3 rounded-2xl border border-[rgba(255,255,255,0.08)] bg-gradient-to-br from-[#0d1e35] to-[#0a1628] px-6 py-6 text-center">
                   <Film className="h-8 w-8 text-cyan-200/70" />
                   {!gif.available ? (
                     <>
@@ -869,6 +869,51 @@ export function ShareModal({
                           {gif.status === "cancelled" ? "GIF generation cancelled." : gif.error}
                         </div>
                       )}
+                      <div className="flex w-full max-w-[360px] flex-col gap-2">
+                        <div className="flex items-center gap-2">
+                          <label className="flex flex-1 flex-col gap-1 text-left">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-white/45">From</span>
+                            <select
+                              value={String(gif.settings.startHour ?? gif.availableHours[0] ?? "")}
+                              onChange={(event) => gif.updateSettings({ startHour: Number(event.target.value) })}
+                              className={fieldClass}
+                            >
+                              {gif.availableHours.map((hour) => (
+                                <option key={hour} value={String(hour)}>FH {hour}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="flex flex-1 flex-col gap-1 text-left">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-white/45">To</span>
+                            <select
+                              value={String(gif.settings.endHour ?? gif.availableHours[gif.availableHours.length - 1] ?? "")}
+                              onChange={(event) => gif.updateSettings({ endHour: Number(event.target.value) })}
+                              className={fieldClass}
+                            >
+                              {gif.availableHours.map((hour) => (
+                                <option key={hour} value={String(hour)}>FH {hour}</option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                        <div className="flex items-center justify-center gap-1.5">
+                          {GIF_SPEED_PRESETS.map((preset) => (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              onClick={() => gif.updateSettings({ delayMs: preset.delayMs })}
+                              className={[
+                                "inline-flex h-7 flex-1 items-center justify-center rounded-md px-2.5 text-xs font-medium transition-colors",
+                                gif.settings.delayMs === preset.delayMs
+                                  ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
+                                  : "bg-white/[0.07] text-white/70 hover:bg-white/[0.11]",
+                              ].join(" ")}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       {(() => {
                         const plan = gif.buildPlan();
                         return plan ? (
@@ -878,11 +923,16 @@ export function ShareModal({
                             {" · 720px wide · ~"}
                             {(plan.estimatedBytes / (1024 * 1024)).toFixed(1)} MB · ~{Math.round(plan.playSeconds)}s loop
                           </div>
-                        ) : null;
+                        ) : (
+                          <div className="max-w-[320px] text-xs leading-relaxed text-red-200/80">
+                            Pick a range with at least two frames.
+                          </div>
+                        );
                       })()}
                       <button
                         type="button"
                         onClick={() => { void gif.generate(); }}
+                        disabled={!gif.buildPlan()}
                         className={primaryButtonClass}
                       >
                         <Film className="h-4 w-4" />

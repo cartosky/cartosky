@@ -704,18 +704,49 @@ def test_member_publish_models_env(monkeypatch) -> None:
     assert member_publish_models() == frozenset({"gefs", "eps"})
 
 
-# ── D1: meteogram members probe ──────────────────────────────────────
-def test_meteogram_probe_gated_until_phase5(monkeypatch) -> None:
+# ── D1/Phase 5: meteogram members probe ──────────────────────────────
+def test_meteogram_probe_requires_allowlist_and_descriptor(monkeypatch) -> None:
     from backend.app.services import forecast_page
 
-    # Payload support off (current state): probe is False even though the
-    # GEFS descriptor exists — include_members stays honestly rejected.
-    assert forecast_page._MEMBER_SERIES_PAYLOAD_SUPPORTED is False
+    # Phase 5 backend is live: the payload can serve member series.
+    assert forecast_page._MEMBER_SERIES_PAYLOAD_SUPPORTED is True
+
+    # Not on the binary-sampling allowlist -> unsupported even with a
+    # descriptor (member frames exist only as grid binaries).
+    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS", raising=False)
     assert forecast_page._model_supports_members("gefs") is False
 
-    # Phase 5 flips the constant: descriptor-bearing models become supported,
-    # descriptor-less models stay unsupported. No probe rework needed.
-    monkeypatch.setattr(forecast_page, "_MEMBER_SERIES_PAYLOAD_SUPPORTED", True)
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs,gfs")
     assert forecast_page._model_supports_members("gefs") is True
-    assert forecast_page._model_supports_members("gfs") is False
-    assert forecast_page._model_supports_members("hrrr") is False
+    assert forecast_page._model_supports_members("gfs") is False   # no descriptor
+    assert forecast_page._model_supports_members("hrrr") is False  # neither
+
+
+# ── Phase 5: seek sampler equality with the full-read sampler ─────────
+def test_seek_sampler_matches_full_read(tmp_path, transform, values) -> None:
+    from backend.app.services.sampling import (
+        read_binary_sample_value,
+        read_binary_sample_value_seek,
+    )
+
+    spike_var = "tmp2m__m01"
+    write_slim_grid_frame_for_run_root(
+        run_root=tmp_path, model="gefs", var=spike_var,
+        fh=0, values=values, transform=transform,
+    )
+    frame = tmp_path / spike_var / "grid" / "fh000.l0.u16.bin"
+    meta = tmp_path / spike_var / "grid" / "fh000.l0.meta.json"
+
+    # Interior, near-edge, out-of-coverage, and a NaN-fringe (nodata) pixel —
+    # the fringe rows sit at the top of the array (north, lat ~82).
+    for lat, lon in ((43.5, -101.5), (6.0, -177.0), (43.5, 5.0), (81.5, -101.5)):
+        full = read_binary_sample_value(frame, meta, model="gefs", var=spike_var, lat=lat, lon=lon)
+        seek = read_binary_sample_value_seek(frame, meta, model="gefs", var=spike_var, lat=lat, lon=lon)
+        assert seek == full, (lat, lon)
+
+    # Truncated frame: both paths refuse to mis-address.
+    frame.write_bytes(frame.read_bytes()[:-10])
+    with pytest.raises(ValueError, match="size mismatch"):
+        read_binary_sample_value(frame, meta, model="gefs", var=spike_var, lat=43.5, lon=-101.5)
+    with pytest.raises(ValueError, match="size mismatch"):
+        read_binary_sample_value_seek(frame, meta, model="gefs", var=spike_var, lat=43.5, lon=-101.5)

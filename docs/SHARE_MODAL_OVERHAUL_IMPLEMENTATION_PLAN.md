@@ -194,7 +194,7 @@ Each phase is a separate agent implementation prompt with: explicit execution-mo
 ## 7. Open decisions
 
 - [x] **Resolved:** server render retained for TWF posts through busy season. Client fixed-viewport render (§3.5: bounds-contain + `GridWebglLayerController` attach) is a post-freeze option gated on a layer-matrix spike **and** Grafana evidence that Playwright load actually matters. Cheaper first experiment: 16:9 as an opt-in "Forum layout" toggle with WYSIWYG default, measured via channel analytics (§3.5).
-- [x] **Resolved (Phase 3):** GIF defaults — 720px-wide output, 200ms/frame (~5fps) with 1.2s end hold, hard frame cap 60 desktop / 30 mobile (`isMobile` from the export state), even stride-sampling when a run exceeds the cap. Constants in `useGifExport.ts`; revisit only on gate feedback.
+- [x] **Resolved (Phase 3):** GIF defaults — 720px-wide output, 200ms/frame (~5fps) with 1.2s end hold, hard frame cap 60 desktop / 30 mobile (`isMobile` from the export state), even stride-sampling when a run exceeds the cap. Constants in `useGifExport.ts`. **Gate feedback additions (2026-07-06):** user-tunable From/To forecast-hour range + speed presets (Slow 350ms / Normal 200ms / Fast 120ms) in the GIF tab, defaults restored per modal open; and `chromeScale` floor of 0.8 for GIF frame composition — the width-derived 720/1280 scale left overlay/logo/legend small and blurry at pixelRatio 1.
 - [ ] Whether trends mode supports N runs or is fixed at 3 for v1. (Recommendation: fixed at 3.)
 - [x] **Resolved (Phase 2):** compare-mode GIF out of scope for v1 — the GIF tab is hidden on `/compare` (`gifTabEnabled={false}`).
 

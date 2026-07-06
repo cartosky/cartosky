@@ -529,6 +529,79 @@ async def test_meteogram_binary_allowlist_switches_substrate_and_cache_key(
     assert third.json() == first_payload
 
 
+# ── Member pipeline Phase 5: include_members payload contract ───────────────
+
+
+async def test_meteogram_include_members_contract(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """include_members=true returns the Model Guidance §7 members block for a
+    member-publishing binary model: mean (reused main series) + every roster
+    id, with frameless members as points=None; include_members=false omits
+    the key; unsupported models 400."""
+    from app.services import grid as grid_module
+    from app.services.grid import write_slim_grid_frame_for_run_root
+
+    run_id = "20260306_00z"
+    _publish_tmp2m(main_module.PUBLISHED_ROOT, main_module.MANIFESTS_ROOT, "gefs", run_id)
+    run_root = main_module.PUBLISHED_ROOT / "gefs" / run_id
+    transform = from_origin(-101.0, 46.0, 1.0, 1.0)
+    for fh in FRAME_HOURS:
+        grid_module.write_grid_frames_for_run_root(
+            run_root=run_root,
+            model="gefs",
+            var="tmp2m__mean",
+            fh=fh,
+            values=np.full((3, 3), 5.0, dtype=np.float32),
+            transform=transform,
+            projection="EPSG:4326",
+        )
+    # Two members published; the other 29 have no frames (points=None).
+    for member_var, value in (("tmp2m__m01", 6.0), ("tmp2m__control", 4.0)):
+        for fh in FRAME_HOURS:
+            write_slim_grid_frame_for_run_root(
+                run_root=run_root,
+                model="gefs",
+                var=member_var,
+                fh=fh,
+                values=np.full((3, 3), value, dtype=np.float32),
+                transform=transform,
+                projection="EPSG:4326",
+            )
+
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs")
+
+    body = _body(["gefs"], ["tmp2m"])
+    body["include_members"] = True
+    response = await client.post("/api/v4/forecast/meteogram", json=body)
+    assert response.status_code == 200
+    var_payload = response.json()["series"]["gefs"]["variables"]["tmp2m"]
+    members = var_payload["members"]
+
+    expected_keys = {"mean", "control"} | {f"m{i:02d}" for i in range(1, 31)}
+    assert set(members) == expected_keys
+    assert members["mean"]["points"] == var_payload["points"]
+    assert [p["value"] for p in members["m01"]["points"]] == [6.0] * len(FRAME_HOURS)
+    assert [p["fh"] for p in members["m01"]["points"]] == FRAME_HOURS
+    assert all(p["valid_time"] for p in members["m01"]["points"])
+    assert [p["value"] for p in members["control"]["points"]] == [4.0] * len(FRAME_HOURS)
+    assert members["m02"]["points"] is None
+
+    # include_members omitted -> no members key, and a distinct cache entry
+    # (the cache key already varies by the flag).
+    plain = await client.post("/api/v4/forecast/meteogram", json=_body(["gefs"], ["tmp2m"]))
+    assert plain.status_code == 200
+    assert "members" not in plain.json()["series"]["gefs"]["variables"]["tmp2m"]
+
+    # A model without member publishing rejects include_members with a 400.
+    unsupported = _body(["gfs"], ["tmp2m"])
+    unsupported["include_members"] = True
+    rejected = await client.post("/api/v4/forecast/meteogram", json=unsupported)
+    assert rejected.status_code == 400
+    assert "include_members" in rejected.json()["error"]
+
+
 # ── Phase E: COG vs grid-binary meteogram batch-loop comparison ─────────────
 #
 # Compares the meteogram's COG sampling loop against the allowlist-gated
