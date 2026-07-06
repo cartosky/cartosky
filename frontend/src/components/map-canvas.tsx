@@ -1352,6 +1352,9 @@ type MapCanvasProps = {
   scrubProtectedFetchUrlsRef?: { current: string[] };
   onMapReady?: (map: maplibregl.Map) => void;
   onCaptureDraft?: (capture: ((format?: MapCaptureFormat) => Promise<string | null>) | null) => void;
+  /** Repaint-then-read snapshot into a (optionally downscaled) 2D canvas — no
+   * PNG round-trip. Used by the GIF export's per-frame capture. */
+  onCaptureCanvas?: (capture: ((maxWidth?: number) => Promise<HTMLCanvasElement | null>) | null) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number, tooltip?: Exclude<SampleTooltipState, null>) => void;
   onMapHoverEnd?: () => void;
   onAnchorClick?: (anchor: { id: string; city: string; state: string; st: string }) => void;
@@ -1433,6 +1436,7 @@ export function MapCanvas({
   scrubProtectedFetchUrlsRef = undefined,
   onMapReady,
   onCaptureDraft,
+  onCaptureCanvas,
   onMapHover,
   onMapHoverEnd,
   onAnchorClick,
@@ -1525,6 +1529,8 @@ export function MapCanvas({
   onMapReadyRef.current = onMapReady;
   const onCaptureDraftRef = useRef(onCaptureDraft);
   onCaptureDraftRef.current = onCaptureDraft;
+  const onCaptureCanvasRef = useRef(onCaptureCanvas);
+  onCaptureCanvasRef.current = onCaptureCanvas;
   const onViewportChangeRef = useRef(onViewportChange);
   onViewportChangeRef.current = onViewportChange;
   const contourRequestTokenRef = useRef(0);
@@ -2439,6 +2445,38 @@ export function MapCanvas({
     };
     onCaptureDraftRef.current?.(captureDraftDataUrl);
 
+    // Same repaint-then-read semantics, but into a 2D canvas (optionally
+    // downscaled) instead of a PNG data URL — the GIF export composes dozens
+    // of frames and skipping the PNG encode/decode keeps stepping fast.
+    const captureCanvasSnapshot = (maxWidth?: number): Promise<HTMLCanvasElement | null> => {
+      const map = mapRef.current;
+      if (!map) {
+        return Promise.resolve(null);
+      }
+      return new Promise((resolve) => {
+        map.once("render", () => {
+          try {
+            const source = map.getCanvas();
+            const scale = maxWidth && source.width > maxWidth ? maxWidth / source.width : 1;
+            const snapshot = document.createElement("canvas");
+            snapshot.width = Math.max(1, Math.round(source.width * scale));
+            snapshot.height = Math.max(1, Math.round(source.height * scale));
+            const ctx = snapshot.getContext("2d");
+            if (!ctx) {
+              resolve(null);
+              return;
+            }
+            ctx.drawImage(source, 0, 0, snapshot.width, snapshot.height);
+            resolve(snapshot);
+          } catch {
+            resolve(null);
+          }
+        });
+        map.triggerRepaint();
+      });
+    };
+    onCaptureCanvasRef.current?.(captureCanvasSnapshot);
+
     // Headless capture hook: screenshot_service.py calls this instead of a
     // cold canvas.toDataURL(), which reads a cleared drawing buffer once the
     // compositor has presented the frame (confirmed blank-capture root cause).
@@ -2448,6 +2486,7 @@ export function MapCanvas({
 
     return () => {
       onCaptureDraftRef.current?.(null);
+      onCaptureCanvasRef.current?.(null);
       if (SCREENSHOT_MODE) {
         delete window.__cartoskyViewerCapture;
       }

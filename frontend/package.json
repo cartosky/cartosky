@@ -22,6 +22,7 @@
     "@radix-ui/react-tooltip": "1.1.6",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
+    "gifenc": "^1.0.3",
     "html-to-image": "^1.11.13",
     "lucide-react": "^1.17.0",
     "maplibre-gl": "^5.24.0",

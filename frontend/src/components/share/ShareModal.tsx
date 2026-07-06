@@ -18,11 +18,12 @@ import {
   captureShareCompleted,
   formatForumLabel,
   loginRouteForCurrentPage,
+  screenshotFilename,
   writeClipboard,
   type SharePayload,
   type ShareMode,
 } from "@/components/share/share-utils";
-import { useGifExport } from "@/components/share/useGifExport";
+import { useGifExport, type GifFrameDriver } from "@/components/share/useGifExport";
 import { useScreenshotCapture } from "@/components/share/useScreenshotCapture";
 import { useTwfPosting } from "@/components/share/useTwfPosting";
 
@@ -41,6 +42,8 @@ type ShareModalProps = {
   captureMapPng?: () => Promise<string | null>;
   /** Compare-mode GIF is out of scope for v1 — the compare page hides the tab. */
   gifTabEnabled?: boolean;
+  /** Viewer frame driver for GIF export; absent → GIF tab shows unavailable. */
+  gifFrameDriver?: GifFrameDriver;
 };
 
 const secondaryButtonClass =
@@ -64,6 +67,7 @@ export function ShareModal({
   getDraftDataUrl,
   captureMapPng,
   gifTabEnabled = true,
+  gifFrameDriver,
 }: ShareModalProps) {
   const { getToken, isLoaded: clerkLoaded, isSignedIn } = useAuth();
 
@@ -116,7 +120,12 @@ export function ShareModal({
     screenshotError: screenshot.screenshotError,
   });
 
-  const gif = useGifExport();
+  const gif = useGifExport({
+    open,
+    frameDriver: gifFrameDriver,
+    buildScreenshotState,
+    getLegend,
+  });
 
   const [activeTab, setActiveTab] = useState<ShareTab>("image");
   const [linkCopied, setLinkCopied] = useState(false);
@@ -218,6 +227,42 @@ export function ShareModal({
       // File sharing unsupported — share the permalink instead.
       await navigator.share({ url: payload.permalink, text: payload.summary });
       captureShareCompleted("native_share", { share_payload: "link" });
+    } catch {
+      // AbortError (user dismissed the share sheet) or unsupported — no event.
+    }
+  };
+
+  const gifFilename = (): string => {
+    const state = buildScreenshotState?.();
+    const base = state ? screenshotFilename(state).replace(/\.png$/, "") : "cartosky-map";
+    return `${base}.gif`;
+  };
+
+  const handleGifDownload = () => {
+    if (!gif.gifBlobUrl) {
+      return;
+    }
+    const link = document.createElement("a");
+    link.href = gif.gifBlobUrl;
+    link.download = gifFilename();
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    captureShareCompleted("gif", { gif_action: "download" });
+  };
+
+  const handleGifNativeShare = async () => {
+    if (!gif.gifBlob) {
+      return;
+    }
+    const file = new File([gif.gifBlob], gifFilename(), { type: "image/gif" });
+    const fileShare: ShareData = { files: [file] };
+    try {
+      if (typeof navigator.canShare !== "function" || navigator.canShare(fileShare)) {
+        await navigator.share(fileShare);
+        captureShareCompleted("gif", { gif_action: "native_share" });
+      }
     } catch {
       // AbortError (user dismissed the share sheet) or unsupported — no event.
     }
@@ -735,15 +780,121 @@ export function ShareModal({
 
           {activeTab === "gif" && (
             <div className="px-4">
-              <div className="flex aspect-[16/9] max-h-[220px] w-full flex-col items-center justify-center gap-3 rounded-2xl border border-[rgba(255,255,255,0.08)] bg-gradient-to-br from-[#0d1e35] to-[#0a1628] px-6 text-center">
-                <Film className="h-8 w-8 text-cyan-200/70" />
-                <div className="text-sm font-semibold text-white/90">GIF export is coming soon</div>
-                <div className="max-w-[320px] text-xs leading-relaxed text-white/55">
-                  {gif.available === false
-                    ? "Animate forecast hours into a shareable GIF, right from this tab."
-                    : null}
+              {gif.status === "ready" && gif.gifBlobUrl ? (
+                <>
+                  {/* Preview-as-artifact: this <img> plays the exact encoded
+                      GIF the user downloads/shares. */}
+                  <div className="relative w-full overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
+                    <img
+                      src={gif.gifBlobUrl}
+                      alt="Animated GIF preview"
+                      className="h-auto w-full"
+                    />
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between gap-3 px-1">
+                    <div className="flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
+                      <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      {gif.gifFrameCount} frames · {(gif.gifBlob!.size / (1024 * 1024)).toFixed(1)} MB
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleGifDownload}
+                        className={previewActionButtonClass}
+                        aria-label="Download GIF"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                      </button>
+                      {canNativeShare && (
+                        <button
+                          type="button"
+                          onClick={() => void handleGifNativeShare()}
+                          className={previewActionButtonClass}
+                          aria-label="Share GIF"
+                        >
+                          <Share2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => { gif.reset(); }}
+                        className={previewActionButtonClass}
+                        aria-label="Discard GIF and start over"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : gif.status === "capturing" || gif.status === "encoding" ? (
+                <div className="flex aspect-[16/9] max-h-[220px] w-full flex-col items-center justify-center gap-3 rounded-2xl border border-[rgba(255,255,255,0.08)] bg-gradient-to-br from-[#0d1e35] to-[#0a1628] px-6 text-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-cyan-200" />
+                  {gif.status === "capturing" ? (
+                    <>
+                      <div className="text-sm font-semibold text-white/90">
+                        Capturing frames… {gif.progress.done}/{gif.progress.total}
+                      </div>
+                      <div className="h-1.5 w-full max-w-[260px] overflow-hidden rounded-full bg-white/10">
+                        <div
+                          className="h-full rounded-full bg-cyan-300/80 transition-[width]"
+                          style={{ width: `${gif.progress.total > 0 ? Math.round((gif.progress.done / gif.progress.total) * 100) : 0}%` }}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => gif.cancel()}
+                        className={secondaryButtonClass}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <div className="text-sm font-semibold text-white/90">Encoding GIF…</div>
+                  )}
                 </div>
-              </div>
+              ) : (
+                <div className="flex aspect-[16/9] max-h-[220px] w-full flex-col items-center justify-center gap-3 rounded-2xl border border-[rgba(255,255,255,0.08)] bg-gradient-to-br from-[#0d1e35] to-[#0a1628] px-6 text-center">
+                  <Film className="h-8 w-8 text-cyan-200/70" />
+                  {!gif.available ? (
+                    <>
+                      <div className="text-sm font-semibold text-white/90">GIF isn't available for this view</div>
+                      <div className="max-w-[320px] text-xs leading-relaxed text-white/55">
+                        Pick a product with an animatable forecast timeline, then come back here.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {(gif.status === "error" || gif.status === "cancelled") && (
+                        <div className="max-w-[320px] text-xs leading-relaxed text-red-200/90">
+                          {gif.status === "cancelled" ? "GIF generation cancelled." : gif.error}
+                        </div>
+                      )}
+                      {(() => {
+                        const plan = gif.buildPlan();
+                        return plan ? (
+                          <div className="max-w-[320px] text-xs leading-relaxed text-white/55">
+                            {plan.frameCount} frames
+                            {plan.totalHours > plan.frameCount ? ` (of ${plan.totalHours} hours)` : ""}
+                            {" · 720px wide · ~"}
+                            {(plan.estimatedBytes / (1024 * 1024)).toFixed(1)} MB · ~{Math.round(plan.playSeconds)}s loop
+                          </div>
+                        ) : null;
+                      })()}
+                      <button
+                        type="button"
+                        onClick={() => { void gif.generate(); }}
+                        className={primaryButtonClass}
+                      >
+                        <Film className="h-4 w-4" />
+                        Generate GIF
+                      </button>
+                      <div className="max-w-[320px] text-[11px] leading-relaxed text-white/40">
+                        The map will step through forecast hours while frames are captured.
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

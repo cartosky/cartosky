@@ -960,8 +960,22 @@ function drawBottomLegend(
   ctx.restore();
 }
 
+// Cached across calls: GIF export composes up to 60 frames back to back and
+// each frame draws the same logo bitmap.
+let cachedLogoPromise: Promise<HTMLImageElement> | null = null;
+
+function loadLogoImage(): Promise<HTMLImageElement> {
+  if (!cachedLogoPromise) {
+    cachedLogoPromise = loadImage(SCREENSHOT_LOGO_SRC).catch((error) => {
+      cachedLogoPromise = null;
+      throw error;
+    });
+  }
+  return cachedLogoPromise;
+}
+
 async function drawLogo(ctx: CanvasRenderingContext2D, width: number, scaleFactor = 1): Promise<void> {
-  const logo = await loadImage(SCREENSHOT_LOGO_SRC);
+  const logo = await loadLogoImage();
   const padding = 18 * scaleFactor;
   const maxWidth = 162 * scaleFactor;
   const maxHeight = 46 * scaleFactor;
@@ -985,6 +999,67 @@ async function drawLogo(ctx: CanvasRenderingContext2D, width: number, scaleFacto
   ctx.shadowOffsetY = 4;
   ctx.drawImage(logo, cardX + cardPaddingX, cardY + cardPaddingY, drawWidth, drawHeight);
   ctx.restore();
+}
+
+/** Overlay title lines for a share frame (still or GIF); exported so the GIF
+ * export can rebuild them per frame with that frame's fh/valid time. */
+export function buildShareOverlayLines(
+  state: ScreenshotExportState,
+  legend?: LegendPayload | null,
+): string[] {
+  return defaultOverlayLines(state, legend).filter(Boolean);
+}
+
+export type ShareFrameComposeOptions = {
+  width: number;
+  height: number;
+  pixelRatio: number;
+  legend?: LegendPayload | null;
+  overlayLines: string[];
+  isMobile: boolean;
+};
+
+/**
+ * Draw one composed share frame (map cover + overlay card + logo + legend)
+ * onto the provided canvas. Shared by the still exporter and the per-frame
+ * GIF compose (share overhaul Phase 3).
+ *
+ * No compare divider (split captures carry the gutter baked in; diff is a
+ * single map) and no anchor chips (the capture is WYSIWYG and already shows
+ * the in-map city labels) — see the Phase 1 notes in the plan doc.
+ */
+export async function composeShareFrame(
+  outputCanvas: HTMLCanvasElement,
+  mapImage: CanvasImageSource,
+  opts: ShareFrameComposeOptions,
+): Promise<void> {
+  const { width, height, pixelRatio } = opts;
+  const scaleFactor = width / NORMALIZED_OUTPUT_WIDTH;
+  outputCanvas.width = Math.max(1, Math.round(width * pixelRatio));
+  outputCanvas.height = Math.max(1, Math.round(height * pixelRatio));
+  const outputCtx = outputCanvas.getContext("2d");
+  if (!outputCtx) {
+    throw new Error("Failed to create screenshot canvas context.");
+  }
+
+  outputCtx.imageSmoothingEnabled = true;
+  outputCtx.imageSmoothingQuality = "high";
+  outputCtx.save();
+  outputCtx.scale(pixelRatio, pixelRatio);
+  drawMapImageCover(outputCtx, mapImage, width, height);
+  drawOverlay(outputCtx, opts.overlayLines, width, scaleFactor);
+
+  try {
+    await drawLogo(outputCtx, width, scaleFactor);
+  } catch (error) {
+    console.warn("[screenshot] Logo load failed; continuing without logo.", error);
+  }
+
+  const bottomPadding = 18 * scaleFactor;
+  if (opts.legend) {
+    drawBottomLegend(outputCtx, opts.legend, width, height, bottomPadding, opts.isMobile, scaleFactor);
+  }
+  outputCtx.restore();
 }
 
 export async function exportViewerScreenshotPng(
@@ -1027,46 +1102,7 @@ export async function exportViewerScreenshotPng(
   const pixelRatio = Number.isFinite(opts.pixelRatio)
     ? Math.max(1, Number(opts.pixelRatio))
     : DEFAULT_PIXEL_RATIO;
-  const scaleFactor = width / NORMALIZED_OUTPUT_WIDTH;
   const overlayLines = (opts.overlayLines ?? defaultOverlayLines(state, opts.legend)).filter(Boolean);
-
-  const composeScreenshot = async (mapImage: CanvasImageSource): Promise<Blob> => {
-    const outputCanvas = document.createElement("canvas");
-    outputCanvas.width = Math.max(1, Math.round(width * pixelRatio));
-    outputCanvas.height = Math.max(1, Math.round(height * pixelRatio));
-    const outputCtx = outputCanvas.getContext("2d");
-    if (!outputCtx) {
-      throw new Error("Failed to create screenshot canvas context.");
-    }
-
-    outputCtx.imageSmoothingEnabled = true;
-    outputCtx.imageSmoothingQuality = "high";
-    outputCtx.save();
-    outputCtx.scale(pixelRatio, pixelRatio);
-    drawMapImageCover(outputCtx, mapImage, width, height);
-    // No exporter compare divider: split captures carry the gutter baked in
-    // (captureComparePng / the server compose), and diff mode is a single map —
-    // the old model-string heuristic drew a bogus center line on diff exports.
-    // No anchor-chip compositing: the capture is WYSIWYG and already contains
-    // the in-map city value labels. The old chips were a second label system
-    // with its own thinning, drawn blind over the baked-in labels — the direct
-    // cause of the overlapping/cut-off city values seen in prod captures.
-    drawOverlay(outputCtx, overlayLines, width, scaleFactor);
-
-    try {
-      await drawLogo(outputCtx, width, scaleFactor);
-    } catch (error) {
-      console.warn("[screenshot] Logo load failed; continuing without logo.", error);
-    }
-
-    const bottomPadding = 18 * scaleFactor;
-    if (opts.legend) {
-      drawBottomLegend(outputCtx, opts.legend, width, height, bottomPadding, state.isMobile, scaleFactor);
-    }
-    outputCtx.restore();
-
-    return canvasToPngBlob(outputCanvas);
-  };
 
   // Compose-only: the offscreen style-rebuild path was deleted (share overhaul
   // Phase 1). It rendered basemap/vectors but never the WebGL weather grid
@@ -1077,5 +1113,14 @@ export async function exportViewerScreenshotPng(
     throw new Error("Map capture unavailable. Retry the screenshot.");
   }
   const liveMapImage = await loadImage(state.capturedMapDataUrl);
-  return composeScreenshot(liveMapImage);
+  const outputCanvas = document.createElement("canvas");
+  await composeShareFrame(outputCanvas, liveMapImage, {
+    width,
+    height,
+    pixelRatio,
+    legend: opts.legend,
+    overlayLines,
+    isMobile: state.isMobile,
+  });
+  return canvasToPngBlob(outputCanvas);
 }

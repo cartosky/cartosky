@@ -6,6 +6,7 @@ import { BottomForecastControls } from "@/components/bottom-forecast-controls";
 import { MapCanvas, type BasemapMode, type MapCaptureFormat, type VectorHazardSelection } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/share/share-utils";
+import type { GifFrameDriver } from "@/components/share/useGifExport";
 import { ViewerSiteHeaderFallback } from "@/components/ViewerSiteHeaderFallback";
 
 const ViewerSiteHeader = lazy(() => import("@/components/ViewerSiteHeader"));
@@ -614,6 +615,7 @@ export default function App() {
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
   const manualLocationJumpRef = useRef(false);
   const captureDraftRef = useRef<((format?: MapCaptureFormat) => Promise<string | null>) | null>(null);
+  const captureCanvasRef = useRef<((maxWidth?: number) => Promise<HTMLCanvasElement | null>) | null>(null);
   const screenshotModeRef = useRef(
     typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get("screenshot") === "1",
@@ -4402,6 +4404,13 @@ export default function App() {
     [],
   );
 
+  const handleCaptureCanvas = useCallback(
+    (capture: ((maxWidth?: number) => Promise<HTMLCanvasElement | null>) | null) => {
+      captureCanvasRef.current = capture;
+    },
+    [],
+  );
+
   const handleViewportChange = useCallback((payload: { lat: number; lon: number; z: number }) => {
     if (!Number.isFinite(payload.lat) || !Number.isFinite(payload.lon) || !Number.isFinite(payload.z)) {
       return;
@@ -5290,6 +5299,76 @@ export default function App() {
     viewerLayoutMode,
   ]);
 
+  // GIF frame driver (share overhaul Phase 3): lets the share modal step the
+  // live viewer through forecast hours with the per-frame dual gate (frame
+  // bytes ready AND presented) and capture each frame. Snapshot ref keeps the
+  // driver's identity stable while its reads stay current.
+  const gifDriverSnapshotRef = useRef({
+    gridFrameHours,
+    gridReadyHourSet,
+    presentedGridDisplayHour,
+    displayedValidTimeISO,
+    gridActive: isGridLowMidActive,
+    targetForecastHour,
+    forecastHour,
+  });
+  gifDriverSnapshotRef.current = {
+    gridFrameHours,
+    gridReadyHourSet,
+    presentedGridDisplayHour,
+    displayedValidTimeISO,
+    gridActive: isGridLowMidActive,
+    targetForecastHour,
+    forecastHour,
+  };
+
+  const gifFrameDriver = useMemo<GifFrameDriver>(() => ({
+    listFrameHours: () => {
+      const snapshot = gifDriverSnapshotRef.current;
+      return snapshot.gridActive ? [...snapshot.gridFrameHours] : [];
+    },
+    begin: () => {
+      setIsPlaying(false);
+    },
+    showFrame: async (hour: number) => {
+      // Outside playback/scrub the display hour follows `forecastHour`, not
+      // `targetForecastHour` — set both, matching the app's own commit sites.
+      setForecastHour(hour);
+      setTargetForecastHour(hour);
+      targetForecastHourRef.current = hour;
+      // Per-frame dual gate: the frame's bytes are ready (texture uploadable)
+      // AND the pipeline presents that hour. The capture's own render-callback
+      // read then guarantees the paint. Timeout skips the frame, not the run.
+      const deadline = performance.now() + 6000;
+      for (;;) {
+        const snapshot = gifDriverSnapshotRef.current;
+        if (snapshot.presentedGridDisplayHour === hour && snapshot.gridReadyHourSet.has(hour)) {
+          return true;
+        }
+        if (performance.now() >= deadline) {
+          return false;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
+    },
+    captureFrame: (maxWidth?: number) =>
+      captureCanvasRef.current?.(maxWidth) ?? Promise.resolve(null),
+    getDisplayedValidTimeISO: () => gifDriverSnapshotRef.current.displayedValidTimeISO ?? null,
+    getRestoreTarget: () => ({
+      forecastHour: gifDriverSnapshotRef.current.forecastHour,
+      targetForecastHour: gifDriverSnapshotRef.current.targetForecastHour,
+    }),
+    restore: (token: unknown) => {
+      const restoreToken = token as { forecastHour: number; targetForecastHour: number } | null;
+      if (!restoreToken) {
+        return;
+      }
+      setForecastHour(restoreToken.forecastHour);
+      setTargetForecastHour(restoreToken.targetForecastHour);
+      targetForecastHourRef.current = restoreToken.targetForecastHour;
+    },
+  }), []);
+
   const handleOpenShareModal = useCallback(() => {
     const runForSummary = gridOnlySelection && run === "latest"
       ? resolvedRunForRequests
@@ -5567,6 +5646,7 @@ export default function App() {
           onViewportChange={handleViewportChange}
           onMapReady={handleMapReady}
           onCaptureDraft={handleCaptureDraft}
+          onCaptureCanvas={handleCaptureCanvas}
           onMapHover={handleMapHover}
           onMapHoverEnd={handleMapHoverEnd}
           onAnchorClick={isCurrentAnalysisSelection ? setSelectedAnchorCity : undefined}
@@ -5709,6 +5789,7 @@ export default function App() {
             getLegend={() => legend}
             getDraftDataUrl={() => captureDraftRef.current?.() ?? Promise.resolve(null)}
             captureMapPng={() => captureDraftRef.current?.("png") ?? Promise.resolve(null)}
+            gifFrameDriver={gifFrameDriver}
           />
         </Suspense>
       ) : null}

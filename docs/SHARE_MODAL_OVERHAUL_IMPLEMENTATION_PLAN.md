@@ -1,6 +1,6 @@
 # Share Modal Overhaul & GIF Export — Implementation Plan
 
-**Status:** Phase 2 implemented (2026-07-06) — gate (prod TWF posting flow) pending. Phase 1 complete: gate passed on prod (signed-out image path, compare capture, city-label/divider/crop/diff-values fixes all verified by Brian). Landed: live-canvas capture as the signed-out image path (compose-only exporter; offscreen rebuild deleted), Download / Copy image / native Share signed-out, compare-path repaint-hook capture (split + diff, server hook and signed-out local share), exporter anchor-chip compositing deleted (root cause of overlapping/cut-off city labels — see §3.4), `fadeDuration: 0` in screenshot mode. Signed-in flow unchanged (server render = TWF post artifact, preview-as-artifact holds until Phase 2 tabs). Phase 0 complete: blank-capture root cause (cold WebGL read-back) confirmed and fixed via `window.__cartoskyViewerCapture`; analytics channels verified in Mixpanel.
+**Status:** Phase 3 implemented (2026-07-06) — gate (prod desktop + mid-tier phone GIF, Grafana zero-delta, abort paths) pending. Phases 0–2 complete, gates passed on prod. Landed: live-canvas capture as the signed-out image path (compose-only exporter; offscreen rebuild deleted), Download / Copy image / native Share signed-out, compare-path repaint-hook capture (split + diff, server hook and signed-out local share), exporter anchor-chip compositing deleted (root cause of overlapping/cut-off city labels — see §3.4), `fadeDuration: 0` in screenshot mode. Signed-in flow unchanged (server render = TWF post artifact, preview-as-artifact holds until Phase 2 tabs). Phase 0 complete: blank-capture root cause (cold WebGL read-back) confirmed and fixed via `window.__cartoskyViewerCapture`; analytics channels verified in Mixpanel.
 **Priority:** GIF export is the highest-priority busy-season feature (October feature freeze target). The anonymous image path (Phase 1) is a prerequisite for GIF and the primary share-funnel fix.
 **Owner:** Brian Austin (sole production operator). Implementation via Codex/Claude Code agents; Brian executes all production commands and verifies each phase gate before the next proceeds.
 
@@ -165,8 +165,13 @@ Each phase is a separate agent implementation prompt with: explicit execution-mo
 
 **Gate:** full TWF post flow (existing topic, new topic, forum switching, prefs persistence, rate-limit handling) verified against prod TWF. No behavior change in posting.
 
-### Phase 3 — GIF: forecast-hour progression
-- Client-side capture with per-frame readiness gate + `gifenc` worker encode, caps, capture-lock UI with progress/cancel, GIF tab wiring.
+### Phase 3 — GIF: forecast-hour progression (implemented 2026-07-06, gate pending)
+- [x] Client-side capture with per-frame readiness gate + `gifenc` worker encode, caps, capture-lock UI with progress/cancel, GIF tab wiring. Implementation notes:
+  - `GifFrameDriver` (App.tsx) steps the live pipeline: sets `forecastHour` **and** `targetForecastHour` (outside playback the display follows `forecastHour` — targeting only `targetForecastHour` never presents), then awaits the per-frame dual gate (`gridReadyHourSet.has(hour)` AND `presentedGridDisplayHour === hour`); 6s per-frame timeout skips the frame rather than aborting the run; timeline snapshot restored after done/cancel/close.
+  - Per-frame capture: `onCaptureCanvas` in map-canvas — repaint-then-read into a downscaled 2D canvas (no PNG round-trip). Frames composed via the shared `composeShareFrame` (same overlay/legend/logo as stills, overlay rebuilt per frame with that frame's fh/valid time), streamed to the `gifenc` worker as transferable RGBA buffers (≤1 frame held on the main thread).
+  - Palette quantized once from the first frame and reused (fixed palette). Loop = infinite; 200ms/frame with 1.2s final-frame hold.
+  - Capture lock = the modal backdrop (map is uninteractable while open) + progress bar with Cancel; aborts cleanly on cancel/modal close/unmount (worker terminated, blob URL revoked, timeline restored).
+  - Measured locally: 19-frame HRRR 720px GIF = 1.5MB, ~15s cold (per-frame binary fetch dominates) / ~4s warm; valid GIF89a playing in-tab (preview-as-artifact); cancel at mid-run verified with timeline restore.
 
 **Gate:** 50-frame HRRR reflectivity GIF on desktop and a mid-tier phone; size and duration within caps; zero server CPU/RAM delta (Grafana per-process graphs are authoritative); clean abort paths verified.
 
@@ -189,9 +194,9 @@ Each phase is a separate agent implementation prompt with: explicit execution-mo
 ## 7. Open decisions
 
 - [x] **Resolved:** server render retained for TWF posts through busy season. Client fixed-viewport render (§3.5: bounds-contain + `GridWebglLayerController` attach) is a post-freeze option gated on a layer-matrix spike **and** Grafana evidence that Playwright load actually matters. Cheaper first experiment: 16:9 as an opt-in "Forum layout" toggle with WYSIWYG default, measured via channel analytics (§3.5).
-- [ ] GIF fps and frame-cap defaults per device class.
+- [x] **Resolved (Phase 3):** GIF defaults — 720px-wide output, 200ms/frame (~5fps) with 1.2s end hold, hard frame cap 60 desktop / 30 mobile (`isMobile` from the export state), even stride-sampling when a run exceeds the cap. Constants in `useGifExport.ts`; revisit only on gate feedback.
 - [ ] Whether trends mode supports N runs or is fixed at 3 for v1. (Recommendation: fixed at 3.)
-- [ ] Compare-mode GIF: explicitly out of scope for v1; note in UI or hide GIF tab on `/compare`.
+- [x] **Resolved (Phase 2):** compare-mode GIF out of scope for v1 — the GIF tab is hidden on `/compare` (`gifTabEnabled={false}`).
 
 ## 8. Reference — key files
 
