@@ -93,6 +93,40 @@ def test_build_frame_readiness_gate_short_circuits_derived_fetch(monkeypatch, tm
     assert readiness_calls == ["sfc", "prs"]
 
 
+def test_ensure_products_ready_probes_with_herbie_model_not_internal_id(monkeypatch) -> None:
+    """EPS maps model id 'eps' -> herbie model 'ifs'; the probe must use the latter."""
+
+    class _EpsLikePlugin:
+        id = "eps"
+
+        def run_discovery_config(self) -> dict:
+            return {}
+
+        def herbie_request(self, *, product: str, var_key: str, ensemble_view=None, run_date=None, fh=None):
+            del product, var_key, ensemble_view, run_date, fh
+            return SimpleNamespace(model="ifs", product="enfo", herbie_kwargs={"priority": ["azure"]})
+
+    probed: list[str] = []
+
+    def _fake_product_ready(*, model_id, product, run_date, fh, herbie_kwargs=None, allow_grib_without_idx=False):
+        del product, run_date, fh, herbie_kwargs, allow_grib_without_idx
+        probed.append(str(model_id))
+        return True
+
+    monkeypatch.setattr(pipeline_module, "product_hour_has_any_idx", _fake_product_ready)
+
+    pipeline_module._ensure_products_ready(
+        model="eps",
+        model_plugin=_EpsLikePlugin(),
+        run_date=datetime(2026, 7, 6, 18, 0),
+        fh=0,
+        var_key="tmp2m__mean",
+        required_products=["enfo"],
+    )
+
+    assert probed == ["ifs"]
+
+
 def test_build_frame_tmp2m_skips_dead_contour_generation(monkeypatch, tmp_path: Path) -> None:
     plugin = _Plugin()
     var_spec_model = SimpleNamespace(

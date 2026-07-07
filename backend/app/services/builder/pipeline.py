@@ -1415,7 +1415,7 @@ def _ensure_products_ready(
             ready = bool(readiness_cache[product_name])
         else:
             ready = product_hour_has_any_idx(
-                model_id=model,
+                model_id=request.model,
                 product=request.product,
                 run_date=run_date,
                 fh=fh,

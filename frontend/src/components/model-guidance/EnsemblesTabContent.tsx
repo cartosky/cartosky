@@ -8,6 +8,13 @@ import { EnsembleMeanTemperatureChart } from "@/components/model-guidance/Ensemb
 import { EnsembleMeanPrecipChart } from "@/components/model-guidance/EnsembleMeanPrecipChart";
 import { EnsemblePrecipPlumeChart } from "@/components/model-guidance/EnsemblePrecipPlumeChart";
 import { EnsembleTemperaturePlumeChart } from "@/components/model-guidance/EnsembleTemperaturePlumeChart";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useMeteogram } from "@/hooks/useMeteogram";
 import {
   ENSEMBLES_TAB_VARIABLES,
@@ -39,7 +46,9 @@ type ControlOption = { value: string; label: string };
 /**
  * Labeled themed dropdown for the control bar. Dropdowns (not segmented
  * toggles) by design: additional views/variables flow into them without the
- * bar growing.
+ * bar growing. Uses the design-system Radix select so the open panel is the
+ * site's glass/cyan styling everywhere — native <select> pickers fall back to
+ * the generic browser control on mobile/tablet.
  */
 function ControlSelect({
   label,
@@ -59,18 +68,21 @@ function ControlSelect({
       <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
         {label}
       </span>
-      <select
-        aria-label={ariaLabel}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-8 rounded-lg border border-white/[0.09] bg-white/[0.05] px-2 text-[12px] text-white/80 outline-none hover:bg-white/[0.08] focus:border-cyan-300/40 [&>option]:bg-slate-900"
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger
+          aria-label={ariaLabel}
+          className="h-8 w-auto gap-1.5 rounded-lg border-white/[0.09] bg-white/[0.05] px-2.5 text-[12px] text-white/80 ring-offset-0 hover:bg-white/[0.08] focus:ring-1 focus:ring-cyan-300/40 focus:ring-offset-0"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }
