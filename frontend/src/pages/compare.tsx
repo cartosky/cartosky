@@ -167,6 +167,28 @@ function parseRunParts(resolvedRun: string): { hour: string; ymd: string; date: 
   return { hour: `${hour}Z`, ymd: `${year}${month}${day}`, date: `${Number(month)}/${Number(day)}` };
 }
 
+/**
+ * Variable to select after a model switch: keep the currently selected
+ * variable when the new model also offers it as a grid variable (so e.g.
+ * GEFS tmp2m_anom → EPS stays on tmp2m_anom), otherwise fall back to the new
+ * model's default grid variable.
+ */
+function variableForModelSwitch(
+  capabilities: CapabilitiesResponse,
+  nextModel: string,
+  currentVariable: string,
+): string {
+  const nextVariableCapability = capabilities.model_catalog?.[nextModel]?.variables?.[currentVariable];
+  // The variable must be declared by the new model — readCapabilityRenderSubstrates
+  // falls back to ["grid"] for undefined, which would keep unsupported variables.
+  const keepCurrent = Boolean(
+    currentVariable
+    && nextVariableCapability
+    && readCapabilityRenderSubstrates(nextVariableCapability).includes("grid"),
+  );
+  return keepCurrent ? currentVariable : defaultGridVariableForModel(capabilities, nextModel);
+}
+
 /** Default grid variable for a model: its declared default if it is grid-backed, else the first grid variable. */
 function defaultGridVariableForModel(capabilities: CapabilitiesResponse, modelId: string): string {
   const modelCapability = capabilities.model_catalog?.[modelId] ?? null;
@@ -252,7 +274,7 @@ function ComparePanelControls({
       return;
     }
     onModelChange(nextModel);
-    onVariableChange(defaultGridVariableForModel(capabilities, nextModel));
+    onVariableChange(variableForModelSwitch(capabilities, nextModel, variable));
     onRunChange("latest");
   };
 
@@ -781,18 +803,18 @@ export default function Compare() {
       return;
     }
     setLModel(nextModel);
-    setLVariable(defaultGridVariableForModel(capabilities, nextModel));
+    setLVariable(variableForModelSwitch(capabilities, nextModel, lVariable));
     setLRun("latest");
-  }, [lModel, capabilities]);
+  }, [lModel, lVariable, capabilities]);
 
   const handleSplitRightModelChange = useCallback((nextModel: string) => {
     if (nextModel === rModel || !capabilities) {
       return;
     }
     setRModel(nextModel);
-    setRVariable(defaultGridVariableForModel(capabilities, nextModel));
+    setRVariable(variableForModelSwitch(capabilities, nextModel, rVariable));
     setRRun("latest");
-  }, [rModel, capabilities]);
+  }, [rModel, rVariable, capabilities]);
 
   // ── Difference pipeline (orchestrated by useCompareDiff) ───────────────
   const resolvedDiffHour = useMemo(
@@ -851,6 +873,12 @@ export default function Compare() {
 
   const leftFrameReadyRef = useRef(false);
   const rightFrameReadyRef = useRef(false);
+  // Split-mode city value labels applied, per panel. Without these in the gate
+  // the headless capture races city sampling and intermittently ships split
+  // screenshots with no city values — the same failure diff mode fixed with
+  // diffCityLabelsReady (observed prod 2026-07-06).
+  const leftCityLabelsReadyRef = useRef(false);
+  const rightCityLabelsReadyRef = useRef(false);
 
   const clearCompareReadySignal = useCallback(() => {
     leftFrameReadyRef.current = false;
@@ -862,13 +890,19 @@ export default function Compare() {
     }
   }, []);
 
-  // Split-mode gate: both panels' first frames ready. (No-op in diff mode — the
-  // diff four-step gate is handled by the effect below.)
+  // Split-mode gate: both panels' first frames rendered AND both panels' city
+  // value labels applied. (No-op in diff mode — the diff five-step gate is
+  // handled by the effect below.)
   const maybeSignalCompareReady = useCallback(() => {
     if (!isScreenshotMode || mode === "diff") {
       return;
     }
-    if (leftFrameReadyRef.current && rightFrameReadyRef.current) {
+    if (
+      leftFrameReadyRef.current
+      && rightFrameReadyRef.current
+      && leftCityLabelsReadyRef.current
+      && rightCityLabelsReadyRef.current
+    ) {
       document.documentElement.setAttribute("data-compare-ready", "1");
     }
   }, [isScreenshotMode, mode]);
@@ -880,6 +914,16 @@ export default function Compare() {
 
   const handleRightFirstFrameReady = useCallback(() => {
     rightFrameReadyRef.current = true;
+    maybeSignalCompareReady();
+  }, [maybeSignalCompareReady]);
+
+  const handleLeftCityLabelsReady = useCallback(() => {
+    leftCityLabelsReadyRef.current = true;
+    maybeSignalCompareReady();
+  }, [maybeSignalCompareReady]);
+
+  const handleRightCityLabelsReady = useCallback(() => {
+    rightCityLabelsReadyRef.current = true;
     maybeSignalCompareReady();
   }, [maybeSignalCompareReady]);
 
@@ -896,6 +940,16 @@ export default function Compare() {
     mode,
     clearCompareReadySignal,
   ]);
+
+  // City-label readiness re-fires once per MapCanvas *selection* (its internal
+  // latch resets on selectionKey/variable change, not on forecast hour), so
+  // these refs must only clear on selection/mode changes — clearing them on a
+  // forecast-hour change would deadlock the gate waiting for a callback that
+  // never re-fires.
+  useEffect(() => {
+    leftCityLabelsReadyRef.current = false;
+    rightCityLabelsReadyRef.current = false;
+  }, [lModel, lVariable, lRun, rModel, rVariable, rRun, mode]);
 
   // Diff-mode readiness gate: left fetched, right fetched, compute done (all
   // from useCompareDiff), the diff MapCanvas rendered + idle, and city value
@@ -1732,6 +1786,7 @@ export default function Compare() {
             showLegend={showLegends}
             onMapReady={handleLeftMapReady}
             onFirstFrameReady={handleLeftFirstFrameReady}
+            onCityLabelsReady={handleLeftCityLabelsReady}
             manualLocationJumpRef={leftRegionFitSuppressRef}
             onMapHover={handleLeftHover}
             onMapHoverEnd={handleHoverEnd}
@@ -1808,6 +1863,7 @@ export default function Compare() {
             showLegend={showLegends}
             onMapReady={handleRightMapReady}
             onFirstFrameReady={handleRightFirstFrameReady}
+            onCityLabelsReady={handleRightCityLabelsReady}
             manualLocationJumpRef={rightRegionFitSuppressRef}
             onMapHover={handleRightHover}
             onMapHoverEnd={handleHoverEnd}

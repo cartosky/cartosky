@@ -28,6 +28,8 @@ type ComparePanelProps = {
   showLegend: boolean;
   onMapReady: (map: maplibregl.Map) => void;
   onFirstFrameReady?: () => void;
+  /** Fires once city value labels are applied for the current selection (screenshot gate). */
+  onCityLabelsReady?: () => void;
   /** Pass-through to MapCanvas: skips the one-shot region fit after load. */
   manualLocationJumpRef?: { current: boolean };
   onMapHover?: (lat: number, lon: number, x: number, y: number) => void;
@@ -73,6 +75,7 @@ export function ComparePanel({
   showLegend,
   onMapReady,
   onFirstFrameReady,
+  onCityLabelsReady,
   manualLocationJumpRef,
   onMapHover,
   onMapHoverEnd,
@@ -306,6 +309,7 @@ export function ComparePanel({
         basemapMode={basemapMode}
         onMapReady={handleMapReady}
         onGridFrameReady={handleGridFrameReady}
+        onCityLabelsReady={onCityLabelsReady}
         manualLocationJumpRef={manualLocationJumpRef}
         onMapHover={onMapHover ? (lat, lon, x, y) => onMapHover(lat, lon, x, y) : undefined}
         onMapHoverEnd={onMapHoverEnd}
