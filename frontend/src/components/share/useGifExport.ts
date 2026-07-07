@@ -74,7 +74,10 @@ const GIF_END_HOLD_MS = 1200;
 // 0.65 balances legibility (with flat shadows + integer-aligned draws doing
 // the crispness work) against how much map the chrome covers — 0.8 read as
 // oversized in gate feedback.
-const GIF_CHROME_SCALE_FLOOR = 0.65;
+// Final chrome scale for GIF frames (composeShareFrame uses explicit values
+// as-is). ~9px overlay text at 720px wide — the smallest that stays legible
+// through 256-color quantization; verified at 0.55 (2026-07-07).
+const GIF_CHROME_SCALE = 0.55;
 // In-modal range-preview thumbnail width (the modal blurs/covers the live map,
 // so slider scrubbing renders its own small snapshot inside the GIF tab).
 // Matches GIF_OUTPUT_WIDTH so the (now full-modal-width) idle preview stays
@@ -432,7 +435,7 @@ export function useGifExport({
           legend,
           overlayLines: buildShareOverlayLines(frameState, legend),
           isMobile: baseState.isMobile,
-          chromeScale: Math.max(dims.width / 1280, GIF_CHROME_SCALE_FLOOR),
+          chromeScale: GIF_CHROME_SCALE,
           // Soft shadows quantize into dark banding in the GIF palette.
           chromeShadows: false,
         });

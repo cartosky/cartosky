@@ -1088,12 +1088,17 @@ export async function composeShareFrame(
   opts: ShareFrameComposeOptions,
 ): Promise<void> {
   const { width, height, pixelRatio } = opts;
-  // Uniform chrome trim (gate feedback 2026-07-07: overlay/logo/legend cards
-  // still read oversized). Applied to the derived scale so every card shrinks
-  // proportionally; GIF overlay text bottoms out around 9px at 720px wide,
-  // which stays legible with flat shadows.
-  const CHROME_COMPACT_FACTOR = 0.85;
-  const scaleFactor = (opts.chromeScale ?? width / NORMALIZED_OUTPUT_WIDTH) * CHROME_COMPACT_FACTOR;
+  // Chrome sizing (gate feedback 2026-07-07: cards must read as small helper
+  // badges, never dominant). Two rules:
+  // 1. Scale by the LIMITING dimension — wide-short composites (compare
+  //    split ≈ 2000×760) previously scaled by width alone and drew ~1.6×
+  //    cards the short frame couldn't accommodate.
+  // 2. Apply a compact factor to the derived scale. An explicit
+  //    opts.chromeScale (the GIF path's floor) is used as-is — its value
+  //    already encodes the smallest-legible size.
+  const CHROME_COMPACT_FACTOR = 0.72;
+  const scaleFactor = opts.chromeScale
+    ?? Math.min(width / NORMALIZED_OUTPUT_WIDTH, height / DEFAULT_HEIGHT) * CHROME_COMPACT_FACTOR;
   outputCanvas.width = Math.max(1, Math.round(width * pixelRatio));
   outputCanvas.height = Math.max(1, Math.round(height * pixelRatio));
   const outputCtx = outputCanvas.getContext("2d");
