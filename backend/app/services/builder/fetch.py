@@ -4147,6 +4147,13 @@ def _celsius_to_fahrenheit(data: np.ndarray) -> np.ndarray:
     return data * 9.0 / 5.0 + 32.0
 
 
+def _fahrenheit_delta_to_celsius_delta(data: np.ndarray) -> np.ndarray:
+    """Convert a Fahrenheit *difference* (e.g. anomaly) to a Celsius
+    difference, preserving NaN. No offset — deltas scale by 5/9 only.
+    """
+    return data * 5.0 / 9.0
+
+
 def _ms_to_mph(data: np.ndarray) -> np.ndarray:
     """Convert m/s → mph, preserving NaN."""
     return data * 2.23694
@@ -4225,6 +4232,7 @@ def _decameters_to_meters(data: np.ndarray) -> np.ndarray:
 UNIT_CONVERTERS: dict[tuple[str, str] | str, Any] = {
     # Conversion IDs for capability metadata
     "c_to_f": _celsius_to_fahrenheit,
+    "f_to_c_delta": _fahrenheit_delta_to_celsius_delta,
     "ms_to_mph": _ms_to_mph,
     "ms_to_kt": _ms_to_kt,
     "m_to_in": _meters_to_inches,

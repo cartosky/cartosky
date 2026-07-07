@@ -154,7 +154,7 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "scale": 0.1,
         "offset": -100.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("hrrr", "vort500"): {
         "scale": 0.1,
@@ -262,7 +262,7 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "scale": 0.1,
         "offset": -80.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("gfs", "tmp2m"): {
         "scale": 0.1,
@@ -280,7 +280,7 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "scale": 0.1,
         "offset": -80.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("gfs", "hgt500_anom"): {
         "scale": 1.0,
@@ -304,7 +304,7 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "scale": 0.1,
         "offset": -80.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("aifs", "tmp2m"): {
         "scale": 0.1,
@@ -322,7 +322,7 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "scale": 0.1,
         "offset": -80.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("aifs", "rh2m"): {
         "scale": 0.1,
@@ -442,37 +442,37 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "scale": 0.1,
         "offset": -100.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("gefs", "tmp850_anom"): {
         "scale": 0.1,
         "offset": -80.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("gefs", "tmp850_anom__mean"): {
         "scale": 0.1,
         "offset": -80.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("eps", "tmp850__mean"): {
         "scale": 0.1,
         "offset": -100.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("eps", "tmp850_anom"): {
         "scale": 0.1,
         "offset": -80.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("eps", "tmp850_anom__mean"): {
         "scale": 0.1,
         "offset": -80.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("gefs", "wspd850__mean"): {
         "scale": 0.1,
@@ -538,13 +538,13 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "scale": 0.1,
         "offset": -100.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("aigfs", "tmp850_anom"): {
         "scale": 0.1,
         "offset": -80.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("aifs", "dp2m"): {
         "scale": 0.1,
@@ -562,13 +562,13 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "scale": 0.1,
         "offset": -100.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("aifs", "tmp850"): {
         "scale": 0.1,
         "offset": -100.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("ecmwf", "wspd850"): {
         "scale": 0.1,
@@ -778,7 +778,7 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "scale": 0.1,
         "offset": -100.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("gfs", "wspd850"): {
         "scale": 0.1,
@@ -898,7 +898,7 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "scale": 0.1,
         "offset": -100.0,
         "nodata": 65535,
-        "units": "F",
+        "units": "C",
     },
     ("nam", "vort500"): {
         "scale": 0.1,

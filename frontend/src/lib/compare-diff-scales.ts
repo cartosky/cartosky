@@ -18,7 +18,7 @@ export const COMPARE_DIFF_SCALES: Record<string, DiffScale> = {
   dp2m:           { maxAbs: 15,   units: "°F" },
   tmp850:         { maxAbs: 5,    units: "°C" },
   tmp2m_anom:     { maxAbs: 10,   units: "°F" },
-  tmp850_anom:    { maxAbs: 10,   units: "°F" },
+  tmp850_anom:    { maxAbs: 6,    units: "°C" },
   wspd10m:        { maxAbs: 15,   units: "mph" },
   wgst10m:        { maxAbs: 15,   units: "mph" },
   wspd850:        { maxAbs: 20,   units: "kt" },

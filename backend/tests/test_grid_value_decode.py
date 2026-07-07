@@ -68,6 +68,14 @@ def _canary_scope_vars(model: str) -> list[str]:
 # MODELS_UNDER_TEST tuple whose full packed lists are all real artifacts.
 ENSEMBLE_MODELS_UNDER_TEST = ("gefs", "eps")
 
+# Poll-driven standalone publishers (NDFD, WPC): minute-stamped run ids,
+# dedicated publish modules (ndfd_publish/wpc_publish, not the scheduler
+# pipeline), zero display-prep entries (all Group 1). Scope is derived through
+# the same canary intersection as the ensemble models even though the audit
+# found every exclusion bucket empty for both — asserted below — so a future
+# catalog change cannot silently drift from what the canary compares.
+PUBLISHER_MODELS_UNDER_TEST = ("ndfd", "wpc")
+
 # The audited write-path-dead bare aliases per ensemble model (packed and
 # catalog-buildable, but runtime var-id resolution redirects every build to
 # the __mean twin, so no frame is ever written under these ids). Pinned so an
@@ -93,6 +101,10 @@ MODEL_VAR_PARAMS = [
 ] + [
     (model, var)
     for model in ENSEMBLE_MODELS_UNDER_TEST
+    for var in _canary_scope_vars(model)
+] + [
+    (model, var)
+    for model in PUBLISHER_MODELS_UNDER_TEST
     for var in _canary_scope_vars(model)
 ]
 
@@ -304,6 +316,163 @@ def test_hrrr_and_nbm_packed_variables_are_all_uint16() -> None:
                 f"{model}/{var} is uint8-packed — Phase G audit assumed all-"
                 f"uint16 for this model; re-audit before relying on these tests"
             )
+
+
+@pytest.mark.parametrize("model", PUBLISHER_MODELS_UNDER_TEST)
+def test_publisher_scope_has_no_exclusions_and_is_fully_covered(model: str) -> None:
+    """NDFD/WPC audit pin: every exclusion bucket is empty for both standalone
+    publishers — the canary scope IS the full packed list — and the Layer 1
+    parameterization covers exactly that scope. Derived through the canary's
+    own logic (not hardcoded) so a future catalog change that populates a
+    bucket fails loudly here instead of silently narrowing coverage."""
+    from backend.scripts.canary_binary_sampler import _scope_for_model
+
+    (
+        in_scope,
+        excluded_non_buildable,
+        excluded_dead_alias,
+        excluded_uncataloged,
+    ) = _scope_for_model(model)
+
+    assert excluded_non_buildable == []
+    assert excluded_dead_alias == []
+    assert excluded_uncataloged == []
+    assert sorted(in_scope) == _vars_for_model(model)
+
+    covered = {var for (mdl, var) in MODEL_VAR_PARAMS if mdl == model}
+    assert covered == set(in_scope)
+    assert covered, f"no parameterized variables for {model}"
+
+
+def test_ndfd_and_wpc_packed_variables_are_all_uint16() -> None:
+    """Publisher audit invariant: every NDFD and WPC packed variable is uint16.
+    A future uint8 addition must be a deliberate, audited change."""
+    for model in PUBLISHER_MODELS_UNDER_TEST:
+        for var in _vars_for_model(model):
+            packing = _packing(model, var)
+            resolved = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+            assert resolved != GRID_DTYPE_UINT8, (
+                f"{model}/{var} is uint8-packed — the NDFD/WPC audit assumed "
+                f"all-uint16; re-audit before relying on these tests"
+            )
+
+
+@pytest.mark.parametrize("var", ["mint", "maxt"])
+def test_ndfd_temperature_negative_offset_round_trips_signed_values(var: str) -> None:
+    """The signed-variable diligence every prior model's audit applied: NDFD's
+    mint/maxt pack with offset=-100.0 (F), so sub-zero temperatures live in the
+    low code range. Pin the offset and prove realistic negative values —
+    including non-lattice ones that exercise round-to-nearest — decode back
+    within scale/2."""
+    packing = _packing("ndfd", var)
+    scale = float(packing["scale"])
+    offset = float(packing["offset"])
+    nodata = int(packing["nodata"])
+    assert offset == -100.0
+    assert scale == 0.1
+
+    # CONUS record cold is about -70 F (Rogers Pass); mix lattice-aligned and
+    # round-to-nearest values across the signed part of the band.
+    values = np.array([-70.0, -40.0, -39.97, -0.5, -0.03, 0.0, 32.0], dtype=np.float32)
+    dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+    encoded = _encode_values(values, scale=scale, offset=offset, nodata=nodata, dtype=dtype)
+    decoded = _decode_values(encoded, model="ndfd", var=var)
+
+    tol = scale / 2 + 1e-4
+    assert np.all(np.abs(decoded - values) <= tol), (
+        f"ndfd/{var}: signed round-trip exceeded {tol}\n"
+        f"values={values}\ndecoded={decoded}"
+    )
+    # The negative inputs must decode negative — sign survives the packing.
+    assert np.all(decoded[values < -tol] < 0)
+
+
+# Realistic post-rollup extremes for NDFD's in-app rolling-sum (and rolling-max)
+# variables. The packing/decode math is derivation-agnostic, but the fixtures
+# must use magnitudes a real 4-6-frame rollup can reach — not raw single-frame
+# values — because scale=0.1/0.01 headroom is consumed differently at rollup
+# scale. Values are near the physical record for each window:
+#   qpf_24h  ~43 in (Alvin, TX 1979 US 24h rainfall record)
+#   qpf_48h  Harvey-scale multi-day totals
+#   snow_24h ~75.8 in (Silver Lake, CO 1921 US 24h snowfall record)
+#   snow_48h stacked lake-effect/Sierra events
+#   wgust_24h_max ~231 mph (Mount Washington observed gust)
+NDFD_ROLLUP_EXTREMES = {
+    "qpf_24h": 42.0,
+    "qpf_48h": 62.0,
+    "snow_24h": 75.8,
+    "snow_48h": 120.5,
+    "wgust_24h_max": 231.0,
+}
+
+
+@pytest.mark.parametrize(("var", "extreme"), sorted(NDFD_ROLLUP_EXTREMES.items()))
+def test_ndfd_rollup_variables_round_trip_at_realistic_rollup_magnitudes(
+    var: str, extreme: float
+) -> None:
+    packing = _packing("ndfd", var)
+    scale = float(packing["scale"])
+    offset = float(packing["offset"])
+    nodata = int(packing["nodata"])
+    dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+
+    # Headroom pin: the record-scale rollup value must sit comfortably inside
+    # the representable band (2x margin), not just barely below the ceiling.
+    hi = _representable_max(scale, offset, nodata)
+    assert extreme * 2 <= hi, (
+        f"ndfd/{var}: representable max {hi} leaves <2x headroom over the "
+        f"realistic rollup extreme {extreme} — re-audit the packing"
+    )
+
+    # The extreme itself plus nearby non-lattice values (round-to-nearest at
+    # rollup magnitude, where float32 ULP is far larger than at single-frame
+    # magnitudes).
+    values = np.array(
+        [extreme, extreme - 0.37 * scale, extreme + 1.13 * scale, extreme / 2],
+        dtype=np.float32,
+    )
+    encoded = _encode_values(values, scale=scale, offset=offset, nodata=nodata, dtype=dtype)
+    decoded = _decode_values(encoded, model="ndfd", var=var)
+
+    tol = scale / 2 + 1e-3
+    assert np.all(np.abs(decoded - values) <= tol), (
+        f"ndfd/{var}: rollup-magnitude round-trip exceeded {tol}\n"
+        f"values={values}\ndecoded={decoded}\ndiff={np.abs(decoded - values)}"
+    )
+
+
+def test_wpc_precip_total_round_trips_at_seven_day_cumulative_extremes() -> None:
+    """WPC publishes precip_total as a cumulative sum out to fh=168 (7 days),
+    so the packing must round-trip at cumulative-total magnitudes, not just
+    single-period ones. scale=0.01 / nodata=65535 gives ~655 in of headroom;
+    the CONUS 7-day record is Harvey's ~60.6 in storm total — pin that the
+    ceiling covers it with an order-of-magnitude margin, then round-trip
+    values at and above the record."""
+    packing = _packing("wpc", "precip_total")
+    scale = float(packing["scale"])
+    offset = float(packing["offset"])
+    nodata = int(packing["nodata"])
+    dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+    assert scale == 0.01
+    assert nodata == 65535
+
+    hi = _representable_max(scale, offset, nodata)
+    assert hi == pytest.approx(655.34)
+    harvey_storm_total = 60.58
+    assert hi >= harvey_storm_total * 10  # order-of-magnitude margin
+
+    # Record-scale and beyond-record cumulative totals, lattice and non-lattice.
+    values = np.array(
+        [harvey_storm_total, 62.37, 100.0, 150.03], dtype=np.float32
+    )
+    encoded = _encode_values(values, scale=scale, offset=offset, nodata=nodata, dtype=dtype)
+    decoded = _decode_values(encoded, model="wpc", var="precip_total")
+
+    tol = scale / 2 + 1e-3
+    assert np.all(np.abs(decoded - values) <= tol), (
+        f"wpc/precip_total: cumulative-extreme round-trip exceeded {tol}\n"
+        f"values={values}\ndecoded={decoded}\ndiff={np.abs(decoded - values)}"
+    )
 
 
 def test_decode_branches_on_dtype_for_uint8_packed_variable() -> None:

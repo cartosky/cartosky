@@ -205,9 +205,10 @@ def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:
     assert tmp850_anom_spec.derived is True
     assert tmp850_anom_spec.derive == "anomaly_departure"
     assert tmp850_anom_spec.kind == "continuous"
-    assert tmp850_anom_spec.units == "F"
+    assert tmp850_anom_spec.units == "C"
     assert tmp850_anom_spec.selectors.hints["base_component"] == "tmp850"
     assert tmp850_anom_spec.selectors.hints["base_conversion"] == "c_to_f"
+    assert tmp850_anom_spec.selectors.hints["anomaly_conversion"] == "f_to_c_delta"
     assert tmp850_anom_spec.selectors.hints["baseline_field"] == "tmp850"
     assert tmp850_anom_spec.selectors.hints["baseline_source"] == "era5"
     assert tmp850_anom_spec.selectors.hints["baseline_region"] == "na"
@@ -485,7 +486,7 @@ def test_aigfs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850_anom["var_key"] == "tmp850_anom"
     assert tmp850_anom["display_name"] == "850mb Temperature Anomaly"
     assert tmp850_anom["kind"] == "continuous"
-    assert tmp850_anom["units"] == "F"
+    assert tmp850_anom["units"] == "C"
     assert tmp850_anom["buildable"] is True
     assert tmp850_anom["derived"] is True
     assert tmp850_anom["derive_strategy_id"] == "anomaly_departure"

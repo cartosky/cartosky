@@ -750,3 +750,372 @@ def test_seek_sampler_matches_full_read(tmp_path, transform, values) -> None:
         read_binary_sample_value(frame, meta, model="gefs", var=spike_var, lat=43.5, lon=-101.5)
     with pytest.raises(ValueError, match="size mismatch"):
         read_binary_sample_value_seek(frame, meta, model="gefs", var=spike_var, lat=43.5, lon=-101.5)
+
+
+# ── Phase 4: pf-subset mode (EPS, design §13/D7) ─────────────────────
+def _pf_inventory(rows):
+    """Minimal pf inventory frame: (start_byte, end_byte, number) rows."""
+    import pandas as pd
+
+    return pd.DataFrame(
+        [{"start_byte": s, "end_byte": e, "number": n} for s, e, n in rows]
+    )
+
+
+def test_pf_band_member_numbers_follow_byte_order() -> None:
+    # Rows arrive number-ordered (the mean sorts them that way), but the
+    # subset writer lays bands out by ascending byte start — the mapping
+    # must follow bytes, not row order.
+    inventory = _pf_inventory([(300, 399, 1), (100, 199, 2), (200, 299, 3)])
+    assert members._pf_band_member_numbers(inventory) == [2, 3, 1]
+
+
+def test_pf_band_member_numbers_reject_ambiguity() -> None:
+    with pytest.raises(members.MemberFetchError, match="duplicate member numbers"):
+        members._pf_band_member_numbers(
+            _pf_inventory([(100, 199, 1), (200, 299, 1)])
+        )
+    with pytest.raises(members.MemberFetchError, match="duplicate byte ranges"):
+        members._pf_band_member_numbers(
+            _pf_inventory([(100, 199, 1), (100, 199, 2)])
+        )
+    with pytest.raises(members.MemberFetchError, match="missing its byte range"):
+        import pandas as pd
+
+        members._pf_band_member_numbers(
+            pd.DataFrame([{"start_byte": float("nan"), "end_byte": 199, "number": 1}])
+        )
+    with pytest.raises(members.MemberFetchError, match="no member number"):
+        import pandas as pd
+
+        members._pf_band_member_numbers(
+            pd.DataFrame([{"start_byte": 100, "end_byte": 199, "number": None}])
+        )
+    with pytest.raises(members.MemberFetchError, match="no byte ranges"):
+        members._pf_band_member_numbers(_pf_inventory([]))
+
+
+def test_build_member_plan_real_eps_is_pf_subset_mode() -> None:
+    plugin = MODEL_REGISTRY["eps"]
+    plan = members.build_member_plan(plugin, "eps", "20260706_00z", "na")
+    assert plan is not None
+    assert plan.mode == members.MODE_PF_SUBSET
+    assert set(plan.contexts) == {"tmp2m", "precip_total"}
+    # 50 pf members, NO control (plan §2.2 correction).
+    assert len(plan.member_ids) == 50
+    assert plan.member_ids[0] == "m01" and plan.member_ids[-1] == "m50"
+    assert "control" not in plan.member_ids
+    assert len(plan.member_var_ids) == 100
+    # ECMWF tp is natively run-cumulative: both vars direct, no step chain.
+    assert not plan.contexts["tmp2m"].derived
+    assert not plan.contexts["precip_total"].derived
+    assert plan.step_fhs == [] and not plan.has_cumulative
+    # min_fh 6 honored by the schedule (no phantom fh-0 precip unit).
+    assert plan.fhs_by_var["precip_total"][0] == 6
+    assert plan.fhs_by_var["tmp2m"][0] == 0
+    # GEFS is untouched by mode detection.
+    gefs_plan = members.build_member_plan(MODEL_REGISTRY["gefs"], "gefs", "20260706_00z", "na")
+    assert gefs_plan.mode == members.MODE_MEMBER_FILES
+
+
+def test_detect_plan_mode_mixed_raises(monkeypatch) -> None:
+    """A plan mixing pf-subset and non-pf member vars has no build path."""
+    plugin = MODEL_REGISTRY["gefs"]
+    monkeypatch.setattr(
+        members,
+        "ensemble_member_descriptors",
+        lambda _plugin: {
+            "tmp2m": {"count": 2, "control": False, "prefix": "m", "enabled": True},
+            "precip_total": {"count": 2, "control": False, "prefix": "m", "enabled": True},
+        },
+    )
+
+    class _MixedProxy:
+        def __getattr__(self, name):
+            return getattr(plugin, name)
+
+        def scheduled_fhs_for_var(self, var_key, cycle_hour):
+            return [0, 6]
+
+        def herbie_request(self, **kwargs):
+            request = plugin.herbie_request(**kwargs)
+            if kwargs.get("var_key") == "tmp2m":
+                herbie_kwargs = dict(request.herbie_kwargs)
+                herbie_kwargs["_cartosky_fetch_aggregation"] = "ecmwf_pf_mean"
+                return type(request)(
+                    model=request.model, product=request.product,
+                    herbie_kwargs=herbie_kwargs,
+                )
+            return request
+
+    with pytest.raises(ValueError, match="mixes pf-subset vars"):
+        members.build_member_plan(_MixedProxy(), "gefs", "20260706_00z", "na")
+
+
+@pytest.fixture()
+def eps_roster_plugin(monkeypatch):
+    """EPS plugin proxy: 3-member pf roster, tmp2m-only, 2-fh schedule."""
+    plugin = MODEL_REGISTRY["eps"]
+    descriptor = {"count": 3, "control": False, "prefix": "m", "enabled": True}
+    monkeypatch.setattr(
+        members, "ensemble_member_descriptors", lambda _plugin: {"tmp2m": descriptor},
+    )
+
+    class _PluginProxy:
+        def __getattr__(self, name):
+            return getattr(plugin, name)
+
+        def scheduled_fhs_for_var(self, var_key, cycle_hour):
+            return [0, 6]
+
+    return _PluginProxy()
+
+
+def _write_pf_subset_tif(path: Path, fh: int, numbers: list[int]) -> None:
+    """Multi-band float32 GeoTIFF standing in for a *.cartosky_pf.grib2:
+    band k carries member numbers[k-1]'s field (byte-order layout)."""
+    import rasterio
+
+    with rasterio.open(
+        path, "w", driver="GTiff", height=NATIVE_H, width=NATIVE_W,
+        count=len(numbers), dtype="float32", crs=NATIVE_CRS,
+        transform=NATIVE_TRANSFORM,
+    ) as dst:
+        for band_index, number in enumerate(numbers, start=1):
+            dst.write(_native_tmp_c(fh) + np.float32(number), band_index)
+
+
+def _make_fake_pf_resolver(subset_dir: Path, numbers: list[int]):
+    calls: list[tuple[str, int]] = []
+
+    def _fake(*, plan, ctx, fh, should_stop):
+        calls.append((ctx.base_var, fh))
+        path = subset_dir / f"pf_{ctx.base_var}_fh{fh:03d}.tif"
+        if not path.exists():
+            _write_pf_subset_tif(path, fh, numbers)
+        return path, list(numbers)
+
+    return _fake, calls
+
+
+def _expected_eps_member_frame(plugin, fh: int, number: int) -> np.ndarray:
+    """The member path's expected output: convert -> warp of that band."""
+    ctx = members._resolve_member_var_context(plugin, "eps", "tmp2m")
+    native = _native_tmp_c(fh) + np.float32(number)
+    converted = members.convert_units(
+        native, var_key="tmp2m", model_id="eps", var_capability=ctx.capability,
+    )
+    warped, _ = members.warp_to_target_grid(
+        converted, NATIVE_CRS, NATIVE_TRANSFORM, model="eps", region="na",
+        resampling=ctx.resampling, src_nodata=None, dst_nodata=float("nan"),
+    )
+    return warped
+
+
+def test_pf_pass_writes_correctly_labeled_frames_and_resumes(
+    tmp_path, eps_roster_plugin, monkeypatch,
+) -> None:
+    # Byte order deliberately ≠ member order: band 1 is member 2's field.
+    numbers = [2, 1, 3]
+    fake_resolver, calls = _make_fake_pf_resolver(tmp_path / "subsets", numbers)
+    (tmp_path / "subsets").mkdir()
+    monkeypatch.setattr(members, "_resolve_pf_subset", fake_resolver)
+    run_id = "20260706_00z"
+
+    summary = members.run_member_pass(
+        plugin=eps_roster_plugin, model_id="eps", run_id=run_id,
+        data_root=tmp_path, region="na", workers=1,
+    )
+    assert summary.counts == {members.STATUS_WRITTEN: 6}  # 3 members × 2 fhs
+    assert summary.complete
+    assert calls == [("tmp2m", 0), ("tmp2m", 6)]  # ONE resolve per (var, fh)
+
+    # Labeling: each member's decoded frame matches ITS band, within packing
+    # quantization (EPS tmp2m scale 0.1 F), despite the shuffled byte order.
+    staging = tmp_path / "staging" / "eps" / run_id
+    for fh in (0, 6):
+        for number in (1, 2, 3):
+            decoded, _meta = members._decode_member_frame(
+                staging, "eps", members.member_var_id("tmp2m", f"m{number:02d}"), fh,
+            )
+            expected = _expected_eps_member_frame(eps_roster_plugin, fh, number)
+            both = np.isfinite(decoded) & np.isfinite(expected)
+            assert both.any()
+            assert np.allclose(decoded[both], expected[both], atol=0.11)
+            # Wrong-label guard: must NOT match a different member's field
+            # (members differ by 1 C = 1.8 F, far above quantization).
+            other = _expected_eps_member_frame(eps_roster_plugin, fh, number % 3 + 1)
+            assert not np.allclose(decoded[both], other[both], atol=0.11)
+
+    assert not members.member_pass_pending(
+        plugin=eps_roster_plugin, model_id="eps", run_id=run_id, data_root=tmp_path,
+    )
+    # Second pass resumes everything and never re-resolves a subset.
+    calls.clear()
+    summary2 = members.run_member_pass(
+        plugin=eps_roster_plugin, model_id="eps", run_id=run_id,
+        data_root=tmp_path, region="na", workers=1,
+    )
+    assert summary2.counts == {members.STATUS_RESUMED: 6}
+    assert calls == []
+
+
+def test_pf_pass_mean_of_members_matches_subset_mean(
+    tmp_path, eps_roster_plugin, monkeypatch,
+) -> None:
+    """Parity with the production mean: averaging the published member frames
+    reproduces convert->warp of ``_aggregate_grib_subset_mean`` on the same
+    subset (both linear, so they commute) within packing tolerance."""
+    from backend.app.services.builder.fetch import _aggregate_grib_subset_mean
+
+    numbers = [3, 1, 2]
+    fake_resolver, _calls = _make_fake_pf_resolver(tmp_path / "subsets", numbers)
+    (tmp_path / "subsets").mkdir()
+    monkeypatch.setattr(members, "_resolve_pf_subset", fake_resolver)
+    run_id = "20260706_00z"
+    members.run_member_pass(
+        plugin=eps_roster_plugin, model_id="eps", run_id=run_id,
+        data_root=tmp_path, region="na", workers=1,
+    )
+
+    staging = tmp_path / "staging" / "eps" / run_id
+    fh = 6
+    member_mean = np.mean(
+        [
+            members._decode_member_frame(
+                staging, "eps", members.member_var_id("tmp2m", f"m{n:02d}"), fh,
+            )[0]
+            for n in (1, 2, 3)
+        ],
+        axis=0,
+    )
+    subset_path = tmp_path / "subsets" / f"pf_tmp2m_fh{fh:03d}.tif"
+    agg, crs, transform, count = _aggregate_grib_subset_mean(subset_path)
+    assert count == 3
+    ctx = members._resolve_member_var_context(eps_roster_plugin, "eps", "tmp2m")
+    converted = members.convert_units(
+        agg, var_key="tmp2m", model_id="eps", var_capability=ctx.capability,
+    )
+    expected, _ = members.warp_to_target_grid(
+        converted, crs, transform, model="eps", region="na",
+        resampling=ctx.resampling, src_nodata=None, dst_nodata=float("nan"),
+    )
+    both = np.isfinite(member_mean) & np.isfinite(expected)
+    assert both.any()
+    assert np.allclose(member_mean[both], expected[both], atol=0.11)
+
+
+def test_pf_pass_roster_mismatch_errors_without_writing(
+    tmp_path, eps_roster_plugin, monkeypatch,
+) -> None:
+    """Numbers that don't cover 1..N exactly must never label bands."""
+    fake_resolver, _calls = _make_fake_pf_resolver(tmp_path / "subsets", [1, 2])
+    (tmp_path / "subsets").mkdir()
+    monkeypatch.setattr(members, "_resolve_pf_subset", fake_resolver)
+
+    summary = members.run_member_pass(
+        plugin=eps_roster_plugin, model_id="eps", run_id="20260706_00z",
+        data_root=tmp_path, region="na", workers=1,
+    )
+    assert summary.counts == {members.STATUS_ERROR: 6}
+    assert not summary.complete
+    staging = tmp_path / "staging" / "eps" / "20260706_00z"
+    assert not (staging.exists() and list(staging.rglob("*.bin")))
+
+
+def test_pf_pass_band_count_mismatch_errors(tmp_path, eps_roster_plugin, monkeypatch) -> None:
+    subset_dir = tmp_path / "subsets"
+    subset_dir.mkdir()
+
+    def _short_resolver(*, plan, ctx, fh, should_stop):
+        path = subset_dir / f"pf_{ctx.base_var}_fh{fh:03d}.tif"
+        if not path.exists():
+            _write_pf_subset_tif(path, fh, [1, 2])  # 2 bands…
+        return path, [1, 2, 3]  # …but the index promises 3 members
+
+    monkeypatch.setattr(members, "_resolve_pf_subset", _short_resolver)
+    summary = members.run_member_pass(
+        plugin=eps_roster_plugin, model_id="eps", run_id="20260706_00z",
+        data_root=tmp_path, region="na", workers=1,
+    )
+    assert summary.counts == {members.STATUS_ERROR: 6}
+    staging = tmp_path / "staging" / "eps" / "20260706_00z"
+    assert not (staging.exists() and list(staging.rglob("*.bin")))
+
+
+def test_pf_pass_fetch_failure_and_preemption(tmp_path, eps_roster_plugin, monkeypatch) -> None:
+    def _failing_resolver(*, plan, ctx, fh, should_stop):
+        raise members.MemberFetchError(f"pf subset resolve failed ({ctx.base_var} fh{fh:03d})")
+
+    monkeypatch.setattr(members, "_resolve_pf_subset", _failing_resolver)
+    summary = members.run_member_pass(
+        plugin=eps_roster_plugin, model_id="eps", run_id="20260706_00z",
+        data_root=tmp_path, region="na", workers=1,
+    )
+    assert summary.counts == {members.STATUS_FETCH_FAILED: 6}
+    assert members.member_pass_pending(
+        plugin=eps_roster_plugin, model_id="eps", run_id="20260706_00z", data_root=tmp_path,
+    )
+
+    # Preemption between bands: stop after the first unit resolves.
+    numbers = [1, 2, 3]
+    fake_resolver, calls = _make_fake_pf_resolver(tmp_path / "subsets", numbers)
+    (tmp_path / "subsets").mkdir()
+    monkeypatch.setattr(members, "_resolve_pf_subset", fake_resolver)
+    summary2 = members.run_member_pass(
+        plugin=eps_roster_plugin, model_id="eps", run_id="20260706_00z",
+        data_root=tmp_path, region="na", workers=1,
+        should_stop=lambda: len(calls) >= 1,
+    )
+    assert summary2.preempted
+    assert summary2.counts[members.STATUS_PREEMPTED] > 0
+    assert not summary2.complete
+
+
+def test_pf_pass_gate_failure_writes_nothing(tmp_path, eps_roster_plugin, monkeypatch) -> None:
+    fake_resolver, _calls = _make_fake_pf_resolver(tmp_path / "subsets", [1, 2, 3])
+    (tmp_path / "subsets").mkdir()
+    monkeypatch.setattr(members, "_resolve_pf_subset", fake_resolver)
+    monkeypatch.setattr(members, "check_pre_encode_value_sanity", lambda *a, **k: False)
+
+    summary = members.run_member_pass(
+        plugin=eps_roster_plugin, model_id="eps", run_id="20260706_00z",
+        data_root=tmp_path, region="na", workers=1,
+    )
+    assert summary.counts == {members.STATUS_GATE_FAILED: 6}
+    staging = tmp_path / "staging" / "eps" / "20260706_00z"
+    assert not (staging.exists() and list(staging.rglob("*.bin")))
+
+
+def test_pf_pass_partial_resume_rebuilds_only_missing_members(
+    tmp_path, eps_roster_plugin, monkeypatch,
+) -> None:
+    numbers = [1, 2, 3]
+    fake_resolver, calls = _make_fake_pf_resolver(tmp_path / "subsets", numbers)
+    (tmp_path / "subsets").mkdir()
+    monkeypatch.setattr(members, "_resolve_pf_subset", fake_resolver)
+    run_id = "20260706_00z"
+    members.run_member_pass(
+        plugin=eps_roster_plugin, model_id="eps", run_id=run_id,
+        data_root=tmp_path, region="na", workers=1,
+    )
+
+    # Knock out one member frame; the next pass resolves ONLY that unit's
+    # subset and rewrites only the missing frame.
+    staging = tmp_path / "staging" / "eps" / run_id
+    victim = staging / "tmp2m__m02" / "grid" / "fh006.l0.u16.bin"
+    assert victim.is_file()
+    victim.unlink()
+    calls.clear()
+    summary = members.run_member_pass(
+        plugin=eps_roster_plugin, model_id="eps", run_id=run_id,
+        data_root=tmp_path, region="na", workers=1,
+    )
+    assert summary.counts == {members.STATUS_RESUMED: 5, members.STATUS_WRITTEN: 1}
+    assert calls == [("tmp2m", 6)]
+    decoded, _ = members._decode_member_frame(
+        staging, "eps", "tmp2m__m02", 6,
+    )
+    expected = _expected_eps_member_frame(eps_roster_plugin, 6, 2)
+    both = np.isfinite(decoded) & np.isfinite(expected)
+    assert np.allclose(decoded[both], expected[both], atol=0.11)

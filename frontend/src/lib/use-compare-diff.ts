@@ -89,12 +89,13 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     }
   };
 
-  // Latest adjacent-hour URLs, read via ref so they never re-trigger the compute
-  // effect (prefetch is a side benefit of a settled diff, not a compute input).
-  const prefetchUrlsRef = useRef<string[]>([]);
-  prefetchUrlsRef.current = [
-    ...(params.leftPrefetchUrls ?? []),
-    ...(params.rightPrefetchUrls ?? []),
+  // Latest adjacent-hour URLs (paired with their side's model for authorized
+  // fetching), read via ref so they never re-trigger the compute effect
+  // (prefetch is a side benefit of a settled diff, not a compute input).
+  const prefetchTargetsRef = useRef<{ url: string; model: string }[]>([]);
+  prefetchTargetsRef.current = [
+    ...(params.leftPrefetchUrls ?? []).map((url) => ({ url, model: leftModel })),
+    ...(params.rightPrefetchUrls ?? []).map((url) => ({ url, model: rightModel })),
   ];
 
   // Fire-and-forget, low-priority warming of adjacent frames into GridFrameCache.
@@ -107,13 +108,13 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
   };
   const schedulePrefetch = () => {
     cancelPrefetch();
-    const urls = prefetchUrlsRef.current.filter((url) => url && !gridFrameCache.has(url));
-    if (urls.length === 0) {
+    const targets = prefetchTargetsRef.current.filter(({ url }) => url && !gridFrameCache.has(url));
+    if (targets.length === 0) {
       return;
     }
     const warm = () => {
-      for (const url of urls) {
-        void fetchGridFrameBytes(url).catch(() => {
+      for (const { url, model } of targets) {
+        void fetchGridFrameBytes(url, model).catch(() => {
           // Best-effort warm — a failed prefetch just means the next scrub
           // fetches normally; never surface it as an error.
         });
@@ -170,13 +171,13 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const leftPromise = fetchGridFrameBytes(leftFrameUrl!, controller.signal).then((bytes) => {
+          const leftPromise = fetchGridFrameBytes(leftFrameUrl!, leftModel, controller.signal).then((bytes) => {
             if (isCurrent()) {
               setReadySteps((steps) => ({ ...steps, leftFetched: true }));
             }
             return bytes;
           });
-          const rightPromise = fetchGridFrameBytes(rightFrameUrl!, controller.signal).then((bytes) => {
+          const rightPromise = fetchGridFrameBytes(rightFrameUrl!, rightModel, controller.signal).then((bytes) => {
             if (isCurrent()) {
               setReadySteps((steps) => ({ ...steps, rightFetched: true }));
             }

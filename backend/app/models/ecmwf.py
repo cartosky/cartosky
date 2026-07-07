@@ -562,7 +562,10 @@ ECMWF_VARS: dict[str, VarSpec] = {
         selectors=VarSelectors(
             hints={
                 "base_component": "tmp850",
+                # ERA5 tmp850 baseline assets are stored in °F, so the
+                # forecast is compared in °F and the delta rescaled to °C.
                 "base_conversion": "c_to_f",
+                "anomaly_conversion": "f_to_c_delta",
                 "baseline_field": "tmp850",
                 "baseline_source": "era5",
                 "baseline_region": "na",
@@ -574,7 +577,7 @@ ECMWF_VARS: dict[str, VarSpec] = {
         derived=True,
         derive="anomaly_departure",
         kind="continuous",
-        units="F",
+        units="C",
     ),
     "wspd850": VarSpec(
         id="wspd850",

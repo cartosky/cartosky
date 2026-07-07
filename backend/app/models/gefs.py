@@ -352,7 +352,10 @@ GEFS_VARS: dict[str, VarSpec] = {
         selectors=VarSelectors(
             hints={
                 "base_component": "tmp850__mean",
+                # ERA5 tmp850 baseline assets are stored in °F, so the
+                # forecast is compared in °F and the delta rescaled to °C.
                 "base_conversion": "c_to_f",
+                "anomaly_conversion": "f_to_c_delta",
                 "baseline_field": "tmp850",
                 "baseline_source": "era5",
                 "legacy_baseline_model_family": "gefs",
@@ -365,7 +368,7 @@ GEFS_VARS: dict[str, VarSpec] = {
         derived=True,
         derive="anomaly_departure",
         kind="continuous",
-        units="F",
+        units="C",
     ),
     "tmp850_anom__mean": VarSpec(
         id="tmp850_anom__mean",
@@ -373,7 +376,10 @@ GEFS_VARS: dict[str, VarSpec] = {
         selectors=VarSelectors(
             hints={
                 "base_component": "tmp850__mean",
+                # ERA5 tmp850 baseline assets are stored in °F, so the
+                # forecast is compared in °F and the delta rescaled to °C.
                 "base_conversion": "c_to_f",
+                "anomaly_conversion": "f_to_c_delta",
                 "baseline_field": "tmp850",
                 "baseline_source": "era5",
                 "legacy_baseline_model_family": "gefs",
@@ -386,7 +392,7 @@ GEFS_VARS: dict[str, VarSpec] = {
         derived=True,
         derive="anomaly_departure",
         kind="continuous",
-        units="F",
+        units="C",
     ),
     "hgt850__mean": replace(
         GFS_VARS["hgt850"],
@@ -953,7 +959,7 @@ GEFS_VARIABLE_CATALOG = {
         derived=True,
         derive_strategy_id="anomaly_departure",
         kind="continuous",
-        units="F",
+        units="C",
         color_map_id="tmp850_anom",
         default_fh=0,
         buildable=True,
@@ -973,7 +979,7 @@ GEFS_VARIABLE_CATALOG = {
         derived=True,
         derive_strategy_id="anomaly_departure",
         kind="continuous",
-        units="F",
+        units="C",
         color_map_id="tmp850_anom",
         default_fh=0,
         buildable=False,

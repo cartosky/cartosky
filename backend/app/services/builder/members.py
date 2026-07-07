@@ -39,12 +39,26 @@ Pass semantics (design R4):
     cumulative chain cannot continue past a missing step).
 
 GEFS member identity -> Herbie kwarg (spike-confirmed): ``member=1..30`` ->
-gepNN, ``member=0`` -> gec00. EPS is NOT built through this pass (Phase 4
-interleaves with the mean bundle build) and has no control member upstream.
+gepNN, ``member=0`` -> gec00.
+
+EPS (member pipeline Phase 4, design Section 13 / D7) runs through the SAME
+pass in ``pf_subset`` mode: ECMWF publishes all 50 perturbed members in one
+file per fh with no control, and both EPS member variables (``tmp2m``,
+``precip_total`` — ECMWF ``tp`` is natively run-cumulative) are direct
+fields. The unit of work is ``(var, fh)``, not ``(member, fh)``: the pass
+resolves the SAME ``*.cartosky_pf.grib2`` subset the mean build downloaded
+(reused from the Herbie cache at its deterministic path, or re-downloaded
+via the same production range-fetch primitive on a miss), derives the
+band->member mapping from the .index (bands are written in ascending byte
+order, so pf inventory rows sorted by start byte give each band's member
+``number`` — validated for count and uniqueness per subset), then per band:
+read -> convert -> warp -> gate -> slim write. No derive chain, no bundle
+patterns, no scheduler changes.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -77,6 +91,8 @@ from .cog_writer import warp_to_target_grid
 from .fetch import (
     _aggregation_subset_path,
     _download_subset_with_inventory_rows,
+    _eps_subset_fallback_path,
+    _inventory_row_byte_range,
     _inventory_search,
     _priority_candidates,
     _priority_normalized,
@@ -111,6 +127,13 @@ STATUS_GATE_FAILED = "gate_failed"
 STATUS_FETCH_FAILED = "fetch_failed"
 STATUS_ERROR = "error"
 STATUS_PREEMPTED = "preempted"
+
+# Build-plan modes (design §13/D7). member_files: one upstream file per
+# member (GEFS gepNN/gec00) — per-member sequential fh loop, bundled fetch.
+# pf_subset: all members share one upstream file per fh (ECMWF enfo) — the
+# unit of work is (var, fh) and members are bands of the mean's pf subset.
+MODE_MEMBER_FILES = "member_files"
+MODE_PF_SUBSET = "pf_subset"
 
 # Member-file component patterns. These intentionally differ from BOTH the
 # mean specs (whose patterns carry ":ens mean:", absent from gepNN files) and
@@ -371,6 +394,7 @@ class _MemberBuildPlan:
     all_fhs: list[int]
     cumulative: _CumulativeParams
     plugin: Any = None
+    mode: str = MODE_MEMBER_FILES
 
     @property
     def member_var_ids(self) -> list[str]:
@@ -393,6 +417,51 @@ def _run_date_from_run_id(run_id: str) -> datetime:
     return datetime.strptime(str(run_id), "%Y%m%d_%Hz")
 
 
+def _detect_plan_mode(
+    plugin: Any,
+    contexts: dict[str, _MemberVarContext],
+    run_date: datetime,
+    fhs_by_var: dict[str, list[int]],
+) -> str:
+    """``pf_subset`` when the mean path fetches via ECMWF pf aggregation.
+
+    Read from the SAME plugin request the mean build uses (the
+    ``_cartosky_fetch_aggregation`` kwarg), so a plugin fetch-path change
+    flows to the member pass automatically. Mixing pf and non-pf member vars
+    in one plan has no build path and fails loudly.
+    """
+    aggregations: dict[str, str] = {}
+    for base_var, ctx in contexts.items():
+        if ctx.derived or not ctx.search_patterns:
+            aggregations[base_var] = ""
+            continue
+        fhs = fhs_by_var.get(base_var) or [0]
+        try:
+            request = plugin.herbie_request(
+                product=ctx.product,
+                var_key=base_var,
+                ensemble_view="mean",
+                run_date=run_date,
+                fh=fhs[0],
+                search_pattern=ctx.search_patterns[0],
+            )
+            aggregations[base_var] = str(
+                request.herbie_kwargs.get("_cartosky_fetch_aggregation") or ""
+            ).strip().lower()
+        except Exception:  # noqa: BLE001 — no aggregation signal -> member files
+            aggregations[base_var] = ""
+    pf_vars = sorted(var for var, agg in aggregations.items() if "pf_mean" in agg)
+    if not pf_vars:
+        return MODE_MEMBER_FILES
+    non_pf = sorted(set(contexts) - set(pf_vars))
+    if non_pf:
+        raise ValueError(
+            f"Member plan mixes pf-subset vars {pf_vars} with non-pf vars "
+            f"{non_pf} — no build path for a mixed-mode plan (design §13)"
+        )
+    return MODE_PF_SUBSET
+
+
 def build_member_plan(plugin: Any, model_id: str, run_id: str, region: str) -> _MemberBuildPlan | None:
     descriptors = ensemble_member_descriptors(plugin)
     if not descriptors:
@@ -407,6 +476,7 @@ def build_member_plan(plugin: Any, model_id: str, run_id: str, region: str) -> _
         )
 
     cycle_hour = _cycle_hour_from_run_id(run_id)
+    run_date = _run_date_from_run_id(run_id)
     contexts: dict[str, _MemberVarContext] = {}
     fhs_by_var: dict[str, list[int]] = {}
     for base_var in descriptors:
@@ -418,6 +488,8 @@ def build_member_plan(plugin: Any, model_id: str, run_id: str, region: str) -> _
             # schedule that claims one would leave the pass forever-pending.
             fhs = [fh for fh in fhs if fh > 0]
         fhs_by_var[base_var] = fhs
+
+    mode = _detect_plan_mode(plugin, contexts, run_date, fhs_by_var)
 
     derived_vars = [var for var, ctx in contexts.items() if ctx.derived]
     snow_ctx = contexts.get("snowfall_total")
@@ -440,7 +512,7 @@ def build_member_plan(plugin: Any, model_id: str, run_id: str, region: str) -> _
         model_id=model_id,
         region=region,
         run_id=run_id,
-        run_date=_run_date_from_run_id(run_id),
+        run_date=run_date,
         member_ids=roster_values[0],
         contexts=contexts,
         fhs_by_var=fhs_by_var,
@@ -448,6 +520,7 @@ def build_member_plan(plugin: Any, model_id: str, run_id: str, region: str) -> _
         all_fhs=all_fhs,
         cumulative=cumulative,
         plugin=plugin,
+        mode=mode,
     )
 
 
@@ -643,6 +716,285 @@ def _stop_aware_wait(delay_s: float, should_stop: Callable[[], bool]) -> bool:
             return True
         time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
     return should_stop()
+
+
+# ── pf-subset mode (EPS — design §13/D7) ────────────────────────────────────
+def _pf_band_member_numbers(pf_inventory: Any) -> list[int]:
+    """Subset band index -> ECMWF member ``number``, derived from the .index.
+
+    ``_download_subset_with_inventory_rows`` writes UNIQUE byte ranges sorted
+    by (start, end) — regardless of the row order it is handed — so the
+    subset's k-th band is the k-th range in that order, and each pf row's
+    ``number`` labels its range's member. Any ambiguity (missing range or
+    number, duplicate ranges or numbers) makes the mapping unsafe and fails
+    the unit loudly rather than risk mislabeling members.
+    """
+    entries: list[tuple[int, int, int]] = []
+    for _, row in pf_inventory.iterrows():
+        byte_range = _inventory_row_byte_range(row)
+        if byte_range is None:
+            raise MemberFetchError("pf inventory row is missing its byte range")
+        try:
+            number = int(float(row.get("number")))
+        except (TypeError, ValueError) as exc:
+            raise MemberFetchError(f"pf inventory row has no member number ({exc})")
+        entries.append((int(byte_range[0]), int(byte_range[1]), number))
+    if not entries:
+        raise MemberFetchError("pf inventory produced no byte ranges")
+    ranges = [(start, end) for start, end, _ in entries]
+    if len(set(ranges)) != len(ranges):
+        raise MemberFetchError("pf inventory contains duplicate byte ranges")
+    entries.sort(key=lambda item: (item[0], item[1]))
+    numbers = [number for _, _, number in entries]
+    if len(set(numbers)) != len(numbers):
+        raise MemberFetchError(f"pf inventory contains duplicate member numbers: {numbers}")
+    return numbers
+
+
+def _resolve_pf_subset(
+    *,
+    plan: _MemberBuildPlan,
+    ctx: _MemberVarContext,
+    fh: int,
+    should_stop: Callable[[], bool],
+) -> tuple[Path, list[int]]:
+    """Resolve the pf subset for (var, fh) plus its band->member mapping.
+
+    Mirrors the mean's ``_fetch_ecmwf_pf_mean_variable`` path resolution
+    exactly (same Herbie request, same pf-row filter, same deterministic
+    ``*.cartosky_pf.grib2`` path with the same fallback token), so in the
+    normal case this REUSES the subset the mean build just downloaded and
+    only re-downloads the same byte ranges on a cache miss.
+    """
+    from herbie.core import Herbie  # lazy — matches production fetch style
+
+    last_exc: Exception | None = None
+    delays = (0.0, *FETCH_BACKOFF_SCHEDULE)
+    for attempt_idx, delay in enumerate(delays, start=1):
+        if delay > 0:
+            logger.info(
+                "pf subset backoff %.0fs before retry %d: %s %s fh%03d",
+                delay, attempt_idx, plan.model_id, ctx.base_var, fh,
+            )
+            if _stop_aware_wait(delay, should_stop):
+                raise MemberFetchError(f"preempted during backoff ({ctx.base_var} fh{fh:03d})")
+        if should_stop():
+            raise MemberFetchError(f"preempted before fetch ({ctx.base_var} fh{fh:03d})")
+        # Patterns in declared order, priorities inner — the mean pipeline's
+        # iteration order, so the first pattern that resolves here is the one
+        # whose subset the mean build wrote.
+        for pattern in ctx.search_patterns:
+            request = plan.plugin.herbie_request(
+                product=ctx.product,
+                var_key=ctx.base_var,
+                ensemble_view="mean",
+                run_date=plan.run_date,
+                fh=fh,
+                search_pattern=pattern,
+            )
+            herbie_kwargs = dict(request.herbie_kwargs)
+            herbie_kwargs.pop("_cartosky_fetch_aggregation", None)
+            # The fetch layer keys caches/paths on the Herbie model id
+            # ("ifs"), not the plugin id ("eps") — match it or the reuse
+            # never hits.
+            fetch_model_id = str(request.model)
+            base_kwargs: dict[str, Any] = {
+                "model": request.model,
+                "product": request.product,
+                "fxx": int(fh),
+                **herbie_kwargs,
+            }
+            priorities = [
+                _priority_normalized(item)
+                for item in _priority_candidates(herbie_kwargs)
+                if str(item).strip()
+            ] or ["aws"]
+            for priority in priorities:
+                try:
+                    run_kwargs = _quiet_herbie_kwargs(base_kwargs)
+                    run_kwargs["priority"] = priority
+                    herbie_date = (
+                        plan.run_date.replace(tzinfo=None)
+                        if plan.run_date.tzinfo else plan.run_date
+                    )
+                    H = Herbie(herbie_date, **run_kwargs)
+                    inv_result = _inventory_search(
+                        H,
+                        search_pattern=pattern,
+                        priority=priority,
+                        model_id=fetch_model_id,
+                        run_date=plan.run_date,
+                        product=request.product,
+                        fh=fh,
+                    )
+                    inventory = inv_result.inventory
+                    if inv_result.reason != "ok" or inventory is None or len(inventory) == 0:
+                        raise MemberFetchError(
+                            f"pf inventory unavailable ({inv_result.reason}) "
+                            f"{ctx.base_var} fh{fh:03d} priority={priority}"
+                        )
+                    if "type" in inventory.columns:
+                        type_series = inventory["type"].astype(str).str.strip().str.lower()
+                        pf_inventory = inventory.loc[type_series == "pf"]
+                    else:
+                        pf_inventory = inventory
+                    if len(pf_inventory) == 0:
+                        raise MemberFetchError(
+                            f"pf inventory contained no perturbed members "
+                            f"{ctx.base_var} fh{fh:03d} priority={priority}"
+                        )
+                    numbers = _pf_band_member_numbers(pf_inventory)
+
+                    subset_hint: Path | None = None
+                    try:
+                        subset_hint = Path(H.get_localFilePath(pattern))
+                    except Exception:  # noqa: BLE001 — mirror the mean's fallback
+                        subset_hint = None
+                    if subset_hint is None:
+                        fallback_name = hashlib.sha1(
+                            f"{fetch_model_id}|{request.product}|{fh}|{pattern}|{priority}".encode("utf-8")
+                        ).hexdigest()[:16]
+                        subset_hint = _eps_subset_fallback_path(
+                            prefix="eps_pf_mean", token=fallback_name,
+                        )
+                    subset_path = _aggregation_subset_path(subset_hint, "cartosky_pf")
+                    with _subset_download_lock(subset_path):
+                        cached_ok, _size = _subset_file_status(subset_path)
+                        if not cached_ok:
+                            downloaded = _download_subset_with_inventory_rows(
+                                H,
+                                inventory=pf_inventory,
+                                out_path=subset_path,
+                                model_id=fetch_model_id,
+                                product=request.product,
+                                run_date=plan.run_date,
+                                fh=fh,
+                                priority=priority,
+                                bundle_fetch_cache=None,
+                            )
+                            if downloaded is None:
+                                raise MemberFetchError(
+                                    f"pf subset download failed {ctx.base_var} "
+                                    f"fh{fh:03d} priority={priority}"
+                                )
+                    return subset_path, numbers
+                except Exception as exc:  # noqa: BLE001 — recorded; next priority
+                    if isinstance(exc, MemberFetchError) and "preempted" in str(exc):
+                        raise
+                    last_exc = exc
+                    logger.warning(
+                        "pf subset resolve failed: %s %s fh%03d priority=%s: %s",
+                        plan.model_id, ctx.base_var, fh, priority,
+                        f"{type(exc).__name__}: {exc}"[:300],
+                    )
+    raise MemberFetchError(
+        f"pf subset resolve failed after {len(delays)} attempt(s) "
+        f"({ctx.base_var} fh{fh:03d})"
+    ) from last_exc
+
+
+def _process_pf_unit(
+    *,
+    plan: _MemberBuildPlan,
+    base_var: str,
+    fh: int,
+    staging_run_root: Path,
+    should_stop: Callable[[], bool],
+    record: Callable[[str, float | None], None],
+) -> None:
+    """Build every missing member frame of (var, fh) from one pf subset.
+
+    Direct fields only (validated at plan time): per band, read -> convert ->
+    warp -> gate -> slim write, holding one member's field at a time.
+    """
+    ctx = plan.contexts[base_var]
+    missing = {
+        member for member in plan.member_ids
+        if not member_frame_is_complete(
+            staging_run_root, plan.model_id, member_var_id(base_var, member), fh,
+        )
+    }
+    for _ in range(len(plan.member_ids) - len(missing)):
+        record(STATUS_RESUMED, None)
+    if not missing:
+        return
+
+    def _mark_missing(status: str) -> None:
+        for _ in range(len(missing)):
+            record(status, None)
+
+    if should_stop():
+        _mark_missing(STATUS_PREEMPTED)
+        return
+    try:
+        subset_path, numbers = _resolve_pf_subset(
+            plan=plan, ctx=ctx, fh=fh, should_stop=should_stop,
+        )
+    except MemberFetchError as exc:
+        if "preempted" in str(exc):
+            _mark_missing(STATUS_PREEMPTED)
+            return
+        logger.warning(
+            "pf unit fetch failed: %s %s fh%03d: %s", plan.model_id, base_var, fh, exc,
+        )
+        _mark_missing(STATUS_FETCH_FAILED)
+        return
+    except Exception:
+        logger.exception("pf unit unexpected fetch error: %s %s fh%03d", plan.model_id, base_var, fh)
+        _mark_missing(STATUS_ERROR)
+        return
+
+    expected = len(plan.member_ids)
+    if sorted(numbers) != list(range(1, expected + 1)):
+        logger.error(
+            "pf roster mismatch — refusing to label bands: %s %s fh%03d "
+            "numbers=%s expected 1..%d",
+            plan.model_id, base_var, fh, numbers, expected,
+        )
+        _mark_missing(STATUS_ERROR)
+        return
+
+    try:
+        with rasterio.open(subset_path) as src:
+            if int(src.count) != expected:
+                logger.error(
+                    "pf subset band count mismatch: %s %s fh%03d bands=%d expected=%d (%s)",
+                    plan.model_id, base_var, fh, int(src.count), expected, subset_path,
+                )
+                _mark_missing(STATUS_ERROR)
+                return
+            for band_index, number in enumerate(numbers, start=1):
+                member = plan.member_ids[number - 1]
+                if member not in missing:
+                    continue
+                if should_stop():
+                    _mark_missing(STATUS_PREEMPTED)
+                    return
+                band_started = time.perf_counter()
+                raw = _read_rasterio_band(src, band_index=band_index)
+                converted = convert_units(
+                    raw, var_key=base_var, model_id=plan.model_id,
+                    var_capability=ctx.capability,
+                )
+                warped, dst_transform = warp_to_target_grid(
+                    converted, src.crs, src.transform,
+                    model=plan.model_id, region=plan.region,
+                    resampling=ctx.resampling, src_nodata=None,
+                    dst_nodata=float("nan"),
+                )
+                status = _gate_and_write(
+                    plan=plan, ctx=ctx, var_id=member_var_id(base_var, member),
+                    fh=fh, values=warped, dst_transform=dst_transform,
+                    staging_run_root=staging_run_root,
+                )
+                record(
+                    status,
+                    time.perf_counter() - band_started if status == STATUS_WRITTEN else None,
+                )
+                missing.discard(member)
+    except Exception:
+        logger.exception("pf unit unexpected build error: %s %s fh%03d", plan.model_id, base_var, fh)
+        _mark_missing(STATUS_ERROR)
 
 
 # ── Per-member sequential processing ────────────────────────────────────────
@@ -1047,7 +1399,9 @@ def run_member_pass(
 
     Writes slim frames into the STAGING run root only — the caller (the
     scheduler) is responsible for member manifest builds and promotion.
-    Parallelism is per-MEMBER (a member's fh sequence is order-dependent).
+    Parallelism follows the plan mode: per-MEMBER in member_files mode (a
+    member's fh sequence is order-dependent), per-(var, fh) UNIT in
+    pf_subset mode (units are independent — one subset per unit).
     """
     resolved_workers = workers if workers is not None else member_fetch_workers()
     resolved_workers = max(1, min(MAX_MEMBER_FETCH_WORKERS, int(resolved_workers)))
@@ -1075,24 +1429,48 @@ def run_member_pass(
             if frame_time_s is not None:
                 summary.frame_times_s.append(frame_time_s)
 
-    def _one(member: str) -> None:
-        try:
-            _process_member(
-                plan=plan, member=member, staging_run_root=staging_run_root,
-                should_stop=stop, record=_record,
-            )
-        except Exception:  # noqa: BLE001 — recorded; retried next pass
-            logger.exception("Member pass: unexpected error processing member=%s", member)
-            _record(STATUS_ERROR)
+    if plan.mode == MODE_PF_SUBSET:
+        work_items: list[Any] = [
+            (base_var, fh)
+            for base_var in plan.contexts
+            for fh in plan.fhs_by_var[base_var]
+        ]
+
+        def _one(item: Any) -> None:
+            base_var, fh = item
+            try:
+                _process_pf_unit(
+                    plan=plan, base_var=base_var, fh=fh,
+                    staging_run_root=staging_run_root,
+                    should_stop=stop, record=_record,
+                )
+            except Exception:  # noqa: BLE001 — recorded; retried next pass
+                logger.exception(
+                    "Member pass: unexpected error processing pf unit %s fh%03d",
+                    base_var, fh,
+                )
+                _record(STATUS_ERROR)
+    else:
+        work_items = list(plan.member_ids)
+
+        def _one(item: Any) -> None:
+            try:
+                _process_member(
+                    plan=plan, member=item, staging_run_root=staging_run_root,
+                    should_stop=stop, record=_record,
+                )
+            except Exception:  # noqa: BLE001 — recorded; retried next pass
+                logger.exception("Member pass: unexpected error processing member=%s", item)
+                _record(STATUS_ERROR)
 
     if resolved_workers <= 1:
-        for member in plan.member_ids:
-            _one(member)
+        for item in work_items:
+            _one(item)
     else:
         with ThreadPoolExecutor(
             max_workers=resolved_workers, thread_name_prefix="member-pass",
         ) as pool:
-            futures = [pool.submit(_one, member) for member in plan.member_ids]
+            futures = [pool.submit(_one, item) for item in work_items]
             for future in as_completed(futures):
                 future.result()
 

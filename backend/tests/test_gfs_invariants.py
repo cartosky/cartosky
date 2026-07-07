@@ -116,7 +116,7 @@ def test_gfs_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850_anom["derived"] is True
     assert tmp850_anom["derive_strategy_id"] == "anomaly_departure"
     assert tmp850_anom["kind"] == "continuous"
-    assert tmp850_anom["units"] == "F"
+    assert tmp850_anom["units"] == "C"
     assert tmp850_anom["display_name"] == "850mb Temperature Anomaly"
     assert tmp850_anom["group"] == "Temperature"
     assert tmp850_anom["color_map_id"] == "tmp850_anom"
@@ -391,9 +391,10 @@ def test_gfs_tmp850_anom_uses_tmp850_component_and_era5_baseline() -> None:
     assert var_spec.derived is True
     assert var_spec.derive == "anomaly_departure"
     assert var_spec.kind == "continuous"
-    assert var_spec.units == "F"
+    assert var_spec.units == "C"
     assert var_spec.selectors.hints["base_component"] == "tmp850"
     assert var_spec.selectors.hints["base_conversion"] == "c_to_f"
+    assert var_spec.selectors.hints["anomaly_conversion"] == "f_to_c_delta"
     assert var_spec.selectors.hints["baseline_field"] == "tmp850"
     assert var_spec.selectors.hints["baseline_source"] == "era5"
     assert var_spec.selectors.hints["baseline_region"] == "na"

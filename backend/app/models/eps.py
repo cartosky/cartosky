@@ -332,7 +332,10 @@ EPS_VARS = {
         selectors=VarSelectors(
             hints={
                 "base_component": "tmp850__mean",
+                # ERA5 tmp850 baseline assets are stored in °F, so the
+                # forecast is compared in °F and the delta rescaled to °C.
                 "base_conversion": "c_to_f",
+                "anomaly_conversion": "f_to_c_delta",
                 "baseline_field": "tmp850",
                 "baseline_source": "era5",
                 "legacy_baseline_model_family": "gefs",
@@ -345,7 +348,7 @@ EPS_VARS = {
         derived=True,
         derive="anomaly_departure",
         kind="continuous",
-        units="F",
+        units="C",
     ),
     "tmp850_anom__mean": replace(
         ECMWF_VARS["tmp850_anom"],
@@ -354,7 +357,10 @@ EPS_VARS = {
         selectors=VarSelectors(
             hints={
                 "base_component": "tmp850__mean",
+                # ERA5 tmp850 baseline assets are stored in °F, so the
+                # forecast is compared in °F and the delta rescaled to °C.
                 "base_conversion": "c_to_f",
+                "anomaly_conversion": "f_to_c_delta",
                 "baseline_field": "tmp850",
                 "baseline_source": "era5",
                 "legacy_baseline_model_family": "gefs",
@@ -367,7 +373,7 @@ EPS_VARS = {
         derived=True,
         derive="anomaly_departure",
         kind="continuous",
-        units="F",
+        units="C",
     ),
     "precip_total": replace(
         ECMWF_VARS["precip_total"],
@@ -478,6 +484,12 @@ EPS_VARIABLE_CATALOG = {
             "supported_views": ["mean"],
             "default_view": "mean",
             "artifact_map": {"mean": "tmp2m__mean"},
+            # Per-member slim publish (member pipeline Phase 4, design §13/D7):
+            # 50 pf members, NO control — ECMWF open data exposes none (plan
+            # §2.2 correction). Built by the member pass's pf-subset mode from
+            # the same subsets the mean build downloads. Publishing also
+            # requires the model on CARTOSKY_MEMBER_PUBLISH_MODELS.
+            "members": {"count": 50, "control": False, "prefix": "m", "enabled": True},
         },
     ),
     "tmp2m__mean": VariableCapability(
@@ -783,7 +795,7 @@ EPS_VARIABLE_CATALOG = {
         derived=True,
         derive_strategy_id="anomaly_departure",
         kind="continuous",
-        units="F",
+        units="C",
         color_map_id="tmp850_anom",
         default_fh=0,
         buildable=True,
@@ -803,7 +815,7 @@ EPS_VARIABLE_CATALOG = {
         derived=True,
         derive_strategy_id="anomaly_departure",
         kind="continuous",
-        units="F",
+        units="C",
         color_map_id="tmp850_anom",
         default_fh=0,
         buildable=False,
@@ -834,6 +846,10 @@ EPS_VARIABLE_CATALOG = {
             "supported_views": ["mean"],
             "default_view": "mean",
             "artifact_map": {"mean": "precip_total__mean"},
+            # Per-member slim publish (design §13/D7): ECMWF tp is natively
+            # run-cumulative, so members are direct per-band reads — no
+            # cumulative loop. 50 pf members, no control (plan §2.2).
+            "members": {"count": 50, "control": False, "prefix": "m", "enabled": True},
         },
     ),
     "precip_total__mean": VariableCapability(

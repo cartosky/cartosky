@@ -603,6 +603,17 @@ TMP2M_ANOM_F_COLORS = [
 TMP2M_ANOM_F_LEGEND_STOPS = list(zip(TMP2M_ANOM_F_LEVELS[:-1], TMP2M_ANOM_F_COLORS))
 TMP2M_ANOM_F_COLOR_ANCHORS = TMP2M_ANOM_F_LEGEND_STOPS
 TMP2M_ANOM_F_RANGE = (-30.0, 30.0)
+# °C analog of the ±30°F anomaly ladder (±17°C ≈ ±30.6°F): same 41-level
+# shape — 0.5°C steps inside ±3°C, 1°C steps beyond — reusing the same ramp.
+TMP850_ANOM_C_LEVELS = [
+    -17.0, -16.0, -15.0, -14.0, -13.0, -12.0, -11.0, -10.0, -9.0, -8.0,
+    -7.0, -6.0, -5.0, -4.0, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5,
+    0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0,
+    7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0,
+]
+TMP850_ANOM_C_COLORS = TMP2M_ANOM_F_COLORS
+TMP850_ANOM_C_LEGEND_STOPS = list(zip(TMP850_ANOM_C_LEVELS[:-1], TMP850_ANOM_C_COLORS))
+TMP850_ANOM_C_RANGE = (-17.0, 17.0)
 HGT500_ANOM_M_LEVELS = [
     -440.0, -420.0, -400.0, -380.0, -360.0, -340.0, -320.0, -300.0, -280.0,
     -270.0, -260.0, -250.0, -240.0, -230.0, -220.0, -210.0, -200.0, -190.0,
@@ -1207,13 +1218,13 @@ COLOR_MAP_SPECS: dict[str, dict] = {
     },
     "tmp850_anom": {
         "type": "discrete",
-        "units": "F",
-        "range": TMP2M_ANOM_F_RANGE,
-        "levels": TMP2M_ANOM_F_LEVELS,
-        "colors": TMP2M_ANOM_F_COLORS,
+        "units": "C",
+        "range": TMP850_ANOM_C_RANGE,
+        "levels": TMP850_ANOM_C_LEVELS,
+        "colors": TMP850_ANOM_C_COLORS,
         "display_name": "850mb Temperature Anomaly",
-        "legend_title": "850mb Temperature Anomaly (°F)",
-        "legend_stops": TMP2M_ANOM_F_LEGEND_STOPS,
+        "legend_title": "850mb Temperature Anomaly (°C)",
+        "legend_stops": TMP850_ANOM_C_LEGEND_STOPS,
         "transparent_below_min": False,
     },
     "hgt500_anom": {

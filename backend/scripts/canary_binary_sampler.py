@@ -121,7 +121,9 @@ def _setup_logging(verbose: bool = False) -> None:
 
 # ── Constants ───────────────────────────────────────────────────────
 DEFAULT_MODEL = "gfs"
-RUN_ID_RE = re.compile(r"^\d{8}_\d{2}z$")
+# Two published run-id formats: hour-stamped scheduler runs (YYYYMMDD_HHz)
+# and minute-stamped poll-driven publisher runs (NDFD/WPC, YYYYMMDD_HHMMz).
+RUN_ID_RE = re.compile(r"^\d{8}_\d{2}(?:\d{2})?z$")
 
 SCALE_HALF_EPSILON = 1e-4
 
@@ -1123,6 +1125,8 @@ def _expected_meteogram_frame_count(model: str, var: str, run: str) -> int | Non
     plugin = MODEL_REGISTRY.get(_normalize_model(model))
     if plugin is None or not RUN_ID_RE.match(run):
         return None
+    # The hour occupies [9:11] in both run-id formats RUN_ID_RE admits —
+    # minute digits, when present, only ever follow it.
     cycle_hour = int(run[9:11])
     try:
         fhs = plugin.scheduled_fhs_for_var(var, cycle_hour)

@@ -189,6 +189,8 @@ Each phase is a separate agent implementation prompt with: explicit execution-mo
   3. **Atomic in-render check (the load-bearing one):** `captureCanvasSnapshot(maxWidth, expectGridHour)` consults `GridWebglLayerController.visibleFrameHour()` *inside the same `map.once("render")` callback that reads the pixels* and resolves `null` unless the grid layer is actively drawing exactly the expected hour. `useGifExport` passes `frameState.fh` and retries null captures for up to 4s (150ms backoff). Signals 1–2 plus a 300ms stability re-check reduce retries; only the atomic check is race-free — a follow-up prop commit could still clear the texture between any polling gate and the capture render.
   - Verified: fresh-load trend generate + two regenerates all 3/3 frames with data (per-frame decoded pixel check ~79.6% colored vs 1.2% for a basemap-only frame); 19-frame hours-mode loop unaffected (64–82%).
 
+- [x] **Post-gate polish (2026-07-07):** GIF tab de-cluttered (removed the trend caption, the size-estimate line, and the "map will step through…" helper; the red not-enough-frames validation message stays). Share overlay line 1 reformatted for stills AND GIF frames: `{run id} {model} • FH n • h:MM AM/PM M/DD/YY` in the viewer's local timezone ("Latest (…)" wrapper stripped to the bare run id in `defaultOverlayLines`). Caveat: server-rendered TWF forum images compose in the headless browser, so their timestamp uses the *server's* timezone (likely UTC), not the posting user's — open item below.
+
 **Gate:** GFS 3-run trend GIF with a deliberately evicted/missing oldest run degrades gracefully and labels frames correctly. Cross-model spot check (HRRR hourly vs. GFS mixed cadence).
 
 ## 6. Acceptance criteria (overall)

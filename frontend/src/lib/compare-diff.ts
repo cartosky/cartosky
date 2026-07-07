@@ -1,4 +1,4 @@
-import type { GridManifestResponse } from "@/lib/api";
+import { productFetch, type GridManifestResponse } from "@/lib/api";
 import { nearestFrame } from "@/lib/app-utils";
 import { gridFrameCache } from "@/lib/grid-frame-cache";
 import { gridUvToLonLat, lonLatToGridUv } from "@/lib/grid-sample";
@@ -54,14 +54,20 @@ export function resolveMutualGridHour(
 /**
  * Fetch raw frame bytes, going through the diff-only {@link gridFrameCache}.
  * Clean independent fetch — does not reuse any `GridWebglLayerController` logic.
- * Throws `AbortError` if the signal aborts.
+ * Goes through {@link productFetch} so protected models (e.g. ECMWF) get the
+ * same Bearer-token authorization as the split-mode controller fetch of the
+ * identical URLs. Throws `AbortError` if the signal aborts.
  */
-export async function fetchGridFrameBytes(url: string, signal?: AbortSignal): Promise<Uint8Array> {
+export async function fetchGridFrameBytes(
+  url: string,
+  model: string | null,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
   const cached = gridFrameCache.get(url);
   if (cached) {
     return cached;
   }
-  const response = await fetch(url, { signal, credentials: "omit", cache: "no-store" });
+  const response = await productFetch(model, url, { signal, credentials: "omit", cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Frame fetch failed: ${response.status} ${response.statusText}`);
   }

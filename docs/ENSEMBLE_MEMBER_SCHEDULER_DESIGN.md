@@ -220,4 +220,63 @@ A bundle failure at a cumulative step aborts that member's remaining fhs for the
 pass (the chain cannot continue past a missing step); the next pass rebases and
 continues.
 
-*Document version: 2026-07-06 (draft → approved same day with review tweaks: D1 API-probe note, D3 clarification, D5 bundling prerequisite; Section 12 addendum approved and implemented same day).*
+---
+
+## 13. Addendum — Phase 4 EPS members via the decoupled pf-subset pass (D7)
+
+> Added 2026-07-06 with the Phase 4 implementation. This amends Section 6's
+> interleave wording; the plan's §3.6 fetch-economics rationale is honored,
+> the mechanism differs.
+
+**What Phase 4 actually needs (code-verified):** every EPS member variable is
+a DIRECT field — `tmp2m` (2t bands) and `precip_total` (tp bands, natively
+run-cumulative in ECMWF output, `derived=False`, `conversion="m_to_in"`).
+There is no member derive chain at all, and no control member exists
+upstream (§2.2). Each `(var, fh)` pf subset (`*.cartosky_pf.grib2`) that the
+MEAN build downloads already contains all 50 member bands.
+
+**D7 — decouple instead of interleave.** EPS members are built by the SAME
+scheduler member pass Phase 3 shipped (model-generic hook, allowlist,
+resume/preemption/promote semantics unchanged), in a pf-subset mode:
+
+- Unit of work = `(var, fh)` (not per-member): resolve the pf subset at the
+  SAME deterministic path the mean fetch used; **reuse it from the Herbie
+  cache** (the pass runs minutes after catchup completes, so the current
+  run's subsets are present) or re-download the same byte ranges via the
+  same production primitive on a miss. One subset yields all 50 members —
+  request count ≈ vars × fhs index reads, ~zero payload re-download in the
+  normal case. §3.6's economics preserved.
+- **Band→member mapping is re-derived from the same .index**: bands in the
+  subset follow ascending byte order (how
+  `_download_subset_with_inventory_rows` writes), so pf rows sorted by
+  `start_byte` give the member `number` per band. Validated per subset:
+  band count == row count == descriptor count (50), numbers unique — any
+  mismatch fails the unit loudly, never mislabels.
+- Per band: `_read_rasterio_band` (the exact primitive the mean aggregation
+  reads bands with) → `convert_units` (same capability conversion as the
+  mean) → warp → enforced gate → slim write `{var}__m{NN}`.
+
+**Why not the Section 6 interleave:** it modifies the EPS bundle build — the
+memory-tight unit (2.5–2.6 GiB plateau vs `MemoryHigh=3G`) whose placement
+risk the plan itself flagged — and threads member context through the fetch
+layer's hottest path. The decoupled pass runs when the scheduler is idle
+(post-catchup RSS ~200–400 MB), holds one band at a time, and required ZERO
+changes to the mean/bundle/scheduler code (eps.py descriptors + members.py
+pf mode only). The plan's warning against a later pass was about
+cache-survival dependence and re-download cost; the deterministic-path
+reuse + graceful range re-download removes both. Estimated pass wall:
+~3–5 min per synoptic run (122 units × 50 bands), well inside the idle
+window; D2's `MemoryHigh` lever remains pre-approved but is not expected
+to be needed.
+
+**Scope:** `tmp2m` + `precip_total` members (the vars EPS publishes means
+for and the Ensembles tab consumes). `snowfall_total` stays gated behind
+its plugin/derive deliverable (plan open decision #4 note). Enable on prod
+by appending `eps` to `CARTOSKY_MEMBER_PUBLISH_MODELS`; the frontend's
+`MEMBER_PLUME_MODELS` gains `"eps"` after the first green EPS run.
+
+| # | Decision | Recommendation | Approved? |
+|---|----------|----------------|-----------|
+| D7 | EPS members via the decoupled pf-subset member pass (deterministic subset reuse + index-derived band mapping) instead of interleaving member encode into the bundle build | Yes — same outputs, zero hot-path blast radius, §3.6 economics preserved | ☐ |
+
+*Document version: 2026-07-06 (draft → approved same day with review tweaks: D1 API-probe note, D3 clarification, D5 bundling prerequisite; Section 12 addendum approved and implemented same day; Section 13 added with the Phase 4 implementation, pending D7).*

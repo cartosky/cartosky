@@ -302,9 +302,10 @@ def test_eps_tmp850_anom_uses_mean_tmp850_component_and_era5_baseline() -> None:
         assert spec.derived is True
         assert spec.derive == "anomaly_departure"
         assert spec.kind == "continuous"
-        assert spec.units == "F"
+        assert spec.units == "C"
         assert spec.selectors.hints["base_component"] == "tmp850__mean"
         assert spec.selectors.hints["base_conversion"] == "c_to_f"
+        assert spec.selectors.hints["anomaly_conversion"] == "f_to_c_delta"
         assert spec.selectors.hints["baseline_field"] == "tmp850"
         assert spec.selectors.hints["baseline_source"] == "era5"
         assert spec.selectors.hints["legacy_baseline_model_family"] == "gefs"

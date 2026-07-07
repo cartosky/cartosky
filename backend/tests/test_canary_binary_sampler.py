@@ -563,3 +563,38 @@ def test_expected_meteogram_frames_differ_across_hrrr_cycle_types() -> None:
 def test_expected_meteogram_frames_none_for_unknown_model_or_bad_run() -> None:
     assert canary._expected_meteogram_frame_count("nosuchmodel", "tmp2m", "20260702_18z") is None
     assert canary._expected_meteogram_frame_count("hrrr", "tmp2m", "not-a-run-id") is None
+
+
+# ── Run-id format handling (hour-stamped vs minute-stamped) ──────────
+
+
+def test_run_id_re_accepts_hour_and_minute_stamped_formats() -> None:
+    # Hour-stamped scheduler runs and minute-stamped poll-driven publisher
+    # runs (NDFD/WPC) are both published run-id formats.
+    for run in ("20260702_18z", "20260706_1530z", "20260706_1200z"):
+        assert canary.RUN_ID_RE.match(run), f"{run} should match RUN_ID_RE"
+    for run in (
+        "20260706_153z",     # three digits: neither format
+        "20260706_15301z",   # five digits: too long
+        "20260706z",         # no cycle at all
+        "20260706_15",       # missing z suffix
+        "2026-07-06_15z",    # separators
+        "not-a-run-id",
+    ):
+        assert not canary.RUN_ID_RE.match(run), f"{run} should NOT match RUN_ID_RE"
+
+
+def test_expected_meteogram_frames_hour_slice_correct_for_minute_stamped_run() -> None:
+    # The cycle hour lives at run[9:11] in BOTH formats — minute digits only
+    # ever follow it — so a minute-stamped run id must resolve to the same
+    # schedule as its hour-stamped twin (hrrr's 18z extended cycle makes a
+    # wrong slice visible: any other parse yields a different frame count or
+    # None). NDFD/WPC themselves are poll-driven with empty schedules, so
+    # their minute-stamped runs resolve to None rather than a bogus count.
+    hour_stamped = canary._expected_meteogram_frame_count("hrrr", "tmp2m", "20260702_18z")
+    minute_stamped = canary._expected_meteogram_frame_count("hrrr", "tmp2m", "20260702_1845z")
+    assert hour_stamped is not None
+    assert minute_stamped == hour_stamped
+
+    assert canary._expected_meteogram_frame_count("ndfd", "mint", "20260706_1530z") is None
+    assert canary._expected_meteogram_frame_count("wpc", "precip_total", "20260706_1200z") is None

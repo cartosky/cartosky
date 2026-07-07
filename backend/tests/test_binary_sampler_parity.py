@@ -336,6 +336,16 @@ PHASE_G_MODELS = ("hrrr", "nbm")
 # to compare.
 PHASE_G_ENSEMBLE_MODELS = ("gefs", "eps")
 
+# Poll-driven standalone publishers (NDFD 2.5km CONUS, WPC 5km CONUS). They do
+# NOT follow the scheduler's model-run conventions — minute-stamped run ids,
+# dedicated publish modules, NDFD's fh is a per-variable valid-time sequence
+# index and WPC's is a real forecast hour over a cumulative transform — but
+# none of that reaches the sampler: parity is a per-frame property. Scope is
+# derived through the canary intersection like the ensembles (the audit found
+# every exclusion bucket empty for both; pinned below), and both models are
+# 100% Group 1 (zero display-prep entries).
+PHASE_G_PUBLISHER_MODELS = ("ndfd", "wpc")
+
 
 def _model_scope(model: str) -> list[str]:
     return sorted(var for (mdl, var) in _PACKING_BY_MODEL_VAR if mdl == model)
@@ -356,6 +366,7 @@ def _tolerance_group(model: str, var: str) -> int:
 _PHASE_G_SCOPE_BY_MODEL: dict[str, list[str]] = {
     **{model: _model_scope(model) for model in PHASE_G_MODELS},
     **{model: _canary_scope(model) for model in PHASE_G_ENSEMBLE_MODELS},
+    **{model: _canary_scope(model) for model in PHASE_G_PUBLISHER_MODELS},
 }
 
 
@@ -495,6 +506,57 @@ def test_phase_g_ensemble_partition_matches_audit_and_canary_scope() -> None:
             f"Phase G audit — re-audit before extending the canary/tests.\n"
             f"actual={actual}\nexpected={expected}"
         )
+
+
+# Expected tolerance-group partition for the standalone publishers, matching
+# the NDFD/WPC audit's tolerance-group table: zero display-prep entries for
+# either model, so every packed variable is Group 1 (exact within scale/2).
+EXPECTED_PUBLISHER_GROUP_PARTITION = {
+    "ndfd": {
+        var: 1
+        for var in (
+            "ice_24h", "ice_6h", "maxt", "mint", "qpf_24h", "qpf_48h",
+            "qpf_6h", "snow_24h", "snow_48h", "snow_6h", "wgust_24h_max",
+            "wgust_6h_max",
+        )
+    },
+    "wpc": {"precip_total": 1},
+}
+
+
+def test_publisher_partition_matches_audit_and_canary_scope() -> None:
+    """Pin the publisher parameterization to the audit: every canary exclusion
+    bucket is empty (scope IS the full packed list), every variable is
+    Group 1, and the parity scope above is exactly the canary scope — so an
+    unaudited catalog or display-prep change fails loudly here instead of
+    silently reclassifying (or dropping) a variable."""
+    from backend.scripts.canary_binary_sampler import _scope_for_model
+
+    for model, expected in EXPECTED_PUBLISHER_GROUP_PARTITION.items():
+        (
+            in_scope,
+            excluded_non_buildable,
+            excluded_dead_alias,
+            excluded_uncataloged,
+        ) = _scope_for_model(model)
+        assert excluded_non_buildable == []
+        assert excluded_dead_alias == []
+        assert excluded_uncataloged == []
+        assert sorted(in_scope) == _model_scope(model)
+
+        assert set(_PHASE_G_SCOPE_BY_MODEL[model]) == set(in_scope)
+        actual = {var: _tolerance_group(model, var) for var in in_scope}
+        assert actual == expected, (
+            f"{model}: tolerance-group partition diverged from the NDFD/WPC "
+            f"audit — re-audit before extending the canary/tests.\n"
+            f"actual={actual}\nexpected={expected}"
+        )
+        # All-Group-1 means these models appear ONLY in the Group 1
+        # parameterization below — none in Group 2 or Group 4.
+        assert not [var for (mdl, var) in GROUP2_PARAMS if mdl == model]
+        assert not [var for (mdl, var) in GROUP4_PARAMS if mdl == model]
+        covered = {var for (mdl, var) in GROUP1_PARAMS if mdl == model}
+        assert covered == set(in_scope)
 
 
 def _model_grid_geometry(model: str) -> tuple[Affine, str]:
