@@ -6,10 +6,16 @@ import { ChartContainer } from "@/components/charts/ChartContainer";
 import { ModelPillFilter } from "@/components/charts/ModelPillFilter";
 import { EnsembleMeanTemperatureChart } from "@/components/model-guidance/EnsembleMeanTemperatureChart";
 import { EnsembleMeanPrecipChart } from "@/components/model-guidance/EnsembleMeanPrecipChart";
+import { EnsemblePrecipPlumeChart } from "@/components/model-guidance/EnsemblePrecipPlumeChart";
 import { EnsemblePrecipProbabilityCard } from "@/components/model-guidance/EnsemblePrecipProbabilityCard";
+import { EnsembleTemperaturePlumeChart } from "@/components/model-guidance/EnsembleTemperaturePlumeChart";
 import { EnsembleTemperatureSpreadChart } from "@/components/model-guidance/EnsembleTemperatureSpreadChart";
 import { useMeteogram } from "@/hooks/useMeteogram";
-import { ENSEMBLES_TAB_VARIABLES } from "@/lib/chart-constants";
+import {
+  ENSEMBLES_TAB_VARIABLES,
+  MEMBER_PLUME_MODELS,
+  modelShortName,
+} from "@/lib/chart-constants";
 import { eligibleEnsembleModels } from "@/lib/eligible-ensemble-models";
 import { useEntitlements } from "@/lib/entitlements";
 
@@ -135,6 +141,38 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
     pinnedRuns,
   });
 
+  // Member plumes (member pipeline Phase 5): a SEPARATE meteogram call scoped
+  // to member-publishing models only — include_members 400s the whole request
+  // if any requested model lacks member support (EPS joins at pipeline
+  // Phase 4). Restricting the pinned runs to the same models keeps the plume
+  // in lockstep with the pill run selector.
+  const plumeModels = useMemo(
+    () => MEMBER_PLUME_MODELS.filter((model) => eligibleModels.includes(model)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eligibleKey],
+  );
+  const plumePinnedRuns = useMemo(() => {
+    const result: Record<string, string> = {};
+    for (const model of plumeModels) {
+      if (pinnedRuns[model]) result[model] = pinnedRuns[model];
+    }
+    return result;
+  }, [plumeModels, pinnedRuns]);
+  const {
+    data: memberData,
+    loading: membersLoading,
+    error: membersError,
+    reload: reloadMembers,
+  } = useMeteogram({
+    lat,
+    lon,
+    models: plumeModels,
+    variables: [...ENSEMBLES_TAB_VARIABLES],
+    pinnedRuns: plumePinnedRuns,
+    includeMembers: true,
+    enabled: plumeModels.length > 0,
+  });
+
   // Highest complete run seen per model. The backend only ever serves a complete
   // run (a pinned run that is still building falls back to the latest complete
   // one), so the max served run id is the latest complete run. Tracking the max
@@ -247,6 +285,24 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
         </ChartContainer>
       </section>
 
+      {plumeModels.map((model) => (
+        <section key={`${model}-temp-plume`} id={`ensemble-${model}-temperature-plume`}>
+          <ChartContainer
+            title={`${modelShortName(model)} temperature members`}
+            subtitle={`${modelShortName(model)} member plume — thin lines are individual members, bold is the mean, dashed white is the control`}
+            isLoading={membersLoading && !memberData}
+            error={membersError}
+            onRetry={reloadMembers}
+          >
+            <EnsembleTemperaturePlumeChart
+              response={memberData}
+              model={model}
+              timezone={timezone}
+            />
+          </ChartContainer>
+        </section>
+      ))}
+
       <section id="ensemble-precip-probability">
         <EnsemblePrecipProbabilityCard />
       </section>
@@ -270,6 +326,24 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
           />
         </ChartContainer>
       </section>
+
+      {plumeModels.map((model) => (
+        <section key={`${model}-precip-plume`} id={`ensemble-${model}-precipitation-plume`}>
+          <ChartContainer
+            title={`${modelShortName(model)} precipitation members`}
+            subtitle={`Cumulative precipitation per ${modelShortName(model)} member — thin lines are individual members, bold is the mean, dashed white is the control`}
+            isLoading={membersLoading && !memberData}
+            error={membersError}
+            onRetry={reloadMembers}
+          >
+            <EnsemblePrecipPlumeChart
+              response={memberData}
+              model={model}
+              timezone={timezone}
+            />
+          </ChartContainer>
+        </section>
+      ))}
     </div>
   );
 }

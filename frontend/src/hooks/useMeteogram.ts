@@ -25,6 +25,12 @@ type UseMeteogramParams = {
   models: string[];
   variables: string[];
   pinnedRuns?: Record<string, string>;
+  /**
+   * Request per-member series (member pipeline Phase 5). Only pass models
+   * that publish members (see MEMBER_PLUME_MODELS) — the backend 400s the
+   * whole request if any requested model lacks member support.
+   */
+  includeMembers?: boolean;
   enabled?: boolean;
 };
 
@@ -50,6 +56,7 @@ export function useMeteogram({
   models,
   variables,
   pinnedRuns,
+  includeMembers = false,
   enabled = true,
 }: UseMeteogramParams): UseMeteogramResult {
   const { getToken, isSignedIn } = useAuth();
@@ -60,8 +67,8 @@ export function useMeteogram({
   const variablesKey = variables.join(",");
   const pinnedRunsKey = JSON.stringify(pinnedRuns ?? {});
   const cacheKey = useMemo(
-    () => buildMeteogramCacheKey(lat, lon, models, variables, pinnedRuns),
-    [lat, lon, modelsKey, variablesKey, pinnedRunsKey],
+    () => buildMeteogramCacheKey(lat, lon, models, variables, pinnedRuns, includeMembers),
+    [lat, lon, modelsKey, variablesKey, pinnedRunsKey, includeMembers],
   );
 
   const getAuthHeaders = useCallback(
@@ -77,7 +84,7 @@ export function useMeteogram({
     const unsubscribe = subscribeMeteogramCache(cacheKey, bumpCacheVersion);
 
   void fetchMeteogramCached(
-    { lat, lon, models, variables, pinnedRuns, getAuthHeaders },
+    { lat, lon, models, variables, pinnedRuns, includeMembers, getAuthHeaders },
     {
       reason: reloadKey > 0 ? "useMeteogram:reload" : "useMeteogram",
       force: reloadKey > 0,
@@ -87,18 +94,24 @@ export function useMeteogram({
     });
 
     return unsubscribe;
+    // The raw `models`/`variables` arrays are intentionally NOT dependencies —
+    // callers routinely pass fresh array literals each render, and an error
+    // response never becomes a cache hit, so depending on array identity turns
+    // any 4xx into an infinite refetch storm (each retry re-renders via the
+    // cache notification, minting new arrays). The string keys carry the
+    // actual identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     cacheKey,
     enabled,
     getAuthHeaders,
     lat,
     lon,
-    models,
     modelsKey,
     reloadKey,
-    variables,
     variablesKey,
     pinnedRunsKey,
+    includeMembers,
   ]);
 
   const reload = useCallback(() => setReloadKey((key) => key + 1), []);

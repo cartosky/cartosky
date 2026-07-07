@@ -1,7 +1,7 @@
 import type { LegendPayload } from "@/components/map-legend";
 import { BRAND_LOGO_SRC } from "@/lib/branding";
 import type { TimeAxisMode } from "@/lib/time-axis";
-import { formatObservedCompactTime, formatObservedValidTime, formatValidTime, validAxisLabel } from "@/lib/time-axis";
+import { formatObservedCompactTime, formatObservedValidTime, validAxisLabel } from "@/lib/time-axis";
 
 export type ScreenshotExportState = {
   /** Unused by the compose-only exporter; kept optional for legacy callers. */
@@ -176,9 +176,28 @@ function buildCpcValidLine(state: ScreenshotExportState): string | null {
     : `Valid: ${fmt(start)} – ${fmt(end)}`;
 }
 
+/** Valid time as `h:MM AM/PM MM-DD-YY` in the viewer's local timezone
+ * (share overlay line 1; local Date getters pick up the user's tz). */
+function formatShareOverlayTime(validTimeISO: string | null | undefined): string | null {
+  if (!validTimeISO) {
+    return null;
+  }
+  const parsed = new Date(validTimeISO);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const hour12 = parsed.getHours() % 12 === 0 ? 12 : parsed.getHours() % 12;
+  const meridiem = parsed.getHours() < 12 ? "AM" : "PM";
+  const date = `${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}-${String(parsed.getFullYear()).slice(-2)}`;
+  return `${hour12}:${pad(parsed.getMinutes())} ${meridiem} ${date}`;
+}
+
 function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayload | null): string[] {
   const model = state.model.trim() || "Model";
-  const run = state.run.trim() || "Run";
+  // The viewer's run selector labels the newest run "Latest (00Z 7/07)" —
+  // shares show just the run id.
+  const run = (state.run.trim() || "Run").replace(/^Latest\s*\((.+)\)$/i, "$1");
   const baseVariableLabel = state.variable.label.trim() || state.variable.key.trim() || "Variable";
   const units = legend?.units?.trim();
   const unitsNormalized = units?.toLowerCase().replace(/[()]/g, "").trim() ?? "";
@@ -226,11 +245,19 @@ function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayloa
     const statusSuffix = state.sourceStatusLabel ? ` • ${state.sourceStatusLabel}` : "";
     return [`${model} • ${run} • ${observedLabel}${statusSuffix}`, variableLabel];
   }
+  // Line 1: {run} {model} • {frame label} • {local valid time}, line 2: variable.
+  const localValidTime = formatShareOverlayTime(state.validTimeISO);
   if (state.timeAxisMode === "valid") {
-    const validLabel = formatValidTime(state.validTimeISO, state.variable.key) ?? "Valid time n/a";
-    return [`${model} • ${run} • ${validAxisLabel(state.fh, state.variable.key, state.runTimeISO, state.validTimeISO)} • ${validLabel}`, variableLabel];
+    const frameLabel = validAxisLabel(state.fh, state.variable.key, state.runTimeISO, state.validTimeISO);
+    return [
+      [`${run} ${model}`, frameLabel, localValidTime].filter(Boolean).join(" • "),
+      variableLabel,
+    ];
   }
-  return [`${model} • ${run} • FH ${state.fh}`, variableLabel];
+  return [
+    [`${run} ${model}`, `FH ${state.fh}`, localValidTime].filter(Boolean).join(" • "),
+    variableLabel,
+  ];
 }
 
 function drawGlassCard(

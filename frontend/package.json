@@ -10,7 +10,8 @@
     "test": "playwright test",
     "test:ui": "playwright test --ui",
     "test:debug": "playwright test --debug",
-    "test:headed": "playwright test --headed"
+    "test:headed": "playwright test --headed",
+    "dev:members-verify": "CARTOSKY_DEV_PROXY_TARGET=http://127.0.0.1:8201 vite --port 5199"
   },
   "dependencies": {
     "@clerk/react": "6.7.3",

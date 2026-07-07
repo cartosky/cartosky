@@ -23,6 +23,7 @@ export const ENSEMBLE_COLORS = {
   gefs_member: "rgba(30, 107, 184, 0.12)",
   gefs_member_stroke: "rgba(30, 107, 184, 0.35)",
   gefs_mean: "#1E6BB8",
+  gefs_control: "#FFFFFF",
   gefs_spread_fill: "rgba(30, 107, 184, 0.18)",
 } as const;
 
@@ -165,5 +166,24 @@ export function ensembleMeanStroke(model: string): string {
 /** Line width (px) for ensemble mean lines — both read as primary. */
 export function ensembleMeanWidth(): number {
   return 2.25;
+}
+
+// Models whose per-member plume data the meteogram can serve (member pipeline
+// Phase 5). EPS joins when its member publishing lands (pipeline Phase 4) —
+// requesting include_members for a model not in this list 400s the request.
+export const MEMBER_PLUME_MODELS = ["gefs"] as const;
+
+/** Thin member-line stroke for the plume charts (Model Guidance §7). */
+export function ensembleMemberStroke(model: string): string {
+  return model.toLowerCase() === "gefs"
+    ? ENSEMBLE_COLORS.gefs_member_stroke
+    : ENSEMBLE_COLORS.eps_member_stroke;
+}
+
+/** Control-member stroke (white, drawn dashed by the plume chart). */
+export function ensembleControlStroke(model: string): string {
+  return model.toLowerCase() === "gefs"
+    ? ENSEMBLE_COLORS.gefs_control
+    : ENSEMBLE_COLORS.eps_control;
 }
 

@@ -2570,6 +2570,19 @@ export class GridWebglLayerController {
     }
   }
 
+  /** Hour of the frame this layer draws right now (null = no texture, e.g.
+   * mid selection swap). Checked synchronously inside capture render
+   * callbacks so GIF frames can't be read while the grid is transiently
+   * cleared (share overhaul Phase 4). */
+  visibleFrameHour(): number | null {
+    return this.active
+      && this.currentTexture
+      && this.currentTextureSignature
+      && Number.isFinite(this.currentTextureFrameHour)
+      ? Number(this.currentTextureFrameHour)
+      : null;
+  }
+
   /** True when `value` renders fully transparent under the current manifest's
    *  palette rules — used to hide city value labels where the map shows no data. */
   valueRendersTransparent(value: number): boolean {

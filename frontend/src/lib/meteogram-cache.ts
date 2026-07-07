@@ -10,6 +10,12 @@ export type MeteogramFetchParams = {
   models: string[];
   variables: string[];
   pinnedRuns?: Record<string, string>;
+  /**
+   * Request per-member series (member pipeline Phase 5). Only send for
+   * models that publish members — the backend rejects the whole request with
+   * a 400 if ANY requested model lacks member support.
+   */
+  includeMembers?: boolean;
   getAuthHeaders: () => Promise<Record<string, string>>;
 };
 
@@ -29,6 +35,7 @@ export function buildMeteogramCacheKey(
   models: string[],
   variables: string[],
   pinnedRuns?: Record<string, string>,
+  includeMembers?: boolean,
 ): string {
   const modelsKey = [...models].sort().join(",");
   const variablesKey = [...variables].sort().join(",");
@@ -40,7 +47,10 @@ export function buildMeteogramCacheKey(
         .join(",")
     : "";
   const suffix = runsKey ? `:${runsKey}` : "";
-  return `${lat.toFixed(3)}:${lon.toFixed(3)}:${modelsKey}:${variablesKey}:${suffix}`;
+  // Member payloads are a superset but MUST cache separately (byte-identical
+  // key when false, mirroring the backend's cache-key rule).
+  const membersSuffix = includeMembers ? ":members" : "";
+  return `${lat.toFixed(3)}:${lon.toFixed(3)}:${modelsKey}:${variablesKey}:${suffix}${membersSuffix}`;
 }
 
 export function meteogramLocationMatches(
@@ -101,7 +111,9 @@ async function requestMeteogram(
   reason: string,
 ): Promise<MeteogramResponse> {
   const startedAt = import.meta.env.DEV ? performance.now() : 0;
-  const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables, params.pinnedRuns);
+  const key = buildMeteogramCacheKey(
+    params.lat, params.lon, params.models, params.variables, params.pinnedRuns, params.includeMembers,
+  );
 
   try {
     const authStartedAt = import.meta.env.DEV ? performance.now() : 0;
@@ -128,6 +140,7 @@ async function requestMeteogram(
         ...(params.pinnedRuns && Object.keys(params.pinnedRuns).length > 0
       ? { pinned_runs: params.pinnedRuns }
       : {}),
+        ...(params.includeMembers ? { include_members: true } : {}),
       }),
     });
     const networkMs = import.meta.env.DEV ? performance.now() - networkStartedAt : 0;
@@ -179,7 +192,9 @@ export function fetchMeteogramCached(
   params: MeteogramFetchParams,
   options?: { reason?: string; force?: boolean },
 ): Promise<MeteogramResponse> {
-  const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables, params.pinnedRuns);
+  const key = buildMeteogramCacheKey(
+    params.lat, params.lon, params.models, params.variables, params.pinnedRuns, params.includeMembers,
+  );
   const reason = options?.reason ?? "fetch";
   const force = options?.force === true;
 
@@ -207,7 +222,9 @@ export function fetchMeteogramCached(
 
 /** Warm the cache after a Forecast page location is selected. */
 export function prefetchMeteogram(params: MeteogramFetchParams, reason = "prefetch"): void {
-  const key = buildMeteogramCacheKey(params.lat, params.lon, params.models, params.variables, params.pinnedRuns);
+  const key = buildMeteogramCacheKey(
+    params.lat, params.lon, params.models, params.variables, params.pinnedRuns, params.includeMembers,
+  );
   if (params.models.length === 0 || params.variables.length === 0) return;
   if (getMeteogramCacheEntry(key)?.data) {
     devLog("prefetch skipped (cache hit)", { key, reason });

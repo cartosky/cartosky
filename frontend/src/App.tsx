@@ -615,7 +615,9 @@ export default function App() {
   const mapInstanceRef = useRef<MapLibreMap | null>(null);
   const manualLocationJumpRef = useRef(false);
   const captureDraftRef = useRef<((format?: MapCaptureFormat) => Promise<string | null>) | null>(null);
-  const captureCanvasRef = useRef<((maxWidth?: number) => Promise<HTMLCanvasElement | null>) | null>(null);
+  const captureCanvasRef = useRef<
+    ((maxWidth?: number, expectGridHour?: number | null) => Promise<HTMLCanvasElement | null>) | null
+  >(null);
   const screenshotModeRef = useRef(
     typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get("screenshot") === "1",
@@ -4405,7 +4407,11 @@ export default function App() {
   );
 
   const handleCaptureCanvas = useCallback(
-    (capture: ((maxWidth?: number) => Promise<HTMLCanvasElement | null>) | null) => {
+    (
+      capture:
+        | ((maxWidth?: number, expectGridHour?: number | null) => Promise<HTMLCanvasElement | null>)
+        | null,
+    ) => {
       captureCanvasRef.current = capture;
     },
     [],
@@ -5311,6 +5317,13 @@ export default function App() {
     gridActive: isGridLowMidActive,
     targetForecastHour,
     forecastHour,
+    run,
+    runs,
+    latestRunId,
+    resolvedRun: resolvedRunForRequests,
+    gridManifestRun: gridManifest?.run ?? null,
+    visibleGridFrameHour,
+    timeAxisMode: selectedTimeAxisMode,
   });
   gifDriverSnapshotRef.current = {
     gridFrameHours,
@@ -5320,29 +5333,23 @@ export default function App() {
     gridActive: isGridLowMidActive,
     targetForecastHour,
     forecastHour,
+    run,
+    runs,
+    latestRunId,
+    resolvedRun: resolvedRunForRequests,
+    gridManifestRun: gridManifest?.run ?? null,
+    visibleGridFrameHour,
+    timeAxisMode: selectedTimeAxisMode,
   };
 
-  const gifFrameDriver = useMemo<GifFrameDriver>(() => ({
-    listFrameHours: () => {
-      const snapshot = gifDriverSnapshotRef.current;
-      return snapshot.gridActive ? [...snapshot.gridFrameHours] : [];
-    },
-    begin: () => {
-      setIsPlaying(false);
-    },
-    showFrame: async (hour: number) => {
-      // Outside playback/scrub the display hour follows `forecastHour`, not
-      // `targetForecastHour` — set both, matching the app's own commit sites.
-      setForecastHour(hour);
-      setTargetForecastHour(hour);
-      targetForecastHourRef.current = hour;
-      // Per-frame dual gate: the frame's bytes are ready (texture uploadable)
-      // AND the pipeline presents that hour. The capture's own render-callback
-      // read then guarantees the paint. Timeout skips the frame, not the run.
-      const deadline = performance.now() + 6000;
+  const gifFrameDriver = useMemo<GifFrameDriver>(() => {
+    const waitForSnapshot = async (
+      predicate: () => boolean,
+      timeoutMs: number,
+    ): Promise<boolean> => {
+      const deadline = performance.now() + timeoutMs;
       for (;;) {
-        const snapshot = gifDriverSnapshotRef.current;
-        if (snapshot.presentedGridDisplayHour === hour && snapshot.gridReadyHourSet.has(hour)) {
+        if (predicate()) {
           return true;
         }
         if (performance.now() >= deadline) {
@@ -5350,24 +5357,186 @@ export default function App() {
         }
         await new Promise((resolve) => setTimeout(resolve, 80));
       }
-    },
-    captureFrame: (maxWidth?: number) =>
-      captureCanvasRef.current?.(maxWidth) ?? Promise.resolve(null),
-    getDisplayedValidTimeISO: () => gifDriverSnapshotRef.current.displayedValidTimeISO ?? null,
-    getRestoreTarget: () => ({
-      forecastHour: gifDriverSnapshotRef.current.forecastHour,
-      targetForecastHour: gifDriverSnapshotRef.current.targetForecastHour,
-    }),
-    restore: (token: unknown) => {
-      const restoreToken = token as { forecastHour: number; targetForecastHour: number } | null;
-      if (!restoreToken) {
-        return;
-      }
-      setForecastHour(restoreToken.forecastHour);
-      setTargetForecastHour(restoreToken.targetForecastHour);
-      targetForecastHourRef.current = restoreToken.targetForecastHour;
-    },
-  }), []);
+    };
+
+    const setHour = (hour: number) => {
+      // Outside playback/scrub the display hour follows `forecastHour`, not
+      // `targetForecastHour` — set both, matching the app's own commit sites.
+      setForecastHour(hour);
+      setTargetForecastHour(hour);
+      targetForecastHourRef.current = hour;
+    };
+
+    // Per-frame dual gate: the frame's bytes are ready (texture uploadable)
+    // AND the pipeline presents that hour. The capture's own render-callback
+    // read then guarantees the paint. Timeout skips the frame, not the run.
+    const awaitHourPresented = (hour: number, timeoutMs: number) =>
+      waitForSnapshot(() => {
+        const snapshot = gifDriverSnapshotRef.current;
+        return snapshot.presentedGridDisplayHour === hour && snapshot.gridReadyHourSet.has(hour);
+      }, timeoutMs);
+
+    const recentRunIds = (count: number): string[] => {
+      const snapshot = gifDriverSnapshotRef.current;
+      return sortRunIdsDescending([
+        ...(snapshot.latestRunId ? [snapshot.latestRunId] : []),
+        ...snapshot.runs,
+      ]).slice(0, count);
+    };
+
+    // Nearest-frame snap: GFS runs go 6-hourly past FH120 while HRRR is
+    // hourly, so a fixed fh across runs is wrong (§3.2) — accept the closest
+    // frame within tolerance, else report the run as missing.
+    const GIF_TREND_VALID_TOLERANCE_MS = 3 * 3_600_000 + 60_000;
+
+    return {
+      listFrameHours: () => {
+        const snapshot = gifDriverSnapshotRef.current;
+        return snapshot.gridActive ? [...snapshot.gridFrameHours] : [];
+      },
+      begin: () => {
+        setIsPlaying(false);
+      },
+      showFrame: async (hour: number) => {
+        setHour(hour);
+        return awaitHourPresented(hour, 6000);
+      },
+      captureFrame: (maxWidth?: number, expectGridHour?: number | null) =>
+        captureCanvasRef.current?.(maxWidth, expectGridHour) ?? Promise.resolve(null),
+      getDisplayedValidTimeISO: () => gifDriverSnapshotRef.current.displayedValidTimeISO ?? null,
+      getRestoreTarget: () => ({
+        run: gifDriverSnapshotRef.current.run,
+        forecastHour: gifDriverSnapshotRef.current.forecastHour,
+        targetForecastHour: gifDriverSnapshotRef.current.targetForecastHour,
+      }),
+      restore: (token: unknown) => {
+        const restoreToken = token as {
+          run?: string;
+          forecastHour: number;
+          targetForecastHour: number;
+        } | null;
+        if (!restoreToken) {
+          return;
+        }
+        if (typeof restoreToken.run === "string" && restoreToken.run) {
+          setRun(restoreToken.run);
+        }
+        setForecastHour(restoreToken.forecastHour);
+        setTargetForecastHour(restoreToken.targetForecastHour);
+        targetForecastHourRef.current = restoreToken.targetForecastHour;
+      },
+      supportsRunTrend: () => {
+        const snapshot = gifDriverSnapshotRef.current;
+        const axis = snapshot.timeAxisMode ?? "forecast";
+        return snapshot.gridActive && axis === "forecast" && recentRunIds(2).length >= 2;
+      },
+      listRecentRuns: (count: number) => {
+        const snapshot = gifDriverSnapshotRef.current;
+        return recentRunIds(count)
+          .map((runId) => ({
+            runId,
+            runTimeISO: parseRunId(runId)?.toISOString() ?? "",
+            label: formatRunLabel(runId, snapshot.timeAxisMode ?? "forecast"),
+          }))
+          .filter((entry) => entry.runTimeISO);
+      },
+      validTimeForHour: (hour: number) => {
+        const snapshot = gifDriverSnapshotRef.current;
+        const runTime = snapshot.resolvedRun ? parseRunId(snapshot.resolvedRun) : null;
+        if (!runTime || !Number.isFinite(hour)) {
+          return null;
+        }
+        return new Date(runTime.getTime() + hour * 3_600_000).toISOString();
+      },
+      showRunFrame: async (runId: string, validTimeISO: string) => {
+        const missing = { shown: false as const, fh: null, validTimeISO: null };
+        const runTime = parseRunId(runId);
+        const targetMs = Date.parse(validTimeISO);
+        if (!runTime || !Number.isFinite(targetMs)) {
+          return missing;
+        }
+        setIsPlaying(false);
+        setRun(runId);
+        // Wait for the NEW run's manifest, not just the run state: `run` flips
+        // immediately while gridFrameHours/gridReadyHourSet still describe the
+        // old manifest, so gating on resolvedRun alone passed on stale state
+        // and captured blank frames mid-swap (found via 200ms "settles").
+        const settled = await waitForSnapshot(() => {
+          const snapshot = gifDriverSnapshotRef.current;
+          return (
+            snapshot.resolvedRun === runId
+            && snapshot.gridManifestRun === runId
+            && snapshot.gridFrameHours.length > 0
+          );
+        }, 12000);
+        if (!settled) {
+          return missing;
+        }
+        let bestHour: number | null = null;
+        let bestDiff = Number.POSITIVE_INFINITY;
+        for (const hour of gifDriverSnapshotRef.current.gridFrameHours) {
+          const diff = Math.abs(runTime.getTime() + hour * 3_600_000 - targetMs);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestHour = hour;
+          }
+        }
+        if (bestHour === null || bestDiff > GIF_TREND_VALID_TOLERANCE_MS) {
+          return missing;
+        }
+        setHour(bestHour);
+        // Stricter than the hours-mode gate: also require the NEW selection to
+        // report the frame as painted (visibleGridFrameHour resets to null on
+        // selection change and is selection-epoch-guarded). The bytes-ready
+        // set survives run switches, so presented+ready alone can pass while
+        // the rebuilt grid controller hasn't uploaded the texture yet — that
+        // produced basemap-only trend frames when returning to a cached run.
+        const target = bestHour;
+        const gateSatisfied = () => {
+          const snapshot = gifDriverSnapshotRef.current;
+          return (
+            snapshot.presentedGridDisplayHour === target
+            && snapshot.gridReadyHourSet.has(target)
+            && snapshot.visibleGridFrameHour === target
+          );
+        };
+        // Require the gate to hold STABLY: run-switch state settles in waves
+        // (manifest → frames list → controller frame), and a paint can be
+        // transiently cleared by a follow-up prop commit right after the first
+        // visible signal — capturing in that window produced blank frames.
+        const deadline = performance.now() + 8000;
+        for (;;) {
+          const ready = await waitForSnapshot(gateSatisfied, Math.max(0, deadline - performance.now()));
+          if (!ready) {
+            return missing;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          if (gateSatisfied()) {
+            break;
+          }
+          if (performance.now() >= deadline) {
+            return missing;
+          }
+        }
+        return {
+          shown: true as const,
+          fh: bestHour,
+          validTimeISO: new Date(runTime.getTime() + bestHour * 3_600_000).toISOString(),
+        };
+      },
+    };
+  }, []);
+
+  // Dev-only: expose the GIF driver for console diagnosis of frame stepping.
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+    (window as unknown as Record<string, unknown>).__cartoskyGifDriver = gifFrameDriver;
+    return () => {
+      delete (window as unknown as Record<string, unknown>).__cartoskyGifDriver;
+    };
+  }, [gifFrameDriver]);
 
   const handleOpenShareModal = useCallback(() => {
     const runForSummary = gridOnlySelection && run === "latest"

@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as SliderPrimitive from "@radix-ui/react-slider";
 import { useAuth } from "@clerk/react";
-import { CheckCircle2, Copy, Download, ExternalLink, Film, Link2, Loader2, RefreshCw, Share2, X } from "lucide-react";
+import { CheckCircle2, Copy, Download, ExternalLink, Film, Link2, Loader2, Play, RefreshCw, Share2, X } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -25,7 +25,13 @@ import {
   type SharePayload,
   type ShareMode,
 } from "@/components/share/share-utils";
-import { GIF_SPEED_PRESETS, useGifExport, type GifFrameDriver } from "@/components/share/useGifExport";
+import {
+  GIF_SPEED_PRESETS,
+  GIF_TREND_SPEED_PRESETS,
+  useGifExport,
+  type GifExportMode,
+  type GifFrameDriver,
+} from "@/components/share/useGifExport";
 import { useScreenshotCapture } from "@/components/share/useScreenshotCapture";
 import { useTwfPosting } from "@/components/share/useTwfPosting";
 
@@ -175,6 +181,7 @@ export function ShareModal({
     screenshotUploadError: screenshot.screenshotUploadError,
     screenshotError:
       activeTab === "gif" ? "Generate a GIF before posting." : screenshot.screenshotError,
+    postArtifact: activeTab === "gif" ? "gif" : "image",
   });
   const [linkCopied, setLinkCopied] = useState(false);
   const [textCopied, setTextCopied] = useState(false);
@@ -310,8 +317,53 @@ export function ShareModal({
     }
   };
 
+  // Seed the range-preview thumbnail as soon as the GIF tab opens so the
+  // slider has visual context before the first drag.
+  useEffect(() => {
+    if (!open || activeTab !== "gif" || !gif.available || gif.rangePreview) {
+      return;
+    }
+    if (gif.status !== "idle" && gif.status !== "error" && gif.status !== "cancelled") {
+      return;
+    }
+    // Seed at the hour the user was viewing (falls back to the first frame):
+    // it keeps the thumbnail on their context and is the natural trend anchor.
+    const seedHour = gif.settings.startHour ?? buildScreenshotState?.()?.fh ?? gif.availableHours[0];
+    if (Number.isFinite(seedHour)) {
+      gif.previewFrame(Number(seedHour));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, activeTab, gif.available, gif.status, gif.rangePreview]);
+
   const rangePreviewTimerRef = useRef<number | null>(null);
-  const lastRangeRef = useRef<[number, number] | null>(null);
+
+  const handleGifModeChange = (mode: GifExportMode) => {
+    if (mode === gif.settings.mode) {
+      return;
+    }
+    // Each mode gets its own speed scale (3 trend frames want ~1s holds).
+    gif.updateSettings({
+      mode,
+      delayMs: (mode === "trend" ? GIF_TREND_SPEED_PRESETS : GIF_SPEED_PRESETS)[1].delayMs,
+    });
+  };
+
+  const handleGifTrendHourChange = (value: number[]) => {
+    const hours = gif.availableHours;
+    const index = value[0];
+    if (!Number.isFinite(index) || !Number.isFinite(hours[index])) {
+      return;
+    }
+    gif.updateSettings({ trendHour: hours[index] });
+    if (rangePreviewTimerRef.current !== null) {
+      window.clearTimeout(rangePreviewTimerRef.current);
+    }
+    rangePreviewTimerRef.current = window.setTimeout(() => {
+      rangePreviewTimerRef.current = null;
+      gif.previewFrame(hours[index]);
+    }, 140);
+  };
+
   const handleGifRangeChange = (value: number[]) => {
     const hours = gif.availableHours;
     if (hours.length < 2 || value.length < 2) {
@@ -319,12 +371,14 @@ export function ShareModal({
     }
     const startIdx = Math.min(value[0], value[1]);
     const endIdx = Math.max(value[0], value[1]);
+    // Which handle moved? Compare against the pre-change settings (state
+    // hasn't updated yet inside this handler).
+    const prevStartIdx = gif.settings.startHour === null
+      ? 0
+      : Math.max(0, hours.indexOf(gif.settings.startHour));
+    const movedIdx = startIdx !== prevStartIdx ? startIdx : endIdx;
     gif.updateSettings({ startHour: hours[startIdx], endHour: hours[endIdx] });
-    // Step the live map to the handle being dragged (debounced) so the user
-    // sees which frame each end of the range points at.
-    const previous = lastRangeRef.current;
-    const movedIdx = previous && previous[0] !== startIdx ? startIdx : endIdx;
-    lastRangeRef.current = [startIdx, endIdx];
+    // Refresh the in-modal thumbnail to the dragged handle's frame (debounced).
     if (rangePreviewTimerRef.current !== null) {
       window.clearTimeout(rangePreviewTimerRef.current);
     }
@@ -349,6 +403,30 @@ export function ShareModal({
     const index = gifHours.indexOf(gif.settings.endHour);
     return index === -1 ? Math.max(0, gifHours.length - 1) : index;
   })();
+  const gifTrendIdx = (() => {
+    if (gifHours.length === 0) {
+      return 0;
+    }
+    const anchor = gif.settings.trendHour ?? buildScreenshotState?.()?.fh ?? gifHours[0];
+    let bestIndex = 0;
+    let bestDiff = Number.POSITIVE_INFINITY;
+    gifHours.forEach((hour, index) => {
+      const diff = Math.abs(hour - Number(anchor));
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestIndex = index;
+      }
+    });
+    return bestIndex;
+  })();
+  const gifSpeedPresets = gif.settings.mode === "trend" ? GIF_TREND_SPEED_PRESETS : GIF_SPEED_PRESETS;
+  // 2..N chips where N = runs actually retained right now; the effective
+  // selection clamps to availability so eviction mid-open can't strand it.
+  const gifTrendRunOptions = Array.from(
+    { length: Math.max(0, gif.trendRunsAvailable - 1) },
+    (_, index) => index + 2,
+  );
+  const gifTrendRunCount = Math.min(gif.settings.trendRunCount, Math.max(2, gif.trendRunsAvailable));
 
   const isPosted = Boolean(posting.submitSuccess || posting.submitTopicSuccess);
   const signedOutLoginUrl = loginRouteForCurrentPage();
@@ -361,7 +439,9 @@ export function ShareModal({
 
   const tabs: Array<{ id: ShareTab; label: string; icon: typeof Copy }> = [
     { id: "image", label: "Image", icon: Download },
-    ...(gifTabEnabled ? [{ id: "gif" as ShareTab, label: "GIF", icon: Film }] : []),
+    // Play, not Film: Film's perforation grid anti-aliases into a blur at the
+    // 14px tab size; the tab-body Film at 32px is unaffected.
+    ...(gifTabEnabled ? [{ id: "gif" as ShareTab, label: "GIF", icon: Play }] : []),
     { id: "link", label: "Link", icon: Link2 },
   ];
 
@@ -870,13 +950,15 @@ export function ShareModal({
               {gif.status === "ready" && gif.gifBlobUrl ? (
                 <>
                   {/* Preview-as-artifact: this <img> plays the exact encoded
-                      GIF the user downloads/shares. Height-clamped so the
-                      actions below stay visible on portrait phone captures. */}
-                  <div className="flex max-h-[38dvh] w-full items-center justify-center overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] sm:max-h-[420px]">
+                      GIF the user downloads/shares. The height clamp lives on
+                      the img (a %-based max-height against the auto-height
+                      wrapper clipped portrait GIFs) so the full frame is always
+                      visible and the actions stay above the fold on phones. */}
+                  <div className="flex w-full items-center justify-center overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
                     <img
                       src={gif.gifBlobUrl}
                       alt="Animated GIF preview"
-                      className="h-auto max-h-full w-auto max-w-full"
+                      className="h-auto max-h-[38dvh] w-auto max-w-full sm:max-h-[420px]"
                     />
                   </div>
                   <div className="mt-1.5 flex items-center justify-between gap-3 px-1">
@@ -942,7 +1024,20 @@ export function ShareModal({
                 </div>
               ) : (
                 <div className="flex w-full flex-col items-center justify-center gap-3 rounded-2xl border border-[rgba(255,255,255,0.08)] bg-gradient-to-br from-[#0d1e35] to-[#0a1628] px-6 py-6 text-center">
-                  <Film className="h-8 w-8 text-cyan-200/70" />
+                  {gif.available && gif.rangePreview ? (
+                    <div className="w-full max-w-[360px]">
+                      <img
+                        src={gif.rangePreview.url}
+                        alt={`Frame preview for FH ${gif.rangePreview.hour}`}
+                        className="w-full rounded-xl border border-white/10"
+                      />
+                      <div className="mt-1 text-center text-[11px] text-white/50">
+                        Previewing FH {gif.rangePreview.hour}
+                      </div>
+                    </div>
+                  ) : (
+                    <Film className="h-8 w-8 text-cyan-200/70" />
+                  )}
                   {!gif.available ? (
                     <>
                       <div className="text-sm font-semibold text-white/90">GIF isn't available for this view</div>
@@ -958,38 +1053,108 @@ export function ShareModal({
                         </div>
                       )}
                       <div className="flex w-full max-w-[360px] flex-col gap-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-white/45">Range</span>
-                          <span className="text-xs font-medium text-white/70">
-                            FH {gifHours[gifStartIdx] ?? "—"} – FH {gifHours[gifEndIdx] ?? "—"}
-                          </span>
-                        </div>
-                        {/* Dragging a handle steps the live map (visible behind
-                            the modal) to that frame, so the range is picked
-                            visually rather than from a blind dropdown. */}
-                        <SliderPrimitive.Root
-                          min={0}
-                          max={Math.max(1, gifHours.length - 1)}
-                          step={1}
-                          minStepsBetweenThumbs={1}
-                          value={[gifStartIdx, gifEndIdx]}
-                          onValueChange={handleGifRangeChange}
-                          className="relative flex h-5 w-full touch-none select-none items-center"
-                        >
-                          <SliderPrimitive.Track className="relative h-1.5 w-full grow overflow-hidden rounded-full bg-white/10">
-                            <SliderPrimitive.Range className="absolute h-full bg-gradient-to-r from-cyan-700 to-cyan-500" />
-                          </SliderPrimitive.Track>
-                          <SliderPrimitive.Thumb
-                            aria-label="First forecast hour"
-                            className="block h-4 w-4 rounded-full border-2 border-cyan-900 bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.35)] focus:outline-none"
-                          />
-                          <SliderPrimitive.Thumb
-                            aria-label="Last forecast hour"
-                            className="block h-4 w-4 rounded-full border-2 border-cyan-900 bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.35)] focus:outline-none"
-                          />
-                        </SliderPrimitive.Root>
+                        {gif.trendAvailable && (
+                          <div className="flex items-center gap-1.5">
+                            {([
+                              { id: "hours" as GifExportMode, label: "Forecast loop" },
+                              { id: "trend" as GifExportMode, label: "Run trend" },
+                            ]).map((mode) => (
+                              <button
+                                key={mode.id}
+                                type="button"
+                                onClick={() => handleGifModeChange(mode.id)}
+                                className={[
+                                  "inline-flex h-7 flex-1 items-center justify-center rounded-md px-2.5 text-xs font-medium transition-colors",
+                                  gif.settings.mode === mode.id
+                                    ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
+                                    : "bg-white/[0.07] text-white/70 hover:bg-white/[0.11]",
+                                ].join(" ")}
+                              >
+                                {mode.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {gif.settings.mode === "trend" ? (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-white/45">Valid time</span>
+                              <span className="text-xs font-medium text-white/70">
+                                FH {gifHours[gifTrendIdx] ?? "—"} on the latest run
+                              </span>
+                            </div>
+                            <SliderPrimitive.Root
+                              min={0}
+                              max={Math.max(1, gifHours.length - 1)}
+                              step={1}
+                              value={[gifTrendIdx]}
+                              onValueChange={handleGifTrendHourChange}
+                              className="relative flex h-5 w-full touch-none select-none items-center"
+                            >
+                              <SliderPrimitive.Track className="relative h-1.5 w-full grow overflow-hidden rounded-full bg-white/10">
+                                <SliderPrimitive.Range className="absolute h-full bg-gradient-to-r from-cyan-700 to-cyan-500" />
+                              </SliderPrimitive.Track>
+                              <SliderPrimitive.Thumb
+                                aria-label="Trend valid time"
+                                className="block h-4 w-4 rounded-full border-2 border-cyan-900 bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.35)] focus:outline-none"
+                              />
+                            </SliderPrimitive.Root>
+                            {gifTrendRunOptions.length > 1 && (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-semibold uppercase tracking-wider text-white/45">Runs</span>
+                                {gifTrendRunOptions.map((count) => (
+                                  <button
+                                    key={count}
+                                    type="button"
+                                    onClick={() => gif.updateSettings({ trendRunCount: count })}
+                                    className={[
+                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md px-2 text-xs font-medium transition-colors",
+                                      gifTrendRunCount === count
+                                        ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
+                                        : "bg-white/[0.07] text-white/70 hover:bg-white/[0.11]",
+                                    ].join(" ")}
+                                  >
+                                    {count}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-white/45">Range</span>
+                              <span className="text-xs font-medium text-white/70">
+                                FH {gifHours[gifStartIdx] ?? "—"} – FH {gifHours[gifEndIdx] ?? "—"}
+                              </span>
+                            </div>
+                            {/* Dragging a handle steps the in-modal thumbnail to
+                                that frame, so the range is picked visually. */}
+                            <SliderPrimitive.Root
+                              min={0}
+                              max={Math.max(1, gifHours.length - 1)}
+                              step={1}
+                              minStepsBetweenThumbs={1}
+                              value={[gifStartIdx, gifEndIdx]}
+                              onValueChange={handleGifRangeChange}
+                              className="relative flex h-5 w-full touch-none select-none items-center"
+                            >
+                              <SliderPrimitive.Track className="relative h-1.5 w-full grow overflow-hidden rounded-full bg-white/10">
+                                <SliderPrimitive.Range className="absolute h-full bg-gradient-to-r from-cyan-700 to-cyan-500" />
+                              </SliderPrimitive.Track>
+                              <SliderPrimitive.Thumb
+                                aria-label="First forecast hour"
+                                className="block h-4 w-4 rounded-full border-2 border-cyan-900 bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.35)] focus:outline-none"
+                              />
+                              <SliderPrimitive.Thumb
+                                aria-label="Last forecast hour"
+                                className="block h-4 w-4 rounded-full border-2 border-cyan-900 bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.35)] focus:outline-none"
+                              />
+                            </SliderPrimitive.Root>
+                          </>
+                        )}
                         <div className="flex items-center justify-center gap-1.5">
-                          {GIF_SPEED_PRESETS.map((preset) => (
+                          {gifSpeedPresets.map((preset) => (
                             <button
                               key={preset.id}
                               type="button"
@@ -1006,21 +1171,13 @@ export function ShareModal({
                           ))}
                         </div>
                       </div>
-                      {(() => {
-                        const plan = gif.buildPlan();
-                        return plan ? (
-                          <div className="max-w-[320px] text-xs leading-relaxed text-white/55">
-                            {plan.frameCount} frames
-                            {plan.totalHours > plan.frameCount ? ` (of ${plan.totalHours} hours)` : ""}
-                            {" · 720px wide · ~"}
-                            {(plan.estimatedBytes / (1024 * 1024)).toFixed(1)} MB · ~{Math.round(plan.playSeconds)}s loop
-                          </div>
-                        ) : (
-                          <div className="max-w-[320px] text-xs leading-relaxed text-red-200/80">
-                            Pick a range with at least two frames.
-                          </div>
-                        );
-                      })()}
+                      {!gif.buildPlan() && (
+                        <div className="max-w-[320px] text-xs leading-relaxed text-red-200/80">
+                          {gif.settings.mode === "trend"
+                            ? "Run trend needs at least two runs."
+                            : "Pick a range with at least two frames."}
+                        </div>
+                      )}
                       <button
                         type="button"
                         onClick={() => { void gif.generate(); }}
@@ -1030,9 +1187,6 @@ export function ShareModal({
                         <Film className="h-4 w-4" />
                         Generate GIF
                       </button>
-                      <div className="max-w-[320px] text-[11px] leading-relaxed text-white/40">
-                        The map will step through forecast hours while frames are captured.
-                      </div>
                     </>
                   )}
                 </div>

@@ -1353,8 +1353,12 @@ type MapCanvasProps = {
   onMapReady?: (map: maplibregl.Map) => void;
   onCaptureDraft?: (capture: ((format?: MapCaptureFormat) => Promise<string | null>) | null) => void;
   /** Repaint-then-read snapshot into a (optionally downscaled) 2D canvas — no
-   * PNG round-trip. Used by the GIF export's per-frame capture. */
-  onCaptureCanvas?: (capture: ((maxWidth?: number) => Promise<HTMLCanvasElement | null>) | null) => void;
+   * PNG round-trip. Used by the GIF export's per-frame capture. When
+   * `expectGridHour` is set, the capture resolves null unless the grid layer
+   * is drawing exactly that frame at the render callback (atomic check). */
+  onCaptureCanvas?: (
+    capture: ((maxWidth?: number, expectGridHour?: number | null) => Promise<HTMLCanvasElement | null>) | null,
+  ) => void;
   onMapHover?: (lat: number, lon: number, x: number, y: number, tooltip?: Exclude<SampleTooltipState, null>) => void;
   onMapHoverEnd?: () => void;
   onAnchorClick?: (anchor: { id: string; city: string; state: string; st: string }) => void;
@@ -2448,7 +2452,10 @@ export function MapCanvas({
     // Same repaint-then-read semantics, but into a 2D canvas (optionally
     // downscaled) instead of a PNG data URL — the GIF export composes dozens
     // of frames and skipping the PNG encode/decode keeps stepping fast.
-    const captureCanvasSnapshot = (maxWidth?: number): Promise<HTMLCanvasElement | null> => {
+    const captureCanvasSnapshot = (
+      maxWidth?: number,
+      expectGridHour?: number | null,
+    ): Promise<HTMLCanvasElement | null> => {
       const map = mapRef.current;
       if (!map) {
         return Promise.resolve(null);
@@ -2456,6 +2463,18 @@ export function MapCanvas({
       return new Promise((resolve) => {
         map.once("render", () => {
           try {
+            // Atomic grid check: React-mirrored readiness can flicker between
+            // a gate check and this render (run switches settle in waves), so
+            // verify the controller is drawing the expected frame in THIS
+            // paint. The caller retries on null.
+            if (
+              expectGridHour !== undefined
+              && expectGridHour !== null
+              && gridWebglControllerRef.current?.visibleFrameHour() !== expectGridHour
+            ) {
+              resolve(null);
+              return;
+            }
             const source = map.getCanvas();
             const scale = maxWidth && source.width > maxWidth ? maxWidth / source.width : 1;
             const snapshot = document.createElement("canvas");

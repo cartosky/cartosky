@@ -53,6 +53,8 @@ export type UseTwfPostingParams = {
   ensurePreparedScreenshot: () => Promise<string | null>;
   screenshotUploadError: string | null;
   screenshotError: string | null;
+  /** Which artifact this post carries (Mixpanel `artifact` on twf_post). */
+  postArtifact: "image" | "gif";
 };
 
 export function useTwfPosting({
@@ -66,6 +68,7 @@ export function useTwfPosting({
   ensurePreparedScreenshot,
   screenshotUploadError,
   screenshotError,
+  postArtifact,
 }: UseTwfPostingParams) {
   const initialSharePrefs = useMemo(() => getSharePrefs(), []);
   const wasOpenRef = useRef(false);
@@ -618,7 +621,7 @@ export function useTwfPosting({
           setSubmitError({ message: "Unexpected response from server." });
           return;
         }
-        captureShareCompleted("twf_post", { share_mode: shareMode });
+        captureShareCompleted("twf_post", { share_mode: shareMode, artifact: postArtifact });
         setSubmitTopicSuccess(result);
         setSubmitTopicTitle(result.title);
       } else {
@@ -627,7 +630,7 @@ export function useTwfPosting({
           setSubmitError({ message: "Unexpected response from server." });
           return;
         }
-        captureShareCompleted("twf_post", { share_mode: shareMode });
+        captureShareCompleted("twf_post", { share_mode: shareMode, artifact: postArtifact });
         setSubmitSuccess(result);
         setSubmitTopicTitle(selectedTopicTitle ?? "Selected topic");
       }
