@@ -2018,12 +2018,16 @@ export default function Forecast() {
       const models = searchParams.get("models");
       const pinnedRuns = searchParams.get("pinned_runs");
       const ensemblePinnedRuns = searchParams.get("ensemble_pinned_runs");
+      const ensembleView = searchParams.get("ensemble_view");
+      const ensembleVar = searchParams.get("ensemble_var");
       if (tab) nextParams.tab = tab;
       if (section) nextParams.section = section;
       if (detailModel) nextParams.detail_model = detailModel;
       if (models != null) nextParams.models = models;
       if (pinnedRuns) nextParams.pinned_runs = pinnedRuns;
       if (ensemblePinnedRuns) nextParams.ensemble_pinned_runs = ensemblePinnedRuns;
+      if (ensembleView) nextParams.ensemble_view = ensembleView;
+      if (ensembleVar) nextParams.ensemble_var = ensembleVar;
     }
     setSearchParams(nextParams, { replace: true });
   }

@@ -8,7 +8,6 @@ import { EnsembleMeanTemperatureChart } from "@/components/model-guidance/Ensemb
 import { EnsembleMeanPrecipChart } from "@/components/model-guidance/EnsembleMeanPrecipChart";
 import { EnsemblePrecipPlumeChart } from "@/components/model-guidance/EnsemblePrecipPlumeChart";
 import { EnsembleTemperaturePlumeChart } from "@/components/model-guidance/EnsembleTemperaturePlumeChart";
-import { SegmentedToggle } from "@/components/ui/segmented-toggle";
 import { useMeteogram } from "@/hooks/useMeteogram";
 import {
   ENSEMBLES_TAB_VARIABLES,
@@ -17,7 +16,7 @@ import {
 } from "@/lib/chart-constants";
 import { eligibleEnsembleModels } from "@/lib/eligible-ensemble-models";
 import { useEntitlements } from "@/lib/entitlements";
-import { formatRunLabel, sortRunIdsDescending } from "@/lib/run-options";
+import { buildRunOptions, formatRunLabel, sortRunIdsDescending } from "@/lib/run-options";
 
 type Props = {
   lat: number;
@@ -34,6 +33,47 @@ const VARIABLE_LABELS: Record<EnsembleVariable, string> = {
   tmp2m: "Temperature",
   precip_total: "Precipitation",
 };
+
+type ControlOption = { value: string; label: string };
+
+/**
+ * Labeled themed dropdown for the control bar. Dropdowns (not segmented
+ * toggles) by design: additional views/variables flow into them without the
+ * bar growing.
+ */
+function ControlSelect({
+  label,
+  ariaLabel,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  ariaLabel: string;
+  value: string;
+  options: ControlOption[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
+        {label}
+      </span>
+      <select
+        aria-label={ariaLabel}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-8 rounded-lg border border-white/[0.09] bg-white/[0.05] px-2 text-[12px] text-white/80 outline-none hover:bg-white/[0.08] focus:border-cyan-300/40 [&>option]:bg-slate-900"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 /**
  * Ensembles top-level tab. Selector-driven (view / variable / run) rather than
@@ -305,10 +345,21 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
 
   // ── Member-view run selector ──────────────────────────────────────────────
   const memberModel = view === "means" ? null : view;
+  // Same shape as the pill run popovers: "Latest (18Z 7/06)" first, then only
+  // the OLDER runs — the latest run is never listed twice.
   const memberRunOptions = useMemo(() => {
     if (!memberModel) return [];
-    return sortRunIdsDescending(availableRuns?.[memberModel] ?? []);
+    const runs = sortRunIdsDescending(availableRuns?.[memberModel] ?? []);
+    return buildRunOptions(runs, runs[0] ?? null);
   }, [memberModel, availableRuns]);
+  const memberLatestRun = memberModel
+    ? sortRunIdsDescending(availableRuns?.[memberModel] ?? [])[0] ?? null
+    : null;
+  // A pin equal to the latest run reads as "Latest" (that option represents it).
+  const memberRunValue =
+    memberModel && pinnedRuns[memberModel] && pinnedRuns[memberModel] !== memberLatestRun
+      ? pinnedRuns[memberModel]
+      : "latest";
   const memberServedRun = memberModel
     ? memberData?.series?.[memberModel]?.run_id ?? null
     : null;
@@ -329,51 +380,30 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
     <div className="flex flex-col gap-6">
       <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
-              View
-            </span>
-            <SegmentedToggle
-              value={view}
-              onChange={(next) => setUrlParam("ensemble_view", next === "means" ? null : next)}
-              options={viewOptions}
-              ariaLabel="Ensemble view"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
-              Variable
-            </span>
-            <SegmentedToggle
-              value={variable}
-              onChange={(next) => setUrlParam("ensemble_var", next === "tmp2m" ? null : next)}
-              options={variableOptions}
-              ariaLabel="Ensemble variable"
-            />
-          </div>
+          <ControlSelect
+            label="View"
+            ariaLabel="Ensemble view"
+            value={view}
+            options={viewOptions}
+            onChange={(next) => setUrlParam("ensemble_view", next === "means" ? null : next)}
+          />
+          <ControlSelect
+            label="Variable"
+            ariaLabel="Ensemble variable"
+            value={variable}
+            options={variableOptions}
+            onChange={(next) => setUrlParam("ensemble_var", next === "tmp2m" ? null : next)}
+          />
           {memberModel ? (
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
-                Run
-              </span>
-              <select
-                aria-label={`${modelShortName(memberModel)} run`}
-                value={pinnedRuns[memberModel] ?? ""}
-                onChange={(event) =>
-                  handleRunChange(memberModel, event.target.value || null)
-                }
-                className="h-8 rounded-lg border border-white/[0.09] bg-white/[0.05] px-2 text-[12px] text-white/80 outline-none hover:bg-white/[0.08] focus:border-cyan-300/40 [&>option]:bg-slate-900"
-              >
-                <option value="">
-                  Latest{memberRunOptions[0] ? ` — ${formatRunLabel(memberRunOptions[0])}` : ""}
-                </option>
-                {memberRunOptions.map((runId) => (
-                  <option key={runId} value={runId}>
-                    {formatRunLabel(runId)}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <ControlSelect
+              label="Run"
+              ariaLabel={`${modelShortName(memberModel)} run`}
+              value={memberRunValue}
+              options={memberRunOptions}
+              onChange={(next) =>
+                handleRunChange(memberModel, next === "latest" ? null : next)
+              }
+            />
           ) : (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
