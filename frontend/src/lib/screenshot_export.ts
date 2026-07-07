@@ -16,6 +16,13 @@ export type ScreenshotExportState = {
   isMobile: boolean;
   model: string;
   run: string;
+  /**
+   * Optional replacement for the default `{run} {model}` prefix on overlay
+   * line 1. Compare screenshots set this to a per-side run+model title
+   * (e.g. "Compare: 12Z 7/7 GEFS vs 00Z 7/7 EPS") because a single
+   * `run`/`model` pair cannot represent two panels with different runs.
+   */
+  overlayTitle?: string;
   variable: { key: string; label: string };
   fh: number;
   /** Unused by the compose-only exporter; kept optional for legacy callers. */
@@ -246,16 +253,19 @@ function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayloa
     return [`${model} • ${run} • ${observedLabel}${statusSuffix}`, variableLabel];
   }
   // Line 1: {run} {model} • {frame label} • {local valid time}, line 2: variable.
+  // Compare screenshots override the {run} {model} prefix with a per-side
+  // title ("Compare: … vs …" / "Difference: … − …") via overlayTitle.
+  const titlePrefix = state.overlayTitle?.trim() || `${run} ${model}`;
   const localValidTime = formatShareOverlayTime(state.validTimeISO);
   if (state.timeAxisMode === "valid") {
     const frameLabel = validAxisLabel(state.fh, state.variable.key, state.runTimeISO, state.validTimeISO);
     return [
-      [`${run} ${model}`, frameLabel, localValidTime].filter(Boolean).join(" • "),
+      [titlePrefix, frameLabel, localValidTime].filter(Boolean).join(" • "),
       variableLabel,
     ];
   }
   return [
-    [`${run} ${model}`, `FH ${state.fh}`, localValidTime].filter(Boolean).join(" • "),
+    [titlePrefix, `FH ${state.fh}`, localValidTime].filter(Boolean).join(" • "),
     variableLabel,
   ];
 }

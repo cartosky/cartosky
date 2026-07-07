@@ -1390,6 +1390,13 @@ export default function Compare() {
         ? leftCanvas.width + rightCanvas.width
         : undefined;
     const viewportHeight = leftCanvas?.height;
+    // Per-side run+model overlay title — a single run/model pair can't
+    // represent two panels whose runs differ (e.g. 12Z GEFS vs 00Z EPS).
+    const leftSide = formatRunModelSide(leftLoader.resolvedRun, lModel.toUpperCase());
+    const rightSide = formatRunModelSide(rightLoader.resolvedRun, rModel.toUpperCase());
+    const overlayTitle = mode === "diff"
+      ? `Difference: ${leftSide} − ${rightSide}`
+      : `Compare: ${leftSide} vs ${rightSide}`;
     return {
       style: {},
       center: [lon, lat],
@@ -1400,13 +1407,15 @@ export default function Compare() {
       isMobile: false,
       model: `${lModel.toUpperCase()} vs ${rModel.toUpperCase()}`,
       run: leftLoader.resolvedRun,
-      variable: { key: lVariable, label: `${leftVarLabel} vs ${rightVarLabel}` },
+      overlayTitle,
+      // Same variable on both sides (always true in diff mode) → one label.
+      variable: { key: lVariable, label: leftVarLabel === rightVarLabel ? leftVarLabel : `${leftVarLabel} vs ${rightVarLabel}` },
       fh: forecastHour,
       gridReady: true,
       region: { id: region, label: region },
       animationEnabled: false,
     };
-  }, [lon, lat, z, basemapMode, lModel, rModel, lVariable, rVariable, leftLoader.resolvedRun, forecastHour, mode, region, variableCatalog]);
+  }, [lon, lat, z, basemapMode, lModel, rModel, lVariable, rVariable, leftLoader.resolvedRun, rightLoader.resolvedRun, forecastHour, mode, region, variableCatalog]);
 
   const handleShare = useCallback(() => {
     setShareOpen(true);
