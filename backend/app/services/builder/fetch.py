@@ -3037,10 +3037,37 @@ def _inventory_primary_byte_range(
 
 def _network_fetch_range_bytes(source_url: str, *, start_byte: int, end_byte: int) -> bytes:
     headers = {"Range": f"bytes={start_byte}-{end_byte}"}
-    response = requests.get(source_url, headers=headers, timeout=45)
-    response.raise_for_status()
-    data = bytes(response.content)
-    response.close()
+    expected_size = int(end_byte) - int(start_byte) + 1
+    response = requests.get(source_url, headers=headers, timeout=45, stream=True)
+    try:
+        response.raise_for_status()
+        if response.status_code != 206:
+            # A 200 means the server ignored the Range header and the body is
+            # the ENTIRE file — which starts with "GRIB", so it would pass
+            # payload validation and decode as the wrong message. Reject before
+            # buffering the (potentially multi-GB) body, unless the declared
+            # length shows the body is exactly the requested slice.
+            content_length_header = response.headers.get("Content-Length")
+            try:
+                content_length = int(content_length_header) if content_length_header is not None else None
+            except (TypeError, ValueError):
+                content_length = None
+            if content_length != expected_size:
+                _metric_increment("range_request_not_honored")
+                raise _InvalidGribSubsetError(
+                    f"Range request not honored: status={response.status_code} "
+                    f"expected_bytes={expected_size} content_length={content_length_header or 'unknown'} "
+                    f"range={start_byte}-{end_byte} url_hash={_url_hash(source_url)}"
+                )
+        data = bytes(response.content)
+    finally:
+        response.close()
+    if len(data) != expected_size:
+        _metric_increment("range_payload_truncated")
+        raise _InvalidGribSubsetError(
+            f"Range payload size mismatch: expected_bytes={expected_size} got={len(data)} "
+            f"range={start_byte}-{end_byte} url_hash={_url_hash(source_url)}"
+        )
     return data
 
 def _fetch_subset_bytes_from_full_source(

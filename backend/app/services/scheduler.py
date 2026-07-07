@@ -1360,12 +1360,25 @@ def _promote_run(data_root: Path, model: str, run_id: str) -> None:
             copy_function=_copy_or_link_file,
         )
 
-    if published_run.exists():
-        shutil.rmtree(published_run, ignore_errors=True)
-    if published_run.exists():
-        raise SchedulerConfigError(f"Cannot clear existing published run dir: {published_run}")
+    # Swap via two renames instead of rmtree-then-move: rmtree of a large run
+    # tree takes seconds, and the published run dir must never disappear while
+    # readers are resolving frames (every publish used to open a 404 window).
+    trash_run = published_model / f".{run_id}.trash"
+    if trash_run.exists():
+        shutil.rmtree(trash_run, ignore_errors=True)
+    if trash_run.exists():
+        raise SchedulerConfigError(f"Cannot clear stale promotion trash dir: {trash_run}")
 
-    shutil.move(str(tmp_run), str(published_run))
+    if published_run.exists():
+        os.rename(published_run, trash_run)
+    try:
+        os.rename(tmp_run, published_run)
+    except OSError:
+        # Put the previous published run back before surfacing the failure.
+        if trash_run.exists() and not published_run.exists():
+            os.rename(trash_run, published_run)
+        raise
+    shutil.rmtree(trash_run, ignore_errors=True)
 
 
 @contextmanager
@@ -1545,6 +1558,37 @@ def _enforce_run_retention(root: Path, keep_runs: int) -> None:
     for _, old_run_dir in runs[keep_runs:]:
         logger.info("Removing old run dir: %s", old_run_dir)
         shutil.rmtree(old_run_dir, ignore_errors=True)
+
+
+def _enforce_manifest_retention(root: Path, keep_runs: int) -> None:
+    """Prune per-run manifest JSONs alongside run-dir retention.
+
+    Manifests outliving their evicted runs let clients resolve run ids whose
+    frames no longer exist (the stale-run 404 incident class). Non-run files
+    (e.g. anything that doesn't parse as a run id) are left untouched.
+    """
+    if keep_runs < 1 or not root.is_dir():
+        return
+
+    manifests: list[tuple[datetime, Path]] = []
+    for child in root.iterdir():
+        if not child.is_file() or child.name.startswith(".") or child.suffix != ".json":
+            continue
+        run_dt = _parse_run_id_datetime(child.stem)
+        if run_dt is None:
+            continue
+        manifests.append((run_dt, child))
+
+    if len(manifests) <= keep_runs:
+        return
+
+    manifests.sort(key=lambda pair: pair[0], reverse=True)
+    for _, old_manifest in manifests[keep_runs:]:
+        logger.info("Removing old run manifest: %s", old_manifest)
+        try:
+            old_manifest.unlink()
+        except OSError:
+            logger.warning("Failed removing old run manifest: %s", old_manifest)
 
 
 def _scheduler_product_category(plugin: Any | None) -> str:
@@ -2521,6 +2565,7 @@ def _process_run(
     effective_keep_runs = _resolved_keep_runs_for_scheduler_plugin(plugin, keep_runs)
     _enforce_run_retention(data_root / "staging" / model_id, effective_keep_runs)
     _enforce_run_retention(data_root / "published" / model_id, effective_keep_runs)
+    _enforce_manifest_retention(data_root / "manifests" / model_id, effective_keep_runs)
     herbie_save_dir_raw = _env_value(ENV_HERBIE_SAVE_DIR).strip()
     if herbie_save_dir_raw:
         herbie_model_id = model_id

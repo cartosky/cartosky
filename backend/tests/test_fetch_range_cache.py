@@ -22,8 +22,10 @@ from app.services.builder import fetch as fetch_module
 
 
 class _FakeResponse:
-    def __init__(self, payload: bytes):
+    def __init__(self, payload: bytes, status_code: int = 206, headers: dict[str, str] | None = None):
         self.content = payload
+        self.status_code = status_code
+        self.headers = headers if headers is not None else {"Content-Length": str(len(payload))}
 
     def raise_for_status(self) -> None:
         return None
@@ -69,7 +71,7 @@ def test_fetch_range_cache_hit_store_and_single_http_call(monkeypatch: pytest.Mo
     cache = fetch_module.BundleFetchCache(max_entries=8, max_bytes=4096, max_cacheable_bytes=1024)
     calls: list[tuple[str, str]] = []
 
-    def _fake_get(url: str, *, headers: dict[str, str], timeout: int):
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
         del timeout
         calls.append((url, str(headers.get("Range", ""))))
         return _FakeResponse(b"ABCD")
@@ -152,7 +154,7 @@ def test_fetch_range_cache_singleflight_concurrency(monkeypatch: pytest.MonkeyPa
     calls = {"count": 0}
     lock = threading.Lock()
 
-    def _fake_get(url: str, *, headers: dict[str, str], timeout: int):
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
         del url, headers, timeout
         with lock:
             calls["count"] += 1
@@ -185,7 +187,7 @@ def test_fetch_range_cache_separates_different_ranges(monkeypatch: pytest.Monkey
     cache = fetch_module.BundleFetchCache(max_entries=8, max_bytes=4096, max_cacheable_bytes=1024)
     calls = {"count": 0}
 
-    def _fake_get(url: str, *, headers: dict[str, str], timeout: int):
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
         del url, timeout
         calls["count"] += 1
         if headers.get("Range") == "bytes=0-3":
@@ -217,7 +219,7 @@ def test_fetch_range_cache_skips_large_ranges(monkeypatch: pytest.MonkeyPatch) -
     cache = fetch_module.BundleFetchCache(max_entries=8, max_bytes=4096, max_cacheable_bytes=2)
     calls = {"count": 0}
 
-    def _fake_get(url: str, *, headers: dict[str, str], timeout: int):
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
         del url, headers, timeout
         calls["count"] += 1
         return _FakeResponse(b"ABCD")
@@ -250,7 +252,7 @@ def test_fetch_range_cache_failure_does_not_poison_cache(monkeypatch: pytest.Mon
     cache = fetch_module.BundleFetchCache(max_entries=8, max_bytes=4096, max_cacheable_bytes=1024)
     calls = {"count": 0}
 
-    def _fake_get(url: str, *, headers: dict[str, str], timeout: int):
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
         del url, headers, timeout
         calls["count"] += 1
         if calls["count"] == 1:
@@ -277,6 +279,59 @@ def test_fetch_range_cache_failure_does_not_poison_cache(monkeypatch: pytest.Mon
     assert calls["count"] == 2
     metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
     assert metrics["counters"].get("fetch_cache_store", 0) == 1
+
+
+def test_network_fetch_range_bytes_rejects_full_file_200_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A server that ignores the Range header returns 200 with the ENTIRE file.
+    The body starts with 'GRIB' so payload validation would pass and band 1
+    (the wrong message) would be decoded — the guard must reject it instead."""
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    full_file = b"GRIB" + (b"\0" * 1020)  # whole-file body, much larger than the slice
+
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
+        del url, headers, timeout, stream
+        return _FakeResponse(full_file, status_code=200)
+
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+
+    with pytest.raises(fetch_module._InvalidGribSubsetError, match="Range request not honored"):
+        fetch_module._network_fetch_range_bytes(
+            "https://nomads.example/gfs.grib2", start_byte=100, end_byte=131
+        )
+    metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
+    assert metrics["counters"].get("range_request_not_honored", 0) == 1
+
+
+def test_network_fetch_range_bytes_accepts_200_when_body_is_exactly_the_slice(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = b"GRIB" + (b"\0" * 28)
+
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
+        del url, headers, timeout, stream
+        return _FakeResponse(payload, status_code=200, headers={"Content-Length": str(len(payload))})
+
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+
+    result = fetch_module._network_fetch_range_bytes(
+        "https://nomads.example/gfs.grib2", start_byte=0, end_byte=31
+    )
+    assert result == payload
+
+
+def test_network_fetch_range_bytes_rejects_truncated_206_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
+        del url, headers, timeout, stream
+        return _FakeResponse(b"GRIB" + (b"\0" * 10))  # 14 bytes; 32 requested
+
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+
+    with pytest.raises(fetch_module._InvalidGribSubsetError, match="size mismatch"):
+        fetch_module._network_fetch_range_bytes(
+            "https://nomads.example/gfs.grib2", start_byte=0, end_byte=31
+        )
+    metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
+    assert metrics["counters"].get("range_payload_truncated", 0) == 1
 
 
 def test_fetch_range_cache_does_not_store_empty_payloads() -> None:
@@ -315,11 +370,11 @@ def test_fetch_range_cache_invalid_grib_payload_does_not_poison_cache(monkeypatc
     cache = fetch_module.BundleFetchCache(max_entries=8, max_bytes=4096, max_cacheable_bytes=1024)
     calls = {"count": 0}
 
-    def _fake_get(url: str, *, headers: dict[str, str], timeout: int):
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
         del url, headers, timeout
         calls["count"] += 1
         if calls["count"] == 1:
-            return _FakeResponse(b"<Error>not ready</Error>")
+            return _FakeResponse(b"<Error>not ready</Error>".ljust(32, b" "))
         return _FakeResponse(b"GRIB" + (b"\0" * 28))
 
     monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
@@ -381,7 +436,7 @@ def test_derived_smoke_reports_fetch_cache_hit(monkeypatch: pytest.MonkeyPatch, 
 
     request_calls = {"count": 0}
 
-    def _fake_get(url: str, *, headers: dict[str, str], timeout: int):
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
         del url, headers, timeout
         request_calls["count"] += 1
         return _FakeResponse(b"GRIB" + (b"X" * 28))
