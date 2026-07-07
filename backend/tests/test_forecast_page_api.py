@@ -521,6 +521,15 @@ async def test_get_forecast_page_by_query_falls_back_to_open_meteo_current_when_
 
     monkeypatch.setattr(forecast_page_service.nws_service, "get_afd_by_office", fake_get_afd_by_office)
 
+    async def fake_fetch_observed_precip(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    async def fake_fetch_temperature_history(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip", fake_fetch_observed_precip)
+    monkeypatch.setattr(forecast_page_service, "_fetch_temperature_history", fake_fetch_temperature_history)
+
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
         path = request.url.path
@@ -604,6 +613,15 @@ async def test_get_forecast_page_by_query_uses_night_icon_for_nws_current(monkey
 
     monkeypatch.setattr(forecast_page_service.nws_service, "get_afd_by_office", fake_get_afd_by_office)
 
+    async def fake_fetch_observed_precip(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    async def fake_fetch_temperature_history(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip", fake_fetch_observed_precip)
+    monkeypatch.setattr(forecast_page_service, "_fetch_temperature_history", fake_fetch_temperature_history)
+
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
         path = request.url.path
@@ -670,6 +688,15 @@ async def test_degraded_us_hybrid_payload_does_not_poison_forecast_page_cache(mo
         )
 
     monkeypatch.setattr(forecast_page_service.nws_service, "get_afd_by_office", fake_get_afd_by_office)
+
+    async def fake_fetch_observed_precip(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    async def fake_fetch_temperature_history(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip", fake_fetch_observed_precip)
+    monkeypatch.setattr(forecast_page_service, "_fetch_temperature_history", fake_fetch_temperature_history)
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal points_calls
@@ -1393,6 +1420,15 @@ async def test_get_forecast_page_refreshes_missing_pollen_from_cached_payload(
         forecast_page_service.FORECAST_PAGE_CACHE_TTL,
     )
 
+    async def fake_fetch_observed_precip(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    async def fake_fetch_temperature_history(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip", fake_fetch_observed_precip)
+    monkeypatch.setattr(forecast_page_service, "_fetch_temperature_history", fake_fetch_temperature_history)
+
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
         path = request.url.path
@@ -1668,6 +1704,15 @@ async def test_get_forecast_page_refreshes_partial_observed_precip_from_cached_p
 async def test_get_forecast_page_by_query_non_us_uses_open_meteo_only(monkeypatch: pytest.MonkeyPatch) -> None:
     _freeze_now(monkeypatch)
 
+    async def fake_fetch_observed_precip(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    async def fake_fetch_temperature_history(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip", fake_fetch_observed_precip)
+    monkeypatch.setattr(forecast_page_service, "_fetch_temperature_history", fake_fetch_temperature_history)
+
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
         path = request.url.path
@@ -1823,6 +1868,15 @@ async def test_get_forecast_page_by_coordinates_probes_nws_when_reverse_geocode_
 
     monkeypatch.setattr(forecast_page_service.nws_service, "get_afd_by_office", fake_get_afd_by_office)
 
+    async def fake_fetch_observed_precip(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    async def fake_fetch_temperature_history(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip", fake_fetch_observed_precip)
+    monkeypatch.setattr(forecast_page_service, "_fetch_temperature_history", fake_fetch_temperature_history)
+
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
         path = request.url.path
@@ -1922,6 +1976,15 @@ async def test_get_forecast_page_with_location_hint_skips_reverse_geocode(
         )
 
     monkeypatch.setattr(forecast_page_service.nws_service, "get_afd_by_office", fake_get_afd_by_office)
+
+    async def fake_fetch_observed_precip(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    async def fake_fetch_temperature_history(location: forecast_page_service.ResolvedLocation) -> dict[str, object] | None:
+        return None
+
+    monkeypatch.setattr(forecast_page_service, "_fetch_observed_precip", fake_fetch_observed_precip)
+    monkeypatch.setattr(forecast_page_service, "_fetch_temperature_history", fake_fetch_temperature_history)
 
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host

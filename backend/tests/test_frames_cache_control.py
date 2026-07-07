@@ -350,7 +350,7 @@ async def test_capabilities_invariant_supported_models_matches_catalog(client: h
 
     assert sorted(supported_models) == sorted(model_catalog.keys())
     assert sorted(supported_models) == sorted(availability.keys())
-    assert payload["contract_version"] == "v1"
+    assert payload["contract_version"] == "v2"
 
     for model_id, model_payload in model_catalog.items():
         variables = model_payload.get("variables", {})
@@ -433,7 +433,7 @@ async def test_bootstrap_endpoint_includes_selection_and_frames(client: httpx.As
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["contract_version"] == "v1"
+    assert payload["contract_version"] == "v2"
     assert "capabilities" in payload
     assert "regions" in payload
     selection = payload["selection"]

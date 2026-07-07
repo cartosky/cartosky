@@ -1369,11 +1369,12 @@ def _required_products_for_var(
             required.append(normalized)
 
     derive_kind = _derive_strategy_id(var_spec_model, var_capability)
+    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {}) or {}
     if not derive_kind:
-        _push(default_norm)
+        product_hint = str(hints.get("product", "")).strip()
+        _push(product_hint or default_norm)
         return required
 
-    hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {}) or {}
     if derive_kind == "snowfall_kuchera_total_cumulative":
         apcp_product = str(hints.get("kuchera_apcp_product", "")).strip() or default_norm
         profile_product = str(hints.get("kuchera_profile_product", "")).strip() or default_norm
@@ -1622,7 +1623,7 @@ def build_frame(
             run_date=run_date,
             fh=fh,
             var_key=var_key,
-            required_products=[source_product],
+            required_products=required_products,
             ensemble_view=ensemble_view,
             readiness_cache=readiness_cache,
         )

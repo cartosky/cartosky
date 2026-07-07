@@ -26,7 +26,8 @@ def test_eps_run_discovery_invariants() -> None:
         "probe_attempts": 4,
         "cycle_cadence_hours": 6,
         "fallback_lag_hours": 6,
-        "stale_cycle_release_minutes_by_hour": {0: 180, 6: 120, 12: 180, 18: 120},
+        "stale_cycle_release_minutes_by_hour": {0: 450, 6: 390, 12: 450, 18: 390},
+        "stalled_run_idle_minutes": 90,
         "source_priority": ["azure", "aws", "ecmwf"],
         "probe_ensemble_view": "mean",
     }
@@ -128,7 +129,22 @@ def test_eps_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"tmp2m", "rh700", "tmp2m_anom", "tmp850_anom", "precip_15d_anom", "hgt500_anom", "wspd10m"}
+    assert buildable_var_keys == {
+        "tmp2m",
+        "rh2m",
+        "rh700",
+        "tmp2m_anom",
+        "tmp850",
+        "tmp850_anom",
+        "pwat",
+        "precip_total",
+        "precip_5d_anom",
+        "precip_7d_anom",
+        "precip_10d_anom",
+        "precip_15d_anom",
+        "hgt500_anom",
+        "wspd10m",
+    }
     assert capabilities.ui_defaults["default_var_key"] == "tmp2m"
     assert capabilities.ui_defaults["default_ensemble_view"] == "mean"
     assert capabilities.canonical_region == "na"
@@ -137,7 +153,7 @@ def test_eps_buildable_var_set_and_defaults_invariants() -> None:
         "na": 18000.0,
     }
     auto_schedule_vars = _resolve_vars_to_schedule(EPS_MODEL, [])
-    assert "tmp850" not in auto_schedule_vars
+    assert "tmp850" in auto_schedule_vars
     assert "tmp850_anom" in auto_schedule_vars
 
     from app.services.grid import _PACKING_BY_MODEL_VAR
@@ -167,7 +183,8 @@ def test_eps_capabilities_schema_snapshot_invariants() -> None:
     assert payload["ensemble"]["supported_views"] == ["mean"]
     assert "tmp2m__mean" not in payload["variables"]
     assert "rh700__mean" not in payload["variables"]
-    assert "rh2m" not in payload["variables"]
+    assert "rh2m" in payload["variables"]
+    assert "rh2m__mean" not in payload["variables"]
     assert "tmp2m_anom__mean" not in payload["variables"]
     assert "tmp850__mean" not in payload["variables"]
     assert "tmp850_anom__mean" not in payload["variables"]
@@ -335,5 +352,5 @@ def test_eps_precip_15d_anom_uses_mean_precip_component_and_era5_baseline() -> N
         assert spec.selectors.hints["baseline_region"] == "na"
         assert spec.selectors.hints["baseline_version"] == "v1"
         assert spec.selectors.hints["reference_period"] == "1991-2020"
-        assert spec.selectors.hints["target_fh"] == 360
-        assert spec.selectors.hints["accumulation_window_hours"] == 360
+        assert spec.selectors.hints["target_fh"] == "360"
+        assert spec.selectors.hints["accumulation_window_hours"] == "360"

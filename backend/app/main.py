@@ -16,6 +16,7 @@ import secrets
 import tempfile
 import threading
 import time
+import zoneinfo
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -1583,17 +1584,27 @@ async def generate_share_screenshot(
     body = await request.json()
     url = str(body.get("url", "")).strip() if isinstance(body, dict) else ""
     basemap = str(body.get("basemap", "light")).strip().lower() if isinstance(body, dict) else "light"
+    timezone_raw = str(body.get("timezone", "")).strip() if isinstance(body, dict) else ""
     if not url:
         return JSONResponse({"error": "url is required"}, status_code=400)
     if basemap not in {"light", "dark"}:
         basemap = "light"
+    # Poster's IANA timezone for the overlay's local valid-time stamp; drop
+    # anything zoneinfo doesn't recognize rather than failing the render.
+    timezone_id: str | None = None
+    if timezone_raw and len(timezone_raw) <= 64:
+        try:
+            zoneinfo.ZoneInfo(timezone_raw)
+            timezone_id = timezone_raw
+        except Exception:
+            timezone_id = None
 
     parsed = urlparse(url)
     if parsed.hostname not in _share_screenshot_allowed_hosts():
         return JSONResponse({"error": "URL not allowed"}, status_code=400)
 
     try:
-        png_bytes = await screenshot_service.render(url, basemap=basemap)
+        png_bytes = await screenshot_service.render(url, basemap=basemap, timezone_id=timezone_id)
         return Response(content=png_bytes, media_type="image/png")
     except Exception as exc:
         logger.error("Screenshot render failed: %s", exc)
@@ -4218,6 +4229,7 @@ async def nws_hazards_active_warnings(
     if cached_payload is not None:
         return JSONResponse(
             content=cached_payload,
+            media_type="application/geo+json",
             headers={"Cache-Control": f"public, max-age={NWS_ACTIVE_WARNINGS_CACHE_MAX_AGE_SECONDS}"},
         )
     try:
@@ -4233,6 +4245,7 @@ async def nws_hazards_active_warnings(
         )
     return JSONResponse(
         content=filtered_payload,
+        media_type="application/geo+json",
         headers={"Cache-Control": f"public, max-age={NWS_ACTIVE_WARNINGS_CACHE_MAX_AGE_SECONDS}"},
     )
 

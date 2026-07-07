@@ -209,6 +209,7 @@ async def test_forecast_grid_supported_selection_bootstraps_without_loop_artifac
         "run": "20260330_12z",
         "variable": "tmp2m",
         "region": "conus",
+        "ensemble_view": "",
     }
     assert [row["fh"] for row in bootstrap_payload["frames"]] == [0]
 
@@ -251,6 +252,7 @@ async def test_observed_grid_supported_selection_bootstraps_without_loop_artifac
         "run": "20260330_1206z",
         "variable": "reflectivity",
         "region": "conus",
+        "ensemble_view": "",
     }
     assert [row["fh"] for row in bootstrap_payload["frames"]] == [0]
 

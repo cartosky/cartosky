@@ -263,6 +263,8 @@ async def test_status_results_reports_ongoing_latest_run_and_artifact_failures(
             return real_datetime(2026, 5, 29, 14, 0, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+    frozen_ts = FrozenDateTime.now(admin_telemetry.timezone.utc).timestamp()
+    monkeypatch.setattr(main_module.time, "time", lambda: frozen_ts)
 
     _seed_run(
         main_module.DATA_ROOT,
@@ -351,6 +353,8 @@ async def test_status_results_treats_grid_runtime_artifacts_as_healthy_without_l
             return real_datetime(2026, 4, 17, 14, 0, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+    frozen_ts = FrozenDateTime.now(admin_telemetry.timezone.utc).timestamp()
+    monkeypatch.setattr(main_module.time, "time", lambda: frozen_ts)
 
     _write_manifest(
         main_module.DATA_ROOT / "manifests" / "gefs" / "20260417_12z.json",
@@ -396,6 +400,8 @@ async def test_status_results_reports_zero_frame_grid_variable_as_incomplete_not
             return real_datetime(2026, 5, 19, 20, 0, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+    frozen_ts = FrozenDateTime.now(admin_telemetry.timezone.utc).timestamp()
+    monkeypatch.setattr(main_module.time, "time", lambda: frozen_ts)
 
     _write_manifest(
         main_module.DATA_ROOT / "manifests" / "gfs" / "20260519_12z.json",
@@ -447,6 +453,8 @@ async def test_status_results_suppresses_latest_artifact_failures_while_runtime_
             return real_datetime(2026, 5, 29, 13, 34, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+    frozen_ts = FrozenDateTime.now(admin_telemetry.timezone.utc).timestamp()
+    monkeypatch.setattr(main_module.time, "time", lambda: frozen_ts)
 
     run_id = "20260529_1333z"
     _write_manifest(
@@ -457,6 +465,7 @@ async def test_status_results_suppresses_latest_artifact_failures_while_runtime_
     )
     manifest_path = main_module.DATA_ROOT / "manifests" / "mrms" / f"{run_id}.json"
     manifest_payload = json.loads(manifest_path.read_text())
+    manifest_payload["last_updated"] = "2026-05-29T13:33:20Z"
     manifest_payload["metadata"] = {
         "source": "mrms",
         "time_axis_mode": "observed",
@@ -555,6 +564,8 @@ async def test_status_results_skips_irrelevant_sidecar_parsing_for_grid_runtime(
             return real_datetime(2026, 4, 17, 14, 0, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+    frozen_ts = FrozenDateTime.now(admin_telemetry.timezone.utc).timestamp()
+    monkeypatch.setattr(main_module.time, "time", lambda: frozen_ts)
 
     _write_manifest(
         main_module.DATA_ROOT / "manifests" / "gefs" / "20260417_12z.json",
@@ -615,6 +626,8 @@ async def test_status_run_detail_returns_full_diagnostics(
             return real_datetime(2026, 3, 11, 14, 0, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+    frozen_ts = FrozenDateTime.now(admin_telemetry.timezone.utc).timestamp()
+    monkeypatch.setattr(main_module.time, "time", lambda: frozen_ts)
 
     _write_manifest(
         main_module.DATA_ROOT / "manifests" / "spc" / "20260311_1200z.json",
@@ -653,8 +666,24 @@ async def test_status_run_detail_returns_full_diagnostics(
     assert result["sample_paths"]
 
 
-async def test_status_results_only_scans_retained_published_runs(client: httpx.AsyncClient) -> None:
+async def test_status_results_only_scans_retained_published_runs(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    real_datetime = admin_telemetry.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return real_datetime(2026, 4, 19, 12, 0, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+    frozen_ts = FrozenDateTime.now(admin_telemetry.timezone.utc).timestamp()
+    monkeypatch.setattr(main_module.time, "time", lambda: frozen_ts)
+
     run_ids = [
         "20260310_00z",
         "20260310_06z",
@@ -704,6 +733,8 @@ async def test_status_results_flags_stale_latest_run(client: httpx.AsyncClient, 
             return base_day.replace(hour=15, tzinfo=tz)
 
     monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+    frozen_ts = FrozenDateTime.now(admin_telemetry.timezone.utc).timestamp()
+    monkeypatch.setattr(main_module.time, "time", lambda: frozen_ts)
 
     response = await client.get(
         "/api/v4/admin/status/results?window=30d&model=hrrr",

@@ -240,7 +240,7 @@ def test_build_grid_for_run_writes_manifest_and_frame(tmp_path: Path, monkeypatc
     assert manifest["subtype"] == "grid"
     assert manifest["grid"]["dtype"] == "uint16"
     assert manifest["grid"]["scale"] == 0.1
-    assert manifest["palette"]["kind"] == "discrete"
+    assert manifest["palette"]["kind"] == "continuous"
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
@@ -277,11 +277,12 @@ def test_build_grid_manifests_for_regioned_run_root_writes_region_manifest(tmp_p
 
 
 def test_build_grid_for_run_writes_regioned_manifest_and_frame(tmp_path: Path) -> None:
+    # Runs now use a flat, region-agnostic layout; grid_dir ignores the region param.
     data_root = tmp_path / "data"
     model = "gfs"
     run_id = "20260422_12z"
     var = "tmp2m"
-    var_dir = data_root / "published" / model / run_id / "na" / var
+    var_dir = data_root / "published" / model / run_id / var
     values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
     _write_value_cog(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
@@ -301,6 +302,7 @@ def test_build_grid_for_run_writes_regioned_manifest_and_frame(tmp_path: Path) -
     assert manifest_ok == 1
 
     artifacts_dir = grid_dir(data_root, model, run_id, var, region="na")
+    assert artifacts_dir == data_root / "published" / model / run_id / var / "grid"
     assert (artifacts_dir / "fh000.l0.u16.bin").is_file()
     assert (artifacts_dir / "manifest.json").is_file()
 
@@ -385,9 +387,9 @@ def test_build_grid_for_run_supports_temperature_family_targets(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == var
-    assert manifest["grid"]["scale"] == 0.01
+    assert manifest["grid"]["scale"] == 0.1
     assert manifest["grid"]["offset"] == -100.0
-    assert manifest["grid"]["units"] == "F"
+    assert manifest["grid"]["units"] == ("C" if var == "tmp850" else "F")
     assert manifest["grid"]["width"] == values.shape[1]
     assert manifest["grid"]["height"] == values.shape[0]
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
@@ -458,7 +460,7 @@ def test_build_grid_for_run_supports_wind_family_targets(
     assert manifest["palette"]["color_map_id"] == expected_color_map_id
     assert manifest["grid"]["scale"] == 0.1
     assert manifest["grid"]["offset"] == 0.0
-    assert manifest["grid"]["units"] == "mph"
+    assert manifest["grid"]["units"] == ("kt" if var in ("wspd850", "wspd300") else "mph")
     assert manifest["grid"]["width"] == values.shape[1]
     assert manifest["grid"]["height"] == values.shape[0]
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
@@ -514,7 +516,7 @@ def test_build_grid_for_run_supports_gfs_snowfall_targets(
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == expected_color_map_id
-    assert manifest["grid"]["scale"] == 0.01
+    assert manifest["grid"]["scale"] == 0.1
     assert manifest["palette"]["kind"] == "discrete"
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
@@ -901,16 +903,19 @@ def test_build_grid_for_run_supports_hrrr_accumulation_targets(
     assert manifest_path.is_file()
 
     encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
+    expected_scale, expected_lo, expected_hi = (
+        (0.01, 1230, 4860) if var == "precip_total" else (0.1, 123, 486)
+    )
     assert encoded[0, 0] == 0
-    assert encoded[0, 1] == 123
+    assert encoded[0, 1] == expected_lo
     assert encoded[1, 0] == 65535
-    assert encoded[1, 1] == 486
+    assert encoded[1, 1] == expected_hi
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == expected_color_map_id
     if expected_color_map_id == "snowfall_total":
         assert manifest["palette"]["kind"] == "discrete"
-    assert manifest["grid"]["scale"] == 0.1
+    assert manifest["grid"]["scale"] == expected_scale
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
     assert manifest["grid"]["width"] == values.shape[1]
@@ -961,16 +966,19 @@ def test_build_grid_for_run_supports_nam_accumulation_targets(
     assert manifest_path.is_file()
 
     encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(values.shape)
+    expected_scale, expected_lo, expected_hi = (
+        (0.01, 1230, 4860) if var == "precip_total" else (0.1, 123, 486)
+    )
     assert encoded[0, 0] == 0
-    assert encoded[0, 1] == 123
+    assert encoded[0, 1] == expected_lo
     assert encoded[1, 0] == 65535
-    assert encoded[1, 1] == 486
+    assert encoded[1, 1] == expected_hi
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == expected_color_map_id
     if expected_color_map_id == "snowfall_total":
         assert manifest["palette"]["kind"] == "discrete"
-    assert manifest["grid"]["scale"] == 0.1
+    assert manifest["grid"]["scale"] == expected_scale
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
     assert manifest["grid"]["width"] == values.shape[1]
@@ -1024,7 +1032,7 @@ def test_build_grid_for_run_supports_nbm_accumulation_targets(
     assert manifest["palette"]["color_map_id"] == expected_color_map_id
     if expected_color_map_id == "snowfall_total":
         assert manifest["palette"]["kind"] == "discrete"
-    assert manifest["grid"]["scale"] == 0.1
+    assert manifest["grid"]["scale"] == (0.01 if var == "precip_total" else 0.1)
     assert manifest["grid"]["offset"] == 0.0
     assert manifest["grid"]["units"] == "in"
 

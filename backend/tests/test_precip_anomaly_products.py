@@ -263,47 +263,54 @@ def test_precip_anomaly_colormap_and_legend_steps() -> None:
     from app.services.colormaps import get_color_map_spec
 
     expected_top_down_steps = [
-        (4.0, "#35a3b8"),
-        (3.5, "#3095a1"),
-        (3.0, "#2a8a8a"),
-        (2.5, "#2f9e63"),
-        (2.0, "#33ad42"),
-        (1.5, "#35c42b"),
-        (1.25, "#3bcf13"),
-        (1.0, "#41d700"),
-        (0.75, "#74e15a"),
-        (0.5, "#a8ed8f"),
-        (0.25, "#d8f6c8"),
-        (0.1, "#f1fbeb"),
-        (-0.1, "#ffffff"),
-        (-0.25, "#fff9ae"),
-        (-0.5, "#fff26a"),
-        (-0.75, "#f1cf3a"),
-        (-1.0, "#e6b428"),
-        (-1.5, "#d99528"),
-        (-2.0, "#c17922"),
-        (-2.5, "#aa6524"),
-        (-3.0, "#975025"),
-        (-3.5, "#8e451f"),
-        (-4.0, "#923a1d"),
+        (5.0, "#b5f1fb"),
+        (4.5, "#97d3fb"),
+        (4.0, "#78b9fb"),
+        (3.5, "#50a5f5"),
+        (3.0, "#3c97f5"),
+        (2.5, "#3083f1"),
+        (2.0, "#2b6eeb"),
+        (1.8, "#2b6eeb"),
+        (1.6, "#467847"),
+        (1.4, "#4a874d"),
+        (1.2, "#529d5a"),
+        (1.0, "#5aaf62"),
+        (0.8, "#7cc378"),
+        (0.6, "#9bd18c"),
+        (0.4, "#b7dfa7"),
+        (0.2, "#c9e9b9"),
+        (-0.2, "#ffffff"),
+        (-0.4, "#efddcb"),
+        (-0.6, "#e1c3ad"),
+        (-0.8, "#c7ab95"),
+        (-1.0, "#b39987"),
+        (-1.2, "#9f8977"),
+        (-1.4, "#8b7668"),
+        (-1.6, "#776658"),
+        (-1.8, "#64544a"),
+        (-2.0, "#a62021"),
+        (-2.5, "#b52828"),
+        (-3.0, "#c93c3c"),
+        (-3.5, "#d54f4f"),
+        (-4.0, "#e16464"),
+        (-4.5, "#e58281"),
+        (-5.0, "#f5a1a1"),
+        (-5.5, "#fbc9c9"),
     ]
     expected_ascending_steps = list(reversed(expected_top_down_steps))
 
     spec = get_color_map_spec("precip_anom")
 
-    assert spec["range"] == (-4.0, 4.0)
+    assert spec["range"] == (-5.5, 5.5)
     assert list(zip(spec["levels"], spec["colors"])) == expected_ascending_steps
     assert spec["legend_stops"] == expected_ascending_steps
     assert list(reversed(spec["legend_stops"])) == expected_top_down_steps
 
     color_by_level = dict(spec["legend_stops"])
-    assert color_by_level[-0.75] == "#f1cf3a"
-    assert color_by_level[-0.5] == "#fff26a"
-    assert color_by_level[-0.25] == "#fff9ae"
-    assert color_by_level[0.25] == "#d8f6c8"
-    assert color_by_level[0.5] == "#a8ed8f"
-    assert color_by_level[0.75] == "#74e15a"
-
+    assert color_by_level[-0.4] == "#efddcb"
+    assert color_by_level[-0.2] == "#ffffff"
+    assert color_by_level[0.2] == "#c9e9b9"
+    assert color_by_level[0.4] == "#b7dfa7"
 
 def test_precip_anomaly_grid_packing_supported_for_exposed_products() -> None:
     pytest.importorskip("brotli")

@@ -42,6 +42,13 @@ type ComparePanelProps = {
   prefersGridSubstrate: boolean;
   forecastHour: number;
   loading: boolean;
+  /**
+   * True once the capabilities catalog has resolved. Until then
+   * `prefersGridSubstrate` (and therefore `gridActive`) reads false for
+   * grid-backed selections, so the readiness gate must not treat the
+   * selection as non-grid yet.
+   */
+  capabilitiesReady: boolean;
   error: string | null;
 };
 
@@ -78,6 +85,7 @@ export function ComparePanel({
   prefersGridSubstrate,
   forecastHour,
   loading,
+  capabilitiesReady,
   error,
 }: ComparePanelProps) {
   // ── Active grid frame (derived locally, per spec) ──────────────────────
@@ -182,16 +190,33 @@ export function ComparePanel({
     return urls;
   }, [activeGridFrameHour, contourGeoJsonUrl, frameRows, gridActive, gridFrameHours, gridManifest, model, resolvedRun, variable]);
 
+  // First-frame readiness gate (mirrors CompareDiffPanel): a grid selection is
+  // ready when the frame texture is ready AND painted; "painted" is satisfied
+  // by a double-rAF after the frame is ready, or by any map `idle`. The idle
+  // listener is persistent and reads live refs — the old `once("idle")` design
+  // captured `gridActive` at map-load time (false until the runs fetch +
+  // manifest probe resolved), so a fast basemap load signaled ready with no
+  // weather overlay rendered, and the consumed listener could never re-arm
+  // after a selection change.
   const onFirstFrameReadyRef = useRef(onFirstFrameReady);
   onFirstFrameReadyRef.current = onFirstFrameReady;
   const firstFrameReadyFiredRef = useRef(false);
   const gridFrameReadyRef = useRef(false);
-  const mapIdleReadyRef = useRef(false);
+  const paintedRef = useRef(false);
+  const gridActiveRef = useRef(gridActive);
+  gridActiveRef.current = gridActive;
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
+  const capabilitiesReadyRef = useRef(capabilitiesReady);
+  capabilitiesReadyRef.current = capabilitiesReady;
+  // Never reset: the basemap doesn't re-render on selection changes, so a past
+  // idle stays a valid "basemap painted" fact for the non-grid path.
+  const mapEverIdleRef = useRef(false);
 
   useEffect(() => {
     firstFrameReadyFiredRef.current = false;
     gridFrameReadyRef.current = false;
-    mapIdleReadyRef.current = false;
+    paintedRef.current = false;
   }, [selectionKey, forecastHour, gridActive]);
 
   const signalFirstFrameReady = useCallback(() => {
@@ -202,38 +227,62 @@ export function ComparePanel({
     onFirstFrameReadyRef.current?.();
   }, []);
 
-  const maybeSignalBothReady = useCallback(() => {
-    if (gridFrameReadyRef.current && mapIdleReadyRef.current) {
+  const maybeSignalReady = useCallback(() => {
+    if (gridActiveRef.current) {
+      if (gridFrameReadyRef.current && paintedRef.current) {
+        signalFirstFrameReady();
+      }
+      return;
+    }
+    // Non-grid selection: only signal once capabilities AND the loader have
+    // fully settled — before capabilities resolve, a grid-backed selection
+    // still reads as non-grid (prefersGridSubstrate=false) with all loader
+    // flags false, which is exactly the premature-ready window this gate
+    // exists to close.
+    if (capabilitiesReadyRef.current && !loadingRef.current && mapEverIdleRef.current) {
       signalFirstFrameReady();
     }
   }, [signalFirstFrameReady]);
 
   const handleGridFrameReady = useCallback(() => {
     gridFrameReadyRef.current = true;
-    maybeSignalBothReady();
-  }, [maybeSignalBothReady]);
+    // Wait for the painted frame to flush before signaling render-complete —
+    // controller warm/prefetch work can starve `idle` indefinitely.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        paintedRef.current = true;
+        maybeSignalReady();
+      }),
+    );
+    maybeSignalReady();
+  }, [maybeSignalReady]);
 
   const handleMapReady = useCallback(
     (map: maplibregl.Map) => {
       onMapReady(map);
       const onIdle = () => {
-        if (gridActive) {
-          mapIdleReadyRef.current = true;
-          maybeSignalBothReady();
-        } else {
-          signalFirstFrameReady();
-        }
+        mapEverIdleRef.current = true;
+        paintedRef.current = true;
+        maybeSignalReady();
       };
       if (map.loaded()) {
-        map.once("idle", onIdle);
+        map.on("idle", onIdle);
       } else {
         map.once("load", () => {
-          map.once("idle", onIdle);
+          map.on("idle", onIdle);
         });
       }
     },
-    [gridActive, maybeSignalBothReady, onMapReady, signalFirstFrameReady],
+    [maybeSignalReady, onMapReady],
   );
+
+  // Loader/capabilities settling is the readiness trigger for non-grid
+  // selections — there is no grid-frame event to drive the gate.
+  useEffect(() => {
+    if (!loading && capabilitiesReady) {
+      maybeSignalReady();
+    }
+  }, [loading, capabilitiesReady, maybeSignalReady]);
 
   return (
     <div className="relative w-full h-full overflow-hidden">

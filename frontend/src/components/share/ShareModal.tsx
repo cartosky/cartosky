@@ -168,6 +168,17 @@ export function ShareModal({
     }
   };
 
+  // Mode/run-count breakdown for gif share events. Settings can't change
+  // while a generated GIF is showing (the ready view replaces the controls),
+  // so they still describe the artifact being shared.
+  const gifShareAnalytics = () => ({
+    gif_mode: gif.settings.mode,
+    gif_frame_count: gif.gifFrameCount,
+    ...(gif.settings.mode === "trend"
+      ? { trend_run_count: Math.min(gif.settings.trendRunCount, Math.max(2, gif.trendRunsAvailable)) }
+      : {}),
+  });
+
   const posting = useTwfPosting({
     open,
     onClose,
@@ -182,6 +193,7 @@ export function ShareModal({
     screenshotError:
       activeTab === "gif" ? "Generate a GIF before posting." : screenshot.screenshotError,
     postArtifact: activeTab === "gif" ? "gif" : "image",
+    postAnalytics: activeTab === "gif" ? gifShareAnalytics() : {},
   });
   const [linkCopied, setLinkCopied] = useState(false);
   const [textCopied, setTextCopied] = useState(false);
@@ -298,7 +310,7 @@ export function ShareModal({
     document.body.appendChild(link);
     link.click();
     link.remove();
-    captureShareCompleted("gif", { gif_action: "download" });
+    captureShareCompleted("gif", { gif_action: "download", ...gifShareAnalytics() });
   };
 
   const handleGifNativeShare = async () => {
@@ -310,7 +322,7 @@ export function ShareModal({
     try {
       if (typeof navigator.canShare !== "function" || navigator.canShare(fileShare)) {
         await navigator.share(fileShare);
-        captureShareCompleted("gif", { gif_action: "native_share" });
+        captureShareCompleted("gif", { gif_action: "native_share", ...gifShareAnalytics() });
       }
     } catch {
       // AbortError (user dismissed the share sheet) or unsupported — no event.
@@ -1022,37 +1034,45 @@ export function ShareModal({
                     <div className="text-sm font-semibold text-white/90">Encoding GIF…</div>
                   )}
                 </div>
-              ) : (
+              ) : !gif.available ? (
                 <div className="flex w-full flex-col items-center justify-center gap-3 rounded-2xl border border-[rgba(255,255,255,0.08)] bg-gradient-to-br from-[#0d1e35] to-[#0a1628] px-6 py-6 text-center">
-                  {gif.available && gif.rangePreview ? (
-                    <div className="w-full max-w-[360px]">
+                  <Film className="h-8 w-8 text-cyan-200/70" />
+                  <div className="text-sm font-semibold text-white/90">GIF isn't available for this view</div>
+                  <div className="max-w-[320px] text-xs leading-relaxed text-white/55">
+                    Pick a product with an animatable forecast timeline, then come back here.
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Preview gets the full modal width (mirrors the ready
+                      state) so the selected frame's data is readable on
+                      desktop; controls live in their own section below. */}
+                  <div className="flex w-full items-center justify-center overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)]">
+                    {gif.rangePreview ? (
                       <img
                         src={gif.rangePreview.url}
                         alt={`Frame preview for FH ${gif.rangePreview.hour}`}
-                        className="w-full rounded-xl border border-white/10"
+                        className="h-auto max-h-[34dvh] w-auto max-w-full sm:max-h-[380px]"
                       />
-                      <div className="mt-1 text-center text-[11px] text-white/50">
-                        Previewing FH {gif.rangePreview.hour}
+                    ) : (
+                      <div className="flex aspect-[16/9] max-h-[220px] w-full items-center justify-center">
+                        <Film className="h-8 w-8 text-cyan-200/70" />
                       </div>
+                    )}
+                  </div>
+                  {gif.rangePreview && (
+                    <div className="mt-1 text-center text-[11px] text-white/50">
+                      Previewing FH {gif.rangePreview.hour}
                     </div>
-                  ) : (
-                    <Film className="h-8 w-8 text-cyan-200/70" />
                   )}
-                  {!gif.available ? (
-                    <>
-                      <div className="text-sm font-semibold text-white/90">GIF isn't available for this view</div>
-                      <div className="max-w-[320px] text-xs leading-relaxed text-white/55">
-                        Pick a product with an animatable forecast timeline, then come back here.
-                      </div>
-                    </>
-                  ) : (
+                  <div className="mt-2 flex w-full flex-col items-center justify-center gap-3 rounded-2xl border border-[rgba(255,255,255,0.08)] bg-gradient-to-br from-[#0d1e35] to-[#0a1628] px-6 py-4 text-center">
                     <>
                       {(gif.status === "error" || gif.status === "cancelled") && (
                         <div className="max-w-[320px] text-xs leading-relaxed text-red-200/90">
                           {gif.status === "cancelled" ? "GIF generation cancelled." : gif.error}
                         </div>
                       )}
-                      <div className="flex w-full max-w-[360px] flex-col gap-2">
+                      <div className="flex w-full max-w-[420px] flex-col gap-2">
                         {gif.trendAvailable && (
                           <div className="flex items-center gap-1.5">
                             {([
@@ -1188,8 +1208,8 @@ export function ShareModal({
                         Generate GIF
                       </button>
                     </>
-                  )}
-                </div>
+                  </div>
+                </>
               )}
             </div>
             {twfSection}

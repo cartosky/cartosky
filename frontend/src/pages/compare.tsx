@@ -1248,12 +1248,21 @@ export default function Compare() {
     forecastHour,
   ]);
 
-  // Keep the scrubber selection on a grid hour both sides can actually render.
+  // Keep the scrubber selection on an hour both sides can actually offer —
+  // mutual grid hours in diff mode, mutual frame hours in split mode (the same
+  // lists the scrubber renders). Without the split-mode snap, an off-cadence
+  // hour from a permalink or a model switch persists in state/URL/tooltips
+  // while the panels render a different (nearest) hour.
   useEffect(() => {
-    if (mode !== "diff") {
+    // Never snap against a mid-hydration hour list: while a loader is still
+    // resolving, its hours can be a partial subset (e.g. just [0]) and the
+    // intersection would snap the hour somewhere wildly wrong.
+    if (leftLoader.loading || rightLoader.loading) {
       return;
     }
-    const mutualHours = intersectSortedHours(leftLoader.gridFrameHours, rightLoader.gridFrameHours);
+    const mutualHours = mode === "diff"
+      ? intersectSortedHours(leftLoader.gridFrameHours, rightLoader.gridFrameHours)
+      : intersectSortedHours(leftLoader.frameHours, rightLoader.frameHours);
     if (mutualHours.length === 0) {
       return;
     }
@@ -1261,7 +1270,16 @@ export default function Compare() {
     if (snapped !== forecastHour) {
       setForecastHour(snapped);
     }
-  }, [mode, leftLoader.gridFrameHours, rightLoader.gridFrameHours, forecastHour]);
+  }, [
+    mode,
+    leftLoader.loading,
+    rightLoader.loading,
+    leftLoader.gridFrameHours,
+    rightLoader.gridFrameHours,
+    leftLoader.frameHours,
+    rightLoader.frameHours,
+    forecastHour,
+  ]);
 
   // Single-line summary for the mobile diff bar, e.g.
   // "06Z 6/23 GFS - 00Z 6/23 GFS" + variable label (separated by a cyan dot in the UI).
@@ -1350,18 +1368,34 @@ export default function Compare() {
   const rightPanelRef = useRef<HTMLDivElement | null>(null);
   const diffPanelRef = useRef<HTMLDivElement | null>(null);
 
+  // Sample at the hour each panel actually renders, not the raw scrubber hour:
+  // the snapped mutual grid hour in diff mode, and each side's nearest grid
+  // frame hour in split mode (ComparePanel renders
+  // `nearestFrame(gridFrameHours, forecastHour)`). Otherwise hover values can
+  // describe a different forecast hour than the pixels under the cursor.
+  const leftSampleHour = mode === "diff"
+    ? resolvedDiffHour ?? forecastHour
+    : leftLoader.gridFrameHours.length > 0
+      ? nearestFrame(leftLoader.gridFrameHours, forecastHour)
+      : forecastHour;
+  const rightSampleHour = mode === "diff"
+    ? resolvedDiffHour ?? forecastHour
+    : rightLoader.gridFrameHours.length > 0
+      ? nearestFrame(rightLoader.gridFrameHours, forecastHour)
+      : forecastHour;
+
   const { tooltip: leftTooltip, onHover: onLeftHover, onHoverEnd: onLeftHoverEnd } = useSampleTooltip({
     model: lModel,
     run: leftLoader.resolvedRun,
     varId: lVariable,
-    fh: forecastHour,
+    fh: leftSampleHour,
   });
 
   const { tooltip: rightTooltip, onHover: onRightHover, onHoverEnd: onRightHoverEnd } = useSampleTooltip({
     model: rModel,
     run: rightLoader.resolvedRun,
     varId: rVariable,
-    fh: forecastHour,
+    fh: rightSampleHour,
   });
 
   const handleLeftHover = useCallback((lat: number, lon: number, x: number, y: number) => {
@@ -1710,6 +1744,7 @@ export default function Compare() {
             prefersGridSubstrate={leftLoader.prefersGridSubstrate}
             forecastHour={forecastHour}
             loading={leftLoader.loading}
+            capabilitiesReady={Boolean(capabilities)}
             error={leftLoader.error}
           />
           {hoverSide === "left" && (
@@ -1785,6 +1820,7 @@ export default function Compare() {
             prefersGridSubstrate={rightLoader.prefersGridSubstrate}
             forecastHour={forecastHour}
             loading={rightLoader.loading}
+            capabilitiesReady={Boolean(capabilities)}
             error={rightLoader.error}
           />
           {hoverSide === "right" && (

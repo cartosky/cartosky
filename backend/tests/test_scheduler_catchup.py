@@ -2035,7 +2035,7 @@ def test_process_run_does_not_pregenerate_loop_cache_when_run_is_complete(
 
 
 def _write_sidecar(tmp_path: Path, run_id: str, var_id: str, fh: int, *, quality: str, quality_flags: list[str]) -> None:
-    sidecar = tmp_path / "staging" / "hrrr" / run_id / scheduler_module.CANONICAL_COVERAGE / var_id / f"fh{fh:03d}.json"
+    sidecar = tmp_path / "staging" / "hrrr" / run_id / var_id / f"fh{fh:03d}.json"
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(
         scheduler_module.json.dumps(
@@ -2281,10 +2281,10 @@ def test_process_run_threads_region_targets_into_builds(
     )
 
     assert processed_run_id == scheduler_module._run_id_from_dt(run_dt)
-    assert total == 2
-    assert available == 2
-    assert attempted == [("conus", "tmp2m", 0), ("na", "tmp2m", 0)]
-    assert existence_checks[:2] == [("conus", "tmp2m", 0), ("na", "tmp2m", 0)]
+    assert total == 1
+    assert available == 1
+    assert attempted == [("na", "tmp2m", 0)]
+    assert existence_checks[:1] == [("na", "tmp2m", 0)]
 
 
 def test_process_run_abandons_rebuilds_when_superseded(

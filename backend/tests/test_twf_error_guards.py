@@ -73,7 +73,31 @@ async def test_non_twf_validation_still_422_detail(client: httpx.AsyncClient) ->
     assert isinstance(payload["detail"], list)
 
 
-async def test_sample_batch_cors_preflight_allows_content_type(client: httpx.AsyncClient) -> None:
+async def test_sample_batch_cors_preflight_allows_content_type(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # main.py captures CORS_ORIGINS once at import; whether this file's env
+    # setdefault took effect depends on which test file imported app.main
+    # first. Patch the live middleware instance so the test is order-independent.
+    from starlette.middleware.cors import CORSMiddleware
+
+    if main_module.app.middleware_stack is None:
+        main_module.app.middleware_stack = main_module.app.build_middleware_stack()
+    instance = main_module.app.middleware_stack
+    cors_instance = None
+    while instance is not None:
+        if isinstance(instance, CORSMiddleware):
+            cors_instance = instance
+            break
+        instance = getattr(instance, "app", None)
+    assert cors_instance is not None
+    monkeypatch.setattr(
+        cors_instance,
+        "allow_origins",
+        tuple(set(cors_instance.allow_origins) | {"https://theweathermodels.com"}),
+    )
+
     response = await client.options(
         "/api/v4/sample/batch",
         headers={

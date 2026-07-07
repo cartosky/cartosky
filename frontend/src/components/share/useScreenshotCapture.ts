@@ -143,6 +143,9 @@ export function useScreenshotCapture({
           body: JSON.stringify({
             url: screenshotRenderUrl,
             basemap: state.basemapMode ?? "light",
+            // The share overlay stamps the valid time in local time; the
+            // headless render must use the poster's timezone, not the server's.
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           }),
           signal: controller.signal,
         });

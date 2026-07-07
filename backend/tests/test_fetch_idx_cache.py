@@ -1297,8 +1297,19 @@ def test_invalid_cached_subset_is_deleted_and_refetched(
             )
         return _FakeDataset()
 
+    # Single-priority refetch now prefers the inventory byte-range path, so the
+    # fake must actually produce a valid subset instead of returning None.
+    byte_range_calls: list[str] = []
+
+    def _fake_byte_range_download(H, *, search_pattern: str, out_path: Path, **kwargs):
+        del H, kwargs
+        assert search_pattern == pattern
+        byte_range_calls.append(str(out_path))
+        Path(out_path).write_bytes(b"grib")
+        return Path(out_path)
+
     _install_fake_herbie(monkeypatch, _FakeHerbie)
-    monkeypatch.setattr(fetch_module, "_download_subset_with_inventory_byte_range", lambda *args, **kwargs: None)
+    monkeypatch.setattr(fetch_module, "_download_subset_with_inventory_byte_range", _fake_byte_range_download)
     monkeypatch.setattr(fetch_module.rasterio, "open", _fake_rasterio_open)
     fetch_module.reset_herbie_runtime_caches_for_tests()
     monkeypatch.setenv("TWF_HERBIE_PRIORITY", "aws")
@@ -1317,7 +1328,8 @@ def test_invalid_cached_subset_is_deleted_and_refetched(
     assert np.allclose(data, np.array([[1.0]], dtype=np.float32))
     assert crs == "EPSG:4326"
     assert transform == fetch_module.rasterio.transform.Affine.identity()
-    assert _FakeHerbie.download_calls == 1
+    assert _FakeHerbie.download_calls == 0
+    assert byte_range_calls == [str(cached_subset)]
     assert cached_subset.read_bytes() == b"grib"
 
 

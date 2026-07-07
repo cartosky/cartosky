@@ -48,6 +48,18 @@ class _Plugin:
             )
         )
 
+    def search_patterns_for_var(self, *, var_key: str, fh=None, product=None, var_spec=None) -> list[str]:
+        del fh, product
+        spec = var_spec or self.get_var(var_key)
+        selectors = getattr(spec, "selectors", None)
+        if selectors is None:
+            return []
+        return [str(pattern) for pattern in getattr(selectors, "search", []) if str(pattern).strip()]
+
+    def herbie_request(self, *, product=None, var_key=None, ensemble_view=None, run_date=None, fh=None, search_pattern=None):
+        del var_key, ensemble_view, run_date, fh, search_pattern
+        return SimpleNamespace(model="hrrr", product=str(product or "sfc"), herbie_kwargs=None)
+
 
 def _kuchera_var_spec(*, use_sfc_pressure_mask: bool = True) -> SimpleNamespace:
     return SimpleNamespace(

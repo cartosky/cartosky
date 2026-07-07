@@ -687,7 +687,7 @@ def test_derive_gfs_tmp850_anomaly_uses_raw_tmp850_component_and_era5_baseline(
     assert fetch_calls
     assert fetch_calls[0]["var_key"] == "tmp850"
     expected_forecast_f = forecast_data_c * np.float32(9.0 / 5.0) + np.float32(32.0)
-    expected = expected_forecast_f - baseline_data_f
+    expected = (expected_forecast_f - baseline_data_f) * np.float32(5.0 / 9.0)
     assert np.allclose(anomaly, expected, atol=1.0e-5)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
@@ -766,7 +766,7 @@ def test_derive_hrrr_tmp850_anomaly_uses_raw_tmp850_component_and_na_era5_baseli
     assert fetch_calls[0]["var_key"] == "tmp850"
     assert fetch_calls[0]["product"] == "prs"
     expected_forecast_f = forecast_data_c * np.float32(9.0 / 5.0) + np.float32(32.0)
-    expected = expected_forecast_f - baseline_data_f
+    expected = (expected_forecast_f - baseline_data_f) * np.float32(5.0 / 9.0)
     assert np.allclose(anomaly, expected, atol=1.0e-5)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
@@ -998,7 +998,7 @@ def test_derive_ecmwf_tmp850_anomaly_uses_raw_tmp850_component_and_era5_baseline
     assert fetch_calls
     assert fetch_calls[0]["var_key"] == "tmp850"
     expected_forecast_f = forecast_data_c * np.float32(9.0 / 5.0) + np.float32(32.0)
-    expected = expected_forecast_f - baseline_data_f
+    expected = (expected_forecast_f - baseline_data_f) * np.float32(5.0 / 9.0)
     assert np.allclose(anomaly, expected, atol=1.0e-5)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
@@ -1156,7 +1156,7 @@ def test_derive_aifs_tmp850_anomaly_uses_raw_tmp850_component_and_era5_baseline(
     assert fetch_calls
     assert fetch_calls[0]["var_key"] == "tmp850"
     expected_forecast_f = forecast_data_c * np.float32(9.0 / 5.0) + np.float32(32.0)
-    expected = expected_forecast_f - baseline_data_f
+    expected = (expected_forecast_f - baseline_data_f) * np.float32(5.0 / 9.0)
     assert np.allclose(anomaly, expected, atol=1.0e-5)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
@@ -1235,7 +1235,7 @@ def test_derive_aigfs_tmp850_anomaly_uses_raw_tmp850_component_and_era5_baseline
     assert fetch_calls[0]["var_key"] == "tmp850"
     assert fetch_calls[0]["product"] == "pres"
     expected_forecast_f = forecast_data_c * np.float32(9.0 / 5.0) + np.float32(32.0)
-    expected = expected_forecast_f - baseline_data_f
+    expected = (expected_forecast_f - baseline_data_f) * np.float32(5.0 / 9.0)
     assert np.allclose(anomaly, expected, atol=1.0e-5)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
@@ -1314,7 +1314,7 @@ def test_derive_gefs_tmp850_anomaly_uses_mean_tmp850_component_and_era5_baseline
     assert fetch_calls[0]["var_key"] == "tmp850__mean"
     assert fetch_calls[0]["product"] == "atmos.5"
     expected_forecast_f = forecast_data_c * np.float32(9.0 / 5.0) + np.float32(32.0)
-    expected = expected_forecast_f - baseline_data_f
+    expected = (expected_forecast_f - baseline_data_f) * np.float32(5.0 / 9.0)
     assert np.allclose(anomaly, expected, atol=1.0e-5)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform
@@ -1393,7 +1393,7 @@ def test_derive_eps_tmp850_anomaly_uses_mean_tmp850_component_and_era5_baseline(
     assert fetch_calls[0]["var_key"] == "tmp850__mean"
     assert fetch_calls[0]["product"] == "enfo"
     expected_forecast_f = forecast_data_c * np.float32(9.0 / 5.0) + np.float32(32.0)
-    expected = expected_forecast_f - baseline_data_f
+    expected = (expected_forecast_f - baseline_data_f) * np.float32(5.0 / 9.0)
     assert np.allclose(anomaly, expected, atol=1.0e-5)
     assert crs.to_epsg() == 3857
     assert anomaly_transform == transform

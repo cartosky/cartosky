@@ -23,13 +23,16 @@ class _Plugin:
     def normalize_var_id(self, var_key: str) -> str:
         return str(var_key)
 
+    def get_region(self, region_id: str):
+        return SimpleNamespace(id=str(region_id))
+
     def search_patterns_for_var(self, *, var_key: str, fh: int, product: str, var_spec) -> list[str]:
         del var_key, fh, product
         selectors = getattr(var_spec, "selectors", None)
         search = getattr(selectors, "search", None) if selectors is not None else None
         return list(search or [])
 
-    def herbie_request(self, *, product: str, var_key: str, ensemble_view=None, run_date=None, fh: int, search_pattern: str):
+    def herbie_request(self, *, product: str, var_key: str, ensemble_view=None, run_date=None, fh: int | None = None, search_pattern: str | None = None):
         del var_key, ensemble_view, run_date, fh, search_pattern
         return SimpleNamespace(model=self.id, product=product, herbie_kwargs=None)
 

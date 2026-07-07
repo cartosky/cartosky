@@ -109,8 +109,12 @@ def test_snowfall_total_continuous_rgba_uses_nearest_overviews(
     assert called["write_base"] == 1
     assert called["translate"] == 1
 
+    # snowfall_total no longer carries display_resampling_override="nearest",
+    # so the continuous RGBA path runs two passes: alpha=nearest, then RGB=average.
     gdaladdo_cmds = [cmd for cmd in gdal_commands if len(cmd) > 0 and cmd[0] == "gdaladdo"]
-    assert len(gdaladdo_cmds) == 1
-    only = gdaladdo_cmds[0]
-    assert only[only.index("-r") + 1] == "nearest"
-    assert "-b" not in only
+    assert len(gdaladdo_cmds) == 2
+    alpha_pass, rgb_pass = gdaladdo_cmds
+    assert alpha_pass[alpha_pass.index("-r") + 1] == "nearest"
+    assert alpha_pass[alpha_pass.index("-b") + 1] == "4"
+    assert rgb_pass[rgb_pass.index("-r") + 1] == "average"
+    assert [rgb_pass[i + 1] for i, arg in enumerate(rgb_pass) if arg == "-b"] == ["1", "2", "3"]

@@ -20,7 +20,7 @@ def test_spc_buildable_var_set_and_defaults_invariants() -> None:
         for var_key, capability in capabilities.variable_catalog.items()
         if capability.buildable
     }
-    assert buildable_var_keys == {"convective", "tornado_prob", "wind_prob", "hail_prob"}
+    assert buildable_var_keys == {"convective", "extended", "tornado_prob", "wind_prob", "hail_prob"}
 
     assert capabilities.ui_defaults["default_var_key"] == "convective"
     assert capabilities.ui_defaults["default_run"] == "latest"

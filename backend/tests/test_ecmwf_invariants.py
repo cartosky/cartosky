@@ -23,7 +23,8 @@ def test_ecmwf_run_discovery_invariants() -> None:
         "probe_attempts": 4,
         "cycle_cadence_hours": 6,
         "fallback_lag_hours": 6,
-        "stale_cycle_release_minutes_by_hour": {0: 180, 6: 120, 12: 180, 18: 120},
+        "stale_cycle_release_minutes_by_hour": {0: 450, 6: 390, 12: 450, 18: 390},
+        "stalled_run_idle_minutes": 90,
         "allow_grib_without_idx": True,
         "source_priority": ["azure", "aws", "ecmwf"],
     }

@@ -177,8 +177,8 @@ def test_derive_bundle_reuses_fetch_and_warp_cache(monkeypatch) -> None:
         (":CSNOW:surface:", 2),
     }
     expected_inventory_precip_steps = {
-        (":APCP:surface:0-1 hour acc fcst$", 1),
-        (":APCP:surface:0-2 hour acc fcst$", 2),
+        (":APCP:surface:0-1 hour acc fcst:$", 1),
+        (":APCP:surface:0-2 hour acc fcst:$", 2),
     }
     assert expected_component_steps.issubset(set(fetch_calls))
     assert expected_inventory_precip_steps.issubset(set(fetch_calls))

@@ -40,6 +40,18 @@ class _FakePlugin:
             )
         )
 
+    def search_patterns_for_var(self, *, var_key: str, fh=None, product=None, var_spec=None) -> list[str]:
+        del fh, product
+        spec = var_spec or self.get_var(var_key)
+        selectors = getattr(spec, "selectors", None)
+        if selectors is None:
+            return []
+        return [str(pattern) for pattern in getattr(selectors, "search", []) if str(pattern).strip()]
+
+    def herbie_request(self, *, product=None, var_key=None, ensemble_view=None, run_date=None, fh=None, search_pattern=None):
+        del var_key, ensemble_view, run_date, fh, search_pattern
+        return SimpleNamespace(model="gfs", product=str(product or "sfc"), herbie_kwargs=None)
+
 
 def test_snowfall_derive_fetch_cache_reuses_repeated_component_fetches(monkeypatch) -> None:
     crs = CRS.from_epsg(4326)

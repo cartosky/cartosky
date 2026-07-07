@@ -30,3 +30,11 @@ def isolate_clerk_env(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_clerk_config_cache()
     yield
     _clear_clerk_config_cache()
+
+
+@pytest.fixture(autouse=True)
+def isolate_data_root_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Services fall back to the repo-relative "./data" when no data root env is
+    # set, which lets derive runs leak cumulative-cache files into the repo and
+    # poison later tests. Point the env fallback at a per-test tmp dir instead.
+    monkeypatch.setenv("CARTOSKY_DATA_ROOT", str(tmp_path / "env-data-root"))

@@ -68,7 +68,7 @@ class ScreenshotService:
             )
             return self._browser
 
-    async def render(self, url: str, *, basemap: str = "light") -> bytes:
+    async def render(self, url: str, *, basemap: str = "light", timezone_id: str | None = None) -> bytes:
         # Timing wrappers only — no behavioral changes to the render logic.
         t_entry = time.monotonic()
         compare_mode = _compare_screenshot_mode(url)
@@ -91,9 +91,13 @@ class ScreenshotService:
         capture_mode: str | None = None
         try:
             browser = await self._ensure_browser()
+            # The share overlay renders valid times in the browser's local
+            # timezone, so the context adopts the poster's tz (falls back to
+            # the server's when absent/invalid).
             context = await browser.new_context(
                 viewport={"width": SCREENSHOT_VIEWPORT_WIDTH, "height": SCREENSHOT_VIEWPORT_HEIGHT},
                 device_scale_factor=1,
+                **({"timezone_id": timezone_id} if timezone_id else {}),
             )
             try:
                 page = await context.new_page()

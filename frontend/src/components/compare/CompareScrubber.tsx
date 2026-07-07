@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Play } from "lucide-react";
 
+import { nearestFrame } from "@/lib/app-utils";
 import { Slider } from "@/components/ui/slider";
 
 type CompareScrubberProps = {
@@ -38,25 +39,6 @@ export function deriveValidTime(resolvedRun: string, forecastHour: number): stri
   }
 }
 
-function nearestValidHourIndex(validHours: number[], forecastHour: number): number {
-  if (validHours.length === 0) {
-    return 0;
-  }
-  if (!Number.isFinite(forecastHour)) {
-    return 0;
-  }
-  let bestIndex = 0;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  validHours.forEach((hour, index) => {
-    const distance = Math.abs(hour - forecastHour);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestIndex = index;
-    }
-  });
-  return bestIndex;
-}
-
 export function CompareScrubber({
   leftFrameHours,
   rightFrameHours,
@@ -80,8 +62,11 @@ export function CompareScrubber({
     );
   }
 
-  const currentIndex = nearestValidHourIndex(validHours, forecastHour);
-  const currentHour = validHours[currentIndex];
+  // nearestFrame is the same snap the panels use to pick their rendered frame
+  // (ComparePanel/diff hour resolution) — one tie-break rule everywhere, so the
+  // scrubber label can never disagree with the frame on screen.
+  const currentHour = nearestFrame(validHours, forecastHour);
+  const currentIndex = Math.max(0, validHours.indexOf(currentHour));
   const activeRun = leftResolvedRun || rightResolvedRun;
   const validTime = activeRun ? deriveValidTime(activeRun, currentHour) : null;
 

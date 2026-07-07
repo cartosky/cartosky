@@ -49,7 +49,12 @@ def test_ecmwf_ptype_intensity_prefers_snow_from_sf_step(monkeypatch) -> None:
     }
 
     def _fake_fetch_step_component(**kwargs):
-        return cumulative[(str(kwargs["var_key"]), int(kwargs["step_fh"]))], crs, transform
+        # Thermal fields also flow through _fetch_step_component now; serve them too.
+        var_key = str(kwargs["var_key"])
+        key = (var_key, int(kwargs["step_fh"]))
+        if key in cumulative:
+            return cumulative[key], crs, transform
+        return thermal[var_key], crs, transform
 
     def _fake_fetch_component(**kwargs):
         return thermal[str(kwargs["var_key"])], crs, transform
@@ -111,7 +116,12 @@ def test_ecmwf_ptype_intensity_marks_freezing_rain_transition(monkeypatch) -> No
     }
 
     def _fake_fetch_step_component(**kwargs):
-        return cumulative[(str(kwargs["var_key"]), int(kwargs["step_fh"]))], crs, transform
+        # Thermal fields also flow through _fetch_step_component now; serve them too.
+        var_key = str(kwargs["var_key"])
+        key = (var_key, int(kwargs["step_fh"]))
+        if key in cumulative:
+            return cumulative[key], crs, transform
+        return thermal[var_key], crs, transform
 
     def _fake_fetch_component(**kwargs):
         return thermal[str(kwargs["var_key"])], crs, transform
@@ -160,7 +170,12 @@ def test_ecmwf_ice_total_accumulates_unscaled_ice_steps(monkeypatch) -> None:
     }
 
     def _fake_fetch_step_component(**kwargs):
-        return cumulative[(str(kwargs["var_key"]), int(kwargs["step_fh"]))], crs, transform
+        # Thermal fields also flow through _fetch_step_component now; serve them too.
+        var_key = str(kwargs["var_key"])
+        key = (var_key, int(kwargs["step_fh"]))
+        if key in cumulative:
+            return cumulative[key], crs, transform
+        return thermal[var_key], crs, transform
 
     def _fake_fetch_component(**kwargs):
         return thermal[str(kwargs["var_key"])], crs, transform
@@ -213,7 +228,12 @@ def test_ecmwf_ptype_intensity_keeps_warm_precip_as_rain(monkeypatch) -> None:
     }
 
     def _fake_fetch_step_component(**kwargs):
-        return cumulative[(str(kwargs["var_key"]), int(kwargs["step_fh"]))], crs, transform
+        # Thermal fields also flow through _fetch_step_component now; serve them too.
+        var_key = str(kwargs["var_key"])
+        key = (var_key, int(kwargs["step_fh"]))
+        if key in cumulative:
+            return cumulative[key], crs, transform
+        return thermal[var_key], crs, transform
 
     def _fake_fetch_component(**kwargs):
         return thermal[str(kwargs["var_key"])], crs, transform
@@ -262,7 +282,12 @@ def test_ecmwf_ptype_intensity_can_fallback_to_cold_snow_without_sf(monkeypatch)
     }
 
     def _fake_fetch_step_component(**kwargs):
-        return cumulative[(str(kwargs["var_key"]), int(kwargs["step_fh"]))], crs, transform
+        # Thermal fields also flow through _fetch_step_component now; serve them too.
+        var_key = str(kwargs["var_key"])
+        key = (var_key, int(kwargs["step_fh"]))
+        if key in cumulative:
+            return cumulative[key], crs, transform
+        return thermal[var_key], crs, transform
 
     def _fake_fetch_component(**kwargs):
         return thermal[str(kwargs["var_key"])], crs, transform

@@ -75,7 +75,7 @@ def test_kuchera_load_prior_cumulative_accepts_legacy_nine_value_transform(tmp_p
     )
 
     assert loaded is not None
-    data, crs, transform = loaded
+    data, crs, transform, _metadata = loaded
     np.testing.assert_allclose(data, np.full((2, 2), 7.0, dtype=np.float32))
     assert crs == CRS.from_epsg(4326)
     assert transform == Affine(1.0, 0.0, 3.0, 0.0, -1.0, 4.0)

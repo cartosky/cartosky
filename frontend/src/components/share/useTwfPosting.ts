@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { captureProductAnalyticsEvent } from "@/lib/analytics";
+import { captureProductAnalyticsEvent, type AnalyticsEventProperties } from "@/lib/analytics";
 import { API_ORIGIN } from "@/lib/config";
 import type { ScreenshotExportState } from "@/lib/screenshot_export";
 import {
@@ -55,6 +55,8 @@ export type UseTwfPostingParams = {
   screenshotError: string | null;
   /** Which artifact this post carries (Mixpanel `artifact` on twf_post). */
   postArtifact: "image" | "gif";
+  /** Extra Mixpanel props for twf_post (e.g. gif_mode / trend_run_count). */
+  postAnalytics?: AnalyticsEventProperties;
 };
 
 export function useTwfPosting({
@@ -69,6 +71,7 @@ export function useTwfPosting({
   screenshotUploadError,
   screenshotError,
   postArtifact,
+  postAnalytics,
 }: UseTwfPostingParams) {
   const initialSharePrefs = useMemo(() => getSharePrefs(), []);
   const wasOpenRef = useRef(false);
@@ -621,7 +624,7 @@ export function useTwfPosting({
           setSubmitError({ message: "Unexpected response from server." });
           return;
         }
-        captureShareCompleted("twf_post", { share_mode: shareMode, artifact: postArtifact });
+        captureShareCompleted("twf_post", { share_mode: shareMode, artifact: postArtifact, ...postAnalytics });
         setSubmitTopicSuccess(result);
         setSubmitTopicTitle(result.title);
       } else {
@@ -630,7 +633,7 @@ export function useTwfPosting({
           setSubmitError({ message: "Unexpected response from server." });
           return;
         }
-        captureShareCompleted("twf_post", { share_mode: shareMode, artifact: postArtifact });
+        captureShareCompleted("twf_post", { share_mode: shareMode, artifact: postArtifact, ...postAnalytics });
         setSubmitSuccess(result);
         setSubmitTopicTitle(selectedTopicTitle ?? "Selected topic");
       }

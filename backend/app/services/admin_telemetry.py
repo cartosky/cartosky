@@ -1325,6 +1325,10 @@ def _scan_run_issue(
                     "expected_frames": max(0, expected),
                 }
             )
+        if runtime_artifacts_pending:
+            # Freshly published bundle still within the runtime-artifact grace window:
+            # skip artifact validation so in-flight runtime writes aren't reported as failures.
+            continue
         substrates = _variable_render_substrates(model_id, public_variable_id)
         has_vector_substrate = "vector" in substrates
         uses_grid_runtime = "grid" in substrates and grid_supported(model_id, artifact_variable_id)

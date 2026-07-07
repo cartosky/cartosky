@@ -77,7 +77,9 @@ const GIF_END_HOLD_MS = 1200;
 const GIF_CHROME_SCALE_FLOOR = 0.65;
 // In-modal range-preview thumbnail width (the modal blurs/covers the live map,
 // so slider scrubbing renders its own small snapshot inside the GIF tab).
-const GIF_RANGE_PREVIEW_WIDTH = 480;
+// Matches GIF_OUTPUT_WIDTH so the (now full-modal-width) idle preview stays
+// sharp on desktop.
+const GIF_RANGE_PREVIEW_WIDTH = 720;
 
 export type GifExportMode = "hours" | "trend";
 
