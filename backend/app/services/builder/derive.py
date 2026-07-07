@@ -2016,6 +2016,10 @@ def _ptype_intensity_ecmwf_phase_signals(
     ctx: FetchContext | None,
     hints: dict[str, Any],
     expected_shape: tuple[int, ...],
+    use_warped: bool = False,
+    target_region: str = "",
+    target_grid_id: str = "",
+    resampling: str = "",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     component_specs = (
         (str(hints.get("surface_temp_component") or "tmp2m"), -1.0, 1.0, 0.40, "surface"),
@@ -2037,6 +2041,10 @@ def _ptype_intensity_ecmwf_phase_signals(
             model_plugin=model_plugin,
             var_key=var_key,
             ctx=ctx,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
         )
         if values is None or values.shape != expected_shape:
             continue
@@ -2273,6 +2281,10 @@ def _derive_ptype_intensity_rates_ecmwf(
         ctx=ctx,
         hints=hints,
         expected_shape=total_step.shape,
+        use_warped=use_warped,
+        target_region=target_region,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
     )
     _log_fetch_context_memory(
         label="ptype_intensity_ecmwf_after_phase_signals",
@@ -5180,6 +5192,10 @@ def _derive_ptype_accumulation_ecmwf(
             ctx=ctx,
             hints=hints,
             expected_shape=total_step.shape,
+            use_warped=use_warped,
+            target_region=target_region,
+            target_grid_id=target_grid_id,
+            resampling=resampling,
         )
         _, rain_step, snow_family_step, ice_step = _ptype_intensity_family_rates_ecmwf(
             intensity=total_step,

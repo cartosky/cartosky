@@ -1,8 +1,8 @@
 # Build Pipeline Audit — 2026-07-07
 
-Scope: the builder pipeline under `backend/app/services/builder/` — `derive.py` (7,350 lines, two lenses: numerical correctness and structure/performance), `pipeline.py` + `services/scheduler.py` (orchestration), `fetch.py` (data acquisition), and the output stages (`cog_writer.py`, `colorize.py`, `members.py`). ~16.5k lines total, read in full by five parallel audit passes.
+Scope: the builder pipeline under `backend/app/services/builder/` — `derive.py` (7,350 lines, two lenses: numerical correctness and structure/performance), `pipeline.py` + `services/scheduler.py` (orchestration), `fetch.py` (data acquisition), and the output stages (`cog_writer.py`, `colorize.py`, `members.py`). ~16.5k lines total, read in full by five parallel audit passes. Cross-reviewed by an independent second pass (Codex, 2026-07-07); its corrections — prune-allowlist scope (2.4), ptype component exposure qualifier (1.5) — are incorporated. Revised 2026-07-07 after operator review: COG-writer findings removed (the pipeline is migrating off COGs to sole binary sampling, with only a few models/products remaining), and the `GDAL_CACHEMAX` finding revised after confirmation that prod scheduler units set it (see 2.3).
 
-**TLDR:** The derive dispatch architecture is clean and the core math (Kuchera SLR, unit conversions, APCP differencing) verified correct — but there is one confirmed high-severity data bug (ECMWF ptype thermal signals silently zero out in warped-component mode, making ice storms render as rain), a cluster of "silently wrong frame" failure modes that ship as full quality, and structural explanations for two known prod incidents: the viewer 404s (non-atomic publish swap + manifests never evicted) and the EPS memory/swap issue (GDAL block cache never bounded + memory-prune allowlist skipping the heaviest derive strategies + float64 member warps). There is also a live instance of the same model-id-leak class that caused the July 6 eps/ifs outage.
+**TLDR:** The derive dispatch architecture is clean and the core math (Kuchera SLR, unit conversions, APCP differencing) verified correct — but there is one confirmed high-severity data bug (ECMWF ptype thermal signals silently zero out in warped-component mode, making ice storms render as rain), a cluster of "silently wrong frame" failure modes that ship as full quality, and structural explanations for two known prod incidents: the viewer 404s (non-atomic publish swap + manifests never evicted) and the EPS memory/swap issue (memory-prune allowlist skipping two of the heaviest derive strategies + float64 member warps + RAM-buffered full-file/pf downloads; the GDAL block cache is bounded to 256 MB in prod via systemd env, though only as undocumented drift from the repo's unit templates). There is also a live instance of the same model-id-leak class that caused the July 6 eps/ifs outage.
 
 Severity legend: **HIGH** = wrong data shipped or prod-incident cause; **MED** = latent correctness trap, meaningful perf/build-time cost, or divergence risk; **LOW** = cleanup, minor cost, or informational.
 
@@ -38,9 +38,11 @@ Fix: AND-merge validity (NaN where any contributing step was invalid) or record 
 
 Fix (S): assert `step_fhs and step_fhs[-1] == fh` (raise or flag degraded) — catches hint/cadence drift permanently.
 
-### 1.5 MED — Snow "component" planes carry a hidden 2× display boost
+### 1.5 MED (exposure unconfirmed) — Snow "component" planes carry a hidden 2× display boost
 
-`derive.py:2465-2486`, `2629-2635` (GFS `snow_display = 2.0 * snow_rate` stored as the family's `snow` plane), `derive.py:5039-5041` (ECMWF ×2). The value grid published for the `snow` ptype component is 2× the 3-h-equivalent liquid intensity while rain/ice are unboosted. Any downstream consumer sampling these planes as physical values (binary sampler, meteograms, compare/diff) reads 2× the model LWE, and the three family planes are mutually inconsistent. Given the binary-sampling migration, verify whether ptype planes are sample-exposed.
+`derive.py:2465-2486`, `2629-2635` (GFS `snow_display = 2.0 * snow_rate` stored as the family's `snow` plane), `derive.py:5039-5041` (ECMWF ×2). The value grid for the `snow` ptype component is 2× the 3-h-equivalent liquid intensity while rain/ice are unboosted, so the three family planes are mutually inconsistent.
+
+**Severity qualifier:** the `ptype_intensity_*` component vars are marked `internal_only` / `buildable=False` in both `gfs.py:1233-1236` and `ecmwf.py:1205-1208`, so they are not directly user-selectable. However, they are built as companions of `ptype_intensity` (`companion_vars`/`composite_layers` hints) with packing configs, and per the canary-script findings buildable=False does not imply unpublished — confirm whether these planes are exposed via the sample/binary-sampling API before treating this as a user-facing value bug. If they are only ever consumed for compositing/display, the remaining issue is the maintenance trap, not wrong data.
 
 Fix: keep the boost strictly inside index binning; store unboosted rates in family/component planes, or document the plane as display-scaled and exclude it from value sampling. The ×2.0 constant is also hardcoded in four places (`derive.py:2171`, `2486`, `2629`, `2997/5040`) — hoist it.
 
@@ -102,17 +104,19 @@ Fix (S): rename-swap — `os.rename(published, trash)` → `os.rename(tmp, publi
 
 Fix (S): prune `manifests/<model>` with the same `effective_keep_runs` in `_process_run`; optionally return 410 from the frames route for manifest-known-but-evicted runs.
 
-### 2.3 HIGH — GDAL block cache never bounded (matches the EPS swap incident)
+### 2.3 REVISED (was HIGH) — GDAL block cache is bounded in prod, but only via unmanaged unit-file drift
 
-No file in `backend/` sets `GDAL_CACHEMAX` / `CPL_CACHE` / `SetConfigOption` (repo-wide grep). GDAL defaults to 5% of RAM for the block cache and it is never trimmed; combined with glibc arena growth this is the multi-GiB-swap suspect from the EPS memory audit. Current mitigations are band-aids: `malloc_trim` after runs (`scheduler.py:1689-1701`) and full process restart after successful runs for big models (`RESTART_ON_SUCCESS_MODELS`, `scheduler.py:178`, `2850-2855`).
+Original finding: nothing in the repo sets `GDAL_CACHEMAX` / `CPL_CACHE` / `SetConfigOption` (repo-wide grep, including the checked-in `deployment/systemd/*.service` templates and env examples). **Operator confirmation 2026-07-07:** the live prod units DO set `GDAL_CACHEMAX=256` in their systemd `Environment=` (verified on `csky-gfs-scheduler` and `csky-eps-scheduler`), so the block cache is bounded at 256 MB per scheduler process — it is **not** the unbounded native-heap suspect.
 
-Fix (S): set `GDAL_CACHEMAX` (256–512 MB) via `rasterio.Env`/env var at scheduler startup; consider `MALLOC_ARENA_MAX=2` in the unit file.
+Two follow-ups remain:
+- **Config drift (S):** the cap exists only on the live hosts; the repo's `deployment/systemd/` unit files and `scheduler*.env.example` files don't carry it. A rebuilt or newly provisioned host from the repo templates would silently lose the cap. Codify `GDAL_CACHEMAX` in the checked-in templates (and audit the other scheduler units for the same drift).
+- **Narrowed swap suspects:** with the block cache bounded, the remaining native-heap candidates from the EPS memory audit are glibc arena growth (`MALLOC_ARENA_MAX=2` in the unit files is still untried), the Python-side prune-allowlist gap (2.4), float64 member warps, and RAM-buffered payloads — full-file `.content` responses (3.2) and the ~51 simultaneous pf range payloads (3.11 bullets). The `malloc_trim`-after-runs (`scheduler.py:1689-1701`) and restart-on-success (`RESTART_ON_SUCCESS_MODELS`, `scheduler.py:178`, `2850-2855`) mitigations should stay until those are addressed.
 
-### 2.4 HIGH — Memory-prune allowlist silently skips the heaviest derive strategies
+### 2.4 HIGH — Memory-prune allowlist silently skips two of the heaviest derive strategies
 
-`prune_fetch_context_after_frame` (`derive.py:237-247`): `handled_derive_kinds` omits `precip_total_cumulative`, `snowfall_total_10to1_cumulative`, the `ptype_accumulation` siblings, `radar_ptype_component`, `ptype_intensity_component*`, and the anomaly strategies. Snowfall 10to1 fetches APCP + csnow for **every step fh** of the run (up to fh384 GFS) into `ctx.fetch_cache`/`warp_cache` and is never pruned between frames — caches grow unbounded across the frame loop for exactly the strategies that fetch the most bands. Matches the multi-GiB RSS symptoms. Note: Python-side lifecycle is otherwise disciplined (`destroy_fetch_context` clears all caches, per-frame prune for listed kinds, RSS checkpoints) — consistent with the prior audit's "leak is native" conclusion, but this allowlist gap is a real Python-side contributor for cumulative vars.
+`prune_fetch_context_after_frame` (`derive.py:237-247`): `handled_derive_kinds` covers `snowfall_kuchera_total_cumulative`, `ptype_accumulation_ecmwf`, `ptype_accumulation_cumulative`, `ptype_intensity_ecmwf`, `ptype_intensity_gfs`, and `radar_ptype_combo` — but **omits `precip_total_cumulative`, `snowfall_total_10to1_cumulative`, the component strategies (`ptype_intensity_component`, `radar_ptype_component`), and the anomaly strategies**. Snowfall 10to1 fetches APCP + csnow for **every step fh** of the run (up to fh384 GFS) into `ctx.fetch_cache`/`warp_cache` and is never pruned between frames — caches grow with run length for two of the heaviest cumulative strategies. Matches the multi-GiB RSS symptoms. Note: Python-side lifecycle is otherwise disciplined (`destroy_fetch_context` clears all caches, per-frame prune for listed kinds, RSS checkpoints) — consistent with the prior audit's "leak is native" conclusion, but this allowlist gap is a real Python-side contributor for the omitted cumulative vars.
 
-Fix (S): invert to opt-out (prune for every derived var) or key off `DeriveStrategy` metadata; new strategies currently default to "never pruned".
+Fix (S): invert to opt-out (prune for every derived var) or make pruning an explicit per-strategy policy on `DeriveStrategy`; new strategies currently default to "never pruned".
 
 ### 2.5 HIGH — Model-id leak class (July 6 eps/ifs incident) has a live instance
 
@@ -130,73 +134,69 @@ Fix (S): include `fh` in the cache key (idx presence is not monotonic for models
 
 ## 3. Build time & performance
 
-### 3.1 HIGH — COG encode pays compression 2–3×, single-threaded, no predictor
+*(A finding on redundant COG encode passes was removed 2026-07-07: the pipeline is migrating off COGs to sole binary sampling, so COG encode tuning is moot.)*
 
-`cog_writer.py:114`, `580-612`, `666-684`: every frame writes a DEFLATE base GTiff via rasterio (single-thread), gdaladdo decompresses/recompresses to add overviews (**two** full gdaladdo passes for continuous RGBA, `cog_writer.py:645-657`), then `gdal_translate -of COG` re-reads and re-encodes everything a final time. No `NUM_THREADS`, no `PREDICTOR` (2 for uint8 RGBA, 3 for float32 value COGs — typically 20–40% smaller value artifacts), default ZLEVEL 6 everywhere.
-
-Fix (S–M): intermediate `base.tif` → `COMPRESS=NONE` (it's deleted anyway); final translate adds `-co NUM_THREADS=ALL_CPUS -co PREDICTOR=...`; optionally ZSTD if deployed GDAL supports it. Largest win on MRMS-scale (4609×8238) grids. No dataset-handle leaks found — all rasterio opens are context-managed.
-
-### 3.2 HIGH — Forecast hours build serially per variable
+### 3.1 HIGH — Forecast hours build serially per variable
 
 `scheduler.py:2285-2397` (normal catch-up branch): `_submit_single` keeps exactly one in-flight fh per (region, var); the next fh submits only when the previous completes. Within a round, concurrency = number of distinct variables regardless of `workers` — a 2–3-variable model uses 2–3 of 4 workers on a 240 h run; a single-var model is fully serial. `fh_lookahead=4` further caps per-round work. The serialization protects the shared per-target `FetchContext`, but non-derived vars (plain fetch→warp) have no cross-fh dependency, and cumulative derives need ordered *completion*, not one-at-a-time execution.
 
-Fix (M): allow 2+ in-flight fhs per target for non-derived vars (readiness cache needs a lock or per-fh keys — see 2.6), or split FetchContext per fh for non-cumulative vars. **Instrument first** (see 3.7).
+Fix (M): allow 2+ in-flight fhs per target for non-derived vars (readiness cache needs a lock or per-fh keys — see 2.6), or split FetchContext per fh for non-cumulative vars. **Instrument first** (see 3.6).
 
-### 3.3 HIGH — Single range-request failure escalates to a full multi-GB GRIB download, then thrown away
+### 3.2 HIGH — Single range-request failure escalates to a full multi-GB GRIB download, then thrown away
 
 `_download_subset_with_inventory_byte_range` fallback (`fetch.py:3291-3305`) → `_fetch_subset_bytes_from_full_source` (`fetch.py:3046-3066`) → full download (`fetch.py:722`, 90 s per-chunk timeout, no total deadline). There is **no per-range retry** (`fetch.py:3107`), so one transient 500 on a ~2 MB range triggers a full-file download (GFS pgrb2 ~500 MB, EPS enfo multi-GB) to extract one message — and `finally` deletes the temp file with no reuse for the next variable in the same frame, which repeats the download. No size guard; can hold a build slot for the duration.
 
 Fix (M): retry the range request 2–3× with short backoff before the full-file fallback; cap fallback by Content-Length; route the fallback through the EPS full-file cache when enabled.
 
-### 3.4 MED — Byte-range correctness: HTTP 200 passes as a "subset"
+### 3.3 MED — Byte-range correctness: HTTP 200 passes as a "subset"
 
 `_network_fetch_range_bytes` (`fetch.py:3038-3044`) + `_validate_grib_range_payload` (`fetch.py:3084-3104`): if an origin/proxy ignores the Range header and returns 200, `response.content` is the entire file — which starts with `GRIB`, so validation passes. The payload is written as the subset and rasterio reads band 1 = first message of the file, i.e. potentially the **wrong variable/level rendered on the map**. Also buffers multi-GB `.content` in RAM. `expected_size` (`fetch.py:3169-3177`) only gates cacheability, not correctness.
 
 Fix (S, one line): assert `status_code == 206` (or `len(payload) == expected_size`); raise `_InvalidGribSubsetError` otherwise.
 
-### 3.5 MED — Subset reuse disabled by default; identical subsets re-downloaded
+### 3.4 MED — Subset reuse disabled by default; identical subsets re-downloaded
 
 With the disk lock env off (default, `fetch.py:2672`), cached-GRIB reuse exists only in the locked branch (`fetch.py:3634-3652`); the default branch calls `H.download(..., overwrite=True)` (`fetch.py:3785`). Identical subsets are fetched multiple times per run (UGRD/VGRD shared across wspd/barbs, accumulation loops, invalid-subset retries). `BundleFetchCache` covers only the byte-range paths.
 
 Fix (S): decouple cache-reuse from the locking flag — `_subset_file_status` check + `overwrite=False` in both branches.
 
-### 3.6 MED — Full RGBA colorization computed per frame, then discarded
+### 3.5 MED — Full RGBA colorization computed per frame, then discarded
 
 `pipeline.py:1781-1785`: `_, colorize_meta = float_to_rgba(display_data, ...)` — the `(4, H, W)` uint8 array is thrown away; only legend metadata is kept. Tens of MB of allocation + a full-grid colorize pass per frame (×51 in member passes), feeding native-heap churn.
 
 Fix (S–M): metadata-only path (`colorize_meta_for(color_map_id, var_key)`).
 
-### 3.7 MED — No per-phase timings inside `build_frame`
+### 3.6 MED — No per-phase timings inside `build_frame`
 
-`pipeline.py:1632/1666/1728/1761/1774/1841` log "Step N/6" with no durations and mostly no model/var/fh, so interleaved thread logs are unattributable. Only whole-frame `elapsed_ms` and completion-only run duration exist. "Is it fetch, warp, or COG-write?" is unanswerable from prod logs — which is exactly what sizing 3.1/3.2/3.6 needs.
+`pipeline.py:1632/1666/1728/1761/1774/1841` log "Step N/6" with no durations and mostly no model/var/fh, so interleaved thread logs are unattributable. Only whole-frame `elapsed_ms` and completion-only run duration exist. "Is it fetch, warp, colorize, or artifact write?" is unanswerable from prod logs — which is exactly what sizing 3.1 and 3.5 needs.
 
-Fix (S): per-step `perf_counter` deltas in the existing step logs + include model/var/fh. **Do this before 3.2.**
+Fix (S): per-step `perf_counter` deltas in the existing step logs + include model/var/fh. **Do this before 3.1.**
 
-### 3.8 MED — Contour and pressure-center paths independently re-fetch/re-warp the same component
+### 3.7 MED — Contour and pressure-center paths independently re-fetch/re-warp the same component
 
 `_build_contour_metadata_for_variable` (`pipeline.py:194-391`) and `_build_pressure_center_metadata_for_variable` (`pipeline.py:414-614`): both resolve the same component (center falls back to `contour_component`), and each does its own `fetch_variable` + `warp_to_target_grid` when the warped-component cache misses. The cache is only consulted when `derive_target_grid_id` is non-empty, so plain mslp/height contour vars fetch+warp twice per frame. The contour warp also hardcodes `resampling="bilinear"` (`pipeline.py:319`) while requesting `contour_resampling` from the cache — key-mismatch risk.
 
 Fix (M): compute the warped component once in `build_frame` and pass to both helpers, or populate the cache on miss.
 
-### 3.9 MED — Failed frames re-attempted every 60 s forever, no backoff or cap
+### 3.8 MED — Failed frames re-attempted every 60 s forever, no backoff or cap
 
 `blocked_targets` is per-`_process_run` state (`scheduler.py:2386-2388`, `2463-2464`); the incomplete-run poll (`INCOMPLETE_RUN_POLL_SECONDS=60`, `scheduler.py:2860-2868`) starts each cycle with fresh state and re-fetches/re-warps/re-fails the same poison frame every minute until the run is superseded (up to ~6 h at GFS cadence). Also pins the fast 60 s poll by keeping the run "incomplete". Contrast: SLR rebuilds carry `rebuild_max_attempts=2`.
 
 Fix (M): persist per-(run, var, fh) failure counts across `_process_run` calls with a cap or exponential backoff; distinguish deterministic from transient failures.
 
-### 3.10 MED — Progressive publish re-copies the entire run tree per snapshot
+### 3.9 MED — Progressive publish re-copies the entire run tree per snapshot
 
 `_promote_run` (`scheduler.py:1341-1368`) called on first promote then every ≥4 new frames (`scheduler.py:2503-2509`): copytree(published→tmp, hardlink) + copytree(staging→tmp overlay) + rmtree + move — O(total frames) work to publish 4 new frames, dozens of times per run. Multiplies the 2.1 404-window count; heavy inode churn on ensembles.
 
 Fix (M): incremental promote — frame files are immutable once written, so additive in-place hardlinking is safe; at minimum keep the 2.1 rename-swap.
 
-### 3.11 MED — Herbie-internal network calls have no timeout control
+### 3.10 MED — Herbie-internal network calls have no timeout control
 
 `Herbie(...)` construction, `H.index_as_dataframe` (`fetch.py:1378`), `H.download` (`fetch.py:3671/3785`) use Herbie's internal requests with no timeout wrapper; the inventory in-flight follower wait is bounded by `max(5.0, inventory_cache_ttl)` = **600 s default** (`fetch.py:1367`). A hung remote read blocks a build slot up to 10 minutes. This file's own requests calls are covered (45/90 s) — the gap is exclusively the Herbie surface.
 
 Fix (M): run Herbie calls under a deadline; cap the follower wait at 60–90 s independent of cache TTL.
 
-### 3.12 MED/LOW — smaller perf items
+### 3.11 MED/LOW — smaller perf items
 
 - **No `requests.Session`/connection pooling anywhere** (`fetch.py:3040`, `1181`, `725`): every range request is a fresh TCP+TLS handshake; EPS pf-mean = ~51 ranges per variable per fh. Fix (S): module-level pooled Session sized ≥ range workers.
 - **`np.savez_compressed` on every cumulative frame's hot path** (`derive.py:701`): zlib on a CONUS float32 grid ≈ 100–300 ms/frame × 4 strategies. Fix (S): uncompressed `np.savez` or zstd.
@@ -209,7 +209,7 @@ Fix (M): run Herbie calls under a deadline; cap the follower wait at 60–90 s i
 - **Frontier re-scan stat storm** (`scheduler.py:2126-2145`, `1407-1417`): thousands of stats per 60 s poll for ensembles; harmless on SSD, measurable on network filesystems.
 - **Member pending/promote scans** stat+JSON-parse every expected frame (~2.8k for GEFS) each scheduler poll (`members.py:1305-1349`).
 - **Parallel pf prefetch holds all ~51 range payloads in memory simultaneously** (`fetch.py:1801-1811`) before writing — tens-to-hundreds of MB spikes; stream to disk with a bounded window.
-- **members.py warps at default `working_dtype=float64`** (`members.py:979,1066,1220,1238,1254`): pass float32 at member call sites; cap GDAL cache for the pass (see 2.3).
+- **members.py warps at default `working_dtype=float64`** (`members.py:979,1066,1220,1238,1254`): pass float32 at member call sites (the GDAL block cache is already capped at 256 MB in prod — see 2.3).
 - **Fixed 0.6 s retry sleeps, no jitter/backoff** in all four fetch retry loops.
 - **Colorize `transpose().copy()` doubles the RGBA transient** (`colorize.py:179/242/301`, ~145 MiB extra at MRMS scale); already mitigated for MRMS via `colorize_metadata()`. The LUT approach itself is good (256-entry, no per-pixel work).
 
@@ -235,7 +235,7 @@ Fix (M): run Herbie calls under a deadline; cap the follower wait at 60–90 s i
 
 ### 4.5 MED — wgrib2-style idx: last message in a file is unfetchable via byte ranges
 
-`fetch.py:1305-1306`: the last record gets no `end_byte`; `_inventory_row_byte_range` returns None (`fetch.py:1678-1680`) and the row is silently skipped (`fetch.py:1767-1770`). A variable that is the final GRIB message deterministically fails byte-range → escalates to the 3.3 full-file path or hard failure. Fix (S): emit open-ended `Range: bytes={start}-`.
+`fetch.py:1305-1306`: the last record gets no `end_byte`; `_inventory_row_byte_range` returns None (`fetch.py:1678-1680`) and the row is silently skipped (`fetch.py:1767-1770`). A variable that is the final GRIB message deterministically fails byte-range → escalates to the 3.2 full-file path or hard failure. Fix (S): emit open-ended `Range: bytes={start}-`.
 
 ### 4.6 MED — `.part` download path is deterministic and unlocked by default
 
@@ -245,23 +245,17 @@ Fix (M): run Herbie calls under a deadline; cap the follower wait at 60–90 s i
 
 `fetch.py:2002`: raises `AttributeError` on every call, swallowed at `fetch.py:2004`. Members aggregate in raw inventory order — harmless for a mean, but if this block is copied into the Phase-3/4 member/percentile pipeline (where order matters) it silently misorders members. Fix (S): `pd.to_numeric`.
 
-### 4.8 MED — `COPY_SRC_OVERVIEWS=YES` is not a COG-driver option
+*(Two COG-specific findings — a `COPY_SRC_OVERVIEWS` creation-option mismatch and dark halos on RGBA overview tiles — were removed 2026-07-07 due to the COG → binary-sampling migration.)*
 
-`cog_writer.py:681`: it's a GTiff option; the COG driver ignores it. The pipeline works only because the COG driver's default `OVERVIEWS=AUTO` happens to reuse existing overviews. Pin with `-co OVERVIEWS=FORCE_USE_EXISTING`, else a GDAL default change silently regenerates overviews and destroys the per-band nearest/average policy.
-
-### 4.9 MED — Dark halos on continuous RGBA overviews
-
-`cog_writer.py:644-657` + `colorize.py:176`: colorize zeroes RGB where alpha==0; overview averaging pulls edge RGB toward black while alpha stays nearest → opaque near-black fringe on every continuous layer's zoomed-out tiles. Fix (M): average alpha too (thresholded), or average premultiplied and unpremultiply.
-
-### 4.10 MED — Discrete colormap specs never validate `len(colors) == len(levels)-1`
+### 4.8 MED — Discrete colormap specs never validate `len(colors) == len(levels)-1`
 
 `colorize.py:248-257`: digitize+clip silently absorbs a mismatch (top bins collapse into the last color; `legend_stops` zip truncates and diverges from the render). The tmp850_anom ladder is verified correct, but the next hand-built ladder has no guard. Fix (S): one-line assertion.
 
-### 4.11 MED — Failure cleanup deletes the variable's whole shared contours dir
+### 4.9 MED — Failure cleanup deletes the variable's whole shared contours dir
 
 `build_frame` binds the contours *directory* into `contour_geojson_path` (`pipeline.py:391`), and `_cleanup_artifacts` (`pipeline.py:2198-2212`) deletes directories recursively — a failure after contour generation deletes all previously built fhs' contour geojsons for that var in staging. Mitigated by published copies surviving, but a staging/published divergence trap. Fix (S): return/clean only the per-fh geojson path.
 
-### 4.12 LOW — additional items
+### 4.10 LOW — additional items
 
 - **Exception classification by exact string match** (`fetch.py:2583-2626`): a Herbie/GDAL version bump silently reclassifies transient→non-transient. Pin versions or match exception types.
 - **Uncleaned temp artifacts**: `/tmp/twf_subset_*` (`fetch.py:2642-2648`), `eps_subset_fallbacks` (`fetch.py:602-612`), `.cartosky_pf`/`.cartosky_em_fhNNN` subsets (`fetch.py:1734-1736`) have no TTL/cleanup (only the EPS full-file cache is swept). Disk creep.
@@ -310,7 +304,7 @@ Fix (L, behind per-model parity canaries per Phase G practice): extract `_run_in
 - Transient-vs-failed distinction exists; transient targets pause rather than block.
 - `BundleFetchCache` leader/follower dedup is correct (event set in `finally`; errors propagate; invalid entries evicted).
 - EPS statistics-file URL rewrite is anchored and step-filtered with an exactly-one-record assertion (`fetch.py:2098-2232`).
-- Output nodata handling is correct: RGBA gets alpha-0, value COGs use NaN, value-grid overviews use nearest (safe for sampling).
+- Output nodata handling is correct: RGBA gets alpha-0; value grids use NaN.
 - Note: no percentile code exists anywhere in `builder/` — GEFS/EPS means are fetched as upstream ens-mean products; Tier-2 percentile correctness is N/A until implemented (fix 4.1/4.2 first, since percentiles would consume member frames).
 
 ---
@@ -329,7 +323,7 @@ Gaps mapping to findings:
 - No assertion that component snow planes are physically scaled (1.5)
 - Ptype accumulation with fractional ensemble masks untested (1.7)
 - No test pinning fetch.py's byte-range write-sort contract for member band mapping (4.2)
-- No discrete-spec `len(colors) == len(levels)-1` validation (4.10)
+- No discrete-spec `len(colors) == len(levels)-1` validation (4.8)
 
 ---
 
@@ -337,16 +331,23 @@ Gaps mapping to findings:
 
 **Quick wins, high impact (all S effort):**
 1. ECMWF ptype warp-params fix + warped-mode test (1.1 — wrong ice/rain classification in prod today)
-2. Publish rename-swap (2.1) + manifest eviction (2.2) — kills the 404 incident class
-3. `GDAL_CACHEMAX` (2.3) + invert prune allowlist (2.4) + float32 member warps — the swap incident
-4. Scheduler `request.model` fix + internal-id guard in `fetch_variable` (2.5) — July 6 incident class
-5. HTTP 206 assertion (3.4), pf member-count validation (4.3), `step_fhs[-1] == fh` assertion (1.4), quality-flag threading for fail-open fallbacks (1.2)
+2. Readiness-cache `fh` keying (2.6) — closes the July 6 gate-bypass class for all later forecast hours
+3. HTTP 206 / range-size guard (3.3) — one-line wrong-variable protection
+4. Publish rename-swap (2.1) + manifest eviction (2.2) — kills the 404 incident class
+5. Quality-flag threading for fail-open fallbacks (1.2)
+6. Prune-policy fix (2.4) + float32 member warps — the swap incident; also codify `GDAL_CACHEMAX` in the repo unit templates and try `MALLOC_ARENA_MAX=2` (2.3)
+7. Scheduler `request.model` fix + internal-id guard in `fetch_variable` (2.5) — July 6 incident class
+8. pf member-count validation (4.3), `step_fhs[-1] == fh` assertion (1.4)
+
+Each quick win should land with a narrow regression test for its incident class: ECMWF warped ptype ice, readiness by fh, stale-manifest eviction, HTTP 200 range rejection, ptype fallback quality flags.
 
 **Medium projects:**
-- COG encode overhaul (3.1)
-- Per-step build timings (3.7), then fh-level parallelism (3.2)
-- Range retry before full-file fallback + subset reuse (3.3, 3.5)
-- Readiness-cache fh keying (2.6); failed-frame backoff (3.9); member scheduling validation (4.1)
+- Per-step build timings (3.6) **first** — current logs cannot attribute frame time to fetch vs warp vs colorize vs artifact write, and fh-parallelism sizing needs that data
+- fh-level parallelism (3.1), sized from the 3.6 data
+- Range retry before full-file fallback + subset reuse (3.2, 3.4)
+- Failed-frame backoff (3.8); member scheduling validation (4.1)
 
 **Larger refactor (behind per-model parity canaries):**
 - Extract the incremental-cumulative orchestrator (5.1) — ~1,000 lines of dedup across 5 strategies including the mechanical items (5.2), eliminates the shipped mismatch-handling divergence.
+
+**Unifying principle for new code:** the dominant risk class in this pipeline is the *silently plausible wrong frame*. Anywhere the code substitutes zeros/ones for missing components, OR-merges validity, clamps out-of-range data, or infers units from data values, it should instead fail the frame, mark it degraded via `_record_derive_quality`, or propagate NaN — never render a confident-looking value.

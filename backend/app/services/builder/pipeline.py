@@ -1409,11 +1409,15 @@ def _ensure_products_ready(
             run_date=run_date,
             fh=fh,
         )
-        readiness_key = f"{request.model}|{request.product}"
+        # Keys must include fh: idx readiness is per forecast hour (models
+        # publish hours incrementally), so a ready result for one fh must not
+        # bypass the fail-closed probe for later hours.
+        readiness_key = f"{request.model}|{request.product}|fh{int(fh):03d}"
+        product_key = f"{product_name}|fh{int(fh):03d}"
         if readiness_cache is not None and readiness_key in readiness_cache:
             ready = bool(readiness_cache[readiness_key])
-        elif readiness_cache is not None and product_name in readiness_cache:
-            ready = bool(readiness_cache[product_name])
+        elif readiness_cache is not None and product_key in readiness_cache:
+            ready = bool(readiness_cache[product_key])
         else:
             ready = product_hour_has_any_idx(
                 model_id=request.model,
@@ -1424,7 +1428,7 @@ def _ensure_products_ready(
                 allow_grib_without_idx=allow_grib_without_idx,
             )
             if readiness_cache is not None:
-                readiness_cache[product_name] = bool(ready)
+                readiness_cache[product_key] = bool(ready)
                 readiness_cache[readiness_key] = bool(ready)
         if not ready:
             missing_products.append(request.product)

@@ -1,6 +1,6 @@
 # Share Modal Overhaul & GIF Export — Implementation Plan
 
-**Status:** Phase 4 implemented (2026-07-06) — gate (deliberately-missing-run degradation + cross-model cadence spot check on prod) pending. Phases 0–3 complete, gates passed on prod (Phase 3 including three rounds of gate-feedback fixes). Landed: live-canvas capture as the signed-out image path (compose-only exporter; offscreen rebuild deleted), Download / Copy image / native Share signed-out, compare-path repaint-hook capture (split + diff, server hook and signed-out local share), exporter anchor-chip compositing deleted (root cause of overlapping/cut-off city labels — see §3.4), `fadeDuration: 0` in screenshot mode. Signed-in flow unchanged (server render = TWF post artifact, preview-as-artifact holds until Phase 2 tabs). Phase 0 complete: blank-capture root cause (cold WebGL read-back) confirmed and fixed via `window.__cartoskyViewerCapture`; analytics channels verified in Mixpanel.
+**Status: COMPLETE (2026-07-07).** All phases implemented and prod gates passed. Phase 4 gate confirmed 2026-07-07: GFS missing-run trend degrades gracefully with correct labels, HRRR/GFS cadence check green, double-generate blank-frame check green, TWF poster-timezone stills green, Mixpanel gif_mode/trend_run_count green, mobile layout green (trend toggle correctly hidden on MRMS — observed products don't support run trend by design). Final chrome sizing: stills/compare min-dimension × 0.72, GIF 0.5. Phases 0–3 complete, gates passed on prod (Phase 3 including three rounds of gate-feedback fixes). Landed: live-canvas capture as the signed-out image path (compose-only exporter; offscreen rebuild deleted), Download / Copy image / native Share signed-out, compare-path repaint-hook capture (split + diff, server hook and signed-out local share), exporter anchor-chip compositing deleted (root cause of overlapping/cut-off city labels — see §3.4), `fadeDuration: 0` in screenshot mode. Signed-in flow unchanged (server render = TWF post artifact, preview-as-artifact holds until Phase 2 tabs). Phase 0 complete: blank-capture root cause (cold WebGL read-back) confirmed and fixed via `window.__cartoskyViewerCapture`; analytics channels verified in Mixpanel.
 **Priority:** GIF export is the highest-priority busy-season feature (October feature freeze target). The anonymous image path (Phase 1) is a prerequisite for GIF and the primary share-funnel fix.
 **Owner:** Brian Austin (sole production operator). Implementation via Codex/Claude Code agents; Brian executes all production commands and verifies each phase gate before the next proceeds.
 
@@ -146,7 +146,7 @@ Each phase is a separate agent implementation prompt with: explicit execution-mo
 
 **Gate:** blank-basemap reproduction with logged gate states, or a documented ruled-out list. Analytics events visible end to end.
 
-### Phase 1 — Anonymous image path (implemented 2026-07-06, gate pending)
+### Phase 1 — Anonymous image path (complete — gate passed on prod)
 - [x] Live-canvas capture wired into the `capturedMapDataUrl` compose path (`captureMapPng` prop → repaint-then-read PNG; signed-out and dev default; signed-in keeps the server render until Phase 2 tabs split the channels).
 - [x] Download / Copy image / native Share available signed-out (`share_completed` channels wired; native Share button renders only where `navigator.share` exists).
 - [x] Data-less offscreen rebuild deleted — `exportViewerScreenshotPng` is compose-only and throws without a captured image (no silent basemap-only output). The anchor-projection offscreen map went with it.
@@ -158,14 +158,14 @@ Each phase is a separate agent implementation prompt with: explicit execution-mo
 
 **Gate:** signed-out user on prod gets a correct data image in <~2s p90 with zero authenticated requests. Screenshot regression pass across: grid variables, RGB/satellite, compare mode, SPC/CPC categorical legends, observed-mode products, portrait mobile.
 
-### Phase 2 — Modal restructure (implemented 2026-07-06, gate pending)
+### Phase 2 — Modal restructure (complete — gate passed on prod)
 - [x] Tabs + hook extraction: `components/share/` now holds `ShareModal.tsx` (shell), `useScreenshotCapture.ts`, `useTwfPosting.ts` (forum/topic/prefs/submit logic moved verbatim — dep arrays untouched), `useGifExport.ts` (stub), `share-utils.ts` (types + pure helpers). `twf-share-modal.tsx` deleted; App/compare mounts updated.
 - [x] TWF composer moved into the Image tab as a "Post to The Weather Forums" destination section (linked users); everyone else sees the quiet one-row connect prompt — never blocking Download/Copy/Share. Link tab = copy link / copy text+link (replaces the old bottom Copy menu). GIF tab renders the stub; hidden on /compare (`gifTabEnabled={false}`, per §7 open decision).
 - Note: the old single open-reset effect was split per-hook with identical open-transition guards; `share_initiated` still fires once per open. Playwright coverage of posting is thin (share-button reachability only), so the prod gate below is the real regression check.
 
 **Gate:** full TWF post flow (existing topic, new topic, forum switching, prefs persistence, rate-limit handling) verified against prod TWF. No behavior change in posting.
 
-### Phase 3 — GIF: forecast-hour progression (implemented 2026-07-06, gate pending)
+### Phase 3 — GIF: forecast-hour progression (complete — gate passed on prod)
 - [x] Client-side capture with per-frame readiness gate + `gifenc` worker encode, caps, capture-lock UI with progress/cancel, GIF tab wiring. Implementation notes:
   - `GifFrameDriver` (App.tsx) steps the live pipeline: sets `forecastHour` **and** `targetForecastHour` (outside playback the display follows `forecastHour` — targeting only `targetForecastHour` never presents), then awaits the per-frame dual gate (`gridReadyHourSet.has(hour)` AND `presentedGridDisplayHour === hour`); 6s per-frame timeout skips the frame rather than aborting the run; timeline snapshot restored after done/cancel/close.
   - Per-frame capture: `onCaptureCanvas` in map-canvas — repaint-then-read into a downscaled 2D canvas (no PNG round-trip). Frames composed via the shared `composeShareFrame` (same overlay/legend/logo as stills, overlay rebuilt per frame with that frame's fh/valid time), streamed to the `gifenc` worker as transferable RGBA buffers (≤1 frame held on the main thread).
@@ -177,7 +177,7 @@ Each phase is a separate agent implementation prompt with: explicit execution-mo
 
 **Gate:** 50-frame HRRR reflectivity GIF on desktop and a mid-tier phone; size and duration within caps; zero server CPU/RAM delta (Grafana per-process graphs are authoritative); clean abort paths verified.
 
-### Phase 4 — GIF: run trend (implemented 2026-07-06, gate pending)
+### Phase 4 — GIF: run trend (complete — gate passed on prod)
 - [x] Valid-time alignment, per-frame run labels, nearest-frame cadence handling, missing-frame skip. Implementation notes:
   - Driver run stepping (`showRunFrame(runId, validTimeISO)`): sets the viewer's run, waits for the selection to resolve to that run with a frames list, snaps to the frame whose valid time (`runTime + fh`) is nearest the target with a **3h tolerance** (covers GFS 6-hourly late cadence), then applies the standard per-frame dual gate. Outside tolerance / timeout → `shown:false` → the run is skipped, not the loop (evicted-run degradation).
   - Trend generate: last **N runs** (user-selectable 2–6 via a Runs chip row, default 3 — see §7), oldest → newest, each frame's overlay state carries that run's label + resolved fh + actual frame valid time. Anchor valid time = the slider-selected hour on the current run (defaults to the hour the user was viewing).
@@ -216,7 +216,31 @@ Each phase is a separate agent implementation prompt with: explicit execution-mo
 - [x] **Resolved (Phase 4, revised post-gate):** trend run count is user-selectable 2–6 (`GIF_TREND_RUN_DEFAULT = 3`, `GIF_TREND_RUN_MAX = 6` — backend retains ~6 runs). Settings store only the **count**, never run ids: the ids resolve from the live runs list at render time (chip options + oldest → newest span label in the caption) and again at generate time, so runs publishing or aging out while the modal is open can't strand a stale selection; eviction mid-generate still degrades via the existing skip-on-missing path.
 - [x] **Resolved (Phase 2):** compare-mode GIF out of scope for v1 — the GIF tab is hidden on `/compare` (`gifTabEnabled={false}`).
 
-## 8. Reference — key files
+## 8. Post-v1 backlog (recorded 2026-07-07 at project close — NOT committed work)
+
+Ranked by estimated value. All of this is new scope on top of the completed overhaul; nothing here blocks anything.
+
+### Features
+
+1. **MP4/WebM export alongside GIF.** GIFs are 256-color and heavy (~0.5–3 MB for what H.264/VP9 does in a tenth of that at full color). Encode client-side via `MediaRecorder` or WebCodecs — the per-frame capture pipeline (`GifFrameDriver` + `composeShareFrame`) is reusable as-is; only the encoder sink changes. Zero added server load. **Check first:** whether TWF embeds video inline in posts — if not, GIF remains the forum format and video is download/social-only.
+2. **Compare/diff GIFs.** Explicitly deferred in §7 (GIF tab is hidden on `/compare`). The capture plumbing already exists from Phase 1 (repaint hooks on both panel maps + the diff map). A *diff run-trend* — how model disagreement evolves run-over-run — would be novel content for TWF threads. Needs a compare-page equivalent of the `GifFrameDriver` (drive both panels' frame state in lockstep).
+3. **Loop styles.** Boomerang (forward-then-reverse) and configurable end-hold are trivial additions in the encoder loop (`useGifExport.ts` worker feed); popular for weather loops.
+4. **Custom caption line.** One optional free-text field burned into the share overlay (chase target, storm name) for stills and GIFs. Small effort, high shareability. Cap the length and sanitize; it renders via `buildShareOverlayLines`.
+
+### Improvements
+
+- **Stride-sampling feedback.** Removing the estimate line also removed the "N frames (of M hours)" hint, so a user exporting a long GFS range has no signal that frames are being even-stride skipped (`sampleHours`, caps 60 desktop/30 mobile). If users report GIFs "jumping," restore a minimal hint in the GIF tab.
+- **Valid-time slider label.** The trend slider still reads "FH n on the latest run"; showing the friendly local time (matching the overlay format, e.g. "11:00 PM 7/06") would be more consistent.
+- **Trend worst-case duration.** A run that can't paint (missing variable, mid-publish) burns its full wait budget (~20s: 12s settle + 8s frame gate) before the skip. Rare; tighten budgets if it bites.
+- **GIF chrome floor is reached.** `GIF_CHROME_SCALE = 0.5` is the hard legibility floor through 256-color quantization. If GIF chrome must get *visually* smaller still, the levers are: drop overlay line 2 in GIF frames, or raise `GIF_OUTPUT_WIDTH` to 960 so fixed-size chrome occupies proportionally less frame (costs encode time/file size).
+
+### Explicitly rejected (with reasons, so they don't get re-litigated)
+
+- **Clipboard-copy for GIFs** — browser `ClipboardItem` support for `image/gif` is effectively nonexistent; download/native-share only.
+- **Resolution presets** — 720px output is doing the job; 1080p roughly doubles encode time and file size for marginal gain.
+- **Scheduled/auto-posting of share images** — different project entirely (server-side rendering pipeline + posting policy).
+
+## 9. Reference — key files
 
 | Area | Path |
 | --- | --- |

@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from rasterio.transform import from_origin
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -128,6 +129,49 @@ def test_ensure_products_ready_probes_with_herbie_model_not_internal_id(monkeypa
     )
 
     assert probed == ["ifs"]
+
+
+def test_ensure_products_ready_readiness_cache_is_scoped_per_forecast_hour(monkeypatch) -> None:
+    """A shared readiness cache spans all fhs of a target; a ready probe for one
+    fh must not bypass the fail-closed gate for later, not-yet-published hours."""
+    plugin = _Plugin()
+    run_date = datetime(2026, 7, 6, 18, 0)
+    probes: list[tuple[str, int]] = []
+    ready_by_fh = {0: True, 6: False}
+
+    def _fake_product_ready(*, model_id, product, run_date, fh, herbie_kwargs=None, allow_grib_without_idx=False):
+        del model_id, run_date, herbie_kwargs, allow_grib_without_idx
+        probes.append((str(product), int(fh)))
+        return ready_by_fh[int(fh)]
+
+    monkeypatch.setattr(pipeline_module, "product_hour_has_any_idx", _fake_product_ready)
+
+    cache: dict[str, bool] = {}
+    # Same fh twice: the second call must hit the cache, not re-probe.
+    for _ in range(2):
+        pipeline_module._ensure_products_ready(
+            model="hrrr",
+            model_plugin=plugin,
+            run_date=run_date,
+            fh=0,
+            var_key="tmp2m",
+            required_products=["sfc"],
+            readiness_cache=cache,
+        )
+    assert probes == [("sfc", 0)]
+
+    # A later, unpublished fh sharing the cache must probe (and fail closed).
+    with pytest.raises(pipeline_module.HerbieTransientUnavailableError):
+        pipeline_module._ensure_products_ready(
+            model="hrrr",
+            model_plugin=plugin,
+            run_date=run_date,
+            fh=6,
+            var_key="tmp2m",
+            required_products=["sfc"],
+            readiness_cache=cache,
+        )
+    assert probes == [("sfc", 0), ("sfc", 6)]
 
 
 def test_build_frame_tmp2m_skips_dead_contour_generation(monkeypatch, tmp_path: Path) -> None:

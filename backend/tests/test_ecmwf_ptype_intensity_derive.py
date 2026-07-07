@@ -307,3 +307,61 @@ def test_ecmwf_ptype_intensity_can_fallback_to_cold_snow_without_sf(monkeypatch)
     )
 
     assert 16.0 <= indexed[0, 0] <= 25.0
+
+
+def test_ecmwf_ptype_intensity_uses_warped_component_fetches_when_requested(monkeypatch) -> None:
+    crs = CRS.from_epsg(3857)
+    transform = Affine.translation(-1.0, 1.0)
+    cumulative = {
+        ("precip_total", 3): np.array([[0.01]], dtype=np.float32),
+        ("precip_total", 6): np.array([[0.04]], dtype=np.float32),
+        ("sf", 3): np.array([[0.0]], dtype=np.float32),
+        ("sf", 6): np.array([[0.0]], dtype=np.float32),
+    }
+    thermal = {
+        "tmp2m": np.array([[-5.0]], dtype=np.float32),
+        "tmp925": np.array([[-4.0]], dtype=np.float32),
+        "tmp850": np.array([[-7.0]], dtype=np.float32),
+    }
+    seen: list[tuple[str, bool, str, str, str]] = []
+
+    def _fake_fetch_step_component(**kwargs):
+        var_key = str(kwargs["var_key"])
+        seen.append(
+            (
+                var_key,
+                bool(kwargs["use_warped"]),
+                str(kwargs["target_region"]),
+                str(kwargs["target_grid_id"]),
+                str(kwargs["resampling"]),
+            )
+        )
+        key = (var_key, int(kwargs["step_fh"]))
+        if key in cumulative:
+            return cumulative[key], crs, transform
+        return thermal[var_key], crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_step_component", _fake_fetch_step_component)
+
+    indexed, out_crs, out_transform = derive_module._derive_ptype_intensity_ecmwf(
+        model_id="ecmwf",
+        var_key="ptype_intensity",
+        product="oper",
+        run_date=datetime(2026, 4, 14, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec(),
+        var_capability=None,
+        model_plugin=object(),
+        ctx=derive_module.FetchContext(),
+        derive_component_target_grid={"region": "na", "id": "climatology:era5:na:25000.0m"},
+        derive_component_resampling="nearest",
+    )
+
+    assert out_crs == crs
+    assert out_transform == transform
+    assert {item[0] for item in seen} == {"precip_total", "sf", "tmp2m", "tmp925", "tmp850"}
+    assert all(item[1:] == (True, "na", "climatology:era5:na:25000.0m", "nearest") for item in seen)
+    # Cold profile with sf=0 relies entirely on the thermal phase signals: before
+    # the warp-params fix those fetches came back native-shape, were silently
+    # skipped, and this pixel classified as rain instead of snow.
+    assert 16.0 <= indexed[0, 0] <= 25.0
