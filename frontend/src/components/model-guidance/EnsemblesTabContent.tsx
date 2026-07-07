@@ -7,9 +7,8 @@ import { ModelPillFilter } from "@/components/charts/ModelPillFilter";
 import { EnsembleMeanTemperatureChart } from "@/components/model-guidance/EnsembleMeanTemperatureChart";
 import { EnsembleMeanPrecipChart } from "@/components/model-guidance/EnsembleMeanPrecipChart";
 import { EnsemblePrecipPlumeChart } from "@/components/model-guidance/EnsemblePrecipPlumeChart";
-import { EnsemblePrecipProbabilityCard } from "@/components/model-guidance/EnsemblePrecipProbabilityCard";
 import { EnsembleTemperaturePlumeChart } from "@/components/model-guidance/EnsembleTemperaturePlumeChart";
-import { EnsembleTemperatureSpreadChart } from "@/components/model-guidance/EnsembleTemperatureSpreadChart";
+import { SegmentedToggle } from "@/components/ui/segmented-toggle";
 import { useMeteogram } from "@/hooks/useMeteogram";
 import {
   ENSEMBLES_TAB_VARIABLES,
@@ -18,6 +17,7 @@ import {
 } from "@/lib/chart-constants";
 import { eligibleEnsembleModels } from "@/lib/eligible-ensemble-models";
 import { useEntitlements } from "@/lib/entitlements";
+import { formatRunLabel, sortRunIdsDescending } from "@/lib/run-options";
 
 type Props = {
   lat: number;
@@ -25,7 +25,22 @@ type Props = {
   timezone: string | null;
 };
 
-/** Ensembles top-level tab — mean-only ensemble guidance (EPS, GEFS). Phase 2. */
+type EnsembleVariable = (typeof ENSEMBLES_TAB_VARIABLES)[number];
+
+/** "means" = multi-model mean comparison; a model id = that model's members. */
+type EnsembleView = "means" | (typeof MEMBER_PLUME_MODELS)[number];
+
+const VARIABLE_LABELS: Record<EnsembleVariable, string> = {
+  tmp2m: "Temperature",
+  precip_total: "Precipitation",
+};
+
+/**
+ * Ensembles top-level tab. Selector-driven (view / variable / run) rather than
+ * a stacked list of every chart: "Means" compares the ensemble means across
+ * models; a members view shows one model's member plume (member pipeline
+ * Phase 5).
+ */
 export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
   const { canAccessProduct } = useEntitlements();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -37,15 +52,60 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
 
   const eligibleKey = eligibleModels.join(",");
 
-  // Pill filter state lives here and is shared by both mean charts. Defaults to
-  // all eligible ensemble models active. Model selection is kept local (not
-  // URL-synced); only run pinning is persisted to the URL below.
+  const plumeModels = useMemo(
+    () => MEMBER_PLUME_MODELS.filter((model) => eligibleModels.includes(model)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eligibleKey],
+  );
+
+  // ── View + variable selection (URL-synced, like the Models tab) ──────────
+  const viewParam = searchParams.get("ensemble_view");
+  const view: EnsembleView =
+    viewParam && (plumeModels as readonly string[]).includes(viewParam)
+      ? (viewParam as EnsembleView)
+      : "means";
+  const varParam = searchParams.get("ensemble_var");
+  const variable: EnsembleVariable = (ENSEMBLES_TAB_VARIABLES as readonly string[]).includes(
+    varParam ?? "",
+  )
+    ? (varParam as EnsembleVariable)
+    : "tmp2m";
+
+  const setUrlParam = useCallback(
+    (key: string, value: string | null) => {
+      const next = new URLSearchParams(searchParams);
+      if (value === null) next.delete(key);
+      else next.set(key, value);
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
+
+  const viewOptions = useMemo(
+    () => [
+      { value: "means" as const, label: "Means" },
+      ...plumeModels.map((model) => ({
+        value: model,
+        label: `${modelShortName(model)} members`,
+      })),
+    ],
+    [plumeModels],
+  );
+
+  const variableOptions = useMemo(
+    () =>
+      ENSEMBLES_TAB_VARIABLES.map((value) => ({
+        value,
+        label: VARIABLE_LABELS[value],
+      })),
+    [],
+  );
+
+  // ── Pill filter state for the means view ─────────────────────────────────
   const [activeModels, setActiveModels] = useState<Set<string>>(
     () => new Set(eligibleModels),
   );
 
-  // Active selection intersected with the eligible set. An empty selection
-  // (user deselected every pill) renders empty charts, mirroring the Models tab.
   const visibleModels = useMemo(() => {
     const next = new Set<string>();
     for (const model of eligibleModels) {
@@ -133,6 +193,8 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
     [searchParams, setSearchParams],
   );
 
+  // ── Data: mean comparison + member payload (separate calls; the members
+  // request may only name member-publishing models or the backend 400s) ────
   const { data, loading, isUpdating, error, reload } = useMeteogram({
     lat,
     lon,
@@ -141,16 +203,6 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
     pinnedRuns,
   });
 
-  // Member plumes (member pipeline Phase 5): a SEPARATE meteogram call scoped
-  // to member-publishing models only — include_members 400s the whole request
-  // if any requested model lacks member support (EPS joins at pipeline
-  // Phase 4). Restricting the pinned runs to the same models keeps the plume
-  // in lockstep with the pill run selector.
-  const plumeModels = useMemo(
-    () => MEMBER_PLUME_MODELS.filter((model) => eligibleModels.includes(model)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [eligibleKey],
-  );
   const plumePinnedRuns = useMemo(() => {
     const result: Record<string, string> = {};
     for (const model of plumeModels) {
@@ -158,6 +210,7 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
     }
     return result;
   }, [plumeModels, pinnedRuns]);
+
   const {
     data: memberData,
     loading: membersLoading,
@@ -250,100 +303,147 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, eligibleKey, isUpdating]);
 
+  // ── Member-view run selector ──────────────────────────────────────────────
+  const memberModel = view === "means" ? null : view;
+  const memberRunOptions = useMemo(() => {
+    if (!memberModel) return [];
+    return sortRunIdsDescending(availableRuns?.[memberModel] ?? []);
+  }, [memberModel, availableRuns]);
+  const memberServedRun = memberModel
+    ? memberData?.series?.[memberModel]?.run_id ?? null
+    : null;
+
+  const memberChartTitle = memberModel
+    ? `${modelShortName(memberModel)} ${VARIABLE_LABELS[variable].toLowerCase()} members`
+    : "";
+  const memberChartSubtitle = memberModel
+    ? [
+        memberServedRun ? `Run ${formatRunLabel(memberServedRun)}` : null,
+        "Colored lines are individual members · bold white is the mean · dashed is the control",
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : undefined;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-          <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
-            Filter:
-          </span>
-          <ModelPillFilter
-            models={eligibleModels}
-            activeModels={visibleModels}
-            onChange={handleFilterChange}
-            availableRuns={availableRuns}
-            pinnedRuns={pinnedRuns}
-            servedRuns={servedRuns}
-            onRunChange={handleRunChange}
-          />
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
+              View
+            </span>
+            <SegmentedToggle
+              value={view}
+              onChange={(next) => setUrlParam("ensemble_view", next === "means" ? null : next)}
+              options={viewOptions}
+              ariaLabel="Ensemble view"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
+              Variable
+            </span>
+            <SegmentedToggle
+              value={variable}
+              onChange={(next) => setUrlParam("ensemble_var", next === "tmp2m" ? null : next)}
+              options={variableOptions}
+              ariaLabel="Ensemble variable"
+            />
+          </div>
+          {memberModel ? (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
+                Run
+              </span>
+              <select
+                aria-label={`${modelShortName(memberModel)} run`}
+                value={pinnedRuns[memberModel] ?? ""}
+                onChange={(event) =>
+                  handleRunChange(memberModel, event.target.value || null)
+                }
+                className="h-8 rounded-lg border border-white/[0.09] bg-white/[0.05] px-2 text-[12px] text-white/80 outline-none hover:bg-white/[0.08] focus:border-cyan-300/40 [&>option]:bg-slate-900"
+              >
+                <option value="">
+                  Latest{memberRunOptions[0] ? ` — ${formatRunLabel(memberRunOptions[0])}` : ""}
+                </option>
+                {memberRunOptions.map((runId) => (
+                  <option key={runId} value={runId}>
+                    {formatRunLabel(runId)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
+                Models
+              </span>
+              <ModelPillFilter
+                models={eligibleModels}
+                activeModels={visibleModels}
+                onChange={handleFilterChange}
+                availableRuns={availableRuns}
+                pinnedRuns={pinnedRuns}
+                servedRuns={servedRuns}
+                onRunChange={handleRunChange}
+              />
+            </div>
+          )}
         </div>
       </div>
 
-      <section id="ensemble-temperature">
-        <ChartContainer
-          title="Mean temperature"
-          subtitle={degradedSubtitle}
-          isLoading={showSkeleton}
-          error={error}
-          onRetry={reload}
-        >
-          <EnsembleMeanTemperatureChart
-            response={data}
-            visibleModels={visibleModels}
-            timezone={timezone}
-          />
-        </ChartContainer>
-      </section>
-
-      {plumeModels.map((model) => (
-        <section key={`${model}-temp-plume`} id={`ensemble-${model}-temperature-plume`}>
+      {view === "means" ? (
+        <section id="ensemble-means">
           <ChartContainer
-            title={`${modelShortName(model)} temperature members`}
-            subtitle={`${modelShortName(model)} member plume — thin lines are individual members, bold is the mean, dashed white is the control`}
+            title={
+              variable === "tmp2m" ? "Mean temperature" : "Mean cumulative precipitation"
+            }
+            subtitle={degradedSubtitle}
+            isLoading={showSkeleton}
+            error={error}
+            onRetry={reload}
+          >
+            {variable === "tmp2m" ? (
+              <EnsembleMeanTemperatureChart
+                response={data}
+                visibleModels={visibleModels}
+                timezone={timezone}
+              />
+            ) : (
+              <EnsembleMeanPrecipChart
+                response={data}
+                visibleModels={visibleModels}
+                timezone={timezone}
+              />
+            )}
+          </ChartContainer>
+        </section>
+      ) : (
+        <section id={`ensemble-${memberModel}-members`}>
+          <ChartContainer
+            title={memberChartTitle}
+            subtitle={memberChartSubtitle}
             isLoading={membersLoading && !memberData}
             error={membersError}
             onRetry={reloadMembers}
           >
-            <EnsembleTemperaturePlumeChart
-              response={memberData}
-              model={model}
-              timezone={timezone}
-            />
+            {variable === "tmp2m" ? (
+              <EnsembleTemperaturePlumeChart
+                response={memberData}
+                model={memberModel!}
+                timezone={timezone}
+              />
+            ) : (
+              <EnsemblePrecipPlumeChart
+                response={memberData}
+                model={memberModel!}
+                timezone={timezone}
+              />
+            )}
           </ChartContainer>
         </section>
-      ))}
-
-      <section id="ensemble-precip-probability">
-        <EnsemblePrecipProbabilityCard />
-      </section>
-
-      <section id="ensemble-temperature-spread">
-        <EnsembleTemperatureSpreadChart />
-      </section>
-
-      <section id="ensemble-precipitation">
-        <ChartContainer
-          title="Mean cumulative precipitation"
-          subtitle={degradedSubtitle}
-          isLoading={showSkeleton}
-          error={error}
-          onRetry={reload}
-        >
-          <EnsembleMeanPrecipChart
-            response={data}
-            visibleModels={visibleModels}
-            timezone={timezone}
-          />
-        </ChartContainer>
-      </section>
-
-      {plumeModels.map((model) => (
-        <section key={`${model}-precip-plume`} id={`ensemble-${model}-precipitation-plume`}>
-          <ChartContainer
-            title={`${modelShortName(model)} precipitation members`}
-            subtitle={`Cumulative precipitation per ${modelShortName(model)} member — thin lines are individual members, bold is the mean, dashed white is the control`}
-            isLoading={membersLoading && !memberData}
-            error={membersError}
-            onRetry={reloadMembers}
-          >
-            <EnsemblePrecipPlumeChart
-              response={memberData}
-              model={model}
-              timezone={timezone}
-            />
-          </ChartContainer>
-        </section>
-      ))}
+      )}
     </div>
   );
 }

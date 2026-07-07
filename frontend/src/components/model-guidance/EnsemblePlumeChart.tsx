@@ -10,11 +10,10 @@ import {
   valueYAxis,
 } from "@/components/charts/chart-helpers";
 import {
-  ensembleControlStroke,
-  ensembleMeanStroke,
-  ensembleMeanWidth,
-  ensembleMemberStroke,
+  PLUME_MEAN_STROKE,
   modelShortName,
+  plumeControlStroke,
+  plumeMemberStroke,
 } from "@/lib/chart-constants";
 import type {
   MeteogramMemberSeries,
@@ -23,8 +22,9 @@ import type {
 } from "@/lib/meteogram-types";
 
 const CHART_HEIGHT = 320;
-const MEMBER_LINE_WIDTH = 1;
-const CONTROL_LINE_WIDTH = 1.5;
+const MEMBER_LINE_WIDTH = 1.25;
+const CONTROL_LINE_WIDTH = 2;
+const MEAN_LINE_WIDTH = 3;
 
 type Props = {
   response: MeteogramResponse | null;
@@ -139,7 +139,10 @@ export function EnsemblePlumeChart({
     return {
       height: CHART_HEIGHT,
       tzDate,
-      cursor: { y: false },
+      // Hover focus dims the other lines so a single member can be traced
+      // through the cloud.
+      cursor: { y: false, focus: { prox: 16 } },
+      focus: { alpha: 0.25 },
       legend: { show: false },
       scales: {
         x: { time: true },
@@ -155,19 +158,19 @@ export function EnsemblePlumeChart({
       },
       series: [
         {},
-        ...seriesList.map((series) => {
+        ...seriesList.map((series, seriesIndex) => {
           if (series.key === "mean") {
             return {
               label: `${modelShortName(model)} mean`,
-              stroke: ensembleMeanStroke(model),
-              width: ensembleMeanWidth(),
+              stroke: PLUME_MEAN_STROKE,
+              width: MEAN_LINE_WIDTH,
               points: { show: false },
             };
           }
           if (series.key === "control") {
             return {
               label: `${modelShortName(model)} control`,
-              stroke: ensembleControlStroke(model),
+              stroke: plumeControlStroke(model),
               width: CONTROL_LINE_WIDTH,
               dash: [6, 6],
               points: { show: false },
@@ -175,7 +178,7 @@ export function EnsemblePlumeChart({
           }
           return {
             label: series.key,
-            stroke: ensembleMemberStroke(model),
+            stroke: plumeMemberStroke(seriesIndex),
             width: MEMBER_LINE_WIDTH,
             points: { show: false },
           };

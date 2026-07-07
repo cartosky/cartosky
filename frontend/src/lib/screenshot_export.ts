@@ -176,7 +176,7 @@ function buildCpcValidLine(state: ScreenshotExportState): string | null {
     : `Valid: ${fmt(start)} – ${fmt(end)}`;
 }
 
-/** Valid time as `h:MM AM/PM MM-DD-YY` in the viewer's local timezone
+/** Valid time as `h:MM AM/PM M/DD/YY` in the viewer's local timezone
  * (share overlay line 1; local Date getters pick up the user's tz). */
 function formatShareOverlayTime(validTimeISO: string | null | undefined): string | null {
   if (!validTimeISO) {
@@ -189,7 +189,7 @@ function formatShareOverlayTime(validTimeISO: string | null | undefined): string
   const pad = (value: number) => String(value).padStart(2, "0");
   const hour12 = parsed.getHours() % 12 === 0 ? 12 : parsed.getHours() % 12;
   const meridiem = parsed.getHours() < 12 ? "AM" : "PM";
-  const date = `${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}-${String(parsed.getFullYear()).slice(-2)}`;
+  const date = `${parsed.getMonth() + 1}/${pad(parsed.getDate())}/${String(parsed.getFullYear()).slice(-2)}`;
   return `${hour12}:${pad(parsed.getMinutes())} ${meridiem} ${date}`;
 }
 

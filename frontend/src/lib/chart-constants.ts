@@ -173,17 +173,23 @@ export function ensembleMeanWidth(): number {
 // requesting include_members for a model not in this list 400s the request.
 export const MEMBER_PLUME_MODELS = ["gefs"] as const;
 
-/** Thin member-line stroke for the plume charts (Model Guidance §7). */
-export function ensembleMemberStroke(model: string): string {
-  return model.toLowerCase() === "gefs"
-    ? ENSEMBLE_COLORS.gefs_member_stroke
-    : ENSEMBLE_COLORS.eps_member_stroke;
+/**
+ * Distinct per-member stroke for the plume charts. Golden-angle hue spacing
+ * makes adjacent member indices maximally distinguishable; fixed saturation /
+ * lightness tuned for the dark chart background. The mean (bold white) and
+ * control (dashed model color) can never be confused with a member hue at
+ * these widths/styles.
+ */
+export function plumeMemberStroke(memberIndex: number): string {
+  const hue = Math.round((memberIndex * 137.508) % 360);
+  return `hsla(${hue}, 70%, 62%, 0.8)`;
 }
 
-/** Control-member stroke (white, drawn dashed by the plume chart). */
-export function ensembleControlStroke(model: string): string {
-  return model.toLowerCase() === "gefs"
-    ? ENSEMBLE_COLORS.gefs_control
-    : ENSEMBLE_COLORS.eps_control;
+/** Bold mean line on plume charts — white reads on top of any member hue. */
+export const PLUME_MEAN_STROKE = "#FFFFFF";
+
+/** Control-member stroke (model color; drawn dashed by the plume chart). */
+export function plumeControlStroke(model: string): string {
+  return ensembleMeanStroke(model);
 }
 
