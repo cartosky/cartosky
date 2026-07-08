@@ -169,9 +169,10 @@ export function ensembleMeanWidth(): number {
 }
 
 // Models whose per-member plume data the meteogram can serve (member pipeline
-// Phase 5). EPS joins when its member publishing lands (pipeline Phase 4) —
-// requesting include_members for a model not in this list 400s the request.
-export const MEMBER_PLUME_MODELS = ["gefs"] as const;
+// Phase 5; EPS members landed with pipeline Phase 4). Deploy-ordering: a model
+// listed here must ALSO be on the API's CARTOSKY_BINARY_SAMPLING_MODELS env,
+// or its include_members requests 400.
+export const MEMBER_PLUME_MODELS = ["gefs", "eps"] as const;
 
 /**
  * Distinct per-member stroke for the plume charts. Golden-angle hue spacing

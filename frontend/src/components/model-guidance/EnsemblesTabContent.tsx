@@ -379,10 +379,16 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
   const memberChartTitle = memberModel
     ? `${modelShortName(memberModel)} ${VARIABLE_LABELS[variable].toLowerCase()} members`
     : "";
+  // Only mention the control line when the served payload has one — EPS
+  // publishes 50 pf members with no upstream control.
+  const memberHasControl = memberModel
+    ? Boolean(memberData?.series?.[memberModel]?.variables?.[variable]?.members?.control)
+    : false;
   const memberChartSubtitle = memberModel
     ? [
         memberServedRun ? `Run ${formatRunLabel(memberServedRun)}` : null,
-        "Colored lines are individual members · bold white is the mean · dashed is the control",
+        "Colored lines are individual members · bold white is the mean" +
+          (memberHasControl ? " · dashed is the control" : ""),
       ]
         .filter(Boolean)
         .join(" · ")
