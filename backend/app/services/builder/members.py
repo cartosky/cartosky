@@ -462,7 +462,47 @@ def _detect_plan_mode(
     return MODE_PF_SUBSET
 
 
-def build_member_plan(plugin: Any, model_id: str, run_id: str, region: str) -> _MemberBuildPlan | None:
+def _mean_var_id_for(base_var: str, capability: Any) -> str:
+    """The runtime var id of this variable's published ensemble MEAN."""
+    ensemble = getattr(capability, "ensemble", None)
+    if isinstance(ensemble, dict):
+        artifact = (ensemble.get("artifact_map") or {}).get("mean")
+        if artifact:
+            return str(artifact).strip().lower()
+    return f"{str(base_var).strip().lower()}__mean"
+
+
+def _mean_frame_available(
+    data_root: Path, model_id: str, run_id: str, mean_var_id: str, fh: int,
+) -> bool:
+    """Does the run's MEAN frame exist (staging or published) for this fh?"""
+    return any(
+        member_frame_is_complete(
+            data_root / tree / model_id / run_id, model_id, mean_var_id, fh,
+        )
+        for tree in ("staging", "published")
+    )
+
+
+def build_member_plan(
+    plugin: Any,
+    model_id: str,
+    run_id: str,
+    region: str,
+    *,
+    data_root: Path | None = None,
+    mean_coverage_only: bool = False,
+) -> _MemberBuildPlan | None:
+    """Resolve the member build plan for one run.
+
+    ``mean_coverage_only`` (backfill semantics — requires ``data_root``) caps
+    each variable's fhs to the frames whose MEAN artifact actually exists:
+    a superseded run whose mean catchup never completed (e.g. an upstream
+    data defect blocked one variable) still gets members exactly where the
+    plume can display them, without chasing frames the mean never built.
+    The normal post-catchup pass leaves this off — there, coverage equals
+    the schedule by construction.
+    """
     descriptors = ensemble_member_descriptors(plugin)
     if not descriptors:
         return None
@@ -474,6 +514,8 @@ def build_member_plan(plugin: Any, model_id: str, run_id: str, region: str) -> _
             f"Member descriptors disagree on the roster for {model_id}: "
             + ", ".join(f"{var}={len(r)}" for var, r in rosters.items())
         )
+    if mean_coverage_only and data_root is None:
+        raise ValueError("mean_coverage_only requires data_root")
 
     cycle_hour = _cycle_hour_from_run_id(run_id)
     run_date = _run_date_from_run_id(run_id)
@@ -487,6 +529,12 @@ def build_member_plan(plugin: Any, model_id: str, run_id: str, region: str) -> _
             # Cumulative vars have no fh-0 product (min_fh constraints); a
             # schedule that claims one would leave the pass forever-pending.
             fhs = [fh for fh in fhs if fh > 0]
+        if mean_coverage_only and data_root is not None:
+            mean_var_id = _mean_var_id_for(base_var, ctx.capability)
+            fhs = [
+                fh for fh in fhs
+                if _mean_frame_available(data_root, model_id, run_id, mean_var_id, fh)
+            ]
         fhs_by_var[base_var] = fhs
 
     mode = _detect_plan_mode(plugin, contexts, run_date, fhs_by_var)
@@ -503,8 +551,9 @@ def build_member_plan(plugin: Any, model_id: str, run_id: str, region: str) -> _
     cumulative = _parse_cumulative_params(snow_ctx, precip_ctx)
 
     step_fhs: list[int] = []
-    if derived_vars:
-        max_step_fh = max(max(fhs_by_var[v]) for v in derived_vars)
+    derived_with_fhs = [v for v in derived_vars if fhs_by_var[v]]
+    if derived_with_fhs:
+        max_step_fh = max(max(fhs_by_var[v]) for v in derived_with_fhs)
         step_fhs = list(range(cumulative.step_hours, max_step_fh + 1, cumulative.step_hours))
 
     all_fhs = sorted({fh for fhs in fhs_by_var.values() for fh in fhs} | set(step_fhs))
@@ -1302,7 +1351,14 @@ def _process_member(
 
 
 # ── Pass pending / promote pending scans ────────────────────────────────────
-def _iter_expected_member_frames(plugin: Any, model_id: str, run_id: str):
+def _iter_expected_member_frames(
+    plugin: Any,
+    model_id: str,
+    run_id: str,
+    *,
+    data_root: Path | None = None,
+    mean_coverage_only: bool = False,
+):
     descriptors = ensemble_member_descriptors(plugin)
     cycle_hour = _cycle_hour_from_run_id(run_id)
     for base_var, descriptor in descriptors.items():
@@ -1312,27 +1368,53 @@ def _iter_expected_member_frames(plugin: Any, model_id: str, run_id: str):
         ))
         if derived:
             fhs = [fh for fh in fhs if fh > 0]
+        if mean_coverage_only and data_root is not None:
+            capability = _resolve_model_var_capability(model_id, base_var, plugin)
+            mean_var_id = _mean_var_id_for(base_var, capability)
+            fhs = [
+                fh for fh in fhs
+                if _mean_frame_available(data_root, model_id, run_id, mean_var_id, fh)
+            ]
         for member in ensemble_member_ids(descriptor):
             var_id = member_var_id(base_var, member)
             for fh in fhs:
                 yield var_id, fh
 
 
-def member_pass_pending(*, plugin: Any, model_id: str, run_id: str, data_root: Path) -> bool:
+def member_pass_pending(
+    *,
+    plugin: Any,
+    model_id: str,
+    run_id: str,
+    data_root: Path,
+    mean_coverage_only: bool = False,
+) -> bool:
     """Cheap presence scan: does any enabled (member, fh) frame remain unwritten?
 
     Gate-failed frames stay "pending" by this definition and are re-attempted
     on later passes; a persistent gate failure is loudly logged each pass
-    rather than silently forgotten.
+    rather than silently forgotten. ``mean_coverage_only`` mirrors the plan
+    builder's backfill cap so a mean-incomplete run stops reading as pending
+    once its mean-covered member frames exist.
     """
     staging_run_root = data_root / "staging" / model_id / run_id
-    for var_id, fh in _iter_expected_member_frames(plugin, model_id, run_id):
+    for var_id, fh in _iter_expected_member_frames(
+        plugin, model_id, run_id,
+        data_root=data_root, mean_coverage_only=mean_coverage_only,
+    ):
         if not member_frame_is_complete(staging_run_root, model_id, var_id, fh):
             return True
     return False
 
 
-def member_promote_pending(*, plugin: Any, model_id: str, run_id: str, data_root: Path) -> bool:
+def member_promote_pending(
+    *,
+    plugin: Any,
+    model_id: str,
+    run_id: str,
+    data_root: Path,
+    mean_coverage_only: bool = False,
+) -> bool:
     """Any member frame complete in STAGING but not in PUBLISHED?
 
     Covers the crash window between a completed pass and its promote: the
@@ -1341,7 +1423,10 @@ def member_promote_pending(*, plugin: Any, model_id: str, run_id: str, data_root
     """
     staging_run_root = data_root / "staging" / model_id / run_id
     published_run_root = data_root / "published" / model_id / run_id
-    for var_id, fh in _iter_expected_member_frames(plugin, model_id, run_id):
+    for var_id, fh in _iter_expected_member_frames(
+        plugin, model_id, run_id,
+        data_root=data_root, mean_coverage_only=mean_coverage_only,
+    ):
         if member_frame_is_complete(
             staging_run_root, model_id, var_id, fh,
         ) and not member_frame_is_complete(published_run_root, model_id, var_id, fh):
@@ -1394,6 +1479,7 @@ def run_member_pass(
     region: str,
     workers: int | None = None,
     should_stop: Callable[[], bool] | None = None,
+    mean_coverage_only: bool = False,
 ) -> MemberPassSummary:
     """Run the member publish pass for one run; idempotent and preemptible.
 
@@ -1409,7 +1495,10 @@ def run_member_pass(
     summary = MemberPassSummary(run_id=run_id, model_id=model_id)
 
     try:
-        plan = build_member_plan(plugin, model_id, run_id, region)
+        plan = build_member_plan(
+            plugin, model_id, run_id, region,
+            data_root=data_root, mean_coverage_only=mean_coverage_only,
+        )
     except Exception:
         logger.exception("Member pass: failed building plan model=%s run=%s", model_id, run_id)
         summary.counts[STATUS_ERROR] = summary.counts.get(STATUS_ERROR, 0) + 1

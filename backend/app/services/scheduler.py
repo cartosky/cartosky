@@ -2635,12 +2635,18 @@ def _maybe_run_member_pass(
     data_root: Path,
     probe_var: str | None,
     pinned_run: bool,
+    probe_reference_run_id: str | None = None,
+    mean_coverage_only: bool = False,
 ) -> None:
     """Run the member publish pass when enabled and work remains.
 
     Called only when the run's mean catchup is complete ("strictly after mean
-    publish" is structural). Never raises: member work must not take down the
-    mean scheduler loop. Writes go to STAGING; completed work is carried to
+    publish" is structural) — or from the idle backfill, which sets
+    ``mean_coverage_only`` (build members only where the run's mean frames
+    exist) and ``probe_reference_run_id`` (preempt on a run newer than the
+    LATEST run, not newer than the backfill target — the latter would preempt
+    instantly). Never raises: member work must not take down the mean
+    scheduler loop. Writes go to STAGING; completed work is carried to
     published via the same manifest-build + promote machinery the mean path
     uses (design R5).
     """
@@ -2657,12 +2663,14 @@ def _maybe_run_member_pass(
     try:
         build_pending = member_pass_pending(
             plugin=plugin, model_id=model_id, run_id=run_id, data_root=data_root,
+            mean_coverage_only=mean_coverage_only,
         )
         # Covers a crash between a completed pass and its promote — staged
         # member frames must never be stranded once the run is complete
         # (there are no further mean promotes to ride).
         promote_pending = member_promote_pending(
             plugin=plugin, model_id=model_id, run_id=run_id, data_root=data_root,
+            mean_coverage_only=mean_coverage_only,
         )
     except Exception:
         logger.exception("Member pass pending-scan failed: run=%s model=%s", run_id, model_id)
@@ -2674,7 +2682,9 @@ def _maybe_run_member_pass(
     member_var_ids: tuple[str, ...] = ()
     summary = None
     if build_pending:
-        should_stop = None if pinned_run else _make_newer_run_probe(plugin, probe_var, run_id)
+        should_stop = None if pinned_run else _make_newer_run_probe(
+            plugin, probe_var, probe_reference_run_id or run_id,
+        )
         try:
             summary = run_member_pass(
                 plugin=plugin,
@@ -2683,6 +2693,7 @@ def _maybe_run_member_pass(
                 data_root=data_root,
                 region=_default_build_region(plugin),
                 should_stop=should_stop,
+                mean_coverage_only=mean_coverage_only,
             )
         except Exception:
             logger.exception("Member pass failed: run=%s model=%s", run_id, model_id)
@@ -2712,6 +2723,78 @@ def _maybe_run_member_pass(
         )
     except Exception:
         logger.exception("Member frame promotion failed: run=%s model=%s", run_id, model_id)
+
+
+def _maybe_run_member_backfill(
+    *,
+    plugin: Any,
+    model_id: str,
+    latest_run_id: str,
+    data_root: Path,
+    probe_var: str | None,
+) -> None:
+    """Backfill member frames for kept runs the normal hook never reached.
+
+    A run superseded before its mean catchup completed (e.g. one variable
+    blocked by an upstream data defect — EPS 20260708_00z's rh700) never
+    fires the post-complete member hook and is never revisited by the mean
+    loop, so without this it would show a mean-only plume forever. During
+    idle, scan the published runs newest-first (skipping the latest — the
+    idle hook already covers it) and run ONE pending run's pass per idle
+    iteration, capped to the mean frames that run actually published.
+    """
+    if model_id not in member_publish_models():
+        return
+    from app.services.builder.members import member_pass_pending, member_promote_pending
+
+    published_root = data_root / "published" / model_id
+    if not published_root.is_dir():
+        return
+    runs: list[tuple[datetime, str]] = []
+    try:
+        for child in published_root.iterdir():
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            if child.name == latest_run_id:
+                continue
+            run_dt = _parse_run_id_datetime(child.name)
+            if run_dt is None:
+                continue
+            runs.append((run_dt, child.name))
+    except OSError:
+        return
+    runs.sort(key=lambda pair: pair[0], reverse=True)
+
+    for _, run_id in runs:
+        try:
+            pending = member_pass_pending(
+                plugin=plugin, model_id=model_id, run_id=run_id,
+                data_root=data_root, mean_coverage_only=True,
+            ) or member_promote_pending(
+                plugin=plugin, model_id=model_id, run_id=run_id,
+                data_root=data_root, mean_coverage_only=True,
+            )
+        except Exception:
+            logger.exception(
+                "Member backfill pending-scan failed: run=%s model=%s", run_id, model_id,
+            )
+            continue
+        if not pending:
+            continue
+        logger.info(
+            "Member backfill: run=%s model=%s (latest=%s)", run_id, model_id, latest_run_id,
+        )
+        _maybe_run_member_pass(
+            plugin=plugin,
+            model_id=model_id,
+            run_id=run_id,
+            data_root=data_root,
+            probe_var=probe_var,
+            pinned_run=False,
+            probe_reference_run_id=latest_run_id,
+            mean_coverage_only=True,
+        )
+        return
 
 
 def run_scheduler(
@@ -2819,6 +2902,15 @@ def run_scheduler(
                     data_root=data_root,
                     probe_var=resolved_probe_var,
                     pinned_run=False,
+                )
+                # Then backfill older kept runs the post-complete hook never
+                # reached (superseded before their mean catchup finished).
+                _maybe_run_member_backfill(
+                    plugin=plugin,
+                    model_id=model,
+                    latest_run_id=run_id,
+                    data_root=data_root,
+                    probe_var=resolved_probe_var,
                 )
                 logger.info("No new run yet (latest=%s complete); sleeping %ss", run_id, poll_seconds)
                 time.sleep(poll_seconds)

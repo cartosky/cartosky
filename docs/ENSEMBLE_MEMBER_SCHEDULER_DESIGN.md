@@ -277,6 +277,43 @@ by appending `eps` to `CARTOSKY_MEMBER_PUBLISH_MODELS`; the frontend's
 
 | # | Decision | Recommendation | Approved? |
 |---|----------|----------------|-----------|
-| D7 | EPS members via the decoupled pf-subset member pass (deterministic subset reuse + index-derived band mapping) instead of interleaving member encode into the bundle build | Yes — same outputs, zero hot-path blast radius, §3.6 economics preserved | ☐ |
+| D7 | EPS members via the decoupled pf-subset member pass (deterministic subset reuse + index-derived band mapping) instead of interleaving member encode into the bundle build | Yes — same outputs, zero hot-path blast radius, §3.6 economics preserved | ✅ 2026-07-08 (approved after the prod gate closed: 12z synoptic + 18z off-cycle both green first-pass) |
 
-*Document version: 2026-07-06 (draft → approved same day with review tweaks: D1 API-probe note, D3 clarification, D5 bundling prerequisite; Section 12 addendum approved and implemented same day; Section 13 added with the Phase 4 implementation, pending D7).*
+---
+
+## 14. Addendum — idle-time member backfill for superseded runs (D8)
+
+> Added 2026-07-08, after prod incident: EPS run 20260708_00z stuck at
+> 654/705 mean targets for ~5 h (upstream ECMWF index defect — the fh060+
+> step files' final GRIB message, an r700 pf band, was one byte shorter than
+> its own `.index` claimed; our range validator correctly refused it every
+> retry), then superseded by 06z. The post-complete member hook never fired
+> and the mean loop never revisits superseded runs, so the run showed a
+> mean-only plume permanently: 51 unbuildable mean frames blocked 5,999
+> buildable member frames.
+
+**D8 — backfill semantics.** During the idle branch (latest run complete),
+after the latest run's own member hook, the scheduler scans the kept
+published runs newest-first (skipping the latest) and runs ONE pending
+run's member pass per idle iteration, with two deviations from the normal
+pass:
+
+- **Mean-coverage cap** (`mean_coverage_only`): the plan builds members
+  only for fhs whose MEAN artifact exists (staging or published) — exactly
+  the frames the plume can display (member candidate fhs come from the mean
+  series), and exactly the pf subsets likely still in the Herbie cache.
+  The pending scans apply the same cap so a mean-incomplete run stops
+  reading as pending once its covered frames exist. The normal
+  post-complete pass is unchanged (coverage == schedule there).
+- **Probe reference = the LATEST run**: preempt when a run newer than the
+  latest appears (new mean work imminent), not newer than the backfill
+  target — the latter would preempt instantly and the backfill would never
+  run.
+
+Approved by Brian 2026-07-08 ("Option 1 is fine for a backfill resolve")
+after the incident diagnosis. Not changed: the mean loop still never
+rebuilds a superseded run's missing MEAN frames — the 51 rh700 frames stay
+absent (upstream defect); the backfill only closes the member gap for the
+654 frames the run did publish.
+
+*Document version: 2026-07-06 (draft → approved same day with review tweaks: D1 API-probe note, D3 clarification, D5 bundling prerequisite; Section 12 addendum approved and implemented same day; Section 13 added with the Phase 4 implementation, D7 approved 2026-07-08; Section 14 backfill addendum added and approved 2026-07-08).*

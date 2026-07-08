@@ -1119,3 +1119,120 @@ def test_pf_pass_partial_resume_rebuilds_only_missing_members(
     expected = _expected_eps_member_frame(eps_roster_plugin, 6, 2)
     both = np.isfinite(decoded) & np.isfinite(expected)
     assert np.allclose(decoded[both], expected[both], atol=0.11)
+
+
+# ── Backfill: mean-coverage cap + idle scan (post-Phase-4 hardening) ──
+# Triggered by prod 2026-07-08: EPS 00z stuck at 654/705 (upstream 1-byte
+# index defect on rh700) → superseded before complete → member hook never
+# fired → mean-only plumes. Backfill builds members for the mean frames a
+# stuck run DID publish, during idle, preempting only on new mean work.
+def _write_mean_frame(data_root: Path, run_id: str, fh: int) -> None:
+    write_slim_grid_frame_for_run_root(
+        run_root=data_root / "staging" / "eps" / run_id, model="eps",
+        var="tmp2m__mean", fh=fh,
+        values=np.full((NATIVE_H, NATIVE_W), 20.0, dtype=np.float32),
+        transform=NATIVE_TRANSFORM,
+    )
+
+
+def test_build_member_plan_mean_coverage_cap(tmp_path, eps_roster_plugin) -> None:
+    run_id = "20260708_00z"
+    _write_mean_frame(tmp_path, run_id, 0)  # fh6 mean deliberately absent
+
+    full = members.build_member_plan(eps_roster_plugin, "eps", run_id, "na")
+    assert full.fhs_by_var["tmp2m"] == [0, 6]
+    capped = members.build_member_plan(
+        eps_roster_plugin, "eps", run_id, "na",
+        data_root=tmp_path, mean_coverage_only=True,
+    )
+    assert capped.fhs_by_var["tmp2m"] == [0]
+    with pytest.raises(ValueError, match="requires data_root"):
+        members.build_member_plan(
+            eps_roster_plugin, "eps", run_id, "na", mean_coverage_only=True,
+        )
+
+
+def test_pf_backfill_pass_builds_only_mean_covered_frames(
+    tmp_path, eps_roster_plugin, monkeypatch,
+) -> None:
+    run_id = "20260708_00z"
+    _write_mean_frame(tmp_path, run_id, 0)
+    fake_resolver, calls = _make_fake_pf_resolver(tmp_path / "subsets", [1, 2, 3])
+    (tmp_path / "subsets").mkdir()
+    monkeypatch.setattr(members, "_resolve_pf_subset", fake_resolver)
+
+    summary = members.run_member_pass(
+        plugin=eps_roster_plugin, model_id="eps", run_id=run_id,
+        data_root=tmp_path, region="na", workers=1, mean_coverage_only=True,
+    )
+    # 3 members × the ONE mean-covered fh; complete, and the uncovered fh6
+    # was never even resolved.
+    assert summary.counts == {members.STATUS_WRITTEN: 3}
+    assert summary.complete
+    assert calls == [("tmp2m", 0)]
+    # Coverage-capped pending clears; schedule-based pending still reports
+    # the uncovered fh6 (the normal post-complete hook semantics).
+    assert not members.member_pass_pending(
+        plugin=eps_roster_plugin, model_id="eps", run_id=run_id,
+        data_root=tmp_path, mean_coverage_only=True,
+    )
+    assert members.member_pass_pending(
+        plugin=eps_roster_plugin, model_id="eps", run_id=run_id, data_root=tmp_path,
+    )
+
+
+def test_member_backfill_scan_selects_newest_pending_run(tmp_path, monkeypatch) -> None:
+    """Scheduler-level scan: newest-first, skips the latest run, one run per
+    idle iteration, probe referenced to the LATEST run."""
+    from backend.app.services import scheduler as sched
+    # The scheduler's lazy member imports resolve in the app.* namespace —
+    # patch that module instance (backend.app.* and app.* are distinct).
+    import app.services.builder.members as members_app
+
+    for run in ("20260707_12z", "20260708_00z", "20260708_06z"):
+        (tmp_path / "published" / "eps" / run).mkdir(parents=True)
+
+    pending_runs = {"20260707_12z"}  # 00z clean, 12z stuck
+    monkeypatch.setattr(sched, "member_publish_models", lambda: frozenset({"eps"}))
+    monkeypatch.setattr(
+        members_app, "member_pass_pending",
+        lambda *, plugin, model_id, run_id, data_root, mean_coverage_only=False:
+            run_id in pending_runs,
+    )
+    monkeypatch.setattr(
+        members_app, "member_promote_pending",
+        lambda *, plugin, model_id, run_id, data_root, mean_coverage_only=False: False,
+    )
+    passes: list[dict] = []
+    monkeypatch.setattr(
+        sched, "_maybe_run_member_pass", lambda **kwargs: passes.append(kwargs),
+    )
+
+    sched._maybe_run_member_backfill(
+        plugin=object(), model_id="eps", latest_run_id="20260708_06z",
+        data_root=tmp_path, probe_var="tmp2m",
+    )
+    assert len(passes) == 1
+    call = passes[0]
+    assert call["run_id"] == "20260707_12z"
+    assert call["probe_reference_run_id"] == "20260708_06z"
+    assert call["mean_coverage_only"] is True
+
+    # Latest run is never a backfill target even when "pending".
+    passes.clear()
+    pending_runs.add("20260708_06z")
+    pending_runs.discard("20260707_12z")
+    sched._maybe_run_member_backfill(
+        plugin=object(), model_id="eps", latest_run_id="20260708_06z",
+        data_root=tmp_path, probe_var="tmp2m",
+    )
+    assert passes == []
+
+    # Model not on the allowlist: no scan at all.
+    monkeypatch.setattr(sched, "member_publish_models", lambda: frozenset())
+    pending_runs.add("20260707_12z")
+    sched._maybe_run_member_backfill(
+        plugin=object(), model_id="eps", latest_run_id="20260708_06z",
+        data_root=tmp_path, probe_var="tmp2m",
+    )
+    assert passes == []
