@@ -116,6 +116,22 @@ def member_publish_models() -> frozenset[str]:
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
+def stats_publish_models() -> frozenset[str]:
+    """Models whose scheduler runs the ensemble STATS publish pass (member
+    pipeline Phase 6 / Tier 2 — percentile + probability map products).
+
+    Same pattern and kill-switch semantics as :func:`member_publish_models`:
+    ``CARTOSKY_STATS_PUBLISH_MODELS=gefs``; empty default = off everywhere;
+    published stat frames age out with run retention. Rollout stages 6A→6C
+    (stats design §9) are driven by this list plus the per-variable
+    descriptor ``enabled`` flags.
+    """
+    raw = _env_value("CARTOSKY_STATS_PUBLISH_MODELS").strip().lower()
+    if not raw:
+        return frozenset()
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
 @lru_cache(maxsize=1)
 def grid_build_enabled() -> bool:
     return True

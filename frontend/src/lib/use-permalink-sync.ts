@@ -13,6 +13,7 @@ export interface UsePermalinkSyncParams {
   mapViewRef: React.RefObject<{ lat: number; lon: number; z: number }>;
   /** Current selection values that feed the permalink search string. */
   model: string | null;
+  product?: string | null;
   run: string | null;
   variable: string | null;
   ensembleView: string | null;
@@ -42,6 +43,7 @@ export function usePermalinkSync({
   mapViewTick,
   mapViewRef,
   model,
+  product,
   run,
   variable,
   ensembleView,
@@ -98,6 +100,7 @@ export function usePermalinkSync({
           run: run || undefined,
           var: variable || undefined,
           ensembleView: ensembleView || undefined,
+          product: product || undefined,
           fh: Number.isFinite(resolvedForecastHourPermalink)
             ? Number(resolvedForecastHourPermalink)
             : undefined,
@@ -124,7 +127,7 @@ export function usePermalinkSync({
     model,
     run,
     variable,
-    ensembleView,
+    ensembleView, product,
     resolvedForecastHourPermalink,
     region,
     mapViewTick,

@@ -39,6 +39,7 @@ import {
   readCapabilitySupportsSampling,
   readCapabilityTimeAxisMode,
 } from "@/lib/api";
+import type { EnsembleProductOption } from "@/lib/api";
 import {
   anchorBatchPointsFromGeoJson,
   buildAnchorDisplayGeoJson,
@@ -345,6 +346,8 @@ export default function App() {
   const [newRunNotice, setNewRunNotice] = useState<NewRunNoticeState | null>(null);
   const [variable, setVariable] = useState("");
   const [ensembleView, setEnsembleView] = useState(initialPermalink.ensembleView?.trim() ?? "");
+  // Ensemble stats product key (stats design §7 / D-D); "" = mean.
+  const [product, setProduct] = useState((initialPermalink.product ?? "").trim().toLowerCase());
   const [visualVariable, setVisualVariable] = useState("");
   const [variableSwitchState, setVariableSwitchState] = useState<VariableSwitchState | null>(null);
   const [forecastHour, setForecastHour] = useState(Number.POSITIVE_INFINITY);
@@ -734,6 +737,21 @@ export default function App() {
     && (selectedCapabilityVarMap.has(variable) || manifestVarIds.has(variable))
   );
   const selectedVariableCapability = variable ? selectedModelCapability?.variables?.[variable] : undefined;
+  // Ensemble stats products (stats design §7, option B): declared on the
+  // parent variable's capability; "mean" = today's behavior. An ACTIVE
+  // product swaps the requested variable id at data-request boundaries
+  // only — capability-driven UI stays keyed on the base variable.
+  const ensembleProducts = useMemo(() => {
+    const raw = (selectedVariableCapability?.ensemble as Record<string, unknown> | undefined)?.products;
+    return Array.isArray(raw) ? (raw as EnsembleProductOption[]) : [];
+  }, [selectedVariableCapability]);
+  const activeProduct = product
+    ? ensembleProducts.find((entry) => entry.key === product && entry.var_id)
+    : undefined;
+  const requestVariable = activeProduct?.var_id ?? variable;
+  // Product var ids are published runtime ids and resolve directly; an
+  // ensemble view would be a meaningless extra hop.
+  const requestEnsembleView = activeProduct ? "" : ensembleView;
   const selectedVariableDefaultFh = selectedCapabilityVarMap.get(variable)?.defaultFh ?? null;
   const selectedModelLatestOnly = readCapabilityLatestOnly(selectedModelCapability);
   const selectedModelSupportsSampling = readCapabilitySupportsSampling(selectedModelCapability);
@@ -790,6 +808,16 @@ export default function App() {
       setEnsembleView(nextDefault);
     }
   }, [selectedModelCapability, selectedVariableCapability, variable, ensembleView]);
+
+  useEffect(() => {
+    if (!product || !selectionCapabilitiesResolved) return;
+    const supported = ensembleProducts.some((entry) => entry.key === product && entry.var_id);
+    if (!supported) {
+      // Deep-link fallback to mean (stats design §7) — also covers
+      // switching to a variable/model without this product.
+      setProduct("");
+    }
+  }, [ensembleProducts, product, selectionCapabilitiesResolved]);
 
   const frameHours = useMemo(() => {
     const hours = frameRows.map((row) => Number(row.fh)).filter(Number.isFinite);
@@ -885,7 +913,7 @@ export default function App() {
         model: context.model,
         run: context.run,
         variable: context.variable,
-        ensembleView,
+        ensembleView: requestEnsembleView,
         forecastHour: requestedHour,
         points: context.points,
         signal: controller.signal,
@@ -957,7 +985,7 @@ export default function App() {
           startAnchorBatchRequest(pendingHour as number, latestContext);
         });
     },
-    [ensembleView]
+    [requestEnsembleView]
   );
 
   const currentFrame = frameByHour.get(forecastHour) ?? frameRows[0] ?? null;
@@ -981,7 +1009,7 @@ export default function App() {
       }
       map[fh] = validTime;
     }
-    const manifestFrames = runManifest?.variables?.[variable]?.frames;
+    const manifestFrames = runManifest?.variables?.[requestVariable]?.frames;
     if (Array.isArray(manifestFrames)) {
       for (const frame of manifestFrames) {
         const fh = Number(frame?.fh);
@@ -1060,7 +1088,7 @@ export default function App() {
     : run === "latest"
       ? "latest"
       : resolvedRunForRequests;
-  const selectionKey = `${model}:${selectionRunKey}:${variable}:${region}:${ensembleView || "-"}`;
+  const selectionKey = `${model}:${selectionRunKey}:${variable}:${region}:${ensembleView || "-"}:${product || "-"}`;
   useEffect(() => {
     selectionKeyRef.current = selectionKey;
   }, [selectionKey]);
@@ -1276,6 +1304,7 @@ export default function App() {
       run: run || undefined,
       var: variable || undefined,
       ensembleView: ensembleView || undefined,
+      product: product || undefined,
       fh: Number.isFinite(feedbackPermalinkForecastHour)
         ? Number(feedbackPermalinkForecastHour)
         : undefined,
@@ -1296,6 +1325,7 @@ export default function App() {
     });
   }, [
     ensembleView,
+    product,
     forecastHour,
     isGridPreloadingForPlay,
     isPlaying,
@@ -1354,7 +1384,7 @@ export default function App() {
         // order) that returns a valid manifest.
         const results = await Promise.allSettled(
           latestGridRunCandidates.map((candidateRun) =>
-            fetchGridManifest(model, candidateRun, variable, region, ensembleView, { signal: controller.signal })
+            fetchGridManifest(model, candidateRun, requestVariable, region, requestEnsembleView, { signal: controller.signal })
               .then((manifest) => ({ candidateRun, manifest })),
           ),
         );
@@ -1376,7 +1406,7 @@ export default function App() {
         return;
       }
 
-      const manifest = await fetchGridManifest(model, resolvedRunForRequests, variable, region, ensembleView, { signal: controller.signal });
+      const manifest = await fetchGridManifest(model, resolvedRunForRequests, requestVariable, region, requestEnsembleView, { signal: controller.signal });
       if (controller.signal.aborted) {
         return;
       }
@@ -1411,6 +1441,7 @@ export default function App() {
     telemetryRunId,
     variable,
     ensembleView,
+    product,
   ]);
 
   // Clock tick (30s) so the observed-source freshness badge re-evaluates as
@@ -3537,7 +3568,7 @@ export default function App() {
         runManifest?.model === model &&
         (run === "latest" || runManifest?.run === run || runManifest?.run === resolvedRunForRequests);
       const manifestFrameList = manifestMatchesSelection
-        ? resolveManifestFrames(runManifest, variable)
+        ? resolveManifestFrames(runManifest, requestVariable)
         : { rows: [] as FrameRow[], hasFrameList: false };
       const canHydrateFromManifest = manifestFrameList.hasFrameList;
       if (manifestMatchesSelection && canHydrateFromManifest) {
@@ -3568,7 +3599,7 @@ export default function App() {
         if (!framesRunKey) {
           return;
         }
-        const rows = await fetchFrames(model, framesRunKey, variable, region, ensembleView, { signal: controller.signal });
+        const rows = await fetchFrames(model, framesRunKey, requestVariable, region, requestEnsembleView, { signal: controller.signal });
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         setVariableSwitchState((current) => {
           if (!current || current.toVariable !== variable) {
@@ -3632,7 +3663,7 @@ export default function App() {
             runManifest === null
             || (
               runManifest?.model === model
-              && resolveManifestFrames(runManifest, variable).hasFrameList
+              && resolveManifestFrames(runManifest, requestVariable).hasFrameList
             )
           );
         if (!forecastHourCommitted && !awaitingManifestForProductSwitch) {
@@ -3714,7 +3745,7 @@ export default function App() {
       generation,
       model,
       run: resolvedRunForRequests,
-      variable,
+      variable: requestVariable,
       baseCollection: anchorBaseGeoJson,
       points: anchorBatchPoints,
       deferToLatest: isScrubbing || isPlaying || isGridPreloadingForPlay,
@@ -3856,7 +3887,7 @@ export default function App() {
             const [manifestData, nextGridManifest] = await Promise.all([
               fetchManifest(model, manifestRunKey, region, ensembleView, { signal: tickController.signal }),
               (prefersGridSubstrate && selectionSupportsGrid)
-                ? fetchGridManifest(model, gridRunKey, variable, region, ensembleView, { signal: tickController.signal })
+                ? fetchGridManifest(model, gridRunKey, requestVariable, region, requestEnsembleView, { signal: tickController.signal })
                 : Promise.resolve(null),
             ]);
             if (cancelled || tickController?.signal.aborted) {
@@ -3876,7 +3907,7 @@ export default function App() {
               setVariables(variableOptions);
               setVariable((prev) => (prev && variableIds.includes(prev) ? prev : nextVar));
             }
-            const { rows, hasFrameList } = resolveManifestFrames(manifestData, variable);
+            const { rows, hasFrameList } = resolveManifestFrames(manifestData, requestVariable);
 
             // Apply the grid manifest BEFORE extending frameRows / the
             // slider.  gridFrameHours (derived from gridManifest) is used by
@@ -3917,9 +3948,9 @@ export default function App() {
             ? (retainedGridLatestRunId ?? framesRunKey)
             : resolvedRunForRequests;
           const [rows, nextGridManifest] = await Promise.all([
-            fetchFrames(model, framesRunKey, variable, region, ensembleView, { signal: tickController.signal }),
+            fetchFrames(model, framesRunKey, requestVariable, region, requestEnsembleView, { signal: tickController.signal }),
             (prefersGridSubstrate && selectionSupportsGrid)
-              ? fetchGridManifest(model, framesGridRunKey, variable, region, ensembleView, { signal: tickController.signal })
+              ? fetchGridManifest(model, framesGridRunKey, requestVariable, region, requestEnsembleView, { signal: tickController.signal })
               : Promise.resolve(null),
           ]);
           if (cancelled || tickController?.signal.aborted) {
@@ -3955,7 +3986,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, variable, ensembleView, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId, prefersGridSubstrate, selectionSupportsGrid, region]);
+  }, [model, run, variable, ensembleView, product, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId, prefersGridSubstrate, selectionSupportsGrid, region]);
 
   useEffect(() => {
     if (!model || run === "latest" || !isPageVisible) {
@@ -4557,8 +4588,8 @@ export default function App() {
     void fetchSampleBatch({
       model,
       run: resolvedRunForRequests,
-      variable,
-      ensembleView,
+      variable: requestVariable,
+      ensembleView: requestEnsembleView,
       forecastHour: requestFrameHour,
       points: batchPoints,
     })
@@ -5103,7 +5134,7 @@ export default function App() {
     if (fromCapabilities) {
       return makeVariableLabel(variable, fromCapabilities, model);
     }
-    const manifestVariable = runManifest?.variables?.[variable];
+    const manifestVariable = runManifest?.variables?.[requestVariable];
     return manifestVariable?.display_name ?? manifestVariable?.name ?? manifestVariable?.label ?? variable;
   }, [variables, variable, selectedCapabilityVarMap, runManifest, model]);
   const runAvailability = useMemo(() => {
@@ -5123,8 +5154,8 @@ export default function App() {
     }
 
     const latestLabel = formatRunLabel(latestRun, selectedTimeAxisMode);
-    const manifestVariableFrames = Array.isArray(runManifest?.variables?.[variable]?.frames)
-      ? runManifest.variables?.[variable]?.frames ?? []
+    const manifestVariableFrames = Array.isArray(runManifest?.variables?.[requestVariable]?.frames)
+      ? runManifest.variables?.[requestVariable]?.frames ?? []
       : [];
     const manifestVariableMaxForecastHour = manifestVariableFrames.length > 0
       ? Math.max(...manifestVariableFrames.map((frame) => Number(frame?.fh)).filter(Number.isFinite))
@@ -5548,6 +5579,7 @@ export default function App() {
       run: run || undefined,
       var: variable || undefined,
       ensembleView: ensembleView || undefined,
+      product: product || undefined,
       fh: Number.isFinite(resolvedForecastHourPermalink)
         ? Number(resolvedForecastHourPermalink)
         : undefined,
@@ -5560,7 +5592,7 @@ export default function App() {
       ? `${window.location.origin}${window.location.pathname}${permalinkSearch}${window.location.hash}`
       : permalinkSearch;
     const capabilityVariableLabel = selectedCapabilityVarMap.get(variable)?.displayName ?? null;
-    const manifestVariable = runManifest?.variables?.[variable];
+    const manifestVariable = runManifest?.variables?.[requestVariable];
     const manifestVariableLabel = manifestVariable?.display_name ?? manifestVariable?.name ?? manifestVariable?.label ?? null;
     const preferredVariableLabel = capabilityVariableLabel ?? manifestVariableLabel;
     const fallbackPayload = buildFallbackSharePayload({
@@ -5643,6 +5675,7 @@ export default function App() {
     run,
     variable,
     ensembleView,
+    product,
     resolvedForecastHourPermalink,
     region,
     suspended: isPlaying || isGridPreloadingForPlay,
@@ -5668,6 +5701,23 @@ export default function App() {
     return `/compare${search}`;
   }, [capabilities, forecastHour, mapViewTick, model, run, variable]);
 
+  const productAvailability = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    for (const entry of ensembleProducts) {
+      map[entry.key] = entry.key === "mean"
+        ? true
+        : Boolean(
+            entry.var_id
+            && (runManifest?.variables?.[entry.var_id]?.frames?.length ?? 0) > 0,
+          );
+    }
+    return map;
+  }, [ensembleProducts, runManifest]);
+
+  const handleProductChange = useCallback((key: string) => {
+    setProduct(key === "mean" ? "" : key.trim().toLowerCase());
+  }, []);
+
   const toolbarContextValue = useMemo(() => ({
     region,
     onRegionChange: handleRegionChange,
@@ -5684,6 +5734,10 @@ export default function App() {
     variables,
     variableCatalog: allVariableCatalog,
     supportedVariableIds,
+    ensembleProducts,
+    product: product || "mean",
+    onProductChange: handleProductChange,
+    productAvailability,
     disabled: loading || models.length === 0,
     runDisplayLabel: selectedRunLabel,
     latestAvailableRunLabel,
@@ -5735,6 +5789,7 @@ export default function App() {
     region, handleRegionChange, handleLocationJump, model, handleModelChange, run, handleRunChange,
     variable, handleVariableChange, regions, models, runOptions, variables,
     allVariableCatalog, supportedVariableIds,
+    ensembleProducts, product, handleProductChange, productAvailability,
     loading, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
     pointLabelsEnabled, nwsWarningsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,

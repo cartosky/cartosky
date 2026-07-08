@@ -1057,6 +1057,34 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "allow_dry_frame": True,
         "transparent_below_min": 0.01,
     },
+    # Ensemble probability-of-exceedance products (stats design §6): one
+    # shared 0–100% ramp for every {var}__prob_gt_* map. allow_dry_frame is
+    # load-bearing — an all-zero probability field (P(snow > 6") in July) is
+    # a valid product, the same lesson as the dry snowfall member frames.
+    "ensemble_probability": {
+        "type": "continuous",
+        "display_palette_kind": "discrete",
+        "units": "%",
+        "range": (0.0, 100.0),
+        "levels": [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95],
+        "colors": [
+            "#0b1d33",  # 5–10   deep navy (near-background)
+            "#12395c",  # 10–20
+            "#1a5a85",  # 20–30
+            "#2380a8",  # 30–40
+            "#2fa8c2",  # 40–50
+            "#4fc9cf",  # 50–60
+            "#7fdcc9",  # 60–70
+            "#b6e8b0",  # 70–80
+            "#e8ee8f",  # 80–90
+            "#f8c95a",  # 90–95
+            "#f0902e",  # 95–100
+        ],
+        "display_name": "Probability",
+        "legend_title": "Probability (%)",
+        "allow_dry_frame": True,
+        "transparent_below_min": 5.0,
+    },
     "mrms_recent_precip_6h": {
         "type": "continuous",
         "display_palette_kind": "discrete",

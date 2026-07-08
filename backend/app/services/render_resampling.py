@@ -208,6 +208,20 @@ def variable_color_map_id(model_id: str, var_key: str) -> str | None:
 
     entry = _lookup_variable_catalog_entry(model_norm, var_norm)
     if entry is None:
+        # Ensemble-derived runtime ids (members/percentiles/probabilities)
+        # are deliberately NOT catalog entries (member pipeline R7 / stats
+        # design §3). Percentiles render with the base variable's colormap
+        # (a snow P50 looks like snow); probabilities share the dedicated
+        # 0–100% ramp (stats design §6).
+        from ..models.base import classify_ensemble_var_id
+
+        classified = classify_ensemble_var_id(var_norm)
+        if classified is not None:
+            base_var, kind, _detail = classified
+            if kind == "percentile":
+                return variable_color_map_id(model_norm, base_var)
+            if kind == "prob_gt":
+                return "ensemble_probability"
         return None
     color_map_id = getattr(entry, "color_map_id", None)
     if not isinstance(color_map_id, str):

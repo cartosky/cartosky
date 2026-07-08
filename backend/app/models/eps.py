@@ -850,6 +850,15 @@ EPS_VARIABLE_CATALOG = {
             # run-cumulative, so members are direct per-band reads — no
             # cumulative loop. 50 pf members, no control (plan §2.2).
             "members": {"count": 50, "control": False, "prefix": "m", "enabled": True},
+            # Tier 2 stats products (stats design §1/§3): rollout stage 6C —
+            # descriptor ships enabled, gated in practice by eps joining
+            # CARTOSKY_STATS_PUBLISH_MODELS after the gefs stages are green.
+            "stats": {
+                "percentiles": [10, 25, 50, 75, 90],
+                "prob_thresholds": [0.10, 0.25, 0.50, 1.00, 1.50, 2.00],
+                "label_noun": "precipitation",
+                "enabled": True,
+            },
         },
     ),
     "precip_total__mean": VariableCapability(

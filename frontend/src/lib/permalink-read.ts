@@ -3,6 +3,8 @@ export type PermalinkState = {
   run?: string;
   var?: string;
   ensembleView?: string;
+  /** Ensemble stats product key (stats design §7), e.g. "p50" / "prob_gt_0p5". */
+  product?: string;
   fh?: number;
   region?: string;
   lat?: number;
@@ -51,6 +53,10 @@ export function readPermalink(): PermalinkState {
     state.var = varKey;
   }
 
+  const product = readStringParam(params, "product");
+  if (product) {
+    state.product = product.toLowerCase();
+  }
   const ensembleView = readStringParam(params, "ev");
   if (ensembleView) {
     state.ensembleView = ensembleView;

@@ -1575,20 +1575,59 @@ def ensure_grid_brotli_sidecar(
     return write_grid_brotli_sidecar(frame_path, payload, quality=quality)
 
 
-# Ensemble member runtime ids: {var}__m{NN} (zero-padded 2-digit) or
-# {var}__control (member pipeline plan Section 4.1).
-_MEMBER_PACK_SUFFIX_RE = re.compile(r"^(?P<base>.+)__(?:m\d{2}|control)$")
+# Ensemble runtime ids sharing the base variable's packing: {var}__m{NN}
+# (zero-padded 2-digit), {var}__control, and — Tier 2 (stats design §6) —
+# percentile grids {var}__p{NN} (member pipeline plan Section 4.1).
+_MEMBER_PACK_SUFFIX_RE = re.compile(r"^(?P<base>.+)__(?:m\d{2}|control|p\d{2})$")
+_PROB_PACK_SUFFIX_RE = re.compile(r"^.+__prob_gt_\d+p\d+$")
+
+# Probability-of-exceedance packing band (stats design §6, plan §3.4 LOCKED):
+# dimensionless %, 0.1% precision, uint16. Entries are generated per
+# (model, prob var id) from the ensemble.stats descriptors — deliberate
+# EXPLICIT dict entries, never a suffix fallback (a probability field
+# quantized with a physical variable's constants is silent corruption).
+# Generation is lazy so grid.py never imports the model registry at load.
+_PROBABILITY_PACKING: dict[str, Any] = {
+    "scale": 0.1,
+    "offset": 0.0,
+    "nodata": 65535,
+    "units": "%",
+}
+_PROB_PACKING_GENERATED = False
+
+
+def _ensure_probability_packing_entries() -> None:
+    global _PROB_PACKING_GENERATED
+    if _PROB_PACKING_GENERATED:
+        return
+    from ..models.base import ensemble_stats_descriptors, ensemble_stats_product_ids
+    from ..models.registry import MODEL_REGISTRY
+
+    for model_id, plugin in MODEL_REGISTRY.items():
+        try:
+            descriptors = ensemble_stats_descriptors(plugin)
+        except Exception:
+            continue
+        for base_var, descriptor in descriptors.items():
+            for key, var_id in ensemble_stats_product_ids(base_var, descriptor).items():
+                if key.startswith("prob_"):
+                    _PACKING_BY_MODEL_VAR.setdefault(
+                        (str(model_id).strip().lower(), var_id),
+                        dict(_PROBABILITY_PACKING),
+                    )
+    _PROB_PACKING_GENERATED = True
 
 
 def normalize_grid_pack_var_id(var: str) -> str:
-    """Map an ensemble-member runtime id to its packing twin.
+    """Map an ensemble-derived runtime id to its packing twin.
 
-    ``tmp2m__m07`` / ``tmp2m__control`` -> ``tmp2m__mean``; every other id is
-    returned unchanged. Members and mean MUST share packing constants — they
-    quantize the same physical field (member pipeline plan Section 3.4).
-    Percentile ``__p{NN}`` -> base mapping is specified by the same plan
-    section but is wired only when Tier 2's precondition is met; probability
-    grids get explicit packing entries and never resolve through here.
+    ``tmp2m__m07`` / ``tmp2m__control`` / ``snowfall_total__p25`` ->
+    ``{base}__mean``; every other id is returned unchanged. Members,
+    percentiles, and the mean MUST share packing constants — they quantize
+    the same physical field (member pipeline plan Section 3.4). Probability
+    grids are dimensionless % with explicit generated entries
+    (:func:`_ensure_probability_packing_entries`); they never resolve
+    through here.
     """
     normalized = str(var or "").strip().lower()
     match = _MEMBER_PACK_SUFFIX_RE.match(normalized)
@@ -1603,14 +1642,20 @@ def _packing_config(model: str, var: str) -> dict[str, Any] | None:
     exact = _PACKING_BY_MODEL_VAR.get((model_norm, var_norm))
     if exact is not None:
         return exact
-    # Member-suffix fallback (member pipeline plan Section 3.4): member ids
-    # resolve to their __mean twin's entry instead of registering hundreds of
-    # duplicate entries. This is the single seam that makes grid_supported,
-    # manifest iteration, and the binary sampler member-aware (Phase 2 design
-    # R3); it changes nothing for ids without a member suffix.
+    # Member/percentile-suffix fallback (member pipeline plan Section 3.4):
+    # these ids resolve to their __mean twin's entry instead of registering
+    # hundreds of duplicate entries. This is the single seam that makes
+    # grid_supported, manifest iteration, and the binary sampler aware of
+    # ensemble-derived ids (Phase 2 design R3); it changes nothing for ids
+    # without a recognized suffix.
     pack_var = normalize_grid_pack_var_id(var_norm)
     if pack_var != var_norm:
         return _PACKING_BY_MODEL_VAR.get((model_norm, pack_var))
+    # Probability ids: generate the explicit entries on first demand, then
+    # retry the exact lookup — never a fallback (see the band definition).
+    if _PROB_PACK_SUFFIX_RE.match(var_norm) and not _PROB_PACKING_GENERATED:
+        _ensure_probability_packing_entries()
+        return _PACKING_BY_MODEL_VAR.get((model_norm, var_norm))
     return None
 
 

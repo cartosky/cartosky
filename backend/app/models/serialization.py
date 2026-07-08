@@ -3,6 +3,54 @@ from __future__ import annotations
 from typing import Any
 
 from ..services.render_resampling import display_resampling_override
+from .base import ensemble_stats_product_ids, parse_prob_threshold
+
+
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }"
+
+
+def _ensemble_products_payload(capability: Any) -> list[dict[str, Any]] | None:
+    """Ordered product list for the viewer's product sub-selector (stats
+    design §7 / D-D): derived from the ``ensemble.stats`` descriptor with
+    human display labels — runtime ids like ``prob_gt_0p5`` never reach the
+    UI. ``None`` when the variable has no enabled stats products (the
+    selector renders nothing and the variable behaves exactly as today).
+    """
+    ensemble = getattr(capability, "ensemble", None)
+    if not isinstance(ensemble, dict):
+        return None
+    stats = ensemble.get("stats")
+    if not isinstance(stats, dict) or not bool(stats.get("enabled", False)):
+        return None
+    var_key = str(getattr(capability, "var_key", "") or "")
+    units = str(getattr(capability, "units", "") or "").strip()
+    unit_suffix = '"' if units == "in" else (f" {units}" if units else "")
+    noun = str(stats.get("label_noun") or "").strip()
+
+    products: list[dict[str, Any]] = [
+        # "mean" = today's behavior: no product param, the ensemble_view
+        # resolution serves the __mean artifact.
+        {"key": "mean", "var_id": None, "label": "Mean", "long_label": "Ensemble mean"},
+    ]
+    for key, var_id in ensemble_stats_product_ids(var_key, stats).items():
+        if key.startswith("prob_gt_"):
+            threshold = parse_prob_threshold(key[len("prob_gt_"):])
+            threshold_text = f"{threshold:g}{unit_suffix}"
+            label = f"P(> {threshold_text})"
+            long_label = (
+                f"Probability of {noun} > {threshold_text}"
+                if noun else f"Probability > {threshold_text}"
+            )
+        else:
+            label = key.upper()
+            long_label = f"{_ordinal(int(key[1:]))} percentile"
+        products.append(
+            {"key": key, "var_id": var_id, "label": label, "long_label": long_label}
+        )
+    return products
 
 
 def _render_substrates_for_variable(model_id: str, capability: Any | None) -> list[str]:
@@ -32,6 +80,9 @@ def serialize_variable_capability(model_id: str, capability: Any) -> dict[str, A
     ensemble = getattr(capability, "ensemble", None)
     ensemble_payload = dict(ensemble) if isinstance(ensemble, dict) else {}
     ensemble_payload.pop("artifact_map", None)
+    products = _ensemble_products_payload(capability)
+    if products:
+        ensemble_payload["products"] = products
     payload = {
         "var_key": var_key,
         "display_name": str(getattr(capability, "name", "")),

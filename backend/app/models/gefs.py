@@ -1177,6 +1177,16 @@ GEFS_VARIABLE_CATALOG = {
             # Per-member slim publish (design §12/D6): built by the member
             # pass's sequential cumulative loop from bundled APCP+CSNOW.
             "members": {"count": 30, "control": True, "prefix": "m", "enabled": True},
+            # Tier 2 stats products (stats design §1/§3). Ships DISABLED:
+            # rollout stage 6B — flip after the gefs precip_total first-run
+            # acceptance budget (§10.7) is green. Thresholds are LOCKED plan
+            # §4.2 values (display units, inches).
+            "stats": {
+                "percentiles": [10, 25, 50, 75, 90],
+                "prob_thresholds": [1, 3, 6, 12],
+                "label_noun": "snowfall",
+                "enabled": False,
+            },
         },
     ),
     "snowfall_total__mean": VariableCapability(
@@ -1263,6 +1273,17 @@ GEFS_VARIABLE_CATALOG = {
             # Per-member slim publish (design §12/D6): built by the member
             # pass's sequential cumulative loop from bundled APCP steps.
             "members": {"count": 30, "control": True, "prefix": "m", "enabled": True},
+            # Tier 2 stats products (stats design §1/§3): rollout stage 6A —
+            # the first-enabled product set; the §10.7 acceptance budget runs
+            # against this variable. Thresholds are LOCKED plan §4.2 values
+            # (display units, inches). Publishing also requires the model on
+            # CARTOSKY_STATS_PUBLISH_MODELS.
+            "stats": {
+                "percentiles": [10, 25, 50, 75, 90],
+                "prob_thresholds": [0.10, 0.25, 0.50, 1.00, 1.50, 2.00],
+                "label_noun": "precipitation",
+                "enabled": True,
+            },
         },
     ),
     "precip_total__mean": VariableCapability(

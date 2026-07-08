@@ -1047,6 +1047,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
 
   const {
     variable, onVariableChange, variables, variableCatalog, supportedVariableIds, model, onModelChange, models,
+    ensembleProducts, product, onProductChange, productAvailability,
     run, onRunChange, runs, region, onRegionChange, onLocationJump, regions,
     disabled, runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel,
     onViewLatestRun, runSelectionLocked,
@@ -1056,6 +1057,14 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
     basemapMode, onBasemapModeChange, opacity, onOpacityChange,
     zoomControlsVisible, onZoomControlsVisibleChange, legend,
   } = toolbar;
+  // Ensemble stats product options (stats design §7): only products the
+  // current run actually serves; the selector hides entirely when the run
+  // offers nothing beyond the mean (e.g. stats still publishing).
+  const availableProductOptions = (ensembleProducts ?? [])
+    .filter((entry) => entry.key === "mean" || productAvailability?.[entry.key])
+    .map((entry) => ({ value: entry.key, label: entry.label ?? entry.key, longLabel: entry.long_label ?? entry.label ?? entry.key }));
+  const showProductSelect = availableProductOptions.length > 1;
+
 
   const runMenuOptions = useMemo(() => {
     if (!hasNewerRunAvailable) return runs;
@@ -1101,6 +1110,18 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
               panelOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
             />
           </HeaderSelectField>
+          {showProductSelect ? (
+            <HeaderSelectField label="Product" icon={Layers}>
+              <NavbarSelect
+                value={product ?? "mean"}
+                onValueChange={(value) => onProductChange?.(value)}
+                options={availableProductOptions}
+                disabled={disabled}
+                placeholder="Product"
+                minWidth="min-w-[120px] max-w-[200px]"
+              />
+            </HeaderSelectField>
+          ) : null}
           <HeaderSelectField label="Run Time" icon={CalendarClock}>
             <NavbarSelect
               value={run}
@@ -1354,6 +1375,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
 
   const {
     variable, onVariableChange, variables, variableCatalog, supportedVariableIds, model, onModelChange, models,
+    ensembleProducts, product, onProductChange, productAvailability,
     run, onRunChange, runs, region, onRegionChange, onLocationJump, regions, disabled,
     runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel, onViewLatestRun,
     runSelectionLocked, onShare, pointLabelsEnabled, onPointLabelsEnabledChange,
@@ -1362,6 +1384,14 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
     zoomControlsVisible, onZoomControlsVisibleChange, legendPopoverOpen, onLegendPopoverOpenChange,
     layoutMode, legend, mobileControlsOpen, onMobileControlsOpenChange,
   } = toolbar;
+  // Ensemble stats product options (stats design §7): only products the
+  // current run actually serves; the selector hides entirely when the run
+  // offers nothing beyond the mean (e.g. stats still publishing).
+  const availableProductOptions = (ensembleProducts ?? [])
+    .filter((entry) => entry.key === "mean" || productAvailability?.[entry.key])
+    .map((entry) => ({ value: entry.key, label: entry.label ?? entry.key, longLabel: entry.long_label ?? entry.label ?? entry.key }));
+  const showProductSelect = availableProductOptions.length > 1;
+
 
   const isTabletTouchLayout = layoutMode === "tablet-touch";
   const isPhoneLayout = !isTabletTouchLayout;
@@ -1519,6 +1549,21 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             />
           </div>
 
+          {showProductSelect ? (
+            <div className={cn("space-y-1.5", mobilePickerOpen ? "hidden" : "") }>
+              <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+                <Layers className="h-3 w-3" /> Product
+              </span>
+              <NavbarSelect
+                value={product ?? "mean"}
+                onValueChange={(value) => { onProductChange?.(value); closeSheet(); }}
+                options={availableProductOptions.map((entry) => ({ value: entry.value, label: entry.longLabel }))}
+                disabled={disabled}
+                placeholder="Product"
+                minWidth="w-full"
+              />
+            </div>
+          ) : null}
           <div className={cn("space-y-1.5", mobilePickerOpen ? "hidden" : "") }>
             <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
               <CalendarClock className="h-3 w-3" /> Run Time

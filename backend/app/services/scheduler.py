@@ -23,7 +23,12 @@ from PIL import Image, ImageFilter
 from rasterio.enums import Resampling
 
 from app.models.registry import MODEL_REGISTRY
-from app.config import binary_sampling_models, grid_build_enabled, member_publish_models
+from app.config import (
+    binary_sampling_models,
+    grid_build_enabled,
+    member_publish_models,
+    stats_publish_models,
+)
 from app.services import climatology
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder import fetch as builder_fetch
@@ -2725,6 +2730,119 @@ def _maybe_run_member_pass(
         logger.exception("Member frame promotion failed: run=%s model=%s", run_id, model_id)
 
 
+def _maybe_run_stats_pass(
+    *,
+    plugin: Any,
+    model_id: str,
+    run_id: str,
+    data_root: Path,
+    probe_var: str | None,
+    pinned_run: bool,
+    probe_reference_run_id: str | None = None,
+) -> None:
+    """Run the ensemble stats pass (Phase 6 / Tier 2) when enabled and work
+    remains.
+
+    Called right after the member hook at every site (post-complete, idle,
+    backfill) — but the "strictly after member promote" ordering is enforced
+    by the DATA, not by call order: the stats pending scan only counts fhs
+    whose full member roster is already promoted to published, so a run
+    whose members aren't in yet simply has no pending stats work. Never
+    raises.
+    """
+    if model_id not in stats_publish_models():
+        return
+    from app.services.builder.stats import (
+        run_stats_pass,
+        stats_pass_pending,
+        stats_promote_pending,
+    )
+
+    try:
+        build_pending = stats_pass_pending(
+            plugin=plugin, model_id=model_id, run_id=run_id, data_root=data_root,
+        )
+        promote_pending = stats_promote_pending(
+            plugin=plugin, model_id=model_id, run_id=run_id, data_root=data_root,
+        )
+    except Exception:
+        logger.exception("Stats pass pending-scan failed: run=%s model=%s", run_id, model_id)
+        return
+    if not build_pending and not promote_pending:
+        return
+
+    written = 0
+    stats_var_ids: tuple[str, ...] = ()
+    summary = None
+    if build_pending:
+        should_stop = None if pinned_run else _make_newer_run_probe(
+            plugin, probe_var, probe_reference_run_id or run_id,
+        )
+        try:
+            summary = run_stats_pass(
+                plugin=plugin,
+                model_id=model_id,
+                run_id=run_id,
+                data_root=data_root,
+                region=_default_build_region(plugin),
+                should_stop=should_stop,
+            )
+        except Exception:
+            logger.exception("Stats pass failed: run=%s model=%s", run_id, model_id)
+            return
+        written = int(summary.counts.get("written", 0))
+        stats_var_ids = tuple(summary.stats_var_ids)
+
+    if written <= 0 and not promote_pending:
+        return
+    try:
+        if grid_build_enabled():
+            manifest_ok = build_grid_manifests_for_run_root(
+                run_root=data_root / "staging" / model_id / run_id,
+                model=model_id,
+                run=run_id,
+                variables=stats_var_ids or None,
+            )
+            logger.info(
+                "stats grid manifest build: run=%s model=%s manifests=%d",
+                run_id, model_id, manifest_ok,
+            )
+        _promote_run(data_root, model_id, run_id)
+        # Register stats vars in the RUN manifest (merge semantics preserve
+        # the mean entries): this is what makes them first-class viewer
+        # variables — frame scrubber, product availability, and meteogram
+        # sampling all read the run manifest. Expected targets are the
+        # roster-capped set, so available == expected once the pass converges.
+        try:
+            from app.services.builder.stats import _iter_expected_stats_frames
+
+            stats_targets = [
+                (var_id, fh)
+                for var_id, fh in _iter_expected_stats_frames(
+                    plugin, model_id, run_id, data_root=data_root,
+                )
+            ]
+            if stats_targets:
+                _write_run_manifest(
+                    data_root=data_root,
+                    model=model_id,
+                    run_id=run_id,
+                    targets=stats_targets,
+                    plugin=plugin,
+                )
+        except Exception:
+            logger.exception(
+                "Stats run-manifest registration failed: run=%s model=%s", run_id, model_id,
+            )
+        logger.info(
+            "Stats frames promoted: run=%s model=%s written=%d complete=%s",
+            run_id, model_id, written,
+            summary.complete if summary is not None else True,
+        )
+    except Exception:
+        logger.exception("Stats frame promotion failed: run=%s model=%s", run_id, model_id)
+
+
 def _maybe_run_member_backfill(
     *,
     plugin: Any,
@@ -2746,6 +2864,10 @@ def _maybe_run_member_backfill(
     if model_id not in member_publish_models():
         return
     from app.services.builder.members import member_pass_pending, member_promote_pending
+
+    stats_enabled = model_id in stats_publish_models()
+    if stats_enabled:
+        from app.services.builder.stats import stats_pass_pending, stats_promote_pending
 
     published_root = data_root / "published" / model_id
     if not published_root.is_dir():
@@ -2774,6 +2896,14 @@ def _maybe_run_member_backfill(
                 plugin=plugin, model_id=model_id, run_id=run_id,
                 data_root=data_root, mean_coverage_only=True,
             )
+            if not pending and stats_enabled:
+                # Stats backfill (Phase 6): a run whose members are done can
+                # still owe stat frames (e.g. stats enabled after the run).
+                pending = stats_pass_pending(
+                    plugin=plugin, model_id=model_id, run_id=run_id, data_root=data_root,
+                ) or stats_promote_pending(
+                    plugin=plugin, model_id=model_id, run_id=run_id, data_root=data_root,
+                )
         except Exception:
             logger.exception(
                 "Member backfill pending-scan failed: run=%s model=%s", run_id, model_id,
@@ -2793,6 +2923,15 @@ def _maybe_run_member_backfill(
             pinned_run=False,
             probe_reference_run_id=latest_run_id,
             mean_coverage_only=True,
+        )
+        _maybe_run_stats_pass(
+            plugin=plugin,
+            model_id=model_id,
+            run_id=run_id,
+            data_root=data_root,
+            probe_var=probe_var,
+            pinned_run=False,
+            probe_reference_run_id=latest_run_id,
         )
         return
 
@@ -2903,6 +3042,16 @@ def run_scheduler(
                     probe_var=resolved_probe_var,
                     pinned_run=False,
                 )
+                # Stats stage (Phase 6): pending only once the run's members
+                # are promoted, so this is a no-op scan until then.
+                _maybe_run_stats_pass(
+                    plugin=plugin,
+                    model_id=model,
+                    run_id=run_id,
+                    data_root=data_root,
+                    probe_var=resolved_probe_var,
+                    pinned_run=False,
+                )
                 # Then backfill older kept runs the post-complete hook never
                 # reached (superseded before their mean catchup finished).
                 _maybe_run_member_backfill(
@@ -2976,6 +3125,16 @@ def run_scheduler(
             # include member work; interrupted passes resume on later polls.
             if run_now_complete:
                 _maybe_run_member_pass(
+                    plugin=plugin,
+                    model_id=model,
+                    run_id=processed_run_id,
+                    data_root=data_root,
+                    probe_var=resolved_probe_var,
+                    pinned_run=bool(run_arg),
+                )
+                # Stats stage (Phase 6): consumes the members the pass above
+                # just promoted; no-op when the model isn't stats-enabled.
+                _maybe_run_stats_pass(
                     plugin=plugin,
                     model_id=model,
                     run_id=processed_run_id,

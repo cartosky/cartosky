@@ -4,6 +4,7 @@ import type { ObservedSourceStatusTone } from "@/lib/time-axis";
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import type { GroupedOption } from "@/lib/app-utils";
 import type { LegendPayload } from "@/components/map-legend";
+import type { EnsembleProductOption } from "@/lib/api";
 
 type Option = { value: string; label: string };
 type VariableOption = Option & { group: string | null };
@@ -25,6 +26,13 @@ export type ViewerToolbarProps = {
   variables: VariableOption[];
   variableCatalog: VariableOption[];
   supportedVariableIds: string[];
+  // Ensemble stats product selector (stats design §7 / D-D): present only
+  // when the selected variable declares products; option availability is
+  // resolved against the current run's manifest.
+  ensembleProducts?: EnsembleProductOption[];
+  product?: string;
+  onProductChange?: (key: string) => void;
+  productAvailability?: Record<string, boolean>;
   disabled?: boolean;
   // Run metadata
   runDisplayLabel?: string;

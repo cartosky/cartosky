@@ -66,6 +66,18 @@ export type CapabilityVariable = {
   ensemble?: Record<string, unknown>;
 };
 
+/**
+ * One entry of a variable's ensemble stats product selector (stats design
+ * §7 / D-D). key "mean" carries var_id null (today's behavior); stats
+ * products carry the published runtime var id the viewer requests directly.
+ */
+export type EnsembleProductOption = {
+  key: string;
+  var_id?: string | null;
+  label?: string;
+  long_label?: string;
+};
+
 export type CapabilityModel = {
   model_id: string;
   name: string;
