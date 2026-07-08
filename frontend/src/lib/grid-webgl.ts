@@ -1757,6 +1757,13 @@ export class GridWebglLayerController {
     this.vertexBuffer = gl.createBuffer();
     this.texCoordBuffer = gl.createBuffer();
     this.lutTexture = gl.createTexture();
+    // A newly created LUT texture is EMPTY, and an empty texture samples as
+    // opaque black. The CPU-side lutPixels survive dispose/re-add (layer
+    // remounts on selection change), so mark them dirty to force a re-upload
+    // into the fresh texture. Without this, a legend whose reference hasn't
+    // changed since the last configure() never triggers rebuildLegendTexture,
+    // and the overlay renders solid black after any remount.
+    this.lutDirty = true;
 
     if (!this.vertexBuffer || !this.texCoordBuffer || !this.lutTexture) {
       throw new Error("Failed to initialize grid WebGL resources");
