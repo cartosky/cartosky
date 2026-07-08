@@ -3,6 +3,15 @@ import { API_V4_BASE } from "@/lib/config";
 
 /** Match backend `Cache-Control: private, max-age=300` for meteogram responses. */
 const METEOGRAM_CACHE_TTL_MS = 5 * 60 * 1000;
+/**
+ * Stale-while-revalidate horizon: past the fresh TTL an entry is served as
+ * `stale: true` (the hook keeps rendering it while a refetch runs) instead of
+ * vanishing — deleting it made every idle tab greet the user with a spinner.
+ * Past THIS age the data is too old to show and the entry is dropped.
+ */
+const METEOGRAM_CACHE_HARD_TTL_MS = 30 * 60 * 1000;
+/** A fetch that never settles must not pin `inflight` forever. */
+const METEOGRAM_FETCH_TIMEOUT_MS = 45 * 1000;
 
 export type MeteogramFetchParams = {
   lat: number;
@@ -23,6 +32,11 @@ type CacheEntry = {
   data: MeteogramResponse | null;
   error: string | null;
   expiresAt: number | null;
+};
+
+export type MeteogramCacheView = CacheEntry & {
+  /** Past the fresh TTL but inside the hard TTL: render it, revalidate it. */
+  stale: boolean;
 };
 
 const cache = new Map<string, CacheEntry>();
@@ -64,16 +78,22 @@ export function meteogramLocationMatches(
   );
 }
 
-export function getMeteogramCacheEntry(key: string): CacheEntry | undefined {
+export function getMeteogramCacheEntry(key: string): MeteogramCacheView | undefined {
   const entry = cache.get(key);
   if (!entry) {
     return undefined;
   }
-  if (entry.expiresAt != null && Date.now() > entry.expiresAt) {
-    cache.delete(key);
-    return undefined;
+  const now = Date.now();
+  if (entry.expiresAt != null) {
+    const hardExpiresAt =
+      entry.expiresAt + (METEOGRAM_CACHE_HARD_TTL_MS - METEOGRAM_CACHE_TTL_MS);
+    if (now > hardExpiresAt) {
+      cache.delete(key);
+      return undefined;
+    }
+    return { ...entry, stale: now > entry.expiresAt };
   }
-  return entry;
+  return { ...entry, stale: false };
 }
 
 export function isMeteogramFetchInFlight(key: string): boolean {
@@ -131,6 +151,7 @@ async function requestMeteogram(
       method: "POST",
       headers,
       credentials: "omit",
+      signal: AbortSignal.timeout(METEOGRAM_FETCH_TIMEOUT_MS),
       body: JSON.stringify({
         lat: params.lat,
         lon: params.lon,
@@ -200,10 +221,12 @@ export function fetchMeteogramCached(
 
   if (!force) {
     const cached = getMeteogramCacheEntry(key);
-    if (cached?.data) {
+    if (cached?.data && !cached.stale) {
       devLog("cache hit", { key, reason });
       return Promise.resolve(cached.data);
     }
+    // Stale data falls through to a refetch; the hook keeps rendering the
+    // stale entry while this request is in flight (stale-while-revalidate).
   }
 
   const existing = inflight.get(key);
@@ -226,7 +249,8 @@ export function prefetchMeteogram(params: MeteogramFetchParams, reason = "prefet
     params.lat, params.lon, params.models, params.variables, params.pinnedRuns, params.includeMembers,
   );
   if (params.models.length === 0 || params.variables.length === 0) return;
-  if (getMeteogramCacheEntry(key)?.data) {
+  const cached = getMeteogramCacheEntry(key);
+  if (cached?.data && !cached.stale) {
     devLog("prefetch skipped (cache hit)", { key, reason });
     return;
   }

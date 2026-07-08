@@ -20,6 +20,7 @@ import concurrent.futures
 import json
 import logging
 import threading
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -175,6 +176,57 @@ def _load_binary_frame_meta(meta_path: Path) -> dict[str, Any]:
     return meta
 
 
+# Parsed frame-meta cache. Frame metas are written once (atomic tmp+rename,
+# never edited in place) but re-read members × fhs times per meteogram
+# member request (~10k parses for a GEFS+EPS include_members call) — parse
+# once per publish instead. Entries are validated against mtime_ns at most
+# every _FRAME_META_RECHECK_SECONDS (the main-module _load_json_cached
+# pattern). Cached dicts are shared: callers treat frame meta as read-only.
+_FRAME_META_CACHE: dict[str, dict[str, Any]] = {}
+_FRAME_META_CACHE_LOCK = threading.Lock()
+_FRAME_META_RECHECK_SECONDS = 15.0
+_FRAME_META_CACHE_MAX_ENTRIES = 16384
+
+
+def _load_binary_frame_meta_cached(meta_path: Path) -> dict[str, Any]:
+    """``_load_binary_frame_meta`` behind an mtime-validated parse cache.
+
+    Same contract (raises ``ValueError`` for missing/invalid metas — a
+    vanished file also invalidates its entry).
+    """
+    key = str(meta_path)
+    now = time.monotonic()
+
+    with _FRAME_META_CACHE_LOCK:
+        entry = _FRAME_META_CACHE.get(key)
+        if entry is not None and now - float(entry["last_checked"]) < _FRAME_META_RECHECK_SECONDS:
+            return entry["payload"]
+
+    try:
+        mtime_ns = int(Path(meta_path).stat().st_mtime_ns)
+    except OSError as exc:
+        with _FRAME_META_CACHE_LOCK:
+            _FRAME_META_CACHE.pop(key, None)
+        raise ValueError(f"Unreadable grid frame metadata: {meta_path}") from exc
+
+    with _FRAME_META_CACHE_LOCK:
+        entry = _FRAME_META_CACHE.get(key)
+        if entry is not None and int(entry["mtime_ns"]) == mtime_ns:
+            entry["last_checked"] = now
+            return entry["payload"]
+
+    meta = _load_binary_frame_meta(meta_path)
+    with _FRAME_META_CACHE_LOCK:
+        if len(_FRAME_META_CACHE) >= _FRAME_META_CACHE_MAX_ENTRIES:
+            _FRAME_META_CACHE.clear()
+        _FRAME_META_CACHE[key] = {
+            "payload": meta,
+            "mtime_ns": mtime_ns,
+            "last_checked": now,
+        }
+    return meta
+
+
 def _sample_binary_frame_index(meta: dict[str, Any], *, lon: float, lat: float) -> tuple[int, int]:
     projection = str(meta.get("projection") or "").strip()
     if projection.upper() == "EPSG:4326":
@@ -222,7 +274,7 @@ def read_binary_sample_value(
     selects the decode packing config) — callers with a requested/alias id
     resolve it first, e.g. via :func:`_resolve_binary_grid_frame`.
     """
-    meta = _load_binary_frame_meta(meta_path)
+    meta = _load_binary_frame_meta_cached(meta_path)
     row, col = _sample_binary_frame_index(meta, lon=lon, lat=lat)
     height = int(meta["height"])
     width = int(meta["width"])
@@ -285,7 +337,7 @@ def read_binary_sample_value_seek(
     The file size is validated against the meta dims exactly like the
     full-read path, so a truncated frame raises rather than mis-addressing.
     """
-    meta = _load_binary_frame_meta(meta_path)
+    meta = _load_binary_frame_meta_cached(meta_path)
     row, col = _sample_binary_frame_index(meta, lon=lon, lat=lat)
     height = int(meta["height"])
     width = int(meta["width"])
@@ -349,6 +401,112 @@ def sample_binary_value_seek(
         return (True, None)
 
 
+def sample_member_values_seek(
+    model: str,
+    run_id: str,
+    member_vars: list[str],
+    fhs: list[int],
+    *,
+    lat: float,
+    lon: float,
+    region: str | None = None,
+) -> dict[tuple[str, int], tuple[bool, float | None]]:
+    """Batch seek-sampler for the meteogram member fan-out.
+
+    Result-identical to calling :func:`sample_binary_value_seek` per
+    ``(member_var, fh)`` — pinned by an equality test — but hoists the
+    invariants out of the per-sample loop: run and runtime-var resolution
+    happen once per member var (not once per sample), frame paths are built
+    from the meta's own ``file`` field without re-stat'ing the meta path,
+    and each member's pixel codes decode in ONE vectorized
+    :func:`_decode_values` call. A GEFS+EPS ``include_members`` request is
+    ~10k samples; the per-sample primitive spends most of its time
+    re-resolving these invariants.
+    """
+    del region
+    from .. import main as _main
+
+    out: dict[tuple[str, int], tuple[bool, float | None]] = {}
+    resolved_run = _main._resolve_run(model, run_id) or run_id
+
+    for member_var in member_vars:
+        try:
+            runtime_var = _main._runtime_var_id_for_request(model, member_var, None)
+            var_dir = _main._published_var_dir(model, resolved_run, runtime_var)
+            run_root = var_dir.parent
+            resolved_dtype, encoded_dtype = _binary_encoded_dtype(model, runtime_var)
+        except Exception:
+            logger.exception("Member batch resolution failed: %s/%s/%s", model, run_id, member_var)
+            for fh in fhs:
+                out[(member_var, fh)] = (False, None)
+            continue
+        itemsize = int(np.dtype(encoded_dtype).itemsize)
+
+        codes: list[bytes] = []
+        pending: list[int] = []  # fhs awaiting the batched decode
+        for fh in fhs:
+            meta_path = resolved_grid_frame_meta_path_for_run_root(run_root, runtime_var, fh)
+            try:
+                meta = _load_binary_frame_meta_cached(meta_path)
+            except ValueError:
+                out[(member_var, fh)] = (False, None)
+                continue
+            filename = Path(str(meta.get("file") or "")).name
+            if not filename:
+                out[(member_var, fh)] = (False, None)
+                continue
+            frame_path = meta_path.parent / filename
+            try:
+                height = int(meta["height"])
+                width = int(meta["width"])
+                row, col = _sample_binary_frame_index(meta, lon=lon, lat=lat)
+                if row < 0 or row >= height or col < 0 or col >= width:
+                    out[(member_var, fh)] = (True, None)
+                    continue
+                expected_size = expected_grid_frame_size_bytes(
+                    width=width, height=height, dtype=resolved_dtype,
+                )
+                try:
+                    actual_size = frame_path.stat().st_size
+                except OSError:
+                    # Frame file absent — same "not present" the per-sample
+                    # resolver reports.
+                    out[(member_var, fh)] = (False, None)
+                    continue
+                if actual_size != expected_size:
+                    raise ValueError(
+                        f"Grid frame byte size mismatch: {frame_path} "
+                        f"actual={actual_size} expected={expected_size}"
+                    )
+                offset = (row * width + col) * itemsize
+                with open(frame_path, "rb") as handle:
+                    handle.seek(offset)
+                    payload = handle.read(itemsize)
+                if len(payload) != itemsize:
+                    raise ValueError(
+                        f"Short read at offset {offset} in grid frame: {frame_path}"
+                    )
+            except Exception:
+                logger.exception(
+                    "Binary seek sample failed: %s/%s/%s/fh%03d", model, run_id, member_var, fh,
+                )
+                out[(member_var, fh)] = (True, None)
+                continue
+            codes.append(payload)
+            pending.append(fh)
+
+        if pending:
+            encoded = np.frombuffer(b"".join(codes), dtype=encoded_dtype)
+            decoded = np.asarray(
+                _decode_values(encoded, model=model, var=runtime_var), dtype=np.float64,
+            ).ravel()
+            for fh, value in zip(pending, decoded):
+                out[(member_var, fh)] = (
+                    True, None if not np.isfinite(value) else round(float(value), 1),
+                )
+    return out
+
+
 def sample_binary_batch_values(
     frame_path: Path,
     meta_path: Path,
@@ -362,7 +520,7 @@ def sample_binary_batch_values(
     nodata / NaN pixels. ``var`` must be the runtime variable id the frame was
     encoded under, since it selects the decode packing config.
     """
-    meta = _load_binary_frame_meta(meta_path)
+    meta = _load_binary_frame_meta_cached(meta_path)
     values = _read_binary_frame_values(frame_path, meta, model=model, var=var)
     height = int(meta["height"])
     width = int(meta["width"])
@@ -450,7 +608,7 @@ def _resolve_binary_grid_frame(
     if not meta_path.is_file():
         return None
     try:
-        meta = _load_binary_frame_meta(meta_path)
+        meta = _load_binary_frame_meta_cached(meta_path)
     except ValueError:
         logger.exception("Grid frame metadata resolution failed: %s/%s/%s/fh%03d", model, run, var, fh)
         return None

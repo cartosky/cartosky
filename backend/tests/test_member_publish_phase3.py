@@ -1236,3 +1236,45 @@ def test_member_backfill_scan_selects_newest_pending_run(tmp_path, monkeypatch) 
         data_root=tmp_path, probe_var="tmp2m",
     )
     assert passes == []
+
+
+def test_batch_member_sampler_matches_per_sample(tmp_path, monkeypatch, transform) -> None:
+    """sample_member_values_seek is result-identical to per-sample
+    sample_binary_value_seek across present / nodata / missing frames."""
+    import backend.app.main as main_mod
+    from backend.app.services import sampling
+
+    monkeypatch.setattr(main_mod, "PUBLISHED_ROOT", tmp_path / "published")
+    monkeypatch.setattr(main_mod, "MANIFESTS_ROOT", tmp_path / "manifests")
+
+    run_id = "20260706_00z"
+    run_root = tmp_path / "published" / "gefs" / run_id
+    manifest = tmp_path / "manifests" / "gefs"
+    manifest.mkdir(parents=True)
+    (manifest / f"{run_id}.json").write_text("{}")
+
+    rng = np.random.default_rng(11)
+    member_vars = ["tmp2m__m01", "tmp2m__m02", "tmp2m__control"]
+    fhs = [0, 6, 12]
+    for var in member_vars:
+        for fh in fhs:
+            if var == "tmp2m__m02" and fh == 12:
+                continue  # missing frame -> present=False
+            data = rng.uniform(0.0, 80.0, size=(HEIGHT, WIDTH)).astype(np.float32)
+            data[:3, :] = np.nan  # nodata band at the grid's north edge
+            write_slim_grid_frame_for_run_root(
+                run_root=run_root, model="gefs", var=var,
+                fh=fh, values=data, transform=transform,
+            )
+
+    # Interior, nodata-band, and out-of-coverage points.
+    for lat, lon in ((43.5, -101.5), (81.5, -101.5), (43.5, 5.0)):
+        batch = sampling.sample_member_values_seek(
+            "gefs", run_id, member_vars, fhs, lat=lat, lon=lon,
+        )
+        for var in member_vars:
+            for fh in fhs:
+                single = sampling.sample_binary_value_seek(
+                    "gefs", run_id, var, fh, lat=lat, lon=lon,
+                )
+                assert batch[(var, fh)] == single, (var, fh, lat, lon)

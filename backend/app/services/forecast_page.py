@@ -3124,14 +3124,22 @@ def _member_series_for_model_var(
     candidate_frames: list[tuple[int, str | None]] = [
         (int(point["fh"]), point.get("valid_time")) for point in mean_points
     ]
+    member_vars = {
+        member: f"{canonical}__{member}" for member in ensemble_member_ids(descriptor)
+    }
+    # Batched: one resolution per member var and one vectorized decode per
+    # member instead of members × fhs per-sample resolutions (~10k samples
+    # for a GEFS+EPS include_members request).
+    sampled = sampling.sample_member_values_seek(
+        model, run_id, list(member_vars.values()),
+        [fh for fh, _vt in candidate_frames],
+        lat=lat, lon=lon, region=region,
+    )
     members_block: dict[str, Any] = {"mean": {"points": mean_result.get("points")}}
-    for member in ensemble_member_ids(descriptor):
-        member_var = f"{canonical}__{member}"
+    for member, member_var in member_vars.items():
         points: list[dict[str, Any]] = []
         for fh, valid_time in candidate_frames:
-            present, value = sampling.sample_binary_value_seek(
-                model, run_id, member_var, fh, lat=lat, lon=lon, region=region,
-            )
+            present, value = sampled.get((member_var, fh), (False, None))
             if not present:
                 continue
             if valid_time is None and run_dt is not None:

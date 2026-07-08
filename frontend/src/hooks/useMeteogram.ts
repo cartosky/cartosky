@@ -123,6 +123,40 @@ export function useMeteogram({
   const error = entry?.error ?? null;
   const inFlight = isMeteogramFetchInFlight(cacheKey);
 
+  // Stale-while-revalidate: an entry past its fresh TTL (or hard-evicted
+  // entirely) no longer refetches through the mount effect above — its deps
+  // haven't changed. Without this, a tab left idle past the TTL either spins
+  // forever (evicted entry, nothing refetches) or silently shows old data.
+  // Stale data keeps rendering while the refetch runs (isUpdating, not a
+  // spinner). A failed revalidate writes a fresh error entry, so this cannot
+  // tight-loop.
+  const needsFetch =
+    enabled &&
+    models.length > 0 &&
+    variables.length > 0 &&
+    (!entry || entry.stale) &&
+    !inFlight;
+  useEffect(() => {
+    if (!needsFetch) return;
+    void fetchMeteogramCached(
+      { lat, lon, models, variables, pinnedRuns, includeMembers, getAuthHeaders },
+      { reason: "useMeteogram:revalidate" },
+    ).catch(() => {
+      // Cache entry + subscribers carry the error state.
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsFetch, cacheKey]);
+
+  // Returning to a backgrounded tab is the classic way an entry goes stale
+  // with no re-render to notice it — nudge one so the revalidate effect runs.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") bumpCacheVersion();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
   // "No data and no error yet" means a fetch is pending or about to start —
   // treat it as loading. Relying on `inFlight` alone misses the gap between a
   // cache-key change (e.g. switching runs) and the effect that starts the fetch:
