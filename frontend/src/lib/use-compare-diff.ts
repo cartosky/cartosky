@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { GridManifestResponse } from "@/lib/api";
 import type { LegendPayload } from "@/components/map-legend";
@@ -76,6 +76,15 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [readySteps, setReadySteps] = useState<CompareDiffReadySteps>(RESET_STEPS);
+
+  // Legend identity is (models, varKey) — memoized so sequential scrub steps
+  // publish the SAME object. MapCanvas's WebGL layer reference-compares its
+  // legend to decide whether to rebuild the 256-px color LUT; a fresh object
+  // per compute forced a rebuild on every scrub step.
+  const legendForSelection = useMemo(
+    () => (varKey ? buildDiffLegend(leftModel, rightModel, varKey, getDiffScale(varKey)) : null),
+    [leftModel, rightModel, varKey],
+  );
 
   // Bumped on every input change; async results from a stale epoch are discarded.
   const epochRef = useRef(0);
@@ -217,7 +226,7 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
           blobUrlRef.current = frameUrl;
           setDiffManifest(manifest);
           setDiffFrameUrl(frameUrl);
-          setDiffLegend(buildDiffLegend(leftModel, rightModel, varKey!, scale));
+          setDiffLegend(legendForSelection);
           setReadySteps((steps) => ({ ...steps, computeDone: true }));
           setIsLoading(false);
 
@@ -253,6 +262,7 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     leftModel,
     rightModel,
     varKey,
+    legendForSelection,
   ]);
 
   // Revoke the last blob + cancel any pending prefetch on unmount.

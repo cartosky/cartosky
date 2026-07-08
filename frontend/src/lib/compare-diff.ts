@@ -1,6 +1,6 @@
 import { productFetch, type GridManifestResponse } from "@/lib/api";
 import { gridFrameCache } from "@/lib/grid-frame-cache";
-import { gridUvToLonLat, lonLatToGridUv } from "@/lib/grid-sample";
+import { gridUvToLonLat, latToGridV, lonToGridU } from "@/lib/grid-sample";
 import { parseRunId } from "@/lib/time-axis";
 import type { DiffScale } from "@/lib/compare-diff-scales";
 
@@ -70,12 +70,20 @@ export function alignedMutualGridHours(
   return leftHours.filter((hour) => rightSet.has(hour + offsetHours));
 }
 
+// Signal-less (prefetch) fetches in flight, shared so a compute fetch for the
+// same URL awaits the existing download instead of duplicating it. Fetches
+// WITH an AbortSignal are never registered — sharing an abortable promise
+// would let one caller's abort reject another caller that is still current.
+const inflightFrameFetches = new Map<string, Promise<Uint8Array>>();
+
 /**
  * Fetch raw frame bytes, going through the diff-only {@link gridFrameCache}.
  * Clean independent fetch — does not reuse any `GridWebglLayerController` logic.
  * Goes through {@link productFetch} so protected models (e.g. ECMWF) get the
  * same Bearer-token authorization as the split-mode controller fetch of the
- * identical URLs. Throws `AbortError` if the signal aborts.
+ * identical URLs. Uses the default HTTP cache mode — frame URLs are versioned
+ * and served immutable, so the browser cache makes split→diff transitions
+ * cache-hot for free. Throws `AbortError` if the signal aborts.
  */
 export async function fetchGridFrameBytes(
   url: string,
@@ -86,13 +94,27 @@ export async function fetchGridFrameBytes(
   if (cached) {
     return cached;
   }
-  const response = await productFetch(model, url, { signal, credentials: "omit", cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Frame fetch failed: ${response.status} ${response.statusText}`);
+  const inflight = inflightFrameFetches.get(url);
+  if (inflight) {
+    return inflight;
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  gridFrameCache.set(url, bytes);
-  return bytes;
+  const doFetch = async (): Promise<Uint8Array> => {
+    const response = await productFetch(model, url, { signal, credentials: "omit" });
+    if (!response.ok) {
+      throw new Error(`Frame fetch failed: ${response.status} ${response.statusText}`);
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    gridFrameCache.set(url, bytes);
+    return bytes;
+  };
+  if (signal) {
+    return doFetch();
+  }
+  const promise = doFetch().finally(() => {
+    inflightFrameFetches.delete(url);
+  });
+  inflightFrameFetches.set(url, promise);
+  return promise;
 }
 
 /**
@@ -186,10 +208,14 @@ function metaMatches(a: GridMeta, b: GridMeta): boolean {
 
 /**
  * Resample a decoded source grid onto `refMeta`'s coordinate space via bilinear
- * interpolation. For each reference pixel center we recover lon/lat
- * ({@link gridUvToLonLat}), map it into the source via {@link lonLatToGridUv},
- * then sample. Pixels outside the source bbox become `NaN`. Identical dimensions
- * + bbox short-circuit to the source unchanged.
+ * interpolation. Pixels outside the source bbox become `NaN`. Identical
+ * dimensions + bbox short-circuit to the source unchanged.
+ *
+ * The Web-Mercator mapping is separable — lon depends only on `u` and lat only
+ * on `v` — so the per-pixel projection collapses to one lookup table per axis
+ * (W+H projections instead of W×H). {@link lonToGridU}/{@link latToGridV} are
+ * the axis components of `lonLatToGridUv`, so the result is identical to the
+ * per-pixel formulation.
  */
 export function resampleGridToReference(
   source: Float32Array,
@@ -203,19 +229,37 @@ export function resampleGridToReference(
   const refHeight = Math.floor(refMeta.height);
   const srcWidth = Math.floor(sourceMeta.width);
   const srcHeight = Math.floor(sourceMeta.height);
-  const out = new Float32Array(refWidth * refHeight);
+
+  // Per-column source u (NaN = outside the source bbox horizontally).
+  const sourceUForCol = new Float64Array(refWidth);
+  for (let col = 0; col < refWidth; col += 1) {
+    const u = (col + 0.5) / refWidth;
+    const [lon] = gridUvToLonLat(u, 0.5, refMeta.bbox);
+    const sourceU = lonToGridU(lon, sourceMeta.bbox);
+    sourceUForCol[col] = sourceU === null ? NaN : sourceU;
+  }
+  // Per-row source v (NaN = outside the source bbox vertically).
+  const sourceVForRow = new Float64Array(refHeight);
   for (let row = 0; row < refHeight; row += 1) {
     const v = (row + 0.5) / refHeight;
+    const [, lat] = gridUvToLonLat(0.5, v, refMeta.bbox);
+    const sourceV = latToGridV(lat, sourceMeta.bbox);
+    sourceVForRow[row] = sourceV === null ? NaN : sourceV;
+  }
+
+  const out = new Float32Array(refWidth * refHeight);
+  for (let row = 0; row < refHeight; row += 1) {
+    const sourceV = sourceVForRow[row];
+    const rowOffset = row * refWidth;
+    if (Number.isNaN(sourceV)) {
+      out.fill(NaN, rowOffset, rowOffset + refWidth);
+      continue;
+    }
     for (let col = 0; col < refWidth; col += 1) {
-      const u = (col + 0.5) / refWidth;
-      const outIndex = row * refWidth + col;
-      const [lon, lat] = gridUvToLonLat(u, v, refMeta.bbox);
-      const sourceUv = lonLatToGridUv(lon, lat, sourceMeta.bbox);
-      if (!sourceUv) {
-        out[outIndex] = NaN;
-        continue;
-      }
-      out[outIndex] = sampleBilinearFloat(source, srcWidth, srcHeight, sourceUv[0], sourceUv[1]);
+      const sourceU = sourceUForCol[col];
+      out[rowOffset + col] = Number.isNaN(sourceU)
+        ? NaN
+        : sampleBilinearFloat(source, srcWidth, srcHeight, sourceU, sourceV);
     }
   }
   return out;
@@ -236,6 +280,11 @@ export function chooseReferenceGrid(leftMeta: GridMeta, rightMeta: GridMeta): Gr
  * Compute the physical-units diff grid: choose the reference grid, decode both
  * frames, resample both onto the reference, then subtract (`left − right`). Any
  * nodata input propagates to `NaN`.
+ *
+ * Fails closed on a units mismatch: subtracting fields packed in different
+ * units (e.g. °F vs °C) produces silent garbage, and correctness otherwise
+ * rests entirely on backend packing conventions staying unit-consistent per
+ * var_key. Missing units on either side skip the check (older manifests).
  */
 export function computeDiffGrid(
   leftBytes: Uint8Array,
@@ -243,6 +292,13 @@ export function computeDiffGrid(
   leftMeta: GridMeta,
   rightMeta: GridMeta,
 ): { diffFloats: Float32Array; refMeta: GridMeta } {
+  const leftUnits = String(leftMeta.units ?? "").trim().toLowerCase();
+  const rightUnits = String(rightMeta.units ?? "").trim().toLowerCase();
+  if (leftUnits && rightUnits && leftUnits !== rightUnits) {
+    throw new Error(
+      `Unit mismatch: left frame is "${leftMeta.units}" but right frame is "${rightMeta.units}" — refusing to diff`,
+    );
+  }
   const refMeta = chooseReferenceGrid(leftMeta, rightMeta);
   const leftFloats = decodeGridFrame(leftBytes, leftMeta);
   const rightFloats = decodeGridFrame(rightBytes, rightMeta);

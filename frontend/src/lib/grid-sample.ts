@@ -38,27 +38,57 @@ export function gridUvToLonLat(
   return [lon, lat];
 }
 
+/**
+ * Horizontal component of {@link lonLatToGridUv}: lon → u within the bbox, or
+ * null when outside/degenerate. In Web Mercator, u depends only on lon (and v
+ * only on lat), so callers that map a whole grid can precompute one u per
+ * column and one v per row instead of projecting every pixel.
+ */
+export function lonToGridU(lon: number, bbox: [number, number, number, number]): number | null {
+  const [west, , east] = bbox;
+  const mx = (lon * MERCATOR_HALF_WORLD) / 180;
+  const left = mercatorXFromMeters(west);
+  const right = mercatorXFromMeters(east);
+  const pointX = mercatorXFromMeters(mx);
+  const spanX = right - left;
+  if (!Number.isFinite(spanX) || spanX === 0) {
+    return null;
+  }
+  const u = (pointX - left) / spanX;
+  if (!Number.isFinite(u) || u < 0 || u > 1) {
+    return null;
+  }
+  return u;
+}
+
+/** Vertical component of {@link lonLatToGridUv}: lat → v within the bbox, or null. */
+export function latToGridV(lat: number, bbox: [number, number, number, number]): number | null {
+  const [, south, , north] = bbox;
+  const clampedLat = Math.max(-85.05112878, Math.min(85.05112878, lat));
+  const yRadians = (clampedLat * Math.PI) / 180;
+  const my = Math.log(Math.tan(Math.PI / 4 + yRadians / 2)) * (MERCATOR_HALF_WORLD / Math.PI);
+  const top = mercatorYFromMeters(north);
+  const bottom = mercatorYFromMeters(south);
+  const pointY = mercatorYFromMeters(my);
+  const spanY = bottom - top;
+  if (!Number.isFinite(spanY) || spanY === 0) {
+    return null;
+  }
+  const v = (pointY - top) / spanY;
+  if (!Number.isFinite(v) || v < 0 || v > 1) {
+    return null;
+  }
+  return v;
+}
+
 export function lonLatToGridUv(
   lon: number,
   lat: number,
   bbox: [number, number, number, number],
 ): [number, number] | null {
-  const [west, south, east, north] = bbox;
-  const [mx, my] = lonLatToMercatorMeters(lon, lat);
-  const left = mercatorXFromMeters(west);
-  const right = mercatorXFromMeters(east);
-  const top = mercatorYFromMeters(north);
-  const bottom = mercatorYFromMeters(south);
-  const pointX = mercatorXFromMeters(mx);
-  const pointY = mercatorYFromMeters(my);
-  const spanX = right - left;
-  const spanY = bottom - top;
-  if (!Number.isFinite(spanX) || !Number.isFinite(spanY) || spanX === 0 || spanY === 0) {
-    return null;
-  }
-  const u = (pointX - left) / spanX;
-  const v = (pointY - top) / spanY;
-  if (!Number.isFinite(u) || !Number.isFinite(v) || u < 0 || u > 1 || v < 0 || v > 1) {
+  const u = lonToGridU(lon, bbox);
+  const v = latToGridV(lat, bbox);
+  if (u === null || v === null) {
     return null;
   }
   return [u, v];

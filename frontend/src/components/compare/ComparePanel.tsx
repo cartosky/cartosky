@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import type maplibregl from "maplibre-gl";
 
 import {
@@ -65,7 +65,7 @@ function selectionEpochForKey(key: string): number {
   return Math.abs(hash);
 }
 
-export function ComparePanel({
+function ComparePanelComponent({
   side,
   model,
   variable,
@@ -341,5 +341,11 @@ export function ComparePanel({
     </div>
   );
 }
+
+// Memoized: hover tracking lives in page state and re-renders the page per
+// mousemove; without memo each move re-rendered both MapCanvas trees. All
+// props are referentially stable across hover renders (page callbacks are
+// useCallback'd, loader-derived objects are memoized).
+export const ComparePanel = memo(ComparePanelComponent);
 
 export default ComparePanel;

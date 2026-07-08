@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { Loader2 } from "lucide-react";
 
@@ -44,7 +44,7 @@ export type CompareDiffPanelProps = {
   onMapHoverEnd?: () => void;
 };
 
-export function CompareDiffPanel({
+function CompareDiffPanelComponent({
   hasMutualEligibleVariables,
   leftModel,
   variable,
@@ -196,5 +196,9 @@ export function CompareDiffPanel({
     </div>
   );
 }
+
+// Memoized for the same reason as ComparePanel: page-level hover state
+// re-renders the page per mousemove and must not re-render the map tree.
+export const CompareDiffPanel = memo(CompareDiffPanelComponent);
 
 export default CompareDiffPanel;
