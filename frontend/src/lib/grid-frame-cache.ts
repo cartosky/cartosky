@@ -10,7 +10,10 @@
  * singleton.
  */
 
-const MAX_ENTRIES = 20;
+// Sized for the diff scrub prefetch window: 2 sides × (active + 4 ahead +
+// 2 behind) plus scroll-back history. The byte budget is the real ceiling —
+// large ensemble grids (~1.7MB each) evict by size well before the count cap.
+const MAX_ENTRIES = 32;
 const MAX_BYTES = 50 * 1024 * 1024; // ~50MB
 
 class GridFrameCache {

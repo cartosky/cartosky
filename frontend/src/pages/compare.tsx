@@ -107,11 +107,18 @@ function resolveActiveGridFrameUrl(loader: UseModelLoaderResult, forecastHour: n
   return toAbsoluteFrameUrl(url);
 }
 
+// Diff scrub prefetch window around the active hour (forward-biased like the
+// viewer's contour prefetch — users predominantly scrub forward). A wider
+// window is what makes sequential scrubbing cache-hot instead of spinning.
+const DIFF_PREFETCH_HOURS_AHEAD = 4;
+const DIFF_PREFETCH_HOURS_BEHIND = 2;
+
 /**
- * Resolve the grid frame URLs for the forecast hours immediately adjacent to the
- * active one (previous + next), for adjacent-frame prefetch. Returns absolute
- * URLs matching {@link resolveActiveGridFrameUrl}, so the prefetched bytes hit
- * the same GridFrameCache key the compute later reads.
+ * Resolve the grid frame URLs for the forecast hours around the active one
+ * (next {@link DIFF_PREFETCH_HOURS_AHEAD} + previous
+ * {@link DIFF_PREFETCH_HOURS_BEHIND}, nearest first), for scrub prefetch.
+ * Returns absolute URLs matching {@link resolveActiveGridFrameUrl}, so the
+ * prefetched bytes hit the same GridFrameCache key the compute later reads.
  */
 function resolveAdjacentGridFrameUrls(loader: UseModelLoaderResult, forecastHour: number): string[] {
   const hours = loader.gridFrameHours;
@@ -122,8 +129,19 @@ function resolveAdjacentGridFrameUrls(loader: UseModelLoaderResult, forecastHour
   if (activeIndex < 0) {
     return [];
   }
+  const neighborIndexes: number[] = [];
+  // Interleave forward/backward so the nearest hours warm first when the
+  // cache is cold: +1, -1, +2, -2, +3, +4.
+  for (let step = 1; step <= Math.max(DIFF_PREFETCH_HOURS_AHEAD, DIFF_PREFETCH_HOURS_BEHIND); step += 1) {
+    if (step <= DIFF_PREFETCH_HOURS_AHEAD) {
+      neighborIndexes.push(activeIndex + step);
+    }
+    if (step <= DIFF_PREFETCH_HOURS_BEHIND) {
+      neighborIndexes.push(activeIndex - step);
+    }
+  }
   const urls: string[] = [];
-  for (const neighborIndex of [activeIndex - 1, activeIndex + 1]) {
+  for (const neighborIndex of neighborIndexes) {
     if (neighborIndex < 0 || neighborIndex >= hours.length) {
       continue;
     }

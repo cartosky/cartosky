@@ -3,6 +3,12 @@
 > Status: DRAFT — awaiting Brian's approval before implementation (same
 > recommend-first gate as the Phase 2 scheduler design).
 > Scope decisions D-A…D-E ratified 2026-07-08; recorded in §2.
+> Amended 2026-07-08 after external (GPT) review: staged enable rollout
+> (§9), numeric first-run acceptance budget (§10.7), published-members
+> input invariant (§5), `method="linear"` parity pin (§4), display-label +
+> availability behavior (§7), tmp2m product-approval rephrase + `prob_lt`
+> naming reservation (§3). Its state-file suggestion was REJECTED in favor
+> of presence-derived state + a structured summary log (§5 rationale).
 > Parent plan: `ENSEMBLE_MEMBER_PIPELINE_PLAN.md` (§3.3 architecture, §4
 > naming/thresholds/layout — all LOCKED there and not re-litigated here).
 > Sibling: `ENSEMBLE_MEMBER_SCHEDULER_DESIGN.md` (the member pass this
@@ -65,8 +71,15 @@ naming, including the threshold→`0p50` formatting, written ONCE and reused by
 the pass, packing resolution, capabilities serialization, manifest tooling,
 and the canary scope classifier.
 
-**Adding tmp2m later = one descriptor on gefs/eps tmp2m.** Adding a
-threshold = one list entry. No schema, pass, or frontend changes.
+**Adding tmp2m later is mechanically one descriptor on gefs/eps tmp2m** —
+adding a threshold is one list entry; no schema, pass, or frontend changes.
+**But product approval is still required per variable** (external review
+point, adopted 2026-07-08): temperature ensemble products likely want
+threshold/risk semantics (P(< 32°F), P(> 100°F)) rather than generic
+percentile maps — and "below" thresholds need a `__prob_lt_{threshold}`
+suffix that §4.1 does not yet define. The shared id helper RESERVES
+`prob_lt` in its parse grammar now (rejecting it as unimplemented) so the
+naming space is claimed before any consumer invents an alternative.
 
 ## 4. Percentile engine (D-C)
 
@@ -80,7 +93,9 @@ counts + linear interpolation at fractional ranks — the single sort serves
 every percentile, and the same valid-count array serves every probability
 threshold (`100 * count(member > thr) / valid`, NaN where valid == 0,
 ~50 ms/threshold). Pure numpy. Pinned by a parity test against
-`np.nanpercentile` on stacks with NaN fringes, scattered gaps, all-NaN
+**`np.nanpercentile(..., method="linear")`** — the method is named
+explicitly in the test so a numpy default change or refactor cannot shift
+output silently — on stacks with NaN fringes, scattered gaps, all-NaN
 pixels, and single-valid-member pixels.
 
 ## 5. The stats pass (D-B) — `builder/stats.py`
@@ -91,10 +106,15 @@ Same skeleton as the member pass, one stage later:
   descriptors; fhs from `scheduled_fhs_for_var` (region/global-agnostic per
   §3.7; no constants).
 - **Unit of work = (base_var, fh)**: decode the member frames for that fh
-  from **published** (members are promote-gated, so published = complete
-  sets), one sort → all percentile frames + all probability frames for that
-  fh. Spike-measured stack cost: 53 MiB + ~0.1 s decode — memory is a
-  non-issue even on the EPS box.
+  from **published**, one sort → all percentile frames + all probability
+  frames for that fh. Spike-measured stack cost: 53 MiB + ~0.1 s decode —
+  memory is a non-issue even on the EPS box.
+  **INVARIANT (named, per external review 2026-07-08): stats may only
+  consume member frames after those frames have been PROMOTED and are
+  manifest-visible in the published tree.** Members are promote-gated as
+  complete sets, which is what makes published a safe input root; never
+  "optimize" this to read staging members — a half-written staging set is
+  exactly the partial-roster poison the completeness gate exists to block.
 - **Completeness gate (LOCKED §3.3)**: before computing, verify the FULL
   member roster is present for that fh (`member_frame_is_complete` per
   member). Missing any → skip the unit, retry next pass. Never publish a
@@ -109,6 +129,14 @@ Same skeleton as the member pass, one stage later:
   member pass (written/resumed/gate_failed/error/preempted; frame-complete
   resume checks; `should_stop` between units; manifest build for stats var
   ids + `_promote_run` via the same scheduler hook machinery).
+  **Deliberately NO persistent completion marker/state file** (external
+  review suggested one; rejected): pending/complete is derived from
+  filesystem presence, the single source of truth that makes resume,
+  crash windows, and backfill drift-proof — a state file reintroduces the
+  dual-source-of-truth failure class the member pass designed out. The
+  observability half of that ask IS adopted: the pass summary log line
+  carries the full structured payload (per-status counts,
+  skipped-incomplete units, wall seconds, RSS peak).
 - **Scheduler hook**: `_maybe_run_member_pass` grows a stats stage — after
   the member pass completes (and on the idle/backfill paths), run
   `stats_pass_pending` → `run_stats_pass` for models on a new
@@ -154,9 +182,22 @@ the forecast/viewer permalink rebuild — the deep-link lesson from Phase 5),
 default `mean` (byte-identical URLs for existing links). `supported_views`
 stays `["mean"]` (design D1 unchanged; products are not views).
 
+**Display labels** ship in the serialized products map (derived from the
+descriptor, human-formatted from display units): `P50`, `P(> 0.50")`,
+`P(> 6")` for pills, with full-form tooltip/mobile labels
+("Probability of snowfall > 6\"") so context survives small screens —
+runtime ids like `prob_gt_0p50` never reach the UI.
+
+**Availability behavior (rollout-critical — GEFS will have stats while EPS
+does not):** the selector renders only products that are BOTH declared in
+capabilities AND available for the selected run (manifest presence). Mean
+is always available. A deep link to an unavailable product falls back to
+mean with a small notice, preserving the `product=` param so the choice
+re-applies when the product appears.
+
 Frontend scope: capabilities plumbing, product selector component, permalink
-param, hover-sample label (shows the product's units — `%` for
-probabilities). No member data touches the client.
+param, availability wiring, hover-sample label (shows the product's units —
+`%` for probabilities). No member data touches the client.
 
 ## 8. Meteogram feed (future, designed-for now)
 
@@ -169,13 +210,28 @@ percentile bands (e.g. p10–p90 shading on the Ensembles tab) is
 frontend-only work: request the stats ids alongside the mean, render bands.
 Explicitly out of Phase 6 scope, deliberately cheap next.
 
-## 9. Config / knobs
+## 9. Config / knobs / rollout
 
 - `CARTOSKY_STATS_PUBLISH_MODELS` — allowlist, empty default (mirrors
   members).
 - Descriptor lists are the product knobs (per D-A's easy-additions bar).
 - Optional (only if the first-run wall demands it): per-descriptor
   `prob_fh_stride` to thin probability frames; not implemented up front.
+
+**Rollout is an ENABLE sequence, not an implementation sequence** (external
+review's phasing, adopted 2026-07-08 with that clarification —
+implementation builds the full §1 matrix behind descriptor flags):
+
+| Stage | Enable | Gate to advance |
+|-------|--------|-----------------|
+| 6A | gefs `precip_total` only (snowfall descriptor ships `enabled: False`; eps off the allowlist) | §10 first-run acceptance budget green |
+| 6B | flip gefs `snowfall_total` descriptor | same checks incl. dry-frame behavior |
+| 6C | add eps to the allowlist (precip) | same checks on the EPS unit |
+| 6D | threshold tuning / frontend polish | — |
+
+GEFS precip alone exercises the whole architecture: descriptor enumeration,
+id generation, both engines, packing, probability colormap, full-profile
+publish, manifests, product selector, sampling labels, retention, CF.
 
 ## 10. Verification & gate
 
@@ -190,8 +246,17 @@ Explicitly out of Phase 6 scope, deliberately cheap next.
 5. Canary scope: suffix classifier keeps stats ids out of parity-canary
    scope (same lesson as `_ensemble_dead_alias_vars`).
 6. CF `HIT` verified on stats tiles/binaries after first prod run.
-7. First capped prod run: wall + RSS observation (§5 estimate validated),
-   spot-check per (2), then eps enable.
+7. **First-run acceptance budget (6A, gefs precip_total — numeric, per
+   external review; thresholds adjustable but a number must exist):**
+   - stats pass wall ≤ 20 minutes for the run;
+   - zero mean-publish latency regression attributable to the pass
+     (mean freshness check, the Phase 3 method);
+   - RSS comfortably below the unit's `MemoryHigh` throughout;
+   - zero completeness-gate bypasses; zero stat frames from partial
+     rosters (journal + spot-audit);
+   - CF `HIT` on stats tiles and binaries;
+   - meteogram point-samples of a stats var resolve correctly.
+   6B/6C advance only on a green 6A (then 6B) budget.
 
 ## 11. Explicitly out of scope
 

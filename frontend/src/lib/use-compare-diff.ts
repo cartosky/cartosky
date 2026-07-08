@@ -138,10 +138,20 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     }
   };
 
+  // Signature of the *selection* (models + variable). Frame-URL-only changes
+  // are scrub steps: the previous diff stays on screen while the next one
+  // computes. Selection changes clear it — stale pixels under a new
+  // variable/model label would be misleading.
+  const selectionSigRef = useRef("");
+
   useEffect(() => {
     const epoch = epochRef.current + 1;
     epochRef.current = epoch;
     cancelPrefetch();
+
+    const selectionSig = `${leftModel}|${rightModel}|${varKey ?? ""}`;
+    const selectionChanged = selectionSigRef.current !== selectionSig;
+    selectionSigRef.current = selectionSig;
 
     // Readiness must always re-confirm for the new selection (screenshot gate).
     setReadySteps(RESET_STEPS);
@@ -159,23 +169,26 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
       return;
     }
 
-    // If both frames are already cached (sequential scrub after prefetch), the
-    // recompute is near-instant: keep the previous diff on screen and show no
-    // loading overlay. Only a real network fetch clears the stale frame + spins.
+    // Scrub steps keep the previous diff visible (the loading overlay renders
+    // on top when a network fetch is needed); only a selection change clears
+    // to blank. Cached scrub steps skip the overlay entirely.
     const bothCached = gridFrameCache.has(leftFrameUrl!) && gridFrameCache.has(rightFrameUrl!);
-    if (bothCached) {
-      setIsLoading(false);
-    } else {
+    if (selectionChanged) {
       revokePublishedBlob();
       setDiffManifest(null);
       setDiffFrameUrl(null);
       setDiffLegend(null);
-      setIsLoading(true);
     }
+    setIsLoading(!bothCached);
     setError(null);
 
     const controller = new AbortController();
     const isCurrent = () => epochRef.current === epoch && !controller.signal.aborted;
+
+    // Cached scrub steps recompute immediately — the debounce exists to
+    // coalesce network fetches during fast scrubbing, and cache hits have
+    // nothing to coalesce (the epoch guard still discards stale computes).
+    const delayMs = bothCached ? 0 : DIFF_DEBOUNCE_MS;
 
     const timer = window.setTimeout(() => {
       void (async () => {
@@ -217,9 +230,9 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
             return;
           }
 
-          // Revoke the just-replaced frame now (in the cached path it was kept on
-          // screen rather than revoked up front). It is fully rendered by now, so
-          // this never truncates an in-flight controller fetch.
+          // Revoke the just-replaced frame now (scrub steps keep the previous
+          // diff on screen rather than revoking up front). It is fully rendered
+          // by now, so this never truncates an in-flight controller fetch.
           if (blobUrlRef.current && blobUrlRef.current !== frameUrl) {
             URL.revokeObjectURL(blobUrlRef.current);
           }
@@ -247,7 +260,7 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
           setIsLoading(false);
         }
       })();
-    }, DIFF_DEBOUNCE_MS);
+    }, delayMs);
 
     return () => {
       window.clearTimeout(timer);
