@@ -117,11 +117,10 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
   };
   const schedulePrefetch = () => {
     cancelPrefetch();
-    const targets = prefetchTargetsRef.current.filter(({ url }) => url && !gridFrameCache.has(url));
-    if (targets.length === 0) {
-      return;
-    }
     const warm = () => {
+      // Read the targets at FIRE time, not schedule time — during a scrub the
+      // pending callback should warm around wherever the user is NOW.
+      const targets = prefetchTargetsRef.current.filter(({ url }) => url && !gridFrameCache.has(url));
       for (const { url, model } of targets) {
         void fetchGridFrameBytes(url, model).catch(() => {
           // Best-effort warm — a failed prefetch just means the next scrub
@@ -130,7 +129,7 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
       }
     };
     if (typeof requestIdleCallback === "function") {
-      const handle = requestIdleCallback(warm, { timeout: 1500 });
+      const handle = requestIdleCallback(warm, { timeout: 500 });
       prefetchCancelRef.current = () => cancelIdleCallback(handle);
     } else {
       const handle = window.setTimeout(warm, 200);
@@ -147,7 +146,6 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
   useEffect(() => {
     const epoch = epochRef.current + 1;
     epochRef.current = epoch;
-    cancelPrefetch();
 
     const selectionSig = `${leftModel}|${rightModel}|${varKey ?? ""}`;
     const selectionChanged = selectionSigRef.current !== selectionSig;
@@ -160,6 +158,7 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
       enabled && leftFrameUrl && rightFrameUrl && leftGridMeta && rightGridMeta && varKey,
     );
     if (!ready) {
+      cancelPrefetch();
       revokePublishedBlob();
       setDiffManifest(null);
       setDiffFrameUrl(null);
@@ -182,6 +181,15 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     setIsLoading(!bothCached);
     setError(null);
 
+    // Cache-hot scrub steps warm the window around the CURRENT position
+    // immediately — during a continuous scrub the settled-compute prefetch in
+    // the success path never runs, and warming must not wait for a pause.
+    // Cold steps skip this so the active pair isn't competing with a dozen
+    // window fetches for bandwidth; their settle-time prefetch covers it.
+    if (bothCached) {
+      schedulePrefetch();
+    }
+
     const controller = new AbortController();
     const isCurrent = () => epochRef.current === epoch && !controller.signal.aborted;
 
@@ -193,13 +201,17 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const leftPromise = fetchGridFrameBytes(leftFrameUrl!, leftModel, controller.signal).then((bytes) => {
+          // Deliberately NO AbortSignal: a scrub step that supersedes this one
+          // discards the COMPUTE (epoch guard) but must not kill the download —
+          // completed bytes populate GridFrameCache, so a fast drag leaves a
+          // warm trail behind it and reversing direction stays cache-hot.
+          const leftPromise = fetchGridFrameBytes(leftFrameUrl!, leftModel).then((bytes) => {
             if (isCurrent()) {
               setReadySteps((steps) => ({ ...steps, leftFetched: true }));
             }
             return bytes;
           });
-          const rightPromise = fetchGridFrameBytes(rightFrameUrl!, rightModel, controller.signal).then((bytes) => {
+          const rightPromise = fetchGridFrameBytes(rightFrameUrl!, rightModel).then((bytes) => {
             if (isCurrent()) {
               setReadySteps((steps) => ({ ...steps, rightFetched: true }));
             }
