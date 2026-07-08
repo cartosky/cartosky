@@ -3,6 +3,7 @@ import {
   type CapabilitiesResponse,
   type CapabilityModel,
 } from "@/lib/api";
+import { PRECIP_ANOM_VAR_KEY_PATTERN } from "@/lib/compare-diff-scales";
 
 /**
  * Diff-eligibility rules for compare difference mode (v1).
@@ -37,13 +38,6 @@ const DIFF_ELIGIBLE_VAR_KEYS = new Set<string>([
   "snowfall_total",
   // Instability
   "mlcape",
-]);
-
-/** Precip-family base keys whose `_anom` variants are also diff-eligible. */
-const PRECIP_FAMILY_BASE_KEYS = new Set<string>([
-  "apcp",
-  "precip_total",
-  "snowfall_total",
 ]);
 
 /** var_keys explicitly excluded even if otherwise present. */
@@ -84,12 +78,12 @@ export function isDiffEligible(varKey: string): boolean {
   if (DIFF_ELIGIBLE_VAR_KEYS.has(key)) {
     return true;
   }
-  // Precip-family anomaly keys (e.g. `apcp_anom`, `precip_total_anom`).
-  if (key.endsWith("_anom")) {
-    const base = key.slice(0, -"_anom".length);
-    if (PRECIP_FAMILY_BASE_KEYS.has(base)) {
-      return true;
-    }
+  // Rolling precip anomaly keys (`precip_5d_anom` … `precip_16d_anom`) —
+  // design doc allowlist entry "`*_anom` precip keys". The pattern is shared
+  // with compare-diff-scales so eligibility and the ±2 in scale stay in
+  // lockstep.
+  if (PRECIP_ANOM_VAR_KEY_PATTERN.test(key)) {
+    return true;
   }
   return false;
 }

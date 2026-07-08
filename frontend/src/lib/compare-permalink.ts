@@ -140,3 +140,28 @@ export function buildComparePermalinkSearch(state: ComparePermalinkState): strin
   const encoded = params.toString();
   return encoded ? `?${encoded}` : "";
 }
+
+/** Query keys the compare page owns (writes) in its permalink. */
+const COMPARE_PERMALINK_KEYS = new Set([
+  "lm", "lv", "lr", "rm", "rv", "rr", "fh", "lat", "lon", "z", "mode",
+]);
+
+/**
+ * Merge params this page does NOT own (e.g. `?screenshot=1`, `legend`,
+ * `basemap`, UTM tags) from the live URL into a freshly built permalink
+ * search, so address-bar writes never strip them. Share links are built
+ * WITHOUT this on purpose — foreign params must not leak into shared URLs.
+ */
+export function withForeignSearchParams(search: string): string {
+  if (typeof window === "undefined") {
+    return search;
+  }
+  const params = new URLSearchParams(search);
+  for (const [key, value] of new URLSearchParams(window.location.search)) {
+    if (!COMPARE_PERMALINK_KEYS.has(key)) {
+      params.append(key, value);
+    }
+  }
+  const encoded = params.toString();
+  return encoded ? `?${encoded}` : "";
+}

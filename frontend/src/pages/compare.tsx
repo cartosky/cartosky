@@ -23,7 +23,7 @@ import {
   type RegionPreset,
 } from "@/lib/api";
 import { useCapabilities } from "@/lib/capabilities-context";
-import { buildComparePermalinkSearch, readComparePermalink } from "@/lib/compare-permalink";
+import { buildComparePermalinkSearch, readComparePermalink, withForeignSearchParams } from "@/lib/compare-permalink";
 import { mutualDiffEligibleVariables } from "@/lib/compare-diff-eligibility";
 import { useCompareDiff } from "@/lib/use-compare-diff";
 import { alignedMutualGridHours, runAlignmentOffsetHours, type GridMeta } from "@/lib/compare-diff";
@@ -1067,7 +1067,7 @@ export default function Compare() {
     setZ(nextZ);
     const selection = selectionStateRef.current;
     replaceUrlQuery(
-      buildComparePermalinkSearch({
+      withForeignSearchParams(buildComparePermalinkSearch({
         lm: selection.lModel,
         lv: selection.lVariable,
         lr: selection.lRun,
@@ -1079,7 +1079,7 @@ export default function Compare() {
         lon: nextLon,
         z: nextZ,
         mode: selection.mode,
-      }),
+      })),
     );
   }, []);
 
@@ -1514,11 +1514,14 @@ export default function Compare() {
   }, [onLeftHover, onRightHover]);
 
   // Persist selection + forecast hour to the URL (debounced). Viewport changes
-  // are written immediately by handleMapMoveEnd, so they are not tracked here;
-  // the current lat/lon/z are still included so a selection change preserves
-  // the viewport. splitPercent is intentionally excluded from the permalink.
+  // are written immediately by handleMapMoveEnd, so they are not tracked here.
+  // The camera is read from cameraStateRef AT FIRE TIME — capturing lat/lon/z
+  // in the closure let a pan inside the debounce window get overwritten with
+  // the coordinates from the scheduling render. splitPercent is intentionally
+  // excluded from the permalink.
   useEffect(() => {
     const handle = window.setTimeout(() => {
+      const camera = cameraStateRef.current;
       const search = buildComparePermalinkSearch({
         lm: lModel,
         lv: lVariable,
@@ -1527,12 +1530,12 @@ export default function Compare() {
         rv: rVariable,
         rr: rRun,
         fh: forecastHour,
-        lat,
-        lon,
-        z,
+        lat: camera.lat,
+        lon: camera.lon,
+        z: camera.z,
         mode,
       });
-      replaceUrlQuery(search);
+      replaceUrlQuery(withForeignSearchParams(search));
     }, URL_SYNC_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
   }, [lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, mode]);

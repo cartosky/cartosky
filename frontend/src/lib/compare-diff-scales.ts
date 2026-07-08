@@ -33,12 +33,30 @@ export const COMPARE_DIFF_SCALES: Record<string, DiffScale> = {
   mlcape:         { maxAbs: 500,  units: "J/kg" },
 };
 
+/**
+ * Rolling precip anomaly keys (`precip_5d_anom` … `precip_16d_anom`, plus any
+ * future window). Shared with diff eligibility so a key can never be
+ * diff-eligible without a real scale (the ±10 unitless default renders
+ * near-white).
+ */
+export const PRECIP_ANOM_VAR_KEY_PATTERN = /^precip_\d+d_anom$/;
+
+/** Design doc "Per-variable symmetric scales": precip anomalies at ±2 in. */
+const PRECIP_ANOM_DIFF_SCALE: DiffScale = { maxAbs: 2, units: "in" };
+
 /** Fallback for any var_key not in {@link COMPARE_DIFF_SCALES} — never throws. */
 export const DEFAULT_DIFF_SCALE: DiffScale = { maxAbs: 10, units: "" };
 
 export function getDiffScale(varKey: string | null | undefined): DiffScale {
   const key = String(varKey ?? "").trim();
-  return COMPARE_DIFF_SCALES[key] ?? DEFAULT_DIFF_SCALE;
+  const exact = COMPARE_DIFF_SCALES[key];
+  if (exact) {
+    return exact;
+  }
+  if (PRECIP_ANOM_VAR_KEY_PATTERN.test(key)) {
+    return PRECIP_ANOM_DIFF_SCALE;
+  }
+  return DEFAULT_DIFF_SCALE;
 }
 
 /**
