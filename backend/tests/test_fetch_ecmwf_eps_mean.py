@@ -646,6 +646,7 @@ def test_fetch_variable_reuses_cached_eps_full_grib(monkeypatch, tmp_path: Path)
     class _FakeResponse:
         def __init__(self, payload: bytes) -> None:
             self._payload = payload
+            self.status_code = 200
             self.headers = {"Content-Length": str(len(payload))}
 
         def raise_for_status(self) -> None:

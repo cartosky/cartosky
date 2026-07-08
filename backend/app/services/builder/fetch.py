@@ -150,6 +150,18 @@ class _InvalidGribSubsetError(RuntimeError):
     """Raised when an upstream byte-range response is not a GRIB payload."""
 
 
+class _RangeRequestNotHonoredError(_InvalidGribSubsetError):
+    """Raised when the upstream server refuses/ignores a byte-range request."""
+
+    def __init__(self, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = int(status_code)
+
+
+class _RangeThrottleActiveError(_InvalidGribSubsetError):
+    """Raised without a network hit while the upstream range-throttle cooldown is active."""
+
+
 @dataclass
 class _IdxNegativeCacheEntry:
     expires_at: float
@@ -309,6 +321,19 @@ class BundleFetchCache:
 _IDX_NEGATIVE_CACHE: dict[tuple[str, str, str, int, str], _IdxNegativeCacheEntry] = {}
 _IDX_NEGATIVE_CACHE_LOCK = threading.Lock()
 _IDX_NEGATIVE_LOG_SUPPRESS: dict[tuple[str, str, str, int], float] = {}
+
+# Search patterns confirmed absent from a fetched inventory (e.g. AIGFS APCP
+# "hour acc" vs "day acc" flips with fh) so repeat frames skip the fail-open
+# download cascade. Keyed per (model, run, product, fh, priority, pattern).
+_PATTERN_NEGATIVE_CACHE: dict[tuple[str, str, str, int, str, str], _IdxNegativeCacheEntry] = {}
+
+# Consecutive upstream 3xx refusals of byte-range requests trip a global
+# cooldown so the retry cascade stops feeding an anti-abuse throttle.
+_RANGE_THROTTLE_LOCK = threading.Lock()
+_RANGE_THROTTLE_CONSECUTIVE = 0
+_RANGE_THROTTLE_COOLDOWN_UNTIL = 0.0
+RANGE_THROTTLE_TRIP_COUNT = 3
+RANGE_THROTTLE_COOLDOWN_SECONDS = 60.0
 
 _INVENTORY_CACHE: dict[str, _InventoryCacheEntry] = {}
 _INVENTORY_CACHE_LOCK = threading.Lock()
@@ -725,6 +750,12 @@ def _download_full_grib_to_path(*, source_url: str, out_path: Path) -> Path:
     response = requests.get(source_url, stream=True, timeout=90)
     try:
         response.raise_for_status()
+        if response.status_code != 200:
+            # raise_for_status passes 3xx; an unfollowable redirect (e.g. NOMADS
+            # anti-abuse block) would otherwise be saved as the "full file".
+            raise RuntimeError(
+                f"Full GRIB download returned status {response.status_code}: {source_url}"
+            )
         expected_size = _parse_float_tag(response.headers.get("Content-Length"))
         with open(tmp_path, "wb") as dst:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
@@ -898,6 +929,94 @@ def _record_idx_negative_cache(cache_key: tuple[str, str, str, int, str]) -> flo
     if evicted > 0:
         _metric_increment("idx_negative_cache_pruned", evicted)
     return ttl
+
+
+def _pattern_negative_key(
+    *,
+    model_id: str,
+    run_date: datetime,
+    product: str,
+    fh: int,
+    priority: str,
+    search_pattern: str,
+) -> tuple[str, str, str, int, str, str]:
+    run_id = _run_id_from_date(run_date)
+    return (
+        str(model_id).strip().lower(),
+        run_id,
+        str(product).strip().lower(),
+        int(fh),
+        str(priority).strip().lower(),
+        str(search_pattern),
+    )
+
+
+def _pattern_negative_cache_remaining(cache_key: tuple[str, str, str, int, str, str]) -> float:
+    now = time.monotonic()
+    with _IDX_NEGATIVE_CACHE_LOCK:
+        entry = _PATTERN_NEGATIVE_CACHE.get(cache_key)
+        if entry is None:
+            return 0.0
+        if now >= entry.expires_at:
+            _PATTERN_NEGATIVE_CACHE.pop(cache_key, None)
+            return 0.0
+        entry.updated_at = now
+        return max(0.0, entry.expires_at - now)
+
+
+def _record_pattern_negative_cache(cache_key: tuple[str, str, str, int, str, str]) -> float:
+    now = time.monotonic()
+    initial_ttl = _idx_negative_initial_ttl_seconds()
+    max_ttl = _idx_negative_max_ttl_seconds()
+    with _IDX_NEGATIVE_CACHE_LOCK:
+        previous = _PATTERN_NEGATIVE_CACHE.get(cache_key)
+        if previous is not None and now < previous.expires_at:
+            ttl = min(max_ttl, max(initial_ttl, previous.ttl_seconds * 2.0))
+        else:
+            ttl = initial_ttl
+        _PATTERN_NEGATIVE_CACHE[cache_key] = _IdxNegativeCacheEntry(
+            expires_at=now + ttl,
+            ttl_seconds=ttl,
+            updated_at=now,
+        )
+        evicted = _evict_oldest_by_updated_at_locked(_PATTERN_NEGATIVE_CACHE, _idx_negative_cache_max_entries())
+    if evicted > 0:
+        _metric_increment("pattern_negative_cache_pruned", evicted)
+    _metric_increment("pattern_negative_cache_store")
+    return ttl
+
+
+def _range_throttle_remaining() -> float:
+    now = time.monotonic()
+    with _RANGE_THROTTLE_LOCK:
+        return max(0.0, _RANGE_THROTTLE_COOLDOWN_UNTIL - now)
+
+
+def _record_range_throttle_refusal(*, status_code: int, source_url: str) -> None:
+    global _RANGE_THROTTLE_CONSECUTIVE, _RANGE_THROTTLE_COOLDOWN_UNTIL
+    tripped = False
+    with _RANGE_THROTTLE_LOCK:
+        _RANGE_THROTTLE_CONSECUTIVE += 1
+        if _RANGE_THROTTLE_CONSECUTIVE >= RANGE_THROTTLE_TRIP_COUNT:
+            _RANGE_THROTTLE_COOLDOWN_UNTIL = time.monotonic() + RANGE_THROTTLE_COOLDOWN_SECONDS
+            _RANGE_THROTTLE_CONSECUTIVE = 0
+            tripped = True
+    if tripped:
+        _metric_increment("range_throttle_cooldown_tripped")
+        logger.warning(
+            "Upstream refused %d consecutive byte-range requests (status=%d, url_hash=%s); "
+            "cooling down range fetches for %.0fs",
+            RANGE_THROTTLE_TRIP_COUNT,
+            status_code,
+            _url_hash(source_url),
+            RANGE_THROTTLE_COOLDOWN_SECONDS,
+        )
+
+
+def _clear_range_throttle() -> None:
+    global _RANGE_THROTTLE_CONSECUTIVE
+    with _RANGE_THROTTLE_LOCK:
+        _RANGE_THROTTLE_CONSECUTIVE = 0
 
 
 def _log_idx_missing_once(
@@ -2322,9 +2441,14 @@ def _fetch_ecmwf_direct_mean_variable(
 def reset_herbie_runtime_caches_for_tests() -> None:
     """Reset process-local Herbie availability caches (tests only)."""
     global _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS
+    global _RANGE_THROTTLE_CONSECUTIVE, _RANGE_THROTTLE_COOLDOWN_UNTIL
     with _IDX_NEGATIVE_CACHE_LOCK:
         _IDX_NEGATIVE_CACHE.clear()
         _IDX_NEGATIVE_LOG_SUPPRESS.clear()
+        _PATTERN_NEGATIVE_CACHE.clear()
+    with _RANGE_THROTTLE_LOCK:
+        _RANGE_THROTTLE_CONSECUTIVE = 0
+        _RANGE_THROTTLE_COOLDOWN_UNTIL = 0.0
     with _INVENTORY_CACHE_LOCK:
         _INVENTORY_CACHE.clear()
         _INVENTORY_INFLIGHT.clear()
@@ -3036,6 +3160,13 @@ def _inventory_primary_byte_range(
 
 
 def _network_fetch_range_bytes(source_url: str, *, start_byte: int, end_byte: int) -> bytes:
+    cooldown_remaining = _range_throttle_remaining()
+    if cooldown_remaining > 0.0:
+        _metric_increment("range_throttle_cooldown_skip")
+        raise _RangeThrottleActiveError(
+            f"Range fetch skipped: upstream throttle cooldown active ({cooldown_remaining:.0f}s left) "
+            f"range={start_byte}-{end_byte} url_hash={_url_hash(source_url)}"
+        )
     headers = {"Range": f"bytes={start_byte}-{end_byte}"}
     expected_size = int(end_byte) - int(start_byte) + 1
     response = requests.get(source_url, headers=headers, timeout=45, stream=True)
@@ -3054,12 +3185,25 @@ def _network_fetch_range_bytes(source_url: str, *, start_byte: int, end_byte: in
                 content_length = None
             if content_length != expected_size:
                 _metric_increment("range_request_not_honored")
+                if 300 <= response.status_code < 400:
+                    # An unfollowable 3xx (e.g. NOMADS anti-abuse block) refuses
+                    # the request outright; count it toward the global cooldown.
+                    _record_range_throttle_refusal(
+                        status_code=response.status_code, source_url=source_url
+                    )
+                    raise _RangeRequestNotHonoredError(
+                        f"Range request not honored: status={response.status_code} "
+                        f"expected_bytes={expected_size} content_length={content_length_header or 'unknown'} "
+                        f"range={start_byte}-{end_byte} url_hash={_url_hash(source_url)}",
+                        status_code=response.status_code,
+                    )
                 raise _InvalidGribSubsetError(
                     f"Range request not honored: status={response.status_code} "
                     f"expected_bytes={expected_size} content_length={content_length_header or 'unknown'} "
                     f"range={start_byte}-{end_byte} url_hash={_url_hash(source_url)}"
                 )
         data = bytes(response.content)
+        _clear_range_throttle()
     finally:
         response.close()
     if len(data) != expected_size:
@@ -3316,6 +3460,10 @@ def _download_subset_with_inventory_byte_range(
                     require_grib_payload=True,
                 )
             except Exception as exc:
+                if isinstance(exc, (_RangeRequestNotHonoredError, _RangeThrottleActiveError)):
+                    # A 3xx refusal (anti-abuse block) or active cooldown means a
+                    # full-file GET would meet the same refusal — don't try it.
+                    raise
                 logger.warning(
                     "Byte-range subset fetch failed; retrying via full-file download (%s fh%03d %s; priority=%s): %s",
                     model_id,
@@ -3570,6 +3718,19 @@ def fetch_variable(
     prs_idx_lag_reason: str | None = None
     prs_fallback_triggered = False
     skipped_cached_priorities: list[tuple[str, float]] = []
+
+    def _note_pattern_missing_failure(priority_value: str) -> None:
+        _record_pattern_negative_cache(
+            _pattern_negative_key(
+                model_id=model_id,
+                run_date=run_date,
+                product=product,
+                fh=fh,
+                priority=priority_value,
+                search_pattern=search_pattern,
+            )
+        )
+
     priority_sequence = list(priority_list)
     priority_idx = 0
     while priority_idx < len(priority_sequence):
@@ -3595,6 +3756,7 @@ def fetch_variable(
             run_kwargs = _quiet_herbie_kwargs(kwargs)
             run_kwargs["priority"] = priority
             subset_target: Path | None = None
+            precheck_pattern_missing = False
             try:
                 H = Herbie(herbie_date, **run_kwargs)
                 precheck_ok, precheck_reason = _precheck_subset_available(
@@ -3620,6 +3782,30 @@ def fetch_variable(
                         prs_idx_lag_reason = precheck_reason
                         force_nomads_after_prs_idx_lag = True
                         break
+                    if precheck_reason == "pattern_missing":
+                        precheck_pattern_missing = True
+                        pattern_neg_remaining = _pattern_negative_cache_remaining(
+                            _pattern_negative_key(
+                                model_id=model_id,
+                                run_date=run_date,
+                                product=product,
+                                fh=fh,
+                                priority=priority,
+                                search_pattern=search_pattern,
+                            )
+                        )
+                        if pattern_neg_remaining > 0.0:
+                            saw_missing_subset_file = True
+                            _metric_increment("pattern_negative_cache_hit")
+                            logger.info(
+                                "Skipping known-missing search pattern (%s fh%03d %s; priority=%s; cached %ds)",
+                                model_id,
+                                fh,
+                                search_pattern,
+                                priority,
+                                int(pattern_neg_remaining),
+                            )
+                            break
                     if precheck_reason in {"idx_empty", "idx_unparseable", "pattern_missing", "no_inventory"}:
                         logger.info(
                             "Herbie precheck failed open; trying subset download anyway (%s fh%03d %s; priority=%s; reason=%s; attempt=%d/%d)",
@@ -3725,6 +3911,8 @@ def fetch_variable(
                                 raise herbie_exc
                         if subset_path is None:
                             saw_missing_subset_file = True
+                            if precheck_pattern_missing:
+                                _note_pattern_missing_failure(priority)
                             logger.warning(
                                 "Herbie subset unavailable: download returned None (%s fh%03d %s; priority=%s; attempt=%d/%d)",
                                 model_id,
@@ -3768,6 +3956,8 @@ def fetch_variable(
                                 grib_priority = priority
                                 selected_meta = attempt_meta
                                 break
+                            if precheck_pattern_missing:
+                                _note_pattern_missing_failure(priority)
                             try:
                                 if subset_candidate.exists():
                                     subset_candidate.unlink()
@@ -3839,6 +4029,8 @@ def fetch_variable(
                             raise herbie_exc
                     if subset_path is None:
                         saw_missing_subset_file = True
+                        if precheck_pattern_missing:
+                            _note_pattern_missing_failure(priority)
                         logger.warning(
                             "Herbie subset unavailable: download returned None (%s fh%03d %s; priority=%s; attempt=%d/%d)",
                             model_id,
@@ -3883,6 +4075,8 @@ def fetch_variable(
                             grib_priority = priority
                             selected_meta = attempt_meta
                             break
+                        if precheck_pattern_missing:
+                            _note_pattern_missing_failure(priority)
                         try:
                             if subset_candidate.exists():
                                 subset_candidate.unlink()
@@ -3908,6 +4102,8 @@ def fetch_variable(
                     break
             except Exception as exc:
                 last_exc = exc
+                if precheck_pattern_missing:
+                    _note_pattern_missing_failure(priority)
                 if isinstance(exc, _InvalidGribSubsetError):
                     saw_missing_subset_file = True
                     logger.warning(

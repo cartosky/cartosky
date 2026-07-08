@@ -334,6 +334,169 @@ def test_network_fetch_range_bytes_rejects_truncated_206_payload(monkeypatch: py
     assert metrics["counters"].get("range_payload_truncated", 0) == 1
 
 
+def test_network_fetch_range_bytes_302_refusals_trip_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Consecutive unfollowable 3xx responses (NOMADS anti-abuse block) must trip
+    a global cooldown so further range fetches fail fast without network hits."""
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    calls: list[str] = []
+
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
+        del headers, timeout, stream
+        calls.append(url)
+        return _FakeResponse(b"<html>blocked</html>", status_code=302)
+
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+
+    for _ in range(fetch_module.RANGE_THROTTLE_TRIP_COUNT):
+        with pytest.raises(fetch_module._RangeRequestNotHonoredError):
+            fetch_module._network_fetch_range_bytes(
+                "https://nomads.example/aigfs.grib2", start_byte=100, end_byte=131
+            )
+
+    # Cooldown active: no further network call, distinct throttle error.
+    with pytest.raises(fetch_module._RangeThrottleActiveError):
+        fetch_module._network_fetch_range_bytes(
+            "https://nomads.example/aigfs.grib2", start_byte=100, end_byte=131
+        )
+    assert len(calls) == fetch_module.RANGE_THROTTLE_TRIP_COUNT
+    metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
+    assert metrics["counters"].get("range_throttle_cooldown_tripped", 0) == 1
+    assert metrics["counters"].get("range_throttle_cooldown_skip", 0) == 1
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+
+
+def test_network_fetch_range_bytes_success_resets_throttle_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    payload = b"GRIB" + (b"\0" * 28)
+    responses = [
+        _FakeResponse(b"x", status_code=302),
+        _FakeResponse(b"x", status_code=302),
+        _FakeResponse(payload),
+        _FakeResponse(b"x", status_code=302),
+    ]
+
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
+        del url, headers, timeout, stream
+        return responses.pop(0)
+
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+
+    for _ in range(2):
+        with pytest.raises(fetch_module._RangeRequestNotHonoredError):
+            fetch_module._network_fetch_range_bytes(
+                "https://nomads.example/aigfs.grib2", start_byte=0, end_byte=31
+            )
+    assert fetch_module._network_fetch_range_bytes(
+        "https://nomads.example/aigfs.grib2", start_byte=0, end_byte=31
+    ) == payload
+    # Counter reset by the success — one more 302 must not trip the cooldown.
+    with pytest.raises(fetch_module._RangeRequestNotHonoredError):
+        fetch_module._network_fetch_range_bytes(
+            "https://nomads.example/aigfs.grib2", start_byte=0, end_byte=31
+        )
+    metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
+    assert metrics["counters"].get("range_throttle_cooldown_tripped", 0) == 0
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+
+
+def test_download_subset_skips_full_file_fallback_on_302_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A 3xx range refusal means the full-file GET would meet the same refusal —
+    the fallback must be skipped and the typed error propagated."""
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+
+    class _FakeHerbie:
+        idx = "https://nomads.example/aigfs.idx"
+        grib = "https://nomads.example/aigfs.grib2"
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([
+                {"search_this": ":UGRD:850 mb:", "start_byte": 4, "end_byte": 35}
+            ])
+
+    def _fake_fetch_range_bytes(**kwargs):
+        raise fetch_module._RangeRequestNotHonoredError("Range request not honored: status=302", status_code=302)
+
+    def _fake_download_full_grib_to_path(*, source_url: str, out_path: Path) -> Path:
+        raise AssertionError("full-file fallback must not run after a 3xx range refusal")
+
+    monkeypatch.setattr(fetch_module, "_fetch_range_bytes", _fake_fetch_range_bytes)
+    monkeypatch.setattr(fetch_module, "_download_full_grib_to_path", _fake_download_full_grib_to_path)
+
+    with pytest.raises(fetch_module._RangeRequestNotHonoredError):
+        fetch_module._download_subset_with_inventory_byte_range(
+            _FakeHerbie(),
+            search_pattern=":UGRD:850 mb:",
+            out_path=tmp_path / "subset.grib2",
+            model_id="aigfs",
+            run_date=datetime(2026, 5, 28, 18, 0),
+            product="pres",
+            fh=198,
+            priority="nomads",
+            bundle_fetch_cache=None,
+        )
+
+
+def test_download_full_grib_to_path_rejects_non_200_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """raise_for_status passes 3xx — an unfollowable redirect body must not be
+    saved as the 'full file'."""
+
+    class _FakeStreamResponse(_FakeResponse):
+        def iter_content(self, chunk_size: int):
+            del chunk_size
+            yield self.content
+
+    def _fake_get(url: str, *, stream: bool = False, timeout: int = 0, **kwargs):
+        del url, stream, timeout, kwargs
+        return _FakeStreamResponse(b"<html>blocked</html>", status_code=302)
+
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+
+    with pytest.raises(RuntimeError, match="status 302"):
+        fetch_module._download_full_grib_to_path(
+            source_url="https://nomads.example/aigfs.grib2",
+            out_path=tmp_path / "full.grib2",
+        )
+    assert not (tmp_path / "full.grib2").exists()
+
+
+def test_pattern_negative_cache_records_and_expires() -> None:
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    key = fetch_module._pattern_negative_key(
+        model_id="aigfs",
+        run_date=datetime(2026, 7, 7, 18, 0),
+        product="sfc",
+        fh=336,
+        priority="nomads",
+        search_pattern=r":APCP:surface:0-[0-9]+ hour acc[^:]*:$",
+    )
+    assert fetch_module._pattern_negative_cache_remaining(key) == 0.0
+    ttl = fetch_module._record_pattern_negative_cache(key)
+    assert ttl > 0.0
+    assert fetch_module._pattern_negative_cache_remaining(key) > 0.0
+    # Repeat recording doubles the TTL up to the max.
+    ttl_second = fetch_module._record_pattern_negative_cache(key)
+    assert ttl_second >= ttl
+    # A different pattern for the same frame is unaffected.
+    other = fetch_module._pattern_negative_key(
+        model_id="aigfs",
+        run_date=datetime(2026, 7, 7, 18, 0),
+        product="sfc",
+        fh=336,
+        priority="nomads",
+        search_pattern=r":APCP:surface:0-[0-9]+ day acc[^:]*:$",
+    )
+    assert fetch_module._pattern_negative_cache_remaining(other) == 0.0
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    assert fetch_module._pattern_negative_cache_remaining(key) == 0.0
+
+
 def test_fetch_range_cache_does_not_store_empty_payloads() -> None:
     fetch_module.reset_herbie_runtime_caches_for_tests()
     cache = fetch_module.BundleFetchCache(max_entries=8, max_bytes=4096, max_cacheable_bytes=1024)

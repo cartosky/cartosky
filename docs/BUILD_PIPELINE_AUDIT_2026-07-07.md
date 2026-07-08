@@ -6,11 +6,15 @@ Scope: the builder pipeline under `backend/app/services/builder/` — `derive.py
 
 Severity legend: **HIGH** = wrong data shipped or prod-incident cause; **MED** = latent correctness trap, meaningful perf/build-time cost, or divergence risk; **LOW** = cleanup, minor cost, or informational.
 
+**Progress (2026-07-07):** the first four items of the quick-wins list (§7) are implemented, tested, and verified against the unfixed code (each new test confirmed to fail pre-fix): 1.1 (ECMWF ptype warp params), 2.6 (readiness-cache `fh` keying), 3.3 (HTTP 206 range guard), and 2.1 + 2.2 (publish rename-swap + manifest eviction). Findings below are left as originally written for the record; each fixed one is marked `STATUS: FIXED`.
+
 ---
 
 ## 1. Data-accuracy findings (derive logic)
 
 ### 1.1 HIGH — ECMWF ptype thermal signals silently drop to zero in warped-component mode
+
+**STATUS: FIXED 2026-07-07.** `_ptype_intensity_ecmwf_phase_signals` now accepts and forwards `use_warped`/`target_region`/`target_grid_id`/`resampling` to its component fetches, matching the GFS path; both call sites (intensity + accumulation) pass their in-scope warp state through. New test `test_ecmwf_ptype_intensity_uses_warped_component_fetches_when_requested` in `backend/tests/test_ecmwf_ptype_intensity_derive.py` asserts every thermal/precip fetch carries the warp params and that a cold/no-sf profile classifies as snow (confirmed to fail against the pre-fix code).
 
 `_ptype_intensity_ecmwf_phase_signals` (`derive.py:2031-2057`, called from `derive.py:2267-2276` and `derive.py:5174-5183`) fetches tmp2m/tmp925/tmp850 **without** the warp parameters (`use_warped`/`target_region`/`target_grid_id`/`resampling`), while the precip/snow steps it combines with *are* warped. The temperature grids come back native-shape, fail the `values.shape != expected_shape` check at `derive.py:2041`, and are silently skipped — `deep_cold`, `surface_cold`, `warm_nose` all become zeros (`derive.py:2055-2057`).
 
@@ -94,11 +98,15 @@ Fix: standardize on `isfinite & >= 0` via a shared helper.
 
 ### 2.1 HIGH — Non-atomic publish swap creates a 404 window on every publish
 
+**STATUS: FIXED 2026-07-07.** `_promote_run` now swaps via two `os.rename` calls (published → `.trash`, tmp → published) instead of `rmtree` + `move`; if the second rename fails, the previous published run is restored before the error propagates. New tests in `backend/tests/test_scheduler_promote_retention.py`, including `test_promote_run_replaces_existing_run_via_rename_swap` (confirmed to fail against the pre-fix code, which rmtree'd the live published dir in place) and `test_promote_run_restores_previous_run_when_swap_fails`.
+
 `_promote_run` (`scheduler.py:1363-1368`): builds `tmp_run`, then `shutil.rmtree(published_run)` followed by `shutil.move(tmp_run, published_run)`. Between rmtree and move, the published run directory does not exist — and rmtree of a large run tree (thousands of frames for ensembles) can take seconds. Every publish (initial + progress publish every ~4 new frames + member-pass promotes) opens this window. This means the *live* run flickers out on every snapshot — a direct contributor to the viewer-404 incident pattern, alongside stale run ids.
 
 Fix (S): rename-swap — `os.rename(published, trash)` → `os.rename(tmp, published)` → delete trash in background. Two renames = milliseconds of exposure.
 
 ### 2.2 HIGH — Manifests are never evicted with their runs
+
+**STATUS: FIXED 2026-07-07.** New `_enforce_manifest_retention` prunes `manifests/<model>/<run>.json` with the same `effective_keep_runs` as staging/published retention, called alongside them in `_process_run`; `LATEST.json` and non-run files are left untouched. Tests `test_enforce_manifest_retention_prunes_only_old_run_manifests` and `test_enforce_manifest_retention_noops_below_keep_count` in `backend/tests/test_scheduler_promote_retention.py`.
 
 `_manifest_path` writes `data_root/manifests/<model>/<run>.json` (`scheduler.py:1082-1084`), but `_enforce_run_retention` (`scheduler.py:2521-2523`) prunes only `staging/<model>` and `published/<model>`. Clients (or caches) resolving a run via an old manifest get a valid-looking manifest whose frames were rmtree'd — exactly the documented "stale client-resolved run ids vs backend run retention" incident.
 
@@ -126,6 +134,8 @@ Fix (S): use `request.model`/`request.product` at `scheduler.py:813`; add a guar
 
 ### 2.6 MED — Readiness-probe cache key omits `fh`
 
+**STATUS: FIXED 2026-07-07.** Both cache-key forms in `_ensure_products_ready` now include `fh` (`{model}|{product}|fh{NNN}` and `{product_name}|fh{NNN}`), so a ready probe at one fh no longer bypasses the fail-closed gate for later hours of the same target; negative results are also now scoped per fh. New test `test_ensure_products_ready_readiness_cache_is_scoped_per_forecast_hour` in `backend/tests/test_pipeline_readiness_gate.py` (confirmed to fail against the pre-fix code). Note: the bare `product_name` cross-sub-model collision risk mentioned below is not addressed by this fix.
+
 `_ensure_products_ready` (`pipeline.py:1412-1428`): cache keys are `f"{request.model}|{request.product}"` and bare `product_name`; `fh` is not in the key, and the scheduler passes one `readiness_cache` per (region, var) across all fhs (`scheduler.py:2238`). After fh N probes ready, all later hours **skip the fail-closed readiness gate entirely** and fall through to `fetch_variable` failure paths. Same gate class as the 18z EPS readiness incident. The bare `product_name` key can also collide across sub-models.
 
 Fix (S): include `fh` in the cache key (idx presence is not monotonic for models publishing hours incrementally).
@@ -149,6 +159,8 @@ Fix (M): allow 2+ in-flight fhs per target for non-derived vars (readiness cache
 Fix (M): retry the range request 2–3× with short backoff before the full-file fallback; cap fallback by Content-Length; route the fallback through the EPS full-file cache when enabled.
 
 ### 3.3 MED — Byte-range correctness: HTTP 200 passes as a "subset"
+
+**STATUS: FIXED 2026-07-07.** `_network_fetch_range_bytes` now streams the response and rejects non-206 responses before buffering the body, unless `Content-Length` exactly matches the requested slice; it also rejects a 206 payload whose length doesn't match the requested range (truncation). New metrics `range_request_not_honored`/`range_payload_truncated`; new tests `test_network_fetch_range_bytes_rejects_full_file_200_response`, `test_network_fetch_range_bytes_accepts_200_when_body_is_exactly_the_slice`, `test_network_fetch_range_bytes_rejects_truncated_206_payload` in `backend/tests/test_fetch_range_cache.py`.
 
 `_network_fetch_range_bytes` (`fetch.py:3038-3044`) + `_validate_grib_range_payload` (`fetch.py:3084-3104`): if an origin/proxy ignores the Range header and returns 200, `response.content` is the entire file — which starts with `GRIB`, so validation passes. The payload is written as the subset and rasterio reads band 1 = first message of the file, i.e. potentially the **wrong variable/level rendered on the map**. Also buffers multi-GB `.content` in RAM. `expected_size` (`fetch.py:3169-3177`) only gates cacheability, not correctness.
 
@@ -330,10 +342,10 @@ Gaps mapping to findings:
 ## 7. Recommended sequence
 
 **Quick wins, high impact (all S effort):**
-1. ECMWF ptype warp-params fix + warped-mode test (1.1 — wrong ice/rain classification in prod today)
-2. Readiness-cache `fh` keying (2.6) — closes the July 6 gate-bypass class for all later forecast hours
-3. HTTP 206 / range-size guard (3.3) — one-line wrong-variable protection
-4. Publish rename-swap (2.1) + manifest eviction (2.2) — kills the 404 incident class
+1. ~~ECMWF ptype warp-params fix + warped-mode test (1.1 — wrong ice/rain classification in prod today)~~ **DONE 2026-07-07**
+2. ~~Readiness-cache `fh` keying (2.6) — closes the July 6 gate-bypass class for all later forecast hours~~ **DONE 2026-07-07**
+3. ~~HTTP 206 / range-size guard (3.3) — one-line wrong-variable protection~~ **DONE 2026-07-07**
+4. ~~Publish rename-swap (2.1) + manifest eviction (2.2) — kills the 404 incident class~~ **DONE 2026-07-07**
 5. Quality-flag threading for fail-open fallbacks (1.2)
 6. Prune-policy fix (2.4) + float32 member warps — the swap incident; also codify `GDAL_CACHEMAX` in the repo unit templates and try `MALLOC_ARENA_MAX=2` (2.3)
 7. Scheduler `request.model` fix + internal-id guard in `fetch_variable` (2.5) — July 6 incident class
