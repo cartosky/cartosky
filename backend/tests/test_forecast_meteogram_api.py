@@ -2022,13 +2022,19 @@ async def test_meteogram_members_prefers_members_ready_run(
     assert response.status_code == 200
     series = response.json()["series"]["gefs"]
     assert series["run_id"] == older
+    # latest_complete_run always reports the true newest complete run, even
+    # when the members-ready preference serves an older one — it is the run
+    # selector's ceiling, and inferring it from run_id hides newer runs.
+    assert series["latest_complete_run"] == newer
     m01 = series["variables"]["tmp2m"]["members"]["m01"]["points"]
     assert [p["value"] for p in m01] == [6.0] * len(FRAME_HOURS)
 
     # Without include_members the newest mean-complete run still wins.
     plain = await client.post("/api/v4/forecast/meteogram", json=_body(["gefs"], ["tmp2m"]))
     assert plain.status_code == 200
-    assert plain.json()["series"]["gefs"]["run_id"] == newer
+    plain_series = plain.json()["series"]["gefs"]
+    assert plain_series["run_id"] == newer
+    assert plain_series["latest_complete_run"] == newer
 
     # An explicit pin beats the members-ready preference (mean-only is what
     # the user asked to see).
@@ -2040,3 +2046,14 @@ async def test_meteogram_members_prefers_members_ready_run(
     pinned_series = response.json()["series"]["gefs"]
     assert pinned_series["run_id"] == newer
     assert pinned_series["variables"]["tmp2m"]["members"]["m01"]["points"] is None
+
+    # A pin to the OLDER run must not mask the true latest (the 2026-07-08
+    # prod bug: a stale pin in a shared URL froze the run dropdown's ceiling
+    # at the pinned cycle and hid every newer run).
+    pinned_old = _body(["gefs"], ["tmp2m"])
+    pinned_old["pinned_runs"] = {"gefs": older}
+    response = await client.post("/api/v4/forecast/meteogram", json=pinned_old)
+    assert response.status_code == 200
+    pinned_old_series = response.json()["series"]["gefs"]
+    assert pinned_old_series["run_id"] == older
+    assert pinned_old_series["latest_complete_run"] == newer

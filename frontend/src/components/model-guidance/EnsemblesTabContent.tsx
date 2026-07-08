@@ -278,12 +278,14 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
     enabled: plumeModels.length > 0,
   });
 
-  // Highest complete run seen per model. The backend only ever serves a complete
-  // run (a pinned run that is still building falls back to the latest complete
-  // one), so the max served run id is the latest complete run. Tracking the max
-  // — rather than reading the current response's run_id — keeps the ceiling
-  // stable when the user pins an older run, which would otherwise lower the
-  // served run_id and hide the newer (still servable) runs from the selector.
+  // Newest complete run per model — the selector ceiling. The backend reports
+  // it directly as `latest_complete_run` (independent of pins), because
+  // inferring it from the SERVED run breaks under a pin: a fresh page load
+  // with a pinned URL only ever sees responses serving the pin, so a
+  // served-run ceiling freezes at the pinned cycle and hides every newer run
+  // (observed 2026-07-08 with a stale gefs pin in a shared link). The served
+  // run_id remains the max-ratchet FALLBACK for older cached payloads that
+  // predate the field.
   const [latestCompleteRun, setLatestCompleteRun] = useState<
     Record<string, string>
   >({});
@@ -294,9 +296,10 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
       let changed = false;
       const next = { ...prev };
       for (const model of eligibleModels) {
-        const served = data.series?.[model]?.run_id;
-        if (served && (!next[model] || served > next[model])) {
-          next[model] = served;
+        const entry = data.series?.[model];
+        const reported = entry?.latest_complete_run ?? entry?.run_id;
+        if (reported && (!next[model] || reported > next[model])) {
+          next[model] = reported;
           changed = true;
         }
       }

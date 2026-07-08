@@ -316,4 +316,26 @@ rebuilds a superseded run's missing MEAN frames — the 51 rh700 frames stay
 absent (upstream defect); the backfill only closes the member gap for the
 654 frames the run did publish.
 
-*Document version: 2026-07-06 (draft → approved same day with review tweaks: D1 API-probe note, D3 clarification, D5 bundling prerequisite; Section 12 addendum approved and implemented same day; Section 13 added with the Phase 4 implementation, D7 approved 2026-07-08; Section 14 backfill addendum added and approved 2026-07-08).*
+---
+
+## 15. Deferred improvement — pf-mean missing-member tolerance (scoped, not approved)
+
+> Scoped 2026-07-08 after the 20260708_00z incident (§14); Brian deferred:
+> "leave that alone for now". Recorded here so the scope isn't re-derived.
+
+When k of the 50 pf member ranges fail payload validation
+(``_InvalidGribSubsetError`` — e.g. the 1-byte index/file truncation that
+blocked rh700 fh060+), ``_fetch_ecmwf_pf_mean_variable`` could build the
+mean from the survivors instead of failing the frame, **iff** survivors ≥ a
+floor (proposed ``CARTOSKY_EPS_PF_MEAN_MIN_MEMBERS``, default 45; below the
+floor, fail exactly as today). Mechanics: collect per-range failures in the
+subset writer (pf-mean path only), write the subset from the good ranges,
+WARN naming the dropped member numbers, stamp the frame meta's
+``member_count`` with the real count for auditability. The member pass
+keeps its strict 50-band validation — a degraded fh publishes a mean but no
+members (mean-of-49 is fine; silently short member rosters are not).
+Counterfactual for the §14 incident: rh700 publishes as mean-of-49 within
+one retry and the run completes. Risk guardrails: the floor + loud logging.
+~80 lines in fetch.py + tests.
+
+*Document version: 2026-07-06 (draft → approved same day with review tweaks: D1 API-probe note, D3 clarification, D5 bundling prerequisite; Section 12 addendum approved and implemented same day; Section 13 added with the Phase 4 implementation, D7 approved 2026-07-08; Section 14 backfill addendum added and approved 2026-07-08; Section 15 deferred-improvement scope recorded 2026-07-08).*

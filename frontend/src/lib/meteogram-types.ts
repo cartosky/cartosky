@@ -28,6 +28,13 @@ export type MeteogramSeries = {
   status: MeteogramSeriesStatus;
   run_id?: string | null;
   run_time?: string | null;
+  /**
+   * Newest complete run for this model, independent of pins and of the
+   * members-ready run preference — the authoritative ceiling for run
+   * selectors. `run_id` is the run actually SERVED (a pin or an older
+   * members-ready run may make it older than this).
+   */
+  latest_complete_run?: string | null;
   variables?: Record<string, MeteogramVariable>;
 };
 

@@ -3233,11 +3233,20 @@ def get_forecast_meteogram(
     # yet, fall back to the plain resolution (mean-only, same as before). An
     # explicit pin always wins — the run dropdown lists mean-only runs too.
     run_ids: dict[str, str | None] = {}
+    # Authoritative newest-complete run per model, independent of pins and of
+    # the members-ready preference. The response carries it so clients never
+    # have to INFER "latest" from the served run — a pinned request serves the
+    # pin, and a client that treats that as the ceiling hides every newer run
+    # from its selector (observed 2026-07-08: a stale gefs pin in a shared URL
+    # froze the plume run dropdown at the pinned cycle).
+    latest_complete_ids: dict[str, str | None] = {}
     for model in norm_models:
         if entitled.get(model) is False:
             continue
         try:
             resolved: str | None = None
+            plain_latest: str | None = None
+            plain_latest_known = False
             pinned_run = pinned.get(model)
             if pinned_run:
                 concrete = sampling.resolve_run(model, pinned_run, region=region)
@@ -3253,10 +3262,18 @@ def get_forecast_meteogram(
                     )
             if resolved is None:
                 resolved = sampling.resolve_latest_complete_run(model, norm_vars, region=region)
+                plain_latest = resolved
+                plain_latest_known = True
             run_ids[model] = resolved
+            if not plain_latest_known:
+                plain_latest = sampling.resolve_latest_complete_run(
+                    model, norm_vars, region=region,
+                )
+            latest_complete_ids[model] = plain_latest
         except Exception:
             logger.exception("Meteogram run resolution failed for %s", model)
             run_ids[model] = None
+            latest_complete_ids[model] = None
 
     # Binary-sampling allowlist (migration plan Phase F): allowlisted models
     # sample grid binaries via _sample_variable_series_binary; everything else
@@ -3386,6 +3403,7 @@ def get_forecast_meteogram(
         series[model] = {
             "run_id": run_id,
             "run_time": run_time,
+            "latest_complete_run": latest_complete_ids.get(model),
             "status": status,
             "variables": var_results_by_model.get(model, {}),
         }
