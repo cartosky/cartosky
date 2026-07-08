@@ -23,7 +23,7 @@ import type {
 
 const CHART_HEIGHT = 320;
 const MEMBER_LINE_WIDTH = 1.25;
-const CONTROL_LINE_WIDTH = 2;
+const CONTROL_LINE_WIDTH = 2.5;
 const MEAN_LINE_WIDTH = 3;
 
 type Props = {

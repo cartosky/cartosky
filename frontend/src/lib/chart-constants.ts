@@ -189,8 +189,11 @@ export function plumeMemberStroke(memberIndex: number): string {
 /** Bold mean line on plume charts — white reads on top of any member hue. */
 export const PLUME_MEAN_STROKE = "#FFFFFF";
 
-/** Control-member stroke (model color; drawn dashed by the plume chart). */
+/** Control-member stroke (drawn dashed by the plume chart). White like the
+ * mean — a model-colored dash got lost among the member hues; the dash
+ * pattern alone separates it from the solid mean line. */
 export function plumeControlStroke(model: string): string {
-  return ensembleMeanStroke(model);
+  void model;
+  return PLUME_MEAN_STROKE;
 }
 
