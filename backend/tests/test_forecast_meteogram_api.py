@@ -1973,3 +1973,70 @@ async def test_meteogram_binary_loop_matches_cog_loop_eps(epscmp_env: None) -> N
         assert not diverged, "\n".join(report_lines)
 
     print("\n".join(report_lines))
+
+
+async def test_meteogram_members_prefers_members_ready_run(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """include_members prefers the newest run whose member frames are
+    PUBLISHED (member manifest present): a fresh run's member pass lags its
+    mean catchup, and a one-cycle-older full fan beats a mean-only plume.
+    The plain request keeps serving the newest mean-complete run, and an
+    explicit pin always wins."""
+    from app.services import grid as grid_module
+    from app.services.grid import write_slim_grid_frame_for_run_root
+
+    older, newer = "20260307_00z", "20260307_06z"
+    transform = from_origin(-101.0, 46.0, 1.0, 1.0)
+    for run_id in (older, newer):
+        _publish_tmp2m(
+            main_module.PUBLISHED_ROOT, main_module.MANIFESTS_ROOT, "gefs", run_id,
+            set_latest=run_id == newer,
+        )
+        run_root = main_module.PUBLISHED_ROOT / "gefs" / run_id
+        for fh in FRAME_HOURS:
+            grid_module.write_grid_frames_for_run_root(
+                run_root=run_root, model="gefs", var="tmp2m__mean", fh=fh,
+                values=np.full((3, 3), 5.0, dtype=np.float32),
+                transform=transform, projection="EPSG:4326",
+            )
+    # Member frames + member manifest exist only on the OLDER run — the
+    # newer run's member pass "hasn't happened yet".
+    older_root = main_module.PUBLISHED_ROOT / "gefs" / older
+    for fh in FRAME_HOURS:
+        write_slim_grid_frame_for_run_root(
+            run_root=older_root, model="gefs", var="tmp2m__m01", fh=fh,
+            values=np.full((3, 3), 6.0, dtype=np.float32),
+            transform=transform, projection="EPSG:4326",
+        )
+    grid_module.build_grid_manifests_for_run_root(
+        run_root=older_root, model="gefs", run=older, variables=("tmp2m__m01",),
+    )
+
+    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs")
+
+    body = _body(["gefs"], ["tmp2m"])
+    body["include_members"] = True
+    response = await client.post("/api/v4/forecast/meteogram", json=body)
+    assert response.status_code == 200
+    series = response.json()["series"]["gefs"]
+    assert series["run_id"] == older
+    m01 = series["variables"]["tmp2m"]["members"]["m01"]["points"]
+    assert [p["value"] for p in m01] == [6.0] * len(FRAME_HOURS)
+
+    # Without include_members the newest mean-complete run still wins.
+    plain = await client.post("/api/v4/forecast/meteogram", json=_body(["gefs"], ["tmp2m"]))
+    assert plain.status_code == 200
+    assert plain.json()["series"]["gefs"]["run_id"] == newer
+
+    # An explicit pin beats the members-ready preference (mean-only is what
+    # the user asked to see).
+    pinned = _body(["gefs"], ["tmp2m"])
+    pinned["include_members"] = True
+    pinned["pinned_runs"] = {"gefs": newer}
+    response = await client.post("/api/v4/forecast/meteogram", json=pinned)
+    assert response.status_code == 200
+    pinned_series = response.json()["series"]["gefs"]
+    assert pinned_series["run_id"] == newer
+    assert pinned_series["variables"]["tmp2m"]["members"]["m01"]["points"] is None

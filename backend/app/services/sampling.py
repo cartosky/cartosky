@@ -729,11 +729,32 @@ def run_complete_for_variables(
     return _run_manifest_complete(plugin, variables_map, variables, run_id)
 
 
+def run_has_member_data(
+    model: str, run_id: str, canonical_vars: list[str], *, region: str | None = None,
+) -> bool:
+    """Does this run publish per-member frames for every listed canonical var?
+
+    Cheap presence probe: the member pass builds each member var's grid
+    manifest before its promote, so ``{var}__m01/grid/manifest.json`` in the
+    published tree is the "members are ready" signal (m01 exists in every
+    roster — GEFS and EPS alike).
+    """
+    del region
+    from .. import main as _main
+
+    for var in canonical_vars:
+        var_dir = _main._published_var_dir(model, run_id, f"{var}__m01")
+        if not (var_dir / "grid" / "manifest.json").is_file():
+            return False
+    return True
+
+
 def resolve_latest_complete_run(
     model: str,
     variables: list[str],
     *,
     region: str | None = None,
+    member_data_vars: list[str] | None = None,
 ) -> str | None:
     """Newest published run that is *complete* for the requested variable(s).
 
@@ -743,6 +764,12 @@ def resolve_latest_complete_run(
     requested variable present in the manifest is complete and at least one
     requested variable is present and complete. Returns ``None`` when no run
     qualifies (caller maps that to ``unavailable``).
+
+    ``member_data_vars`` additionally requires published member frames for
+    those canonical vars (the plume view's "members-ready" preference — a
+    fresh run's member pass lags its mean catchup, and a mean-only plume is
+    worse than a one-cycle-older full fan). Callers fall back to a plain
+    resolve when no run qualifies.
     """
     from .. import main as _main
     from ..models.registry import get_model
@@ -767,8 +794,13 @@ def resolve_latest_complete_run(
         variables_map = manifest.get("variables")
         if not isinstance(variables_map, dict):
             continue
-        if _run_manifest_complete(plugin, variables_map, variables, run_id):
-            return run_id
+        if not _run_manifest_complete(plugin, variables_map, variables, run_id):
+            continue
+        if member_data_vars and not run_has_member_data(
+            model, run_id, member_data_vars, region=region,
+        ):
+            continue
+        return run_id
 
     return None
 

@@ -38,3 +38,35 @@ def isolate_data_root_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     # set, which lets derive runs leak cumulative-cache files into the repo and
     # poison later tests. Point the env fallback at a per-test tmp dir instead.
     monkeypatch.setenv("CARTOSKY_DATA_ROOT", str(tmp_path / "env-data-root"))
+
+
+def _clear_billing_config_caches() -> None:
+    # backend.app.* and app.* are distinct module instances (each with its own
+    # lru_cache) — clear whichever have been imported.
+    for module_name in ("backend.app.config", "app.config"):
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+        for accessor in ("billing_enabled", "pro_gating_enabled"):
+            try:
+                getattr(module, accessor).cache_clear()
+            except AttributeError:
+                pass
+
+
+@pytest.fixture(autouse=True)
+def isolate_billing_env(monkeypatch: pytest.MonkeyPatch):
+    """Pin billing/pro-gating OFF for every test.
+
+    ``app.main`` runs ``load_dotenv("backend/.env.local")`` at import, so
+    without this the DEVELOPER'S local dev flags leak into the test process —
+    flipping ``CARTOSKY_PRO_GATING_ENABLED=true`` locally silently turned
+    entitlement-dependent API tests red (observed 2026-07-08). Tests that
+    exercise gating/billing set the env themselves and clear the (lru-cached)
+    config accessors, which overrides this pin.
+    """
+    monkeypatch.setenv("CARTOSKY_BILLING_ENABLED", "false")
+    monkeypatch.setenv("CARTOSKY_PRO_GATING_ENABLED", "false")
+    _clear_billing_config_caches()
+    yield
+    _clear_billing_config_caches()

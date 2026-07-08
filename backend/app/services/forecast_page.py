@@ -3079,6 +3079,23 @@ def _model_supports_members(model: str) -> bool:
         return False
 
 
+def _member_descriptor_vars(model: str, variables: list[str]) -> list[str]:
+    """Canonical ids of the requested variables that carry a member
+    descriptor — the vars whose published member data the members-ready run
+    preference requires. Empty when none do (or resolution fails)."""
+    try:
+        from ..models.base import ensemble_member_descriptors
+        from ..models.registry import get_model
+
+        plugin = get_model(str(model or "").strip().lower())
+        descriptors = ensemble_member_descriptors(plugin)
+        canonical = {plugin.normalize_var_id(var) for var in variables}
+        return sorted(var for var in canonical if var in descriptors)
+    except Exception:
+        logger.exception("Member descriptor var resolution failed: %s", model)
+        return []
+
+
 def _member_series_for_model_var(
     model: str,
     run_id: str,
@@ -3207,6 +3224,14 @@ def get_forecast_meteogram(
     # run, which may still be publishing frames (a building run would otherwise
     # produce truncated lines near "Now"). Run ids are part of the cache key so a
     # cycle publish (or a different pin) correctly invalidates the cached payload.
+    #
+    # include_members additionally prefers the newest run whose MEMBER frames
+    # are published: a fresh run's member pass runs strictly after its mean
+    # catchup, so "latest mean-complete" would show a mean-only plume during
+    # that window (and indefinitely for a run whose members never built). A
+    # one-cycle-older full fan beats a bare mean line; if NO run has members
+    # yet, fall back to the plain resolution (mean-only, same as before). An
+    # explicit pin always wins — the run dropdown lists mean-only runs too.
     run_ids: dict[str, str | None] = {}
     for model in norm_models:
         if entitled.get(model) is False:
@@ -3220,6 +3245,12 @@ def get_forecast_meteogram(
                     model, concrete, norm_vars, region=region
                 ):
                     resolved = concrete
+            if resolved is None and include_members and _model_supports_members(model):
+                member_vars = _member_descriptor_vars(model, norm_vars)
+                if member_vars:
+                    resolved = sampling.resolve_latest_complete_run(
+                        model, norm_vars, region=region, member_data_vars=member_vars,
+                    )
             if resolved is None:
                 resolved = sampling.resolve_latest_complete_run(model, norm_vars, region=region)
             run_ids[model] = resolved

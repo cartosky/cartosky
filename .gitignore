@@ -80,3 +80,8 @@ frontend/scripts/generate_poc_frames.js
 AGENTS.md
 prpm.lock
 /docs/plans/
+
+# Compiled artifacts of vite.config.ts — vite PREFERS a sibling .js over the
+# .ts, so a committed stale .js silently shadows config edits (bit us 7/06).
+frontend/vite.config.js
+frontend/vite.config.d.ts

@@ -146,6 +146,14 @@ export function useScreenshotCapture({
             // The share overlay stamps the valid time in local time; the
             // headless render must use the poster's timezone, not the server's.
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            // Poster's window size: lat/lon/z only reproduces this view at the
+            // same canvas size, so the server render matches it (clamped
+            // server-side; portrait/mobile windows keep the normalized
+            // landscape default on purpose).
+            viewport: {
+              width: Math.round(window.innerWidth),
+              height: Math.round(window.innerHeight),
+            },
           }),
           signal: controller.signal,
         });

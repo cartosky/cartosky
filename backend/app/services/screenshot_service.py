@@ -20,6 +20,43 @@ SCREENSHOT_TIMEOUT_MS = 30_000
 SCREENSHOT_VIEWPORT_WIDTH = 1280
 SCREENSHOT_VIEWPORT_HEIGHT = 720
 
+# Poster-viewport pass-through clamp. A permalink's lat/lon/z only reproduces
+# the poster's view when rendered at the poster's window size (visible extent
+# scales with canvas pixels at fixed zoom), so desktop landscape windows are
+# honored within these bounds. Portrait or sub-minimum windows (phones) fall
+# back to the 1280x720 default ON PURPOSE — normalizing mobile captures to a
+# forum-friendly landscape frame is the reason this server path exists.
+SCREENSHOT_VIEWPORT_MIN_WIDTH = 960
+SCREENSHOT_VIEWPORT_MAX_WIDTH = 2560
+SCREENSHOT_VIEWPORT_MIN_HEIGHT = 540
+SCREENSHOT_VIEWPORT_MAX_HEIGHT = 1440
+
+
+def resolve_render_viewport(viewport: dict | None) -> dict[str, int]:
+    """Clamp a poster-supplied window size to a renderable landscape viewport.
+
+    Returns the default 1280x720 when the input is missing, malformed,
+    portrait, or smaller than the minimum; otherwise clamps each dimension
+    into its allowed range (an ultrawide poster gets the closest renderable
+    approximation rather than an unbounded browser window).
+    """
+    default = {"width": SCREENSHOT_VIEWPORT_WIDTH, "height": SCREENSHOT_VIEWPORT_HEIGHT}
+    if not isinstance(viewport, dict):
+        return default
+    try:
+        width = int(viewport.get("width", 0))
+        height = int(viewport.get("height", 0))
+    except (TypeError, ValueError):
+        return default
+    if width < SCREENSHOT_VIEWPORT_MIN_WIDTH or height < SCREENSHOT_VIEWPORT_MIN_HEIGHT:
+        return default
+    if height >= width:
+        return default
+    return {
+        "width": min(width, SCREENSHOT_VIEWPORT_MAX_WIDTH),
+        "height": min(height, SCREENSHOT_VIEWPORT_MAX_HEIGHT),
+    }
+
 
 async def _read_gate_log(page) -> list | None:
     """Read the viewer's screenshot gate-state event log (Phase 0 diagnosis).
@@ -68,7 +105,14 @@ class ScreenshotService:
             )
             return self._browser
 
-    async def render(self, url: str, *, basemap: str = "light", timezone_id: str | None = None) -> bytes:
+    async def render(
+        self,
+        url: str,
+        *,
+        basemap: str = "light",
+        timezone_id: str | None = None,
+        viewport: dict | None = None,
+    ) -> bytes:
         # Timing wrappers only — no behavioral changes to the render logic.
         t_entry = time.monotonic()
         compare_mode = _compare_screenshot_mode(url)
@@ -95,7 +139,7 @@ class ScreenshotService:
             # timezone, so the context adopts the poster's tz (falls back to
             # the server's when absent/invalid).
             context = await browser.new_context(
-                viewport={"width": SCREENSHOT_VIEWPORT_WIDTH, "height": SCREENSHOT_VIEWPORT_HEIGHT},
+                viewport=resolve_render_viewport(viewport),
                 device_scale_factor=1,
                 **({"timezone_id": timezone_id} if timezone_id else {}),
             )

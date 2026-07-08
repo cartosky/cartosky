@@ -1585,6 +1585,10 @@ async def generate_share_screenshot(
     url = str(body.get("url", "")).strip() if isinstance(body, dict) else ""
     basemap = str(body.get("basemap", "light")).strip().lower() if isinstance(body, dict) else "light"
     timezone_raw = str(body.get("timezone", "")).strip() if isinstance(body, dict) else ""
+    # Poster's window size so the render reproduces their visible extent —
+    # validated/clamped (and portrait-rejected) by resolve_render_viewport.
+    viewport_raw = body.get("viewport") if isinstance(body, dict) else None
+    viewport = viewport_raw if isinstance(viewport_raw, dict) else None
     if not url:
         return JSONResponse({"error": "url is required"}, status_code=400)
     if basemap not in {"light", "dark"}:
@@ -1604,7 +1608,7 @@ async def generate_share_screenshot(
         return JSONResponse({"error": "URL not allowed"}, status_code=400)
 
     try:
-        png_bytes = await screenshot_service.render(url, basemap=basemap, timezone_id=timezone_id)
+        png_bytes = await screenshot_service.render(url, basemap=basemap, timezone_id=timezone_id, viewport=viewport)
         return Response(content=png_bytes, media_type="image/png")
     except Exception as exc:
         logger.error("Screenshot render failed: %s", exc)
