@@ -26,7 +26,7 @@ import { useCapabilities } from "@/lib/capabilities-context";
 import { buildComparePermalinkSearch, readComparePermalink } from "@/lib/compare-permalink";
 import { mutualDiffEligibleVariables } from "@/lib/compare-diff-eligibility";
 import { useCompareDiff } from "@/lib/use-compare-diff";
-import { intersectSortedHours, resolveMutualGridHour, type GridMeta } from "@/lib/compare-diff";
+import { alignedMutualGridHours, runAlignmentOffsetHours, type GridMeta } from "@/lib/compare-diff";
 import { selectGridManifestLod } from "@/lib/grid-lod";
 import { buildMapRegionViews } from "@/lib/map-region-views";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS } from "@/lib/config";
@@ -816,10 +816,30 @@ export default function Compare() {
     setRRun("latest");
   }, [rModel, rVariable, capabilities]);
 
+  // ── Valid-time alignment across runs ───────────────────────────────────
+  // Comparing different init cycles at the same forecast hour compares
+  // different valid times (12Z FH30 = Thu 1 PM, 00Z FH30 = Thu 1 AM). All
+  // shared-hour state is LEFT-anchored (state/permalink `fh` = left panel's
+  // hour); the right panel renders `fh + runOffsetHours` so both panels show
+  // the same valid time. Same-run comparisons have offset 0 and behave
+  // exactly as before.
+  const runOffsetHours = useMemo(
+    () => runAlignmentOffsetHours(leftLoader.resolvedRun, rightLoader.resolvedRun),
+    [leftLoader.resolvedRun, rightLoader.resolvedRun],
+  );
+
+  // Left-anchored hours where both sides can render the SAME valid time.
+  const mutualAlignedHours = useMemo(
+    () => alignedMutualGridHours(leftLoader.gridFrameHours, rightLoader.gridFrameHours, runOffsetHours),
+    [leftLoader.gridFrameHours, rightLoader.gridFrameHours, runOffsetHours],
+  );
+
   // ── Difference pipeline (orchestrated by useCompareDiff) ───────────────
+  // Left-anchored diff hour; the right frame is fetched at `+ runOffsetHours`
+  // so the diff subtracts fields valid at the same instant.
   const resolvedDiffHour = useMemo(
-    () => resolveMutualGridHour(leftLoader.gridFrameHours, rightLoader.gridFrameHours, forecastHour),
-    [leftLoader.gridFrameHours, rightLoader.gridFrameHours, forecastHour],
+    () => (mutualAlignedHours.length === 0 ? null : nearestFrame(mutualAlignedHours, forecastHour)),
+    [mutualAlignedHours, forecastHour],
   );
 
   const leftDiffFrameUrl = useMemo(
@@ -827,8 +847,8 @@ export default function Compare() {
     [leftLoader.gridFrameHours, leftLoader.gridFrameByHour, resolvedDiffHour],
   );
   const rightDiffFrameUrl = useMemo(
-    () => (resolvedDiffHour === null ? null : resolveActiveGridFrameUrl(rightLoader, resolvedDiffHour)),
-    [rightLoader.gridFrameHours, rightLoader.gridFrameByHour, resolvedDiffHour],
+    () => (resolvedDiffHour === null ? null : resolveActiveGridFrameUrl(rightLoader, resolvedDiffHour + runOffsetHours)),
+    [rightLoader.gridFrameHours, rightLoader.gridFrameByHour, resolvedDiffHour, runOffsetHours],
   );
   const leftGridMeta = useMemo(() => resolveGridMeta(leftLoader.gridManifest), [leftLoader.gridManifest]);
   const rightGridMeta = useMemo(() => resolveGridMeta(rightLoader.gridManifest), [rightLoader.gridManifest]);
@@ -840,8 +860,8 @@ export default function Compare() {
     [leftLoader.gridFrameHours, leftLoader.gridFrameByHour, resolvedDiffHour],
   );
   const rightPrefetchUrls = useMemo(
-    () => (resolvedDiffHour === null ? [] : resolveAdjacentGridFrameUrls(rightLoader, resolvedDiffHour)),
-    [rightLoader.gridFrameHours, rightLoader.gridFrameByHour, resolvedDiffHour],
+    () => (resolvedDiffHour === null ? [] : resolveAdjacentGridFrameUrls(rightLoader, resolvedDiffHour + runOffsetHours)),
+    [rightLoader.gridFrameHours, rightLoader.gridFrameByHour, resolvedDiffHour, runOffsetHours],
   );
 
   const diff = useCompareDiff({
@@ -1291,20 +1311,20 @@ export default function Compare() {
     if (!run) {
       return null;
     }
-    const mutualHours = intersectSortedHours(leftLoader.gridFrameHours, rightLoader.gridFrameHours);
-    const hour = mutualHours.length > 0 ? nearestFrame(mutualHours, forecastHour) : forecastHour;
+    // Left-anchored hour over the valid-time-aligned list: with alignment the
+    // derived valid time is genuinely shared by both panels.
+    const hour = mutualAlignedHours.length > 0 ? nearestFrame(mutualAlignedHours, forecastHour) : forecastHour;
     return deriveValidTime(run, hour);
   }, [
     leftLoader.resolvedRun,
     rightLoader.resolvedRun,
-    leftLoader.gridFrameHours,
-    rightLoader.gridFrameHours,
+    mutualAlignedHours,
     forecastHour,
   ]);
 
-  // Keep the scrubber selection on an hour both sides can actually RENDER:
-  // the intersection of ready grid-frame hours, in both modes (the same list
-  // the scrubber offers). Manifest frameHours deliberately include
+  // Keep the scrubber selection on an hour both sides can actually RENDER at
+  // the same valid time (the valid-time-aligned list the scrubber offers, in
+  // both modes). Manifest frameHours deliberately include
   // expected-but-not-yet-built hours, so snapping/offering against them let
   // the two panels silently render different hours under one shared label.
   useEffect(() => {
@@ -1314,19 +1334,17 @@ export default function Compare() {
     if (leftLoader.loading || rightLoader.loading) {
       return;
     }
-    const mutualHours = intersectSortedHours(leftLoader.gridFrameHours, rightLoader.gridFrameHours);
-    if (mutualHours.length === 0) {
+    if (mutualAlignedHours.length === 0) {
       return;
     }
-    const snapped = nearestFrame(mutualHours, forecastHour);
+    const snapped = nearestFrame(mutualAlignedHours, forecastHour);
     if (snapped !== forecastHour) {
       setForecastHour(snapped);
     }
   }, [
     leftLoader.loading,
     rightLoader.loading,
-    leftLoader.gridFrameHours,
-    rightLoader.gridFrameHours,
+    mutualAlignedHours,
     forecastHour,
   ]);
 
@@ -1429,18 +1447,20 @@ export default function Compare() {
   // Sample at the hour each panel actually renders, not the raw scrubber hour:
   // the snapped mutual grid hour in diff mode, and each side's nearest grid
   // frame hour in split mode (ComparePanel renders
-  // `nearestFrame(gridFrameHours, forecastHour)`). Otherwise hover values can
-  // describe a different forecast hour than the pixels under the cursor.
+  // `nearestFrame(gridFrameHours, forecastHour)`). The right side is offset by
+  // `runOffsetHours` so it samples the frame valid at the same instant.
+  // Otherwise hover values can describe different data than the pixels under
+  // the cursor.
   const leftSampleHour = mode === "diff"
     ? resolvedDiffHour ?? forecastHour
     : leftLoader.gridFrameHours.length > 0
       ? nearestFrame(leftLoader.gridFrameHours, forecastHour)
       : forecastHour;
   const rightSampleHour = mode === "diff"
-    ? resolvedDiffHour ?? forecastHour
+    ? (resolvedDiffHour ?? forecastHour) + runOffsetHours
     : rightLoader.gridFrameHours.length > 0
-      ? nearestFrame(rightLoader.gridFrameHours, forecastHour)
-      : forecastHour;
+      ? nearestFrame(rightLoader.gridFrameHours, forecastHour + runOffsetHours)
+      : forecastHour + runOffsetHours;
 
   const { tooltip: leftTooltip, onHover: onLeftHover, onHoverEnd: onLeftHoverEnd } = useSampleTooltip({
     model: lModel,
@@ -1878,7 +1898,7 @@ export default function Compare() {
             frameRows={rightLoader.frameRows}
             frameHours={rightLoader.frameHours}
             prefersGridSubstrate={rightLoader.prefersGridSubstrate}
-            forecastHour={forecastHour}
+            forecastHour={forecastHour + runOffsetHours}
             loading={rightLoader.loading}
             capabilitiesReady={Boolean(capabilities)}
             error={rightLoader.error}
@@ -1935,12 +1955,12 @@ export default function Compare() {
           </div>
         )}
         <CompareScrubber
-          leftFrameHours={leftLoader.gridFrameHours}
-          rightFrameHours={rightLoader.gridFrameHours}
+          validHours={mutualAlignedHours}
           forecastHour={forecastHour}
           onForecastHourChange={setForecastHour}
           leftResolvedRun={leftLoader.resolvedRun}
           rightResolvedRun={rightLoader.resolvedRun}
+          rightHourOffset={runOffsetHours}
         />
       </div>
 

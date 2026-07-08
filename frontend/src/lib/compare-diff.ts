@@ -1,7 +1,7 @@
 import { productFetch, type GridManifestResponse } from "@/lib/api";
-import { nearestFrame } from "@/lib/app-utils";
 import { gridFrameCache } from "@/lib/grid-frame-cache";
 import { gridUvToLonLat, lonLatToGridUv } from "@/lib/grid-sample";
+import { parseRunId } from "@/lib/time-axis";
 import type { DiffScale } from "@/lib/compare-diff-scales";
 
 /**
@@ -36,19 +36,38 @@ export function intersectSortedHours(left: number[], right: number[]): number[] 
 }
 
 /**
- * Snap a scrubber forecast hour to the nearest hour present in **both** grid
- * manifests. Returns null when no mutual grid frames exist.
+ * Forecast-hour offset that aligns the right run's frames to the left run's
+ * valid times: a left frame at hour `h` and a right frame at hour
+ * `h + offset` are valid at the same instant. Positive when the left run is
+ * newer (e.g. left 12Z vs right 00Z → +12). Returns 0 when either run id
+ * fails to parse (unresolved runs during load degrade to plain same-hour
+ * comparison).
  */
-export function resolveMutualGridHour(
+export function runAlignmentOffsetHours(
+  leftRun: string | null | undefined,
+  rightRun: string | null | undefined,
+): number {
+  const left = parseRunId(leftRun);
+  const right = parseRunId(rightRun);
+  if (!left || !right) {
+    return 0;
+  }
+  return Math.round((left.getTime() - right.getTime()) / 3_600_000);
+}
+
+/**
+ * Left-anchored hours at which BOTH sides have a ready grid frame for the
+ * SAME valid time: left hour `h` is kept when the right side has a frame at
+ * `h + offsetHours`. With offset 0 (same run / unresolved) this is the plain
+ * intersection.
+ */
+export function alignedMutualGridHours(
   leftHours: number[],
   rightHours: number[],
-  forecastHour: number,
-): number | null {
-  const mutual = intersectSortedHours(leftHours, rightHours);
-  if (mutual.length === 0) {
-    return null;
-  }
-  return nearestFrame(mutual, forecastHour);
+  offsetHours: number,
+): number[] {
+  const rightSet = new Set(rightHours);
+  return leftHours.filter((hour) => rightSet.has(hour + offsetHours));
 }
 
 /**

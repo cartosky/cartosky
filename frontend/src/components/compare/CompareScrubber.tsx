@@ -1,16 +1,24 @@
-import { useMemo } from "react";
 import { Play } from "lucide-react";
 
 import { nearestFrame } from "@/lib/app-utils";
 import { Slider } from "@/components/ui/slider";
 
 type CompareScrubberProps = {
-  leftFrameHours: number[];
-  rightFrameHours: number[];
+  /**
+   * Left-anchored hours at which BOTH panels render the same valid time
+   * (valid-time-aligned mutual grid hours, precomputed by the page).
+   */
+  validHours: number[];
   forecastHour: number;
   onForecastHourChange: (hour: number) => void;
   leftResolvedRun: string;
   rightResolvedRun: string;
+  /**
+   * Right panel's forecast-hour offset at equal valid time
+   * (rightHour = leftHour + offset). Non-zero when the runs differ; drives
+   * the dual "FH 30 / 42" readout.
+   */
+  rightHourOffset: number;
 };
 
 export function deriveValidTime(resolvedRun: string, forecastHour: number): string | null {
@@ -40,18 +48,13 @@ export function deriveValidTime(resolvedRun: string, forecastHour: number): stri
 }
 
 export function CompareScrubber({
-  leftFrameHours,
-  rightFrameHours,
+  validHours,
   forecastHour,
   onForecastHourChange,
   leftResolvedRun,
   rightResolvedRun,
+  rightHourOffset,
 }: CompareScrubberProps) {
-  const validHours = useMemo(() => {
-    const rightSet = new Set(rightFrameHours);
-    return leftFrameHours.filter(h => rightSet.has(h));
-  }, [leftFrameHours, rightFrameHours]);
-
   if (validHours.length === 0) {
     return (
       <div className="pointer-events-none absolute inset-x-0 bottom-4 z-40 flex justify-center px-4">
@@ -116,7 +119,11 @@ export function CompareScrubber({
             </span>
           )}
           <span className="text-[10px] font-medium text-cyan-200/80 transition-all duration-200">
-            FH {Math.round(currentHour)}
+            {rightHourOffset !== 0
+              // Different init cycles: same valid time = different per-side
+              // forecast hours; show both so "FH" is never wrong for a panel.
+              ? `FH ${Math.round(currentHour)} / ${Math.round(currentHour + rightHourOffset)}`
+              : `FH ${Math.round(currentHour)}`}
           </span>
         </div>
       </div>
