@@ -1302,11 +1302,11 @@ export default function Compare() {
     forecastHour,
   ]);
 
-  // Keep the scrubber selection on an hour both sides can actually offer —
-  // mutual grid hours in diff mode, mutual frame hours in split mode (the same
-  // lists the scrubber renders). Without the split-mode snap, an off-cadence
-  // hour from a permalink or a model switch persists in state/URL/tooltips
-  // while the panels render a different (nearest) hour.
+  // Keep the scrubber selection on an hour both sides can actually RENDER:
+  // the intersection of ready grid-frame hours, in both modes (the same list
+  // the scrubber offers). Manifest frameHours deliberately include
+  // expected-but-not-yet-built hours, so snapping/offering against them let
+  // the two panels silently render different hours under one shared label.
   useEffect(() => {
     // Never snap against a mid-hydration hour list: while a loader is still
     // resolving, its hours can be a partial subset (e.g. just [0]) and the
@@ -1314,9 +1314,7 @@ export default function Compare() {
     if (leftLoader.loading || rightLoader.loading) {
       return;
     }
-    const mutualHours = mode === "diff"
-      ? intersectSortedHours(leftLoader.gridFrameHours, rightLoader.gridFrameHours)
-      : intersectSortedHours(leftLoader.frameHours, rightLoader.frameHours);
+    const mutualHours = intersectSortedHours(leftLoader.gridFrameHours, rightLoader.gridFrameHours);
     if (mutualHours.length === 0) {
       return;
     }
@@ -1325,13 +1323,10 @@ export default function Compare() {
       setForecastHour(snapped);
     }
   }, [
-    mode,
     leftLoader.loading,
     rightLoader.loading,
     leftLoader.gridFrameHours,
     rightLoader.gridFrameHours,
-    leftLoader.frameHours,
-    rightLoader.frameHours,
     forecastHour,
   ]);
 
@@ -1940,8 +1935,8 @@ export default function Compare() {
           </div>
         )}
         <CompareScrubber
-          leftFrameHours={mode === "diff" ? leftLoader.gridFrameHours : leftLoader.frameHours}
-          rightFrameHours={mode === "diff" ? rightLoader.gridFrameHours : rightLoader.frameHours}
+          leftFrameHours={leftLoader.gridFrameHours}
+          rightFrameHours={rightLoader.gridFrameHours}
           forecastHour={forecastHour}
           onForecastHourChange={setForecastHour}
           leftResolvedRun={leftLoader.resolvedRun}
