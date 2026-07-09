@@ -2865,11 +2865,15 @@ export default function App() {
   const hoverSampleRun = (effectiveRunId ?? "").trim();
 
   // ── Hover-for-data tooltip ──────────────────────────────────────────
+  // Samples the DISPLAYED product's artifact (stats design §7): on a
+  // percentile/probability map the hover must report that product's value
+  // (84%, P50 inches), not the mean's — requestVariable carries the active
+  // product's runtime id and falls back to the base variable on "mean".
   const { tooltip, onHover, onHoverEnd } = useSampleTooltip({
     model: hoverSamplingEnabled ? model : "",
     run: hoverSamplingEnabled ? hoverSampleRun : "",
-    varId: hoverSamplingEnabled ? variable : "",
-    ensembleView: hoverSamplingEnabled ? ensembleView : "",
+    varId: hoverSamplingEnabled ? requestVariable : "",
+    ensembleView: hoverSamplingEnabled ? requestEnsembleView : "",
     fh: hoverSamplingEnabled ? hoverSampleHour : Number.NaN,
   });
   const [vectorHoverTooltip, setVectorHoverTooltip] = useState<Exclude<typeof tooltip, null> | null>(null);

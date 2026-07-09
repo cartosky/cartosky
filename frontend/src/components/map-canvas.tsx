@@ -2433,15 +2433,28 @@ export function MapCanvas({
         return Promise.resolve(null);
       }
       return new Promise((resolve) => {
+        // Same rAF hazard as captureCanvasSnapshot: if triggerRepaint()'s
+        // scheduled render never fires (throttled rAF), an unguarded
+        // once("render") would hang the caller forever. Resolve null on
+        // timeout so still-image and headless capture callers fall through to
+        // their retry/fallback instead.
+        let settled = false;
+        const finish = (value: string | null) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timeoutId);
+          resolve(value);
+        };
+        const timeoutId = window.setTimeout(() => finish(null), 2000);
         map.once("render", () => {
           try {
-            resolve(
+            finish(
               format === "png"
                 ? map.getCanvas().toDataURL("image/png")
                 : map.getCanvas().toDataURL("image/jpeg", 0.7),
             );
           } catch {
-            resolve(null);
+            finish(null);
           }
         });
         map.triggerRepaint();
@@ -2461,6 +2474,26 @@ export function MapCanvas({
         return Promise.resolve(null);
       }
       return new Promise((resolve) => {
+        // triggerRepaint() schedules the render via requestAnimationFrame; when
+        // rAF is throttled (backgrounded tab, browser/GPU throttle) the "render"
+        // may never fire. Without this timeout the promise would hang forever,
+        // wedging the GIF generate loop (whose await never returns, so its own
+        // retry deadline never runs) and freezing slider previews. Resolve null
+        // on timeout so the caller retries or skips the frame — same guard the
+        // compare capture path uses.
+        let settled = false;
+        const finish = (value: HTMLCanvasElement | null) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timeoutId);
+          resolve(value);
+        };
+        const timeoutId = window.setTimeout(() => {
+          if (import.meta.env.DEV) {
+            console.warn("[gif-capture] render event timed out; skipping frame");
+          }
+          finish(null);
+        }, 2000);
         map.once("render", () => {
           try {
             // Atomic grid check: React-mirrored readiness can flicker between
@@ -2472,7 +2505,7 @@ export function MapCanvas({
               && expectGridHour !== null
               && gridWebglControllerRef.current?.visibleFrameHour() !== expectGridHour
             ) {
-              resolve(null);
+              finish(null);
               return;
             }
             const source = map.getCanvas();
@@ -2482,13 +2515,13 @@ export function MapCanvas({
             snapshot.height = Math.max(1, Math.round(source.height * scale));
             const ctx = snapshot.getContext("2d");
             if (!ctx) {
-              resolve(null);
+              finish(null);
               return;
             }
             ctx.drawImage(source, 0, 0, snapshot.width, snapshot.height);
-            resolve(snapshot);
+            finish(snapshot);
           } catch {
-            resolve(null);
+            finish(null);
           }
         });
         map.triggerRepaint();
