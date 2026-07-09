@@ -224,8 +224,8 @@ implementation builds the full §1 matrix behind descriptor flags):
 
 | Stage | Enable | Gate to advance |
 |-------|--------|-----------------|
-| 6A | gefs `precip_total` only (snowfall descriptor ships `enabled: False`; eps off the allowlist) | §10 first-run acceptance budget green |
-| 6B | flip gefs `snowfall_total` descriptor | same checks incl. dry-frame behavior |
+| 6A | gefs `precip_total` only (snowfall descriptor ships `enabled: False`; eps off the allowlist) | §10 first-run acceptance budget green — **PASSED 2026-07-08 on 20260708_18z: wall 100.8s (budget ≤20 min), 704/704 written, zero gate bypasses, manual tally exact at packing precision, maps spot-checked vs WeatherBell; the D8 backfill also stats-healed 20260707_18z unprompted** |
+| 6B | flip gefs `snowfall_total` descriptor — **flipped 2026-07-08** | same checks incl. dry-frame behavior (July snow = all-zero products, the exact dry-frame path 6A could not exercise) |
 | 6C | add eps to the allowlist (precip) | same checks on the EPS unit |
 | 6D | threshold tuning / frontend polish | — |
 

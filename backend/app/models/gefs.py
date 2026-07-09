@@ -1177,15 +1177,16 @@ GEFS_VARIABLE_CATALOG = {
             # Per-member slim publish (design §12/D6): built by the member
             # pass's sequential cumulative loop from bundled APCP+CSNOW.
             "members": {"count": 30, "control": True, "prefix": "m", "enabled": True},
-            # Tier 2 stats products (stats design §1/§3). Ships DISABLED:
-            # rollout stage 6B — flip after the gefs precip_total first-run
-            # acceptance budget (§10.7) is green. Thresholds are LOCKED plan
-            # §4.2 values (display units, inches).
+            # Tier 2 stats products (stats design §1/§3): rollout stage 6B,
+            # enabled 2026-07-08 after the precip_total first-run acceptance
+            # budget passed (wall 100.8s vs <=20min; tally exact; zero gate
+            # bypasses). Thresholds are LOCKED plan §4.2 values (display
+            # units, inches).
             "stats": {
                 "percentiles": [10, 25, 50, 75, 90],
                 "prob_thresholds": [1, 3, 6, 12],
                 "label_noun": "snowfall",
-                "enabled": False,
+                "enabled": True,
             },
         },
     ),

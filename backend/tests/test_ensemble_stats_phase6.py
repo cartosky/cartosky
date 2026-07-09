@@ -57,14 +57,12 @@ def test_classify_ensemble_var_id_grammar() -> None:
 # ── Descriptors (rollout stages 6A/6B/6C) ────────────────────────────
 def test_stats_descriptor_rollout_posture() -> None:
     gefs = ensemble_stats_descriptors(MODEL_REGISTRY["gefs"])
-    # 6A: precip enabled with the LOCKED §4.2 thresholds; 6B: snowfall ships
-    # disabled (flipped after the precip acceptance budget is green).
-    assert set(gefs) == {"precip_total"}
+    # 6A (precip) gate passed 2026-07-08 -> 6B (snowfall) enabled; both carry
+    # the LOCKED §4.2 thresholds.
+    assert set(gefs) == {"precip_total", "snowfall_total"}
     assert gefs["precip_total"]["percentiles"] == [10, 25, 50, 75, 90]
     assert gefs["precip_total"]["prob_thresholds"] == [0.10, 0.25, 0.50, 1.00, 1.50, 2.00]
-    snowfall = MODEL_REGISTRY["gefs"].get_var_capability("snowfall_total").ensemble["stats"]
-    assert snowfall["enabled"] is False
-    assert snowfall["prob_thresholds"] == [1, 3, 6, 12]
+    assert gefs["snowfall_total"]["prob_thresholds"] == [1, 3, 6, 12]
 
     eps = ensemble_stats_descriptors(MODEL_REGISTRY["eps"])
     assert set(eps) == {"precip_total"}
@@ -178,10 +176,10 @@ def test_probability_packing_explicit_generated_entries() -> None:
     packing = grid._packing_config("gefs", "precip_total__prob_gt_0p5")
     assert packing == {"scale": 0.1, "offset": 0.0, "nodata": 65535, "units": "%"}
     assert grid._packing_config("eps", "precip_total__prob_gt_1p0") is not None
+    # 6B: snowfall prob entries generate from its (now enabled) descriptor.
+    assert grid._packing_config("gefs", "snowfall_total__prob_gt_6p0") is not None
     # Explicit entries only: a prob id no descriptor declares resolves to
-    # nothing (never a fallback) — gefs snowfall ships enabled: False (6B),
-    # and tmp2m has no stats descriptor at all.
-    assert grid._packing_config("gefs", "snowfall_total__prob_gt_6p0") is None
+    # nothing (never a fallback) — tmp2m has no stats descriptor at all.
     assert grid._packing_config("gefs", "tmp2m__prob_gt_90p0") is None
 
 
@@ -398,10 +396,12 @@ def test_capabilities_products_payload() -> None:
         "prob_gt_1p0", "prob_gt_1p5", "prob_gt_2p0",
     ]
 
-    # snowfall ships enabled: False (6B) -> NO products payload yet.
+    # 6B: snowfall products carry the snowfall noun and integer thresholds.
     snow = MODEL_REGISTRY["gefs"].get_var_capability("snowfall_total")
     snow_payload = serialize_variable_capability("gefs", snow)
-    assert "products" not in snow_payload.get("ensemble", {})
+    snow_products = {p["key"]: p for p in snow_payload["ensemble"]["products"]}
+    assert snow_products["prob_gt_6p0"]["label"] == 'P(> 6")'
+    assert snow_products["prob_gt_6p0"]["long_label"] == 'Probability of snowfall > 6"'
     # No stats descriptor at all -> unchanged shape.
     tmp = MODEL_REGISTRY["gefs"].get_var_capability("tmp2m")
     tmp_payload = serialize_variable_capability("gefs", tmp)
