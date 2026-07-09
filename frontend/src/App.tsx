@@ -4624,13 +4624,13 @@ export default function App() {
       });
   }, [
     cityLabelMode,
-    ensembleView,
     gridManifest,
     model,
     pointLabelsEnabled,
+    requestEnsembleView,
+    requestVariable,
     resolvedRunForRequests,
     selectionKey,
-    variable,
   ]);
   const handleGridFrameReady = useCallback((frameUrl: string) => {
     const normalized = normalizeGridFrameUrl(frameUrl);
@@ -5141,6 +5141,22 @@ export default function App() {
     const manifestVariable = runManifest?.variables?.[requestVariable];
     return manifestVariable?.display_name ?? manifestVariable?.name ?? manifestVariable?.label ?? variable;
   }, [variables, variable, selectedCapabilityVarMap, runManifest, model]);
+
+  // Screenshot/export overlay label: the base variable name plus the active
+  // ensemble stats product qualifier ("(Mean)", "(50th Percentile)",
+  // "(Prob. > 0.5")"). Only stats-capable variables carry products; everything
+  // else falls through to the plain base label. Scoped to the export overlay —
+  // the live picker keeps the short base name + separate Product selector.
+  const screenshotVariableLabel = useMemo(() => {
+    const base = selectedVariableLabel || variable || "Variable";
+    if (ensembleProducts.length === 0) return base;
+    const activeKey = product || "mean";
+    const qualifier = ensembleProducts
+      .find((entry) => entry.key === activeKey)?.overlay_label?.trim();
+    if (!qualifier) return base;
+    if (base.toLowerCase().includes(`(${qualifier.toLowerCase()})`)) return base;
+    return `${base} (${qualifier})`;
+  }, [selectedVariableLabel, ensembleProducts, product, variable]);
   const runAvailability = useMemo(() => {
     if (RUN_AVAILABILITY_BADGE_EXCLUDED_MODELS.has(model)) {
       return null;
@@ -5305,7 +5321,7 @@ export default function App() {
       run: selectedRunLabel || run || "Run",
       variable: {
         key: variable || "variable",
-        label: selectedVariableLabel || variable || "Variable",
+        label: screenshotVariableLabel,
       },
       fh: Number.isFinite(displayedForecastHour) ? Math.round(displayedForecastHour) : 0,
       isMobile: viewerLayoutMode !== "desktop",

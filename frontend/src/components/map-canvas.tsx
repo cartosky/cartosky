@@ -3289,14 +3289,34 @@ export function MapCanvas({
     if (!map || !isLoaded) {
       return;
     }
-    latestCitySamplingRef.current = null;
-    cityLabelsReadyFiredRef.current = false;
-    cityLabelFallbackRetriesRef.current = 0;
-    clearCityValueLabels(map);
-    if (shouldRefreshCityLabelsAfterSelectionReset({
-      cityLabelMode: cityLabelModeRef.current,
-      pointLabelsEnabled: pointLabelsEnabledRef.current,
-    })) {
+    // Guard against a race: when the target grid frame is already HTTP-cached
+    // (e.g. toggling an ensemble stats product back to the mean), its
+    // emitGridFrameVisible can fire and populate city values BEFORE this
+    // selectionKey effect runs. Its sampler payload then already carries the
+    // CURRENT selectionKey — not stale — so wiping it would blank the
+    // just-populated labels with nothing left to re-fire them until a zoom.
+    // Only reset when the sampler predates this selection.
+    const samplerMatchesSelection =
+      latestCitySamplingRef.current?.payload.selectionKey === selectionKey;
+    if (!samplerMatchesSelection) {
+      latestCitySamplingRef.current = null;
+      cityLabelsReadyFiredRef.current = false;
+      cityLabelFallbackRetriesRef.current = 0;
+      clearCityValueLabels(map);
+    }
+    // Value mode otherwise relies on the "next" grid frame sample to
+    // repopulate — which never arrives when the frame is already resident.
+    // Schedule a refresh so a resident (or imminently-loaded) frame's values
+    // get sampled without requiring a zoom gesture. RAF-coalesced, so a
+    // redundant schedule alongside emitGridFrameVisible's own refresh is a
+    // no-op.
+    if (
+      shouldRefreshCityLabelsAfterSelectionReset({
+        cityLabelMode: cityLabelModeRef.current,
+        pointLabelsEnabled: pointLabelsEnabledRef.current,
+      })
+      || (cityLabelModeRef.current === "value" && pointLabelsEnabledRef.current)
+    ) {
       scheduleCityLabelRefresh();
     }
   }, [isLoaded, variable, selectionKey, scheduleCityLabelRefresh]);

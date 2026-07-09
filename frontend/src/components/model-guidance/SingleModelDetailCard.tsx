@@ -1,6 +1,5 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import uPlot from "uplot";
-import { Check, Clipboard, ClipboardCheck, Download } from "lucide-react";
 
 import { ChartContainer } from "@/components/charts/ChartContainer";
 import { UplotChart } from "@/components/charts/UplotChart";
@@ -16,7 +15,6 @@ import {
 import { sixHourSteps } from "@/components/model-guidance/PrecipDetailPanel";
 import { CHART_THEME, DETAIL_COLORS, modelShortName } from "@/lib/chart-constants";
 import { localNoonSec } from "@/lib/chart-time";
-import { exportCardImage } from "@/lib/export-card-image";
 import { parseRunInitLabel } from "@/lib/model-guidance-subtitle";
 import type { MeteogramResponse, MeteogramSeries } from "@/lib/meteogram-types";
 
@@ -229,10 +227,6 @@ export function SingleModelDetailCard({
 }: Props) {
   const tz = timezone || "UTC";
   const nowSec = useMemo(() => Math.floor((nowMs ?? Date.now()) / 1000), [nowMs]);
-
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "downloaded">("idle");
-  const [downloadState, setDownloadState] = useState<"idle" | "downloaded">("idle");
 
   const series = model ? response?.series?.[model] : undefined;
   const title = model ? modelShortName(model) : "Model detail";
@@ -544,87 +538,24 @@ export function SingleModelDetailCard({
     );
   }
 
-  function runExport(mode: "clipboard" | "download") {
-    if (!model || !cardRef.current) return null;
-    return exportCardImage({
-      cardRef,
-      filename: `cartosky-${model}-${Date.now()}.png`,
-      headerText: runSubtitle ? `${title} · ${runSubtitle}` : title,
-      locationText,
-      logoUrl: "/assets/new_logo.png",
-      mode,
-    });
-  }
-
-  async function handleCopyImage() {
-    const result = await runExport("clipboard");
-    if (!result) return;
-    setCopyState(result === "copied" ? "copied" : "downloaded");
-    setTimeout(() => setCopyState("idle"), 2000);
-  }
-
-  async function handleDownloadImage() {
-    const result = await runExport("download");
-    if (!result) return;
-    setDownloadState("downloaded");
-    setTimeout(() => setDownloadState("idle"), 2000);
-  }
-
-  // Only offer the export buttons on a fully-rendered card with data.
-  const showButtons = hasAnyData && !isLoading && !error;
-  const copyIcon =
-    copyState === "copied" ? (
-      <ClipboardCheck className="h-4 w-4" />
-    ) : copyState === "downloaded" ? (
-      <Download className="h-4 w-4" />
-    ) : (
-      <Clipboard className="h-4 w-4" />
-    );
-
-  const buttonClass = (active: boolean) =>
-    `rounded-md border border-white/10 p-1.5 transition-colors hover:bg-white/[0.06] ${
-      active ? "text-green-400" : "text-white/55 hover:text-white/85"
-    }`;
-
-  const actionButtons = showButtons ? (
-    <div className="flex items-center gap-1.5">
-      <button
-        type="button"
-        onClick={handleCopyImage}
-        title="Copy image"
-        aria-label="Copy image"
-        className={buttonClass(copyState !== "idle")}
-      >
-        {copyIcon}
-      </button>
-      <button
-        type="button"
-        onClick={handleDownloadImage}
-        title="Download image"
-        aria-label="Download image"
-        className={buttonClass(downloadState !== "idle")}
-      >
-        {downloadState === "downloaded" ? (
-          <Check className="h-4 w-4" />
-        ) : (
-          <Download className="h-4 w-4" />
-        )}
-      </button>
-    </div>
-  ) : undefined;
-
   return (
-    <div ref={cardRef}>
-      <ChartContainer
-        title={title}
-        subtitle={runSubtitle}
-        filterSlot={actionButtons}
-        isLoading={isLoading}
-        error={error}
-        onRetry={onRetry}
-      >
-        {content}
-      </ChartContainer>
-    </div>
+    <ChartContainer
+      title={title}
+      subtitle={runSubtitle}
+      isLoading={isLoading}
+      error={error}
+      onRetry={onRetry}
+      exportImage={
+        model
+          ? {
+              headerText: runSubtitle ? `${title} · ${runSubtitle}` : title,
+              locationText,
+              filenameSlug: model,
+            }
+          : undefined
+      }
+    >
+      {content}
+    </ChartContainer>
   );
 }

@@ -346,6 +346,7 @@ export function ModelsTabContent({ lat, lon, timezone, locationText }: Props) {
               isLoading={showSkeleton}
               error={error}
               onRetry={reload}
+              exportImage={{ headerText: "Temperature", locationText, filenameSlug: "temperature" }}
             >
               <MultiModelTemperatureChart
                 response={data}
@@ -362,6 +363,7 @@ export function ModelsTabContent({ lat, lon, timezone, locationText }: Props) {
               isLoading={showSkeleton}
               error={error}
               onRetry={reload}
+              exportImage={{ headerText: "Precipitation", locationText, filenameSlug: "precipitation" }}
             >
               <MultiModelCumulativePrecipChart
                 response={data}
@@ -385,6 +387,7 @@ export function ModelsTabContent({ lat, lon, timezone, locationText }: Props) {
               isLoading={showSkeleton}
               error={error}
               onRetry={reload}
+              exportImage={{ headerText: "Wind", locationText, filenameSlug: "wind" }}
             >
               <MultiModelWindChart
                 response={data}

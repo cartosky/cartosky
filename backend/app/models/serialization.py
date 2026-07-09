@@ -32,8 +32,12 @@ def _ensemble_products_payload(capability: Any) -> list[dict[str, Any]] | None:
 
     products: list[dict[str, Any]] = [
         # "mean" = today's behavior: no product param, the ensemble_view
-        # resolution serves the __mean artifact.
-        {"key": "mean", "var_id": None, "label": "Mean", "long_label": "Ensemble mean"},
+        # resolution serves the __mean artifact. overlay_label is the concise
+        # qualifier the screenshot/export chrome appends to the variable name.
+        {
+            "key": "mean", "var_id": None, "label": "Mean",
+            "long_label": "Ensemble mean", "overlay_label": "Mean",
+        },
     ]
     for key, var_id in ensemble_stats_product_ids(var_key, stats).items():
         if key.startswith("prob_gt_"):
@@ -44,12 +48,18 @@ def _ensemble_products_payload(capability: Any) -> list[dict[str, Any]] | None:
                 f"Probability of {noun} > {threshold_text}"
                 if noun else f"Probability > {threshold_text}"
             )
+            # The base variable name already carries the field ("Total
+            # Precip"), so the overlay qualifier stays noun-free to avoid
+            # "Total Precip (Prob. Precip > 0.5")".
+            overlay_label = f"Prob. > {threshold_text}"
         else:
             label = key.upper()
             long_label = f"{_ordinal(int(key[1:]))} percentile"
-        products.append(
-            {"key": key, "var_id": var_id, "label": label, "long_label": long_label}
-        )
+            overlay_label = f"{_ordinal(int(key[1:]))} Percentile"
+        products.append({
+            "key": key, "var_id": var_id, "label": label,
+            "long_label": long_label, "overlay_label": overlay_label,
+        })
     return products
 
 

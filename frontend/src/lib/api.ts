@@ -76,6 +76,8 @@ export type EnsembleProductOption = {
   var_id?: string | null;
   label?: string;
   long_label?: string;
+  /** Concise qualifier the screenshot/export overlay appends to the variable name. */
+  overlay_label?: string;
 };
 
 export type CapabilityModel = {

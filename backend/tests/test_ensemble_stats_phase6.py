@@ -381,14 +381,18 @@ def test_capabilities_products_payload() -> None:
     payload = serialize_variable_capability("gefs", capability)
     products = payload["ensemble"]["products"]
     assert products[0] == {
-        "key": "mean", "var_id": None, "label": "Mean", "long_label": "Ensemble mean",
+        "key": "mean", "var_id": None, "label": "Mean",
+        "long_label": "Ensemble mean", "overlay_label": "Mean",
     }
     by_key = {p["key"]: p for p in products}
     assert by_key["p50"]["var_id"] == "precip_total__p50"
     assert by_key["p50"]["label"] == "P50"
     assert by_key["p50"]["long_label"] == "50th percentile"
+    assert by_key["p50"]["overlay_label"] == "50th Percentile"
+    assert by_key["mean"]["overlay_label"] == "Mean"
     assert by_key["prob_gt_0p5"]["label"] == 'P(> 0.5")'
     assert by_key["prob_gt_0p5"]["long_label"] == 'Probability of precipitation > 0.5"'
+    assert by_key["prob_gt_0p5"]["overlay_label"] == 'Prob. > 0.5"'
     # Ordered: mean, percentiles ascending, thresholds ascending.
     assert [p["key"] for p in products] == [
         "mean", "p10", "p25", "p50", "p75", "p90",

@@ -2402,6 +2402,7 @@ export default function Forecast() {
               lat={f.location.latitude}
               lon={f.location.longitude}
               timezone={f.location.timezone}
+              locationText={formatLocationText(f.location.display_name, f.location.latitude, f.location.longitude)}
             />
           )}
           {activeTab === "discussion" && <DiscussionTab afd={f.afd} />}

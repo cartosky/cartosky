@@ -29,6 +29,8 @@ type Props = {
   lat: number;
   lon: number;
   timezone: string | null;
+  /** Location line passed to the chart cards' image export. */
+  locationText: string;
 };
 
 type EnsembleVariable = (typeof ENSEMBLES_TAB_VARIABLES)[number];
@@ -93,7 +95,7 @@ function ControlSelect({
  * models; a members view shows one model's member plume (member pipeline
  * Phase 5).
  */
-export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
+export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props) {
   const { canAccessProduct } = useEntitlements();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -454,6 +456,13 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
             isLoading={showSkeleton}
             error={error}
             onRetry={reload}
+            exportImage={{
+              headerText:
+                variable === "tmp2m" ? "Mean temperature" : "Mean cumulative precipitation",
+              locationText,
+              filenameSlug:
+                variable === "tmp2m" ? "ensemble-mean-temperature" : "ensemble-mean-precip",
+            }}
           >
             {variable === "tmp2m" ? (
               <EnsembleMeanTemperatureChart
@@ -478,6 +487,11 @@ export function EnsemblesTabContent({ lat, lon, timezone }: Props) {
             isLoading={membersLoading && !memberData}
             error={membersError}
             onRetry={reloadMembers}
+            exportImage={{
+              headerText: memberChartTitle,
+              locationText,
+              filenameSlug: `${memberModel}-${variable}-members`,
+            }}
           >
             {variable === "tmp2m" ? (
               <EnsembleTemperaturePlumeChart
