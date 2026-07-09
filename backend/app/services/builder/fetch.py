@@ -1784,15 +1784,25 @@ def _inventory_row_byte_range(row: Any) -> tuple[int, int] | None:
     except Exception:
         end_byte = None
 
-    if end_byte is None:
-        try:
-            raw_length = row.get("_length")
-            if raw_length is not None and np.isfinite(raw_length):
-                parsed_length = int(raw_length)
-                if parsed_length > 0:
-                    end_byte = start_byte + parsed_length - 1
-        except Exception:
-            end_byte = None
+    parsed_length: int | None = None
+    try:
+        raw_length = row.get("_length")
+        if raw_length is not None and np.isfinite(raw_length):
+            parsed_length = int(raw_length)
+            if parsed_length <= 0:
+                parsed_length = None
+    except Exception:
+        parsed_length = None
+
+    if end_byte is not None and parsed_length is not None and end_byte == start_byte + parsed_length:
+        # ECMWF-style indexes report an exclusive end (offset + length).
+        # Treating it as inclusive over-requests one byte, which the server
+        # clamps at EOF on the file's last message and trips the strict
+        # payload size check.
+        end_byte = start_byte + parsed_length - 1
+
+    if end_byte is None and parsed_length is not None:
+        end_byte = start_byte + parsed_length - 1
 
     if end_byte is None or end_byte < start_byte:
         return None
