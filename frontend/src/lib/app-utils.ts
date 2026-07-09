@@ -22,7 +22,7 @@ import { readCapabilityRenderSubstrates } from "@/lib/api";
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/share/share-utils";
 import type { BasemapMode } from "@/components/map-canvas";
-import type { WeatherSubstrate } from "@/lib/config";
+import { API_ORIGIN, type WeatherSubstrate } from "@/lib/config";
 import {
   formatObservedCompactTime,
   formatValidTime,
@@ -1232,6 +1232,17 @@ export function extractLegendMeta(row: FrameRow | null | undefined): LegendMeta 
   if (!rawMeta) return null;
   const nested = (rawMeta as { meta?: LegendMeta | null }).meta;
   return nested ?? (rawMeta as LegendMeta);
+}
+
+/**
+ * Resolve a (possibly relative) grid frame URL to an absolute one against the
+ * API origin. Shared by ComparePanel (split mode) and compare.tsx's diff
+ * pipeline: both must produce byte-identical strings because the diff
+ * GridFrameCache and in-flight dedup are keyed on the exact URL. `API_ORIGIN`
+ * is already trailing-slash-stripped at its source in config.
+ */
+export function toAbsoluteGridFrameUrl(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : `${API_ORIGIN}${url.startsWith("/") ? "" : "/"}${url}`;
 }
 
 export function nearestFrame(frames: number[], current: number): number {

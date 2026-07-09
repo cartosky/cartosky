@@ -1,6 +1,7 @@
 import { Play } from "lucide-react";
 
 import { nearestFrame } from "@/lib/app-utils";
+import { deriveValidTime } from "@/lib/time-axis";
 import { Slider } from "@/components/ui/slider";
 
 type CompareScrubberProps = {
@@ -20,32 +21,6 @@ type CompareScrubberProps = {
    */
   rightHourOffset: number;
 };
-
-export function deriveValidTime(resolvedRun: string, forecastHour: number): string | null {
-  // resolvedRun format: "YYYYMMDD_HHz" e.g. "20260619_12z"
-  const match = resolvedRun.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})z$/i);
-  if (!match) return null;
-  const [, year, month, day, hour] = match;
-  const validDate = new Date(Date.UTC(
-    Number(year), Number(month) - 1, Number(day), Number(hour)
-  ));
-  validDate.setUTCHours(validDate.getUTCHours() + Math.round(forecastHour));
-  try {
-    const raw = new Intl.DateTimeFormat("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-    }).format(validDate);
-    // Some platforms/locales insert " at " between date and time — strip it.
-    return raw.replace(/\s+at\s+/i, ", ");
-  } catch {
-    return null;
-  }
-}
 
 export function CompareScrubber({
   validHours,

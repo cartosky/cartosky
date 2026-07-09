@@ -10,8 +10,9 @@ import {
   buildLegend,
   extractLegendMeta,
   nearestFrame,
+  toAbsoluteGridFrameUrl,
 } from "@/lib/app-utils";
-import { API_ORIGIN, OVERLAY_DEFAULT_OPACITY } from "@/lib/config";
+import { API_V4_BASE, OVERLAY_DEFAULT_OPACITY } from "@/lib/config";
 import { resolveGridContourGeoJsonUrl } from "@/lib/grid-contours";
 import { selectGridManifestLod } from "@/lib/grid-lod";
 import type { MapRegionView } from "@/lib/map-region-views";
@@ -54,7 +55,6 @@ type ComparePanelProps = {
   error: string | null;
 };
 
-const API_ROOT = API_ORIGIN.replace(/\/$/, "");
 const EMPTY_CONTOUR_PREFETCH_URLS: string[] = [];
 
 function selectionEpochForKey(key: string): number {
@@ -99,7 +99,7 @@ function ComparePanelComponent({
     if (!url) {
       return null;
     }
-    return /^https?:\/\//i.test(url) ? url : `${API_ROOT}${url.startsWith("/") ? "" : "/"}${url}`;
+    return toAbsoluteGridFrameUrl(url);
   }, [activeGridFrame]);
 
   const gridLodLevel = useMemo(() => {
@@ -160,7 +160,7 @@ function ComparePanelComponent({
       hour: activeGridFrameHour,
       gridManifest,
       frameRows,
-      apiBase: `${API_ROOT}/api/v4`,
+      apiBase: API_V4_BASE,
     });
   }, [activeGridFrameHour, frameRows, gridActive, gridManifest, model, resolvedRun, variable]);
 
@@ -184,7 +184,7 @@ function ComparePanelComponent({
         hour,
         gridManifest,
         frameRows,
-        apiBase: `${API_ROOT}/api/v4`,
+        apiBase: API_V4_BASE,
       });
       if (url && url !== contourGeoJsonUrl && !urls.includes(url)) {
         urls.push(url);

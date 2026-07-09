@@ -5,7 +5,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 
 import { Link } from "react-router-dom";
 import ComparePanel from "@/components/compare/ComparePanel";
-import CompareScrubber, { deriveValidTime } from "@/components/compare/CompareScrubber";
+import CompareScrubber from "@/components/compare/CompareScrubber";
 import CompareDiffPanel from "@/components/compare/CompareDiffPanel";
 import CompareModeToggle, { type CompareMode } from "@/components/compare/CompareModeToggle";
 import CompareMobileSummaryBar from "@/components/compare/CompareMobileSummaryBar";
@@ -29,10 +29,11 @@ import { useCompareDiff } from "@/lib/use-compare-diff";
 import { alignedMutualGridHours, runAlignmentOffsetHours, type GridMeta } from "@/lib/compare-diff";
 import { selectGridManifestLod } from "@/lib/grid-lod";
 import { buildMapRegionViews } from "@/lib/map-region-views";
-import { API_ORIGIN, MAP_VIEW_DEFAULTS } from "@/lib/config";
+import { MAP_VIEW_DEFAULTS } from "@/lib/config";
 import { buildPermalinkSearch, replaceUrlQuery } from "@/lib/permalink";
 import { useModelLoader, type UseModelLoaderResult } from "@/lib/use-model-loader";
 import { useSampleTooltip } from "@/lib/use-sample-tooltip";
+import { deriveValidTime, parseRunId } from "@/lib/time-axis";
 import { useViewerLayoutMode } from "@/lib/viewer-layout";
 import {
   makeModelOptions,
@@ -42,6 +43,7 @@ import {
   normalizeModelRows,
   readBasemapModePreference,
   readLegendVisibilityPreference,
+  toAbsoluteGridFrameUrl,
   writeBasemapModePreference,
   writeLegendVisibilityPreference,
   type GroupedOption,
@@ -78,19 +80,11 @@ const EMPTY_CAPABILITIES: CapabilitiesResponse = {
   availability: {},
 };
 
-/** Same base-URL resolution ComparePanel applies to grid frame URLs. */
-const API_ROOT = API_ORIGIN.replace(/\/$/, "");
-
 function clampSplit(value: number): number {
   if (!Number.isFinite(value)) {
     return DEFAULT_SPLIT;
   }
   return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, value));
-}
-
-/** Apply ComparePanel's base-URL resolution to a (possibly relative) grid frame URL. */
-function toAbsoluteFrameUrl(url: string): string {
-  return /^https?:\/\//i.test(url) ? url : `${API_ROOT}${url.startsWith("/") ? "" : "/"}${url}`;
 }
 
 /** Resolve the active grid frame URL for a loader at a forecast hour (mirrors ComparePanel). */
@@ -104,7 +98,7 @@ function resolveActiveGridFrameUrl(loader: UseModelLoaderResult, forecastHour: n
   if (!url) {
     return null;
   }
-  return toAbsoluteFrameUrl(url);
+  return toAbsoluteGridFrameUrl(url);
 }
 
 // Diff scrub prefetch window around the active hour (forward-biased like the
@@ -147,7 +141,7 @@ function resolveAdjacentGridFrameUrls(loader: UseModelLoaderResult, forecastHour
     }
     const url = loader.gridFrameByHour.get(hours[neighborIndex])?.url;
     if (url) {
-      urls.push(toAbsoluteFrameUrl(url));
+      urls.push(toAbsoluteGridFrameUrl(url));
     }
   }
   return urls;
@@ -175,15 +169,6 @@ function resolveGridMeta(manifest: GridManifestResponse | null): GridMeta | null
   };
 }
 
-/** Parse a resolved run id ("YYYYMMDD_HHz") into compact display parts. */
-function parseRunParts(resolvedRun: string): { hour: string; ymd: string; date: string } | null {
-  const match = resolvedRun.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})z$/i);
-  if (!match) {
-    return null;
-  }
-  const [, year, month, day, hour] = match;
-  return { hour: `${hour}Z`, ymd: `${year}${month}${day}`, date: `${Number(month)}/${Number(day)}` };
-}
 
 /**
  * Variable to select after a model switch: keep the currently selected
@@ -338,9 +323,15 @@ function ControlLabel({ children }: { children: ReactNode }) {
   );
 }
 
+/** Compact "HHZ M/D MODEL" side label from a resolved run id (e.g. "12Z 7/8 GFS"). */
 function formatRunModelSide(resolvedRun: string, modelDisp: string): string {
-  const parts = parseRunParts(resolvedRun);
-  return parts ? `${parts.hour} ${parts.date} ${modelDisp}` : modelDisp;
+  const parsed = parseRunId(resolvedRun);
+  if (!parsed) {
+    return modelDisp;
+  }
+  const hour = `${String(parsed.getUTCHours()).padStart(2, "0")}Z`;
+  const date = `${parsed.getUTCMonth() + 1}/${parsed.getUTCDate()}`;
+  return `${hour} ${date} ${modelDisp}`;
 }
 
 /** Mobile compare header: mode toggle + utility row, summary line, optional notice. */
@@ -666,6 +657,11 @@ export default function Compare() {
   const [splitPercent, setSplitPercent] = useState(() => clampSplit(DEFAULT_SPLIT));
   const [dragPreviewPercent, setDragPreviewPercent] = useState<number | null>(null);
   const dragPreviewPercentRef = useRef<number | null>(null);
+  // Detaches the active divider drag's window listeners and restores the body
+  // cursor/user-select. Held in a ref so an unmount mid-drag (mode toggle,
+  // navigation, hot reload) can run it — otherwise the listeners leak and the
+  // whole page stays stuck in col-resize with text selection disabled.
+  const dragCleanupRef = useRef<(() => void) | null>(null);
 
   const loaderCapabilities = capabilities ?? EMPTY_CAPABILITIES;
   const loaderRegionPresets = regionPresets ?? {};
@@ -1562,6 +1558,8 @@ export default function Compare() {
 
   const handleDividerMouseDown = useCallback((event: ReactMouseEvent) => {
     event.preventDefault();
+    // A prior drag that somehow never released — detach it before rebinding.
+    dragCleanupRef.current?.();
     dragPreviewPercentRef.current = splitPercent;
     setDragPreviewPercent(splitPercent);
     const previousCursor = document.body.style.cursor;
@@ -1584,11 +1582,19 @@ export default function Compare() {
       setDragPreviewPercent(nextPreview);
     };
 
-    const handleMouseUp = () => {
+    // Removes the window listeners and restores body styles only (the global
+    // side effects that outlive the component). Idempotent, and safe to call
+    // from the unmount path where committing state would be a no-op.
+    const detachDrag = () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
+      dragCleanupRef.current = null;
+    };
+
+    const handleMouseUp = () => {
+      detachDrag();
       const nextSplit = dragPreviewPercentRef.current ?? splitPercent;
       dragPreviewPercentRef.current = null;
       setDragPreviewPercent(null);
@@ -1603,9 +1609,16 @@ export default function Compare() {
       });
     };
 
+    dragCleanupRef.current = detachDrag;
     window.addEventListener("mousemove", handleMouseMove);
     window.addEventListener("mouseup", handleMouseUp);
   }, [splitPercent]);
+
+  // Detach any in-flight divider drag on unmount so listeners + forced body
+  // styles never leak past the component's life.
+  useEffect(() => () => {
+    dragCleanupRef.current?.();
+  }, []);
 
   if (error) {
     return (

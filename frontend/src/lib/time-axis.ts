@@ -53,6 +53,36 @@ export function formatRunLabel(runId: string): string {
   return `${timeLabel} ${month}/${day}`;
 }
 
+/**
+ * Valid time (run issue time + forecast hour) formatted for the viewer's local
+ * timezone, e.g. "Thu, Jul 9, 2026, 1:00 PM CDT". Returns null when the run id
+ * doesn't parse. Uses the canonical {@link parseRunId} so the run-id format is
+ * defined in exactly one place (compare's scrubber label and diff share
+ * summary both consume this).
+ */
+export function deriveValidTime(resolvedRun: string, forecastHour: number): string | null {
+  const validDate = parseRunId(resolvedRun);
+  if (!validDate) {
+    return null;
+  }
+  validDate.setUTCHours(validDate.getUTCHours() + Math.round(forecastHour));
+  try {
+    const raw = new Intl.DateTimeFormat("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(validDate);
+    // Some platforms/locales insert " at " between date and time — strip it.
+    return raw.replace(/\s+at\s+/i, ", ");
+  } catch {
+    return null;
+  }
+}
+
 export function formatValidRunIssuedLabel(runId: string): string {
   const parsed = parseRunId(runId);
   if (!parsed) {
