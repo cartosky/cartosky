@@ -13,6 +13,7 @@ import {
   MessageSquareText,
   Moon,
   Palette,
+  Percent,
   Search,
   Settings,
   Share2,
@@ -25,6 +26,7 @@ import {
 
 import { MapLegend } from "@/components/map-legend";
 import { ModelPicker } from "@/components/ModelPicker";
+import { StatisticPicker } from "@/components/StatisticPicker";
 import { VariablePicker } from "@/components/VariablePicker";
 import {
   Select,
@@ -1076,15 +1078,14 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
   const selectedRegionLabel = regions.find((option) => option.value === region)?.label ?? "Region";
 
   return (
-    /* flex-1 so this fills all space after the logo; spacer pushes controls to the right */
-    <div className="flex h-full flex-1 items-end">
-      {/* Flex spacer — pushes everything to the right */}
-      <div className="flex-1" />
-
+    /* flex-1 so this fills all space after the logo; justify-end right-aligns
+       controls while still allowing the row to wrap onto a second line
+       instead of overflowing at narrow (tablet) widths. */
+    <div className="flex h-full flex-1 flex-wrap items-end justify-end gap-1.5">
       {/* Controls group: selectors + divider + icons — all right-aligned */}
-      <div className="flex shrink-0 items-end gap-1.5">
+      <div className="flex flex-wrap items-end gap-1.5">
         {/* Primary selectors */}
-        <div data-tour-target="product-variable-run" className="flex items-end gap-1.5">
+        <div data-tour-target="product-variable-run" className="flex flex-wrap items-end gap-1.5 gap-y-2">
           <HeaderSelectField label="Product" icon={Boxes}>
             <ModelPicker
               value={model}
@@ -1111,13 +1112,12 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
             />
           </HeaderSelectField>
           {showProductSelect ? (
-            <HeaderSelectField label="Product" icon={Layers}>
-              <NavbarSelect
+            <HeaderSelectField label="Statistic" icon={Percent}>
+              <StatisticPicker
                 value={product ?? "mean"}
                 onValueChange={(value) => onProductChange?.(value)}
                 options={availableProductOptions}
                 disabled={disabled}
-                placeholder="Product"
                 minWidth="min-w-[120px] max-w-[200px]"
               />
             </HeaderSelectField>
@@ -1552,14 +1552,13 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           {showProductSelect ? (
             <div className={cn("space-y-1.5", mobilePickerOpen ? "hidden" : "") }>
               <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
-                <Layers className="h-3 w-3" /> Product
+                <Percent className="h-3 w-3" /> Statistic
               </span>
-              <NavbarSelect
+              <StatisticPicker
                 value={product ?? "mean"}
                 onValueChange={(value) => { onProductChange?.(value); closeSheet(); }}
-                options={availableProductOptions.map((entry) => ({ value: entry.value, label: entry.longLabel }))}
+                options={availableProductOptions}
                 disabled={disabled}
-                placeholder="Product"
                 minWidth="w-full"
               />
             </div>
@@ -1862,11 +1861,17 @@ export default function ViewerSiteHeader() {
         className={cn(
           "relative z-10",
           isViewerDesktop
-            ? "flex h-[4.5rem] items-end gap-3 px-4 pb-2 md:px-5"
+            ? "flex min-h-[4.5rem] items-end gap-3 px-4 pb-2 md:px-5"
             : "flex h-14 items-center gap-3 px-4 md:px-5",
         )}
       >
-        <NavLink to="/" className="flex shrink-0 items-center font-semibold tracking-tight text-white">
+        <NavLink
+          to="/"
+          className={cn(
+            "flex shrink-0 items-center font-semibold tracking-tight text-white",
+            isViewerDesktop ? "self-start" : "",
+          )}
+        >
           <img
             src={BRAND_LOGO_SRC}
             alt="CartoSky"

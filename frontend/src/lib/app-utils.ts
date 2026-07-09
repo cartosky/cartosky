@@ -172,6 +172,7 @@ export type Option = {
 
 export type GroupedOption = Option & {
   group: string | null;
+  hasStats?: boolean;
 };
 
 export type VariableOption = GroupedOption;
@@ -189,6 +190,7 @@ export type VariableEntry = {
   group?: string | null;
   renderSubstrates?: WeatherSubstrate[];
   supportedBuildRegions?: string[];
+  hasStats?: boolean;
 };
 
 type VariableUiOverride = {
@@ -703,11 +705,13 @@ export function makeVariableLabel(
   id: string,
   preferredLabel?: string | null,
   modelId?: string | null,
+  options?: { appendEnsembleMeanSuffix?: boolean },
 ): string {
+  const appendSuffix = options?.appendEnsembleMeanSuffix ?? true;
   const override = variableUiOverride(id);
   const apiLabel = preferredLabel?.trim() ?? "";
 
-  if (isEnsembleModel(modelId)) {
+  if (appendSuffix && isEnsembleModel(modelId)) {
     if (apiLabel && hasMeanSuffix(apiLabel)) {
       return apiLabel;
     }
@@ -915,6 +919,10 @@ export function normalizeCapabilityVarRows(modelCapability: CapabilityModel | nu
           .map((regionId) => String(regionId ?? "").trim().toLowerCase())
           .filter((regionId, index, items) => Boolean(regionId) && items.indexOf(regionId) === index)
         : undefined,
+      hasStats: (() => {
+        const products = (entry as { ensemble?: Record<string, unknown> }).ensemble?.products;
+        return Array.isArray(products) && products.length > 1;
+      })(),
     }))
     .filter((entry) => Boolean(entry.id) && entry.buildable);
 
@@ -988,9 +996,10 @@ export function makeVariableOptions(entries: VariableEntry[], modelId?: string |
       const override = variableUiOverride(entry.id);
       return {
         value: entry.id,
-        label: makeVariableLabel(entry.id, entry.displayName, modelId),
+        label: makeVariableLabel(entry.id, entry.displayName, modelId, { appendEnsembleMeanSuffix: false }),
         group: canonicalVariableGroup(entry.id, entry.group),
         sortOrder: typeof override?.order === "number" ? override.order : (1000 + index),
+        hasStats: Boolean(entry.hasStats),
       };
     })
     .sort((a, b) => {

@@ -10,6 +10,7 @@ type VariableOption = {
   value: string;
   label: string;
   group: string | null;
+  hasStats?: boolean;
 };
 
 type VariablePickerProps = {
@@ -511,6 +512,11 @@ export function VariablePicker({
                         title={supported ? option.label : `${option.label} is not available for this model`}
                       >
                         <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
+                        {option.hasStats ? (
+                          <span className="shrink-0 rounded-md border border-cyan-300/25 bg-cyan-300/[0.10] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-cyan-200/80">
+                            stats
+                          </span>
+                        ) : null}
                       </button>
                     </div>
                   );
@@ -604,6 +610,11 @@ export function VariablePicker({
                           title={supported ? option.label : `${option.label} is not available for this model`}
                         >
                           <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
+                          {option.hasStats ? (
+                            <span className="shrink-0 rounded-md border border-cyan-300/25 bg-cyan-300/[0.10] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-cyan-200/80">
+                              stats
+                            </span>
+                          ) : null}
                           {hasSearch ? (
                             <span className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-white/38">
                               {categoryLabel}
