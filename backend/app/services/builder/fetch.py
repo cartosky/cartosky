@@ -1495,6 +1495,15 @@ def _inventory_index_dataframe(
     try:
         try:
             dataframe = H.index_as_dataframe
+            # Herbie's eccodes-style (ECMWF) inventories set end_byte to
+            # offset + length — one past the message's last byte — while
+            # wgrib2-style inventories are inclusive. Normalize to inclusive,
+            # otherwise ranged fetches request one byte past EOF on a file's
+            # final message and trip the strict payload size check. Use
+            # assign() so Herbie's memoized dataframe is never mutated (a
+            # second pass over the same object would double-subtract).
+            if getattr(H, "IDX_STYLE", "") == "eccodes" and "end_byte" in getattr(dataframe, "columns", ()):
+                dataframe = dataframe.assign(end_byte=dataframe["end_byte"] - 1)
         except Exception:
             fallback_refs: list[Any] = []
             for candidate in (idx_ref, getattr(H, "idx", None)):
