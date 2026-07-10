@@ -58,7 +58,6 @@ patterns, no scheduler changes.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -92,6 +91,7 @@ from .fetch import (
     _aggregation_subset_path,
     _download_subset_with_inventory_rows,
     _eps_subset_fallback_path,
+    _eps_subset_fallback_token,
     _inventory_row_byte_range,
     _inventory_search,
     _priority_candidates,
@@ -900,9 +900,14 @@ def _resolve_pf_subset(
                     except Exception:  # noqa: BLE001 — mirror the mean's fallback
                         subset_hint = None
                     if subset_hint is None:
-                        fallback_name = hashlib.sha1(
-                            f"{fetch_model_id}|{request.product}|{fh}|{pattern}|{priority}".encode("utf-8")
-                        ).hexdigest()[:16]
+                        fallback_name = _eps_subset_fallback_token(
+                            model_id=fetch_model_id,
+                            product=request.product,
+                            run_date=plan.run_date,
+                            fh=fh,
+                            search_pattern=pattern,
+                            priority=priority,
+                        )
                         subset_hint = _eps_subset_fallback_path(
                             prefix="eps_pf_mean", token=fallback_name,
                         )

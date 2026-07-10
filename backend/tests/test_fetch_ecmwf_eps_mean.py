@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
+import pytest
 import rasterio.crs
 import rasterio.transform
 
@@ -248,6 +249,95 @@ def test_eps_subset_fallback_path_uses_writable_temp_root(monkeypatch) -> None:
     path = fetch_module._eps_subset_fallback_path(prefix="eps_direct_mean", token="abc123")
 
     assert path == Path(tempfile.gettempdir()) / "cartosky-eps-subsets" / "eps_direct_mean_abc123.grib2"
+
+
+@pytest.mark.parametrize(
+    "aggregation",
+    ["ecmwf_direct_mean", "ecmwf_pf_mean"],
+)
+def test_eps_subset_fallback_cache_is_isolated_by_model_run(
+    monkeypatch,
+    tmp_path: Path,
+    aggregation: str,
+) -> None:
+    class _FakeHerbieFallback(_FakeHerbie):
+        def __init__(self, run_date, *_args, **kwargs) -> None:
+            super().__init__(run_date, *_args, **kwargs)
+            run_token = run_date.strftime("%Y%m%d%H")
+            self.grib = f"https://example.invalid/{run_token}-240h-enfo-ef.grib2"
+            self.idx = f"https://example.invalid/{run_token}-240h-enfo-ef.index"
+
+        def get_localFilePath(self, _search_pattern: str) -> str:
+            raise RuntimeError("Herbie local subset path unavailable")
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame(
+                [
+                    {
+                        "search_this": ":gh:500:pl:em:enfo",
+                        "type": "em",
+                        "step": "0",
+                        "start_byte": 0,
+                        "end_byte": 9,
+                    },
+                    {
+                        "search_this": ":gh:500:pl:1:pf:enfo",
+                        "type": "pf",
+                        "number": 1,
+                        "start_byte": 10,
+                        "end_byte": 19,
+                    },
+                    {
+                        "search_this": ":gh:500:pl:2:pf:enfo",
+                        "type": "pf",
+                        "number": 2,
+                        "start_byte": 20,
+                        "end_byte": 29,
+                    },
+                ]
+            )
+
+    fake_herbie_core = ModuleType("herbie.core")
+    fake_herbie_core.Herbie = _FakeHerbieFallback
+    downloaded_paths: list[Path] = []
+
+    def _fake_download_subset(_herbie, **kwargs):
+        downloaded_paths.append(kwargs["out_path"])
+        return kwargs["out_path"]
+
+    data = np.array([[5580.0, 5520.0]], dtype=np.float32)
+    crs = rasterio.crs.CRS.from_epsg(4326)
+    transform = rasterio.transform.from_origin(-101.0, 46.0, 1.0, 1.0)
+
+    monkeypatch.setenv("CARTOSKY_HERBIE_SAVE_DIR", str(tmp_path))
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}), patch(
+        "app.services.builder.fetch._subset_file_status", return_value=(False, 0)
+    ), patch(
+        "app.services.builder.fetch._download_subset_with_inventory_rows",
+        side_effect=_fake_download_subset,
+    ), patch(
+        "app.services.builder.fetch._read_grib_raster",
+        return_value=(data, crs, transform),
+    ), patch(
+        "app.services.builder.fetch._aggregate_grib_subset_mean",
+        return_value=(data, crs, transform, 2),
+    ):
+        for run_date in (datetime(2026, 7, 10, 0), datetime(2026, 7, 10, 12)):
+            fetch_variable(
+                model_id="ifs",
+                product="enfo",
+                search_pattern=":gh:500:",
+                run_date=run_date,
+                fh=0,
+                herbie_kwargs={
+                    "_cartosky_fetch_aggregation": aggregation,
+                    "priority": ["azure"],
+                },
+            )
+
+    assert len(downloaded_paths) == 2
+    assert downloaded_paths[0] != downloaded_paths[1]
 
 
 def test_ecmwf_eps_step_filter_handles_herbie_timedelta_steps() -> None:

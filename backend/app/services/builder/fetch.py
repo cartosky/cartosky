@@ -637,6 +637,28 @@ def _eps_subset_fallback_path(*, prefix: str, token: str) -> Path:
     return _eps_subset_fallback_root() / f"{safe_prefix}_{safe_token}.grib2"
 
 
+def _eps_subset_fallback_token(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    search_pattern: str,
+    priority: str,
+) -> str:
+    cache_identity = "|".join(
+        (
+            str(model_id),
+            str(product),
+            _run_id_from_date(run_date),
+            str(int(fh)),
+            str(search_pattern),
+            str(priority),
+        )
+    )
+    return hashlib.sha1(cache_identity.encode("utf-8")).hexdigest()[:16]
+
+
 def _eps_full_file_cache_max_bytes() -> int:
     return _int_from_env(
         ENV_EPS_FULL_FILE_CACHE_MAX_BYTES,
@@ -2153,9 +2175,14 @@ def _fetch_ecmwf_pf_mean_variable(
                 except Exception:
                     subset_hint = None
                 if subset_hint is None:
-                    fallback_name = hashlib.sha1(
-                        f"{model_id}|{product}|{fh}|{search_pattern}|{priority}".encode("utf-8")
-                    ).hexdigest()[:16]
+                    fallback_name = _eps_subset_fallback_token(
+                        model_id=model_id,
+                        product=product,
+                        run_date=run_date,
+                        fh=fh,
+                        search_pattern=search_pattern,
+                        priority=priority,
+                    )
                     subset_hint = _eps_subset_fallback_path(prefix="eps_pf_mean", token=fallback_name)
 
                 subset_path = _aggregation_subset_path(subset_hint, "cartosky_pf")
@@ -2385,9 +2412,14 @@ def _fetch_ecmwf_direct_mean_variable(
                 except Exception:
                     subset_hint = None
                 if subset_hint is None:
-                    fallback_name = hashlib.sha1(
-                        f"{model_id}|{product}|{fh}|{search_pattern}|{priority}|em".encode("utf-8")
-                    ).hexdigest()[:16]
+                    fallback_name = _eps_subset_fallback_token(
+                        model_id=model_id,
+                        product=product,
+                        run_date=run_date,
+                        fh=fh,
+                        search_pattern=search_pattern,
+                        priority=priority,
+                    )
                     subset_hint = _eps_subset_fallback_path(prefix="eps_direct_mean", token=fallback_name)
 
                 subset_path = _aggregation_subset_path(subset_hint, f"cartosky_em_fh{int(fh):03d}")

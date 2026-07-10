@@ -7,51 +7,12 @@ import Home from "./pages/home";
 import { AdminProtectedRoute } from "./components/AdminProtectedRoute";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { CapabilitiesProvider } from "./lib/capabilities-context";
-
-const CHUNK_RELOAD_SESSION_KEY = "cartosky:lazy-chunk-reload";
-
-function isRecoverableChunkError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const message = error.message.toLowerCase();
-  return (
-    message.includes("dynamically imported module")
-    || message.includes("failed to fetch dynamically imported module")
-    || message.includes("error loading dynamically imported module")
-    || message.includes("importing a module script failed")
-    || message.includes("chunkloaderror")
-  );
-}
-
-function markChunkReloadAttempted(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  try {
-    if (window.sessionStorage.getItem(CHUNK_RELOAD_SESSION_KEY) === "1") {
-      return false;
-    }
-    window.sessionStorage.setItem(CHUNK_RELOAD_SESSION_KEY, "1");
-    return true;
-  } catch {
-    return true;
-  }
-}
-
-function clearChunkReloadAttempt(): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.sessionStorage.removeItem(CHUNK_RELOAD_SESSION_KEY);
-  } catch {
-    // Ignore session storage failures and continue without persistence.
-  }
-}
+import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
+import {
+  clearChunkReloadAttempt,
+  isRecoverableChunkError,
+  markChunkReloadAttempted,
+} from "./lib/chunk-reload";
 
 function lazyRoute<T extends React.ComponentType<any>>(
   loader: () => Promise<{ default: T }>
@@ -127,6 +88,7 @@ export default function RouterApp() {
   }, [location.pathname]);
 
   return (
+    <RouteErrorBoundary resetKey={location.pathname}>
     <Routes>
       <Route element={<MarketingLayout />}>
         <Route path="/" element={<Home />} />
@@ -169,5 +131,6 @@ export default function RouterApp() {
       <Route path="/app" element={<Navigate to="/viewer" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </RouteErrorBoundary>
   );
 }
