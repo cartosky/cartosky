@@ -1,4 +1,23 @@
+import { readFile } from 'node:fs/promises';
+
 import { test, expect, type Page } from '@playwright/test';
+
+const mobileControlSurface = new URL('../../src/styles/globals.css', import.meta.url);
+const bottomForecastControls = new URL('../../src/components/bottom-forecast-controls.tsx', import.meta.url);
+const compareMobileDrawer = new URL('../../src/components/compare/CompareMobileDrawer.tsx', import.meta.url);
+
+test('mobile viewer and comparison controls share an opaque glass surface', async () => {
+  const [styles, viewerControls, compareControls] = await Promise.all([
+    readFile(mobileControlSurface, 'utf8'),
+    readFile(bottomForecastControls, 'utf8'),
+    readFile(compareMobileDrawer, 'utf8'),
+  ]);
+
+  expect(styles).toMatch(/\.viewer-mobile-control-surface\s*\{[\s\S]*?background-color:\s*rgba\(4, 16, 30, 0\.88\)/);
+  expect(styles).toMatch(/\.viewer-mobile-control-surface\s*\{[\s\S]*?backdrop-filter:\s*blur\(12px\) saturate\(1\.6\)/);
+  expect(viewerControls).toContain('viewer-mobile-control-surface');
+  expect(compareControls).toContain('viewer-mobile-control-surface');
+});
 
 function nearestFrame(frames: number[], current: number): number {
   if (frames.length === 0) return 0;

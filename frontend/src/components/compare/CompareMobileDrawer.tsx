@@ -489,7 +489,7 @@ function DrawerShell({
           maxHeight: snap === "full" ? "90dvh" : "60dvh",
           transition: "max-height 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
         }}
-        className="viewer-mobile-surface fixed bottom-0 left-0 right-0 z-[66] flex max-w-full flex-col overflow-x-hidden overflow-y-hidden rounded-t-[1.5rem] [border-bottom:none] [border-left:none] [border-right:none] pb-[env(safe-area-inset-bottom)]"
+        className="viewer-mobile-control-surface fixed bottom-0 left-0 right-0 z-[66] flex max-w-full flex-col overflow-x-hidden overflow-y-hidden rounded-t-[1.5rem] [border-bottom:none] [border-left:none] [border-right:none] pb-[env(safe-area-inset-bottom)]"
         role="dialog"
         aria-label="Comparison settings"
       >

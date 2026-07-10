@@ -13,6 +13,7 @@
   .glass-strong,
   .glass-overlay,
   .viewer-mobile-surface,
+  .viewer-mobile-control-surface,
   .viewer-mobile-backdrop,
   .viewer-mobile-inset,
   .viewer-mobile-field {
@@ -59,6 +60,18 @@
   /* Reusable viewer mobile surface shared by the controls sheet and modals. */
   .viewer-mobile-surface {
     background-color: rgba(4, 16, 30, 0.82);
+    border: 1px solid rgba(26, 58, 92, 0.6);
+    box-shadow:
+      0 8px 40px rgba(0, 0, 0, 0.55),
+      0 2px 12px rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(100, 180, 255, 0.08);
+    backdrop-filter: blur(12px) saturate(1.6);
+    -webkit-backdrop-filter: blur(12px) saturate(1.6);
+  }
+
+  /* Higher-contrast glass for persistent bottom controls over map imagery. */
+  .viewer-mobile-control-surface {
+    background-color: rgba(4, 16, 30, 0.88);
     border: 1px solid rgba(26, 58, 92, 0.6);
     box-shadow:
       0 8px 40px rgba(0, 0, 0, 0.55),
