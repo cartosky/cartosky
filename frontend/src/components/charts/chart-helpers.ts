@@ -140,6 +140,46 @@ export function buildAlignedData(
 }
 
 /**
+ * Build a shared union x-axis across several point series of ONE model (the
+ * ensemble stats charts align p10…p90 + mean, or one line per probability
+ * threshold). Null entries in `seriesList` produce all-null value arrays so
+ * callers can keep positional series indices stable.
+ */
+export function alignPointSeries(seriesList: readonly (MeteogramPoint[] | null)[]): {
+  data: uPlot.AlignedData;
+  hasData: boolean;
+} {
+  const xsSet = new Set<number>();
+  for (const points of seriesList) {
+    if (!points) continue;
+    for (const point of points) {
+      if (!point.valid_time) continue;
+      const ts = toTimestampSec(point.valid_time);
+      if (ts != null) xsSet.add(ts);
+    }
+  }
+  const xs = [...xsSet].sort((a, b) => a - b);
+  const indexByTs = new Map(xs.map((ts, idx) => [ts, idx]));
+  const arrays: (number | null)[][] = seriesList.map((points) => {
+    const arr: (number | null)[] = new Array(xs.length).fill(null);
+    if (points) {
+      for (const point of points) {
+        if (!point.valid_time) continue;
+        const ts = toTimestampSec(point.valid_time);
+        if (ts == null) continue;
+        const idx = indexByTs.get(ts);
+        if (idx != null) arr[idx] = point.value;
+      }
+    }
+    return arr;
+  });
+  return {
+    data: [xs, ...arrays] as unknown as uPlot.AlignedData,
+    hasData: xs.length > 0,
+  };
+}
+
+/**
  * Span null slots on the shared union x-axis only when the gap is due to another
  * model's denser cadence — not when this model has a native frame with a missing
  * value at an intermediate timestamp.

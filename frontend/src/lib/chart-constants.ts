@@ -189,6 +189,71 @@ export function plumeMemberStroke(memberIndex: number): string {
 /** Bold mean line on plume charts — white reads on top of any member hue. */
 export const PLUME_MEAN_STROKE = "#FFFFFF";
 
+// ── Ensemble stats meteogram charts (backlog B1) ───────────────────────────
+// MUST mirror the backend stats descriptors (`ensemble.stats` in
+// models/gefs.py + models/eps.py); var ids are derived with the same grammar
+// as models/base.py `ensemble_stats_product_ids`. Only variables listed in
+// ENSEMBLE_STATS_PROB_THRESHOLDS get band + probability charts under the
+// member views — to add one (e.g. snowfall_total: [1, 3, 6, 12] when a
+// snowfall variable joins the tab, or tmp2m with backlog B2), add its
+// threshold entry here.
+
+export const ENSEMBLE_STATS_PERCENTILES = [10, 25, 50, 75, 90] as const;
+
+export const ENSEMBLE_STATS_PROB_THRESHOLDS: Partial<Record<string, readonly number[]>> = {
+  precip_total: [0.1, 0.25, 0.5, 1, 1.5, 2],
+};
+
+/** `0.5 -> "0p5"`, `1 -> "1p0"` — mirrors backend `format_prob_threshold`. */
+function formatProbThresholdToken(value: number): string {
+  const text = String(value);
+  return text.includes(".") ? text.replace(".", "p") : `${text}p0`;
+}
+
+/** `("precip_total", 10) -> "precip_total__p10"` */
+export function ensemblePercentileVarId(baseVar: string, percentile: number): string {
+  return `${baseVar}__p${String(percentile).padStart(2, "0")}`;
+}
+
+/** `("precip_total", 0.5) -> "precip_total__prob_gt_0p5"` */
+export function ensembleProbVarId(baseVar: string, threshold: number): string {
+  return `${baseVar}__prob_gt_${formatProbThresholdToken(threshold)}`;
+}
+
+/**
+ * Percentile band fills: outer = 10–90th, inner = 25–75th drawn over it (the
+ * overlap reads darker). Model family hue matches the plume/mean charts.
+ */
+export function ensemblePercentileBandFill(model: string, band: "outer" | "inner"): string {
+  const rgb = model.toLowerCase() === "gefs" ? "30, 107, 184" : "232, 80, 2";
+  return `rgba(${rgb}, ${band === "outer" ? 0.16 : 0.2})`;
+}
+
+/** Thin band-edge stroke (p10/p25/p75/p90) in the model family hue. */
+export function ensemblePercentileEdgeStroke(model: string): string {
+  const rgb = model.toLowerCase() === "gefs" ? "30, 107, 184" : "232, 80, 2";
+  return `rgba(${rgb}, 0.5)`;
+}
+
+/**
+ * Cool→hot stroke ramp for exceedance-probability lines, indexed by the
+ * threshold's position in the configured list (lowest threshold = cool blue,
+ * highest = magenta). Six stops cover the largest configured list.
+ */
+export const ENSEMBLE_PROB_THRESHOLD_STROKES = [
+  "#60A5FA",
+  "#34D399",
+  "#FBBF24",
+  "#FB923C",
+  "#F87171",
+  "#E879F9",
+] as const;
+
+export function ensembleProbThresholdStroke(index: number): string {
+  const clamped = Math.max(0, Math.min(index, ENSEMBLE_PROB_THRESHOLD_STROKES.length - 1));
+  return ENSEMBLE_PROB_THRESHOLD_STROKES[clamped]!;
+}
+
 /** Control-member stroke (drawn dashed by the plume chart). White like the
  * mean — a model-colored dash got lost among the member hues; the dash
  * pattern alone separates it from the solid mean line. */

@@ -6,7 +6,9 @@ import { ChartContainer } from "@/components/charts/ChartContainer";
 import { ModelPillFilter } from "@/components/charts/ModelPillFilter";
 import { EnsembleMeanTemperatureChart } from "@/components/model-guidance/EnsembleMeanTemperatureChart";
 import { EnsembleMeanPrecipChart } from "@/components/model-guidance/EnsembleMeanPrecipChart";
+import { EnsemblePercentileBandChart } from "@/components/model-guidance/EnsemblePercentileBandChart";
 import { EnsemblePrecipPlumeChart } from "@/components/model-guidance/EnsemblePrecipPlumeChart";
+import { EnsembleProbabilityChart } from "@/components/model-guidance/EnsembleProbabilityChart";
 import { EnsembleTemperaturePlumeChart } from "@/components/model-guidance/EnsembleTemperaturePlumeChart";
 import {
   Select,
@@ -18,7 +20,11 @@ import {
 import { useMeteogram } from "@/hooks/useMeteogram";
 import {
   ENSEMBLES_TAB_VARIABLES,
+  ENSEMBLE_STATS_PERCENTILES,
+  ENSEMBLE_STATS_PROB_THRESHOLDS,
   MEMBER_PLUME_MODELS,
+  ensemblePercentileVarId,
+  ensembleProbVarId,
   modelShortName,
 } from "@/lib/chart-constants";
 import { eligibleEnsembleModels } from "@/lib/eligible-ensemble-models";
@@ -381,6 +387,106 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
     ? memberData?.series?.[memberModel]?.run_id ?? null
     : null;
 
+  // ── Stats charts data (backlog B1) ───────────────────────────────────────
+  // Percentile band + probability charts render below the plume when the
+  // selected variable has stats products. Two requests, not one: the
+  // meteogram request schema caps `variables` at 6 (main.py
+  // MeteogramRequest), and the band chart's vars (base + 5 percentiles) and
+  // the probability vars (≤6 thresholds) each exactly fit — no backend
+  // change needed. Both are pinned to the run the MEMBER payload serves so
+  // every chart on the page describes the same run: unpinned, "latest
+  // members-ready" and "latest stats-ready" can briefly diverge while a
+  // fresh run's stats pass finishes (~2 min after members promote). The base
+  // variable rides along for the band chart's mean overlay — an ensemble
+  // base series IS the mean. NOTE the backend silently falls back to the
+  // latest complete run when a pinned run can't serve the requested vars, so
+  // the card subtitles read the SERVED run_id, never the pin.
+  const statsThresholds = ENSEMBLE_STATS_PROB_THRESHOLDS[variable];
+  const hasStatsCharts = Boolean(statsThresholds);
+  const statsRun = memberModel
+    ? pinnedRuns[memberModel] ?? memberData?.series?.[memberModel]?.run_id ?? null
+    : null;
+  const statsPinnedRuns = useMemo(
+    () => (memberModel && statsRun ? { [memberModel]: statsRun } : {}),
+    [memberModel, statsRun],
+  );
+  const statsEnabled = Boolean(memberModel && hasStatsCharts && statsRun);
+  const percentileVariables = useMemo(
+    () =>
+      hasStatsCharts
+        ? [
+            variable,
+            ...ENSEMBLE_STATS_PERCENTILES.map((q) => ensemblePercentileVarId(variable, q)),
+          ]
+        : [],
+    [variable, hasStatsCharts],
+  );
+  const probVariables = useMemo(
+    () =>
+      statsThresholds ? statsThresholds.map((t) => ensembleProbVarId(variable, t)) : [],
+    [variable, statsThresholds],
+  );
+  const {
+    data: percentileData,
+    loading: percentileLoading,
+    error: percentileError,
+    reload: reloadPercentiles,
+  } = useMeteogram({
+    lat,
+    lon,
+    models: memberModel ? [memberModel] : [],
+    variables: percentileVariables,
+    pinnedRuns: statsPinnedRuns,
+    enabled: statsEnabled,
+  });
+  const {
+    data: probData,
+    loading: probLoading,
+    error: probError,
+    reload: reloadProbs,
+  } = useMeteogram({
+    lat,
+    lon,
+    models: memberModel ? [memberModel] : [],
+    variables: probVariables,
+    pinnedRuns: statsPinnedRuns,
+    enabled: statsEnabled,
+  });
+
+  const statsRunSubtitle = useCallback(
+    (served: string | null | undefined) => {
+      const runId = served ?? statsRun;
+      return runId ? `Run ${formatRunLabel(runId)}` : null;
+    },
+    [statsRun],
+  );
+
+  // Both stats charts are precip-only today (inches, 2 decimals); a new
+  // variable's formatting joins the ENSEMBLE_STATS_PROB_THRESHOLDS entry.
+  const formatStatsValue = useCallback(
+    (value: number, units: string) => `${value.toFixed(2)} ${units}`,
+    [],
+  );
+  const statsNoun = VARIABLE_LABELS[variable].toLowerCase();
+  const statsBandTitle = memberModel
+    ? `${modelShortName(memberModel)} ${statsNoun} percentiles`
+    : "";
+  const statsBandSubtitle = [
+    memberModel ? statsRunSubtitle(percentileData?.series?.[memberModel]?.run_id) : null,
+    "Bands span the 10–90th (light) and 25–75th (dark) percentiles · solid white is the median · dashed is the mean",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const statsProbTitle = memberModel
+    ? `${modelShortName(memberModel)} ${statsNoun} probabilities`
+    : "";
+  const statsProbSubtitle = [
+    memberModel ? statsRunSubtitle(probData?.series?.[memberModel]?.run_id) : null,
+    `Chance that total ${statsNoun} exceeds each amount by that time`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   const memberChartTitle = memberModel
     ? `${modelShortName(memberModel)} ${VARIABLE_LABELS[variable].toLowerCase()} members`
     : "";
@@ -480,34 +586,89 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
           </ChartContainer>
         </section>
       ) : (
-        <section id={`ensemble-${memberModel}-members`}>
-          <ChartContainer
-            title={memberChartTitle}
-            subtitle={memberChartSubtitle}
-            isLoading={membersLoading && !memberData}
-            error={membersError}
-            onRetry={reloadMembers}
-            exportImage={{
-              headerText: memberChartTitle,
-              locationText,
-              filenameSlug: `${memberModel}-${variable}-members`,
-            }}
-          >
-            {variable === "tmp2m" ? (
-              <EnsembleTemperaturePlumeChart
-                response={memberData}
-                model={memberModel!}
-                timezone={timezone}
-              />
-            ) : (
-              <EnsemblePrecipPlumeChart
-                response={memberData}
-                model={memberModel!}
-                timezone={timezone}
-              />
-            )}
-          </ChartContainer>
-        </section>
+        <>
+          <section id={`ensemble-${memberModel}-members`}>
+            <ChartContainer
+              title={memberChartTitle}
+              subtitle={memberChartSubtitle}
+              isLoading={membersLoading && !memberData}
+              error={membersError}
+              onRetry={reloadMembers}
+              exportImage={{
+                headerText: memberChartTitle,
+                locationText,
+                filenameSlug: `${memberModel}-${variable}-members`,
+              }}
+            >
+              {variable === "tmp2m" ? (
+                <EnsembleTemperaturePlumeChart
+                  response={memberData}
+                  model={memberModel!}
+                  timezone={timezone}
+                />
+              ) : (
+                <EnsemblePrecipPlumeChart
+                  response={memberData}
+                  model={memberModel!}
+                  timezone={timezone}
+                />
+              )}
+            </ChartContainer>
+          </section>
+          {hasStatsCharts ? (
+            <section id={`ensemble-${memberModel}-percentiles`}>
+              <ChartContainer
+                title={statsBandTitle}
+                subtitle={statsBandSubtitle}
+                isLoading={percentileLoading && !percentileData}
+                error={percentileError}
+                onRetry={reloadPercentiles}
+                exportImage={{
+                  headerText: statsBandTitle,
+                  locationText,
+                  filenameSlug: `${memberModel}-${variable}-percentiles`,
+                }}
+              >
+                <EnsemblePercentileBandChart
+                  response={percentileData}
+                  model={memberModel!}
+                  variable={variable}
+                  unitsFallback="in"
+                  formatValue={formatStatsValue}
+                  timezone={timezone}
+                  clampZero
+                  emptyMessage="No percentile data available for this run yet."
+                />
+              </ChartContainer>
+            </section>
+          ) : null}
+          {statsThresholds ? (
+            <section id={`ensemble-${memberModel}-probabilities`}>
+              <ChartContainer
+                title={statsProbTitle}
+                subtitle={statsProbSubtitle}
+                isLoading={probLoading && !probData}
+                error={probError}
+                onRetry={reloadProbs}
+                exportImage={{
+                  headerText: statsProbTitle,
+                  locationText,
+                  filenameSlug: `${memberModel}-${variable}-probabilities`,
+                }}
+              >
+                <EnsembleProbabilityChart
+                  response={probData}
+                  model={memberModel!}
+                  variable={variable}
+                  thresholds={statsThresholds}
+                  thresholdUnitSuffix={'"'}
+                  timezone={timezone}
+                  emptyMessage="No probability data available for this run yet."
+                />
+              </ChartContainer>
+            </section>
+          ) : null}
+        </>
       )}
     </div>
   );
