@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from app.config import grid_build_enabled
+from app.config import binary_sampling_models, grid_build_enabled
 from app.models.wpc import WPC_MODEL
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.cog_writer import warp_to_target_grid, write_value_cog
@@ -69,15 +69,19 @@ def publish_wpc_bundle(
     latest_valid_time: datetime | None = None
     for var_id, frames in sorted(frames_by_var.items(), key=lambda item: item[0]):
         for frame in sorted(frames, key=lambda item: item.forecast_hour):
-            _write_wpc_frame(
+            if not _write_wpc_frame(
                 data_root=data_root,
                 run_id=run_id,
                 var_id=var_id,
                 frame=frame,
-            )
+            ):
+                continue
             targets.append((var_id, int(frame.forecast_hour)))
             frame_valid_time = frame.valid_time.astimezone(timezone.utc)
             latest_valid_time = frame_valid_time if latest_valid_time is None else max(latest_valid_time, frame_valid_time)
+
+    if not targets:
+        raise ValueError("WPC publish requires at least one frame")
 
     if grid_build_enabled():
         _require_grid_support()
@@ -112,7 +116,7 @@ def publish_wpc_bundle(
         run_id=run_id,
         published_run_dir=published_run_dir,
         manifest_path=manifest_path,
-        frame_count=sum(len(frames) for frames in frames_by_var.values()),
+        frame_count=len(targets),
     )
 
 
@@ -129,7 +133,10 @@ def _write_wpc_frame(
     run_id: str,
     var_id: str,
     frame: WPCSourceField,
-) -> None:
+) -> bool:
+    """Write one frame's artifacts. Returns False when the enforced pre-encode
+    gate rejected the frame (nothing written), mirroring how build_frame
+    signals a failed frame to the scheduler via status rather than raising."""
     fh = int(frame.forecast_hour)
     fh_str = f"fh{fh:03d}"
     staging_dir = data_root / "staging" / WPC_MODEL_ID / run_id / var_id
@@ -143,27 +150,31 @@ def _write_wpc_frame(
         raise ValueError(f"Missing WPC color map registration for {var_id}")
     var_spec_colormap = get_color_map_spec(str(var_capability.color_map_id))
     var_spec_model = WPC_MODEL.get_var(var_id)
+    # Pre-encode gate (COG->binary sampling migration): the check itself runs
+    # on every frame. For a binary-sampling-allowlisted model it is ENFORCED —
+    # failure (or a gate error) rejects the frame before ANY artifact is
+    # written, matching pipeline.py's binary_only branch. Otherwise it stays
+    # the Phase C shadow gate: log-only, frame governed by the COG path.
+    binary_only = WPC_MODEL_ID in binary_sampling_models()
     if check_pre_encode_value_sanity is not None:
-        # Phase C shadow gate (COG->binary sampling migration): log-only on
-        # every frame. Enforcement + the value-COG skip are Phase 4's
-        # separate, allowlist-gated step, gated on the shadow evidence this
-        # logging accumulates.
         try:
-            if not check_pre_encode_value_sanity(
+            gate_ok = check_pre_encode_value_sanity(
                 values,
                 var_spec_colormap,
                 var_spec_model=var_spec_model,
                 var_capability=var_capability,
                 label=f"{WPC_MODEL_ID}/{var_id}/fh{fh:03d}",
-            ):
-                logger.warning(
-                    "Phase C shadow gate failed: pre-encode value sanity "
-                    "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+            )
+        except Exception:
+            if binary_only:
+                logger.exception(
+                    "Pre-encode sanity gate errored — rejecting frame "
+                    "model=%s var=%s fh%03d — frame not published",
                     WPC_MODEL_ID,
                     var_id,
                     fh,
                 )
-        except Exception:
+                return False
             logger.exception(
                 "Phase C shadow gate errored: pre-encode value sanity "
                 "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
@@ -171,8 +182,35 @@ def _write_wpc_frame(
                 var_id,
                 fh,
             )
+            gate_ok = True
+        if not gate_ok:
+            if binary_only:
+                logger.error(
+                    "Pre-encode sanity gate rejected frame model=%s var=%s "
+                    "fh%03d — frame not published",
+                    WPC_MODEL_ID,
+                    var_id,
+                    fh,
+                )
+                return False
+            logger.warning(
+                "Phase C shadow gate failed: pre-encode value sanity "
+                "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                WPC_MODEL_ID,
+                var_id,
+                fh,
+            )
     _, colorize_meta = float_to_rgba(values, str(var_capability.color_map_id), meta_var_key=var_id)
-    write_value_cog(values, value_path, model=WPC_MODEL_ID, region=WPC_REGION_ID)
+    if binary_only:
+        # Value COG retired for binary-sampling models: the grid binary
+        # (written below) serves rendering and sampling, and the enforced
+        # gate above already applied the value-quality gate.
+        logger.info(
+            "Value COG write skipped (model=%s is binary-only)",
+            WPC_MODEL_ID,
+        )
+    else:
+        write_value_cog(values, value_path, model=WPC_MODEL_ID, region=WPC_REGION_ID)
 
     sidecar = _build_sidecar_json(
         model=WPC_MODEL_ID,
@@ -208,6 +246,7 @@ def _write_wpc_frame(
             transform=dst_transform,
             projection="EPSG:3857",
         )
+    return True
 
 
 def _warp_frame_to_target_grid(frame: WPCSourceField) -> tuple[np.ndarray, Any]:

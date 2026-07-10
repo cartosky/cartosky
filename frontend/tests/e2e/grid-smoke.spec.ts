@@ -667,6 +667,25 @@ test.describe('Grid-only smoke', () => {
     expect(tileRequests).toEqual([]);
   });
 
+  test('viewer logo is vertically centered in the desktop header', async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop-only header layout.');
+
+    await stubViewerGridRoutes(page);
+    await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
+    await expect(page.getByText('Product', { exact: true })).toBeVisible();
+
+    const header = page.locator('header').filter({ has: page.getByText('Product', { exact: true }) });
+    const logo = header.getByRole('img', { name: 'CartoSky' });
+    const headerBox = await header.boundingBox();
+    const logoBox = await logo.boundingBox();
+
+    expect(headerBox).not.toBeNull();
+    expect(logoBox).not.toBeNull();
+    expect(Math.abs(
+      (logoBox!.y + logoBox!.height / 2) - (headerBox!.y + headerBox!.height / 2),
+    )).toBeLessThanOrEqual(1);
+  });
+
   test('compare grid mount avoids maximum update depth warnings', async ({ page }) => {
     const reactLoopErrors: string[] = [];
     const loaderRequests: string[] = [];

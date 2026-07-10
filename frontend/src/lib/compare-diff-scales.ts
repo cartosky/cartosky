@@ -44,6 +44,17 @@ export const PRECIP_ANOM_VAR_KEY_PATTERN = /^precip_\d+d_anom$/;
 /** Design doc "Per-variable symmetric scales": precip anomalies at ±2 in. */
 const PRECIP_ANOM_DIFF_SCALE: DiffScale = { maxAbs: 2, units: "in" };
 
+/**
+ * Ensemble stats runtime ids (stats design §4.1 naming): percentile grids
+ * diff in the base variable's physical units and inherit its scale;
+ * probability grids diff in percentage points — ±50 pp (ratified
+ * 2026-07-09: run-to-run probability shifts rarely exceed that, and a full
+ * ±100 range wastes contrast on the common case).
+ */
+const ENSEMBLE_PERCENTILE_VAR_ID = /^(?<base>.+)__p\d{2}$/;
+const ENSEMBLE_PROB_VAR_ID = /^.+__prob_(?:gt|lt)_\d+p\d+$/;
+const PROBABILITY_DIFF_SCALE: DiffScale = { maxAbs: 50, units: "%" };
+
 /** Fallback for any var_key not in {@link COMPARE_DIFF_SCALES} — never throws. */
 export const DEFAULT_DIFF_SCALE: DiffScale = { maxAbs: 10, units: "" };
 
@@ -55,6 +66,13 @@ export function getDiffScale(varKey: string | null | undefined): DiffScale {
   }
   if (PRECIP_ANOM_VAR_KEY_PATTERN.test(key)) {
     return PRECIP_ANOM_DIFF_SCALE;
+  }
+  const percentile = ENSEMBLE_PERCENTILE_VAR_ID.exec(key);
+  if (percentile?.groups?.base) {
+    return getDiffScale(percentile.groups.base);
+  }
+  if (ENSEMBLE_PROB_VAR_ID.test(key)) {
+    return PROBABILITY_DIFF_SCALE;
   }
   return DEFAULT_DIFF_SCALE;
 }

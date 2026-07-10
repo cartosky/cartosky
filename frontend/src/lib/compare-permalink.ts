@@ -1,9 +1,11 @@
 export type ComparePermalinkState = {
   lm?: string;   // left model
   lv?: string;   // left variable
+  lp?: string;   // left ensemble stats product key (stats design §7); "mean"/absent = mean
   lr?: string;   // left run
   rm?: string;   // right model
   rv?: string;   // right variable
+  rp?: string;   // right ensemble stats product key
   rr?: string;   // right run
   fh?: number;   // shared forecast hour
   lat?: number;
@@ -48,6 +50,10 @@ export function readComparePermalink(): ComparePermalinkState {
     state.lv = leftVar;
   }
 
+  const leftProduct = readStringParam(params, "lp");
+  if (leftProduct) {
+    state.lp = leftProduct.toLowerCase();
+  }
   const leftRun = readStringParam(params, "lr");
   if (leftRun) {
     state.lr = leftRun;
@@ -63,6 +69,10 @@ export function readComparePermalink(): ComparePermalinkState {
     state.rv = rightVar;
   }
 
+  const rightProduct = readStringParam(params, "rp");
+  if (rightProduct) {
+    state.rp = rightProduct.toLowerCase();
+  }
   const rightRun = readStringParam(params, "rr");
   if (rightRun) {
     state.rr = rightRun;
@@ -103,12 +113,20 @@ export function buildComparePermalinkSearch(state: ComparePermalinkState): strin
   const sharedVar = isDiff ? (state.lv ?? state.rv) : undefined;
   const leftVar = isDiff ? sharedVar : state.lv;
   const rightVar = isDiff ? sharedVar : state.rv;
+  // Product is shared in diff mode exactly like the variable (stats design:
+  // the diff answers "same field, two runs/models"). "mean" never serializes.
+  const sharedProduct = isDiff ? (state.lp ?? state.rp) : undefined;
+  const leftProduct = isDiff ? sharedProduct : state.lp;
+  const rightProduct = isDiff ? sharedProduct : state.rp;
 
   if (state.lm) {
     params.set("lm", state.lm);
   }
   if (leftVar) {
     params.set("lv", leftVar);
+  }
+  if (leftProduct && leftProduct !== "mean") {
+    params.set("lp", leftProduct);
   }
   if (state.lr) {
     params.set("lr", state.lr);
@@ -118,6 +136,9 @@ export function buildComparePermalinkSearch(state: ComparePermalinkState): strin
   }
   if (rightVar) {
     params.set("rv", rightVar);
+  }
+  if (rightProduct && rightProduct !== "mean") {
+    params.set("rp", rightProduct);
   }
   if (state.rr) {
     params.set("rr", state.rr);
@@ -143,7 +164,9 @@ export function buildComparePermalinkSearch(state: ComparePermalinkState): strin
 
 /** Query keys the compare page owns (writes) in its permalink. */
 const COMPARE_PERMALINK_KEYS = new Set([
-  "lm", "lv", "lr", "rm", "rv", "rr", "fh", "lat", "lon", "z", "mode",
+  "lm", "lv",
+  "lp", "lr", "rm", "rv",
+  "rp", "rr", "fh", "lat", "lon", "z", "mode",
 ]);
 
 /**

@@ -22,8 +22,10 @@ import {
   type GridManifestResponse,
   type RegionPreset,
 } from "@/lib/api";
+import type { EnsembleProductOption } from "@/lib/api";
 import { useCapabilities } from "@/lib/capabilities-context";
 import { buildComparePermalinkSearch, readComparePermalink, withForeignSearchParams } from "@/lib/compare-permalink";
+
 import { mutualDiffEligibleVariables } from "@/lib/compare-diff-eligibility";
 import { useCompareDiff } from "@/lib/use-compare-diff";
 import { alignedMutualGridHours, runAlignmentOffsetHours, type GridMeta } from "@/lib/compare-diff";
@@ -247,10 +249,44 @@ function CompareSelect({
   );
 }
 
+/** Products declared for (model, variable) in capabilities (stats design §7). */
+function ensembleProductsFor(
+  capabilities: CapabilitiesResponse | null,
+  model: string,
+  variable: string,
+): EnsembleProductOption[] {
+  const raw = (
+    capabilities?.model_catalog?.[model]?.variables?.[variable]?.ensemble as
+      | Record<string, unknown>
+      | undefined
+  )?.products;
+  return Array.isArray(raw) ? (raw as EnsembleProductOption[]) : [];
+}
+
+/** Mean is always available; stats products need frames in the run manifest. */
+function productAvailabilityFor(
+  products: EnsembleProductOption[],
+  runManifest: { variables?: Record<string, { frames?: unknown[] } | undefined> } | null,
+): Record<string, boolean> {
+  const map: Record<string, boolean> = {};
+  for (const entry of products) {
+    map[entry.key] = entry.key === "mean"
+      ? true
+      : Boolean(
+          entry.var_id
+          && ((runManifest?.variables?.[entry.var_id]?.frames?.length ?? 0) > 0),
+        );
+  }
+  return map;
+}
+
 function ComparePanelControls({
   model,
   variable,
   run,
+  product,
+  products,
+  productAvailability,
   groupedModelOptions,
   variableCatalog,
   supportedVariableIds,
@@ -259,10 +295,14 @@ function ComparePanelControls({
   onModelChange,
   onVariableChange,
   onRunChange,
+  onProductChange,
 }: {
   model: string;
   variable: string;
   run: string;
+  product: string;
+  products: EnsembleProductOption[];
+  productAvailability: Record<string, boolean>;
   groupedModelOptions: GroupedOption[];
   variableCatalog: VariableOption[];
   supportedVariableIds: string[];
@@ -271,7 +311,14 @@ function ComparePanelControls({
   onModelChange: (value: string) => void;
   onVariableChange: (value: string) => void;
   onRunChange: (value: string) => void;
+  onProductChange: (value: string) => void;
 }) {
+  // Only products the panel's run actually serves; hide the select entirely
+  // when the run offers nothing beyond the mean.
+  const productOptions = products
+    .filter((entry) => entry.key === "mean" || productAvailability[entry.key])
+    .map((entry) => ({ value: entry.key, label: entry.label ?? entry.key }));
+  const showProductSelect = productOptions.length > 1;
   const handleModelChange = (nextModel: string) => {
     if (nextModel === model) {
       return;
@@ -284,7 +331,7 @@ function ComparePanelControls({
   return (
     <div className="flex min-w-0 flex-wrap items-end gap-1.5">
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="px-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-white/42">Product</span>
+          <span className="px-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-white/42">Model</span>
           <ModelPicker
             value={model}
             onChange={handleModelChange}
@@ -303,6 +350,16 @@ function ComparePanelControls({
             minWidth="min-w-[160px] max-w-[220px]"
           />
         </div>
+        {showProductSelect ? (
+          <CompareSelect
+            label="Product"
+            value={product || "mean"}
+            onValueChange={(value) => onProductChange(value === "mean" ? "" : value)}
+            options={productOptions}
+            placeholder="Product"
+            minWidth="min-w-[110px] max-w-[170px]"
+          />
+        ) : null}
         <CompareSelect
           label="Run Time"
           value={run}
@@ -416,6 +473,9 @@ function DiffControlBar({
   lModel,
   rModel,
   sharedVariable,
+  sharedProduct,
+  mutualProducts,
+  productAvailability,
   lRun,
   rRun,
   mode,
@@ -431,6 +491,7 @@ function DiffControlBar({
   onLeftModelChange,
   onRightModelChange,
   onSharedVariableChange,
+  onSharedProductChange,
   onLeftRunChange,
   onRightRunChange,
   onSwap,
@@ -441,6 +502,9 @@ function DiffControlBar({
   lModel: string;
   rModel: string;
   sharedVariable: string;
+  sharedProduct: string;
+  mutualProducts: EnsembleProductOption[];
+  productAvailability: Record<string, boolean>;
   lRun: string;
   rRun: string;
   mode: CompareMode;
@@ -456,6 +520,7 @@ function DiffControlBar({
   onLeftModelChange: (value: string) => void;
   onRightModelChange: (value: string) => void;
   onSharedVariableChange: (value: string) => void;
+  onSharedProductChange: (value: string) => void;
   onLeftRunChange: (value: string) => void;
   onRightRunChange: (value: string) => void;
   onSwap: () => void;
@@ -464,6 +529,12 @@ function DiffControlBar({
   onDismissNotice: () => void;
 }) {
   const variablesDisabled = diffMutualVariables.length === 0;
+  // Shared product options: mutual (both models) AND available on both
+  // sides' runs; hidden entirely when only the mean qualifies.
+  const productOptions = mutualProducts
+    .filter((entry) => entry.key === "mean" || productAvailability[entry.key])
+    .map((entry) => ({ value: entry.key, label: entry.label ?? entry.key }));
+  const showProductSelect = productOptions.length > 1;
   return (
     <div className="px-4 pb-2">
       <div className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200/70">
@@ -510,6 +581,16 @@ function DiffControlBar({
             minWidth="min-w-[160px] max-w-[220px]"
           />
         </div>
+        {showProductSelect ? (
+          <CompareSelect
+            label="Product (shared)"
+            value={sharedProduct || "mean"}
+            onValueChange={onSharedProductChange}
+            options={productOptions}
+            placeholder="Product"
+            minWidth="min-w-[110px] max-w-[170px]"
+          />
+        ) : null}
         <CompareSelect
           label="L Run"
           value={lRun}
@@ -589,11 +670,14 @@ export default function Compare() {
   const [lModel, setLModel] = useState(initial.lm ?? DEFAULT_MODEL);
   const [lVariable, setLVariable] = useState(initial.lv ?? DEFAULT_VARIABLE);
   const [lRun, setLRun] = useState(initial.lr ?? DEFAULT_RUN);
+  // Ensemble stats product key per panel (stats design §7); "" = mean.
+  const [lProduct, setLProduct] = useState((initial.lp ?? "").trim().toLowerCase());
 
   // Right panel selection.
   const [rModel, setRModel] = useState(initial.rm ?? DEFAULT_MODEL);
   const [rVariable, setRVariable] = useState(initial.rv ?? DEFAULT_VARIABLE);
   const [rRun, setRRun] = useState(initial.rr ?? DEFAULT_RUN);
+  const [rProduct, setRProduct] = useState((initial.rp ?? "").trim().toLowerCase());
 
   // Compare mode (split = side-by-side, diff = difference). Driven by permalink.
   const [mode, setMode] = useState<CompareMode>(initial.mode === "diff" ? "diff" : "split");
@@ -663,12 +747,48 @@ export default function Compare() {
   // whole page stays stuck in col-resize with text selection disabled.
   const dragCleanupRef = useRef<(() => void) | null>(null);
 
+  // ── Ensemble stats products per panel (stats design §7) ────────────────
+  // Same request-boundary swap as the viewer: capability facts stay keyed on
+  // the base variable; the loader fetches the product's runtime var id.
+  const lProducts = useMemo(
+    () => ensembleProductsFor(capabilities, lModel, lVariable),
+    [capabilities, lModel, lVariable],
+  );
+  const rProducts = useMemo(
+    () => ensembleProductsFor(capabilities, rModel, rVariable),
+    [capabilities, rModel, rVariable],
+  );
+  const lActiveProduct = lProduct
+    ? lProducts.find((entry) => entry.key === lProduct && entry.var_id)
+    : undefined;
+  const rActiveProduct = rProduct
+    ? rProducts.find((entry) => entry.key === rProduct && entry.var_id)
+    : undefined;
+  const lRequestVariable = lActiveProduct?.var_id ?? lVariable;
+  const rRequestVariable = rActiveProduct?.var_id ?? rVariable;
+
+  // Deep-link fallback to mean when the model/variable stops offering the
+  // product (mirror of the viewer's behavior).
+  useEffect(() => {
+    if (!lProduct || !capabilities) return;
+    if (!lProducts.some((entry) => entry.key === lProduct && entry.var_id)) {
+      setLProduct("");
+    }
+  }, [capabilities, lProduct, lProducts]);
+  useEffect(() => {
+    if (!rProduct || !capabilities) return;
+    if (!rProducts.some((entry) => entry.key === rProduct && entry.var_id)) {
+      setRProduct("");
+    }
+  }, [capabilities, rProduct, rProducts]);
+
   const loaderCapabilities = capabilities ?? EMPTY_CAPABILITIES;
   const loaderRegionPresets = regionPresets ?? {};
   const leftLoader = useModelLoader({
     model: capabilities ? lModel : "",
     run: lRun,
     variable: lVariable,
+    requestVariable: lRequestVariable,
     region,
     capabilities: loaderCapabilities,
     regionPresets: loaderRegionPresets,
@@ -677,10 +797,22 @@ export default function Compare() {
     model: capabilities ? rModel : "",
     run: rRun,
     variable: rVariable,
+    requestVariable: rRequestVariable,
     region,
     capabilities: loaderCapabilities,
     regionPresets: loaderRegionPresets,
   });
+
+  // Product availability per panel: capabilities-declared ∩ present in the
+  // panel's run manifest (stats vars are first-class run-manifest variables).
+  const lProductAvailability = useMemo(
+    () => productAvailabilityFor(lProducts, leftLoader.runManifest),
+    [lProducts, leftLoader.runManifest],
+  );
+  const rProductAvailability = useMemo(
+    () => productAvailabilityFor(rProducts, rightLoader.runManifest),
+    [rProducts, rightLoader.runManifest],
+  );
 
   const modelOptions = useMemo(() => {
     if (!capabilities) {
@@ -794,6 +926,50 @@ export default function Compare() {
     setRVariable(value);
   }, []);
 
+  // Diff mode: shared PRODUCT, exactly like the shared variable (ratified
+  // 2026-07-09) — the diff answers "same field, two runs/models", so both
+  // sides always request the same product. Mutual = offered by both models
+  // for the shared variable.
+  const diffMutualProducts = useMemo(() => {
+    if (!capabilities) return [] as EnsembleProductOption[];
+    const rightKeys = new Set(
+      rProducts.filter((entry) => entry.key === "mean" || entry.var_id).map((entry) => entry.key),
+    );
+    return lProducts.filter(
+      (entry) => (entry.key === "mean" || entry.var_id) && rightKeys.has(entry.key),
+    );
+  }, [capabilities, lProducts, rProducts]);
+
+  // Keep the shared product valid + in sync while in diff mode (covers
+  // permalink load, model changes, and shared-variable changes). Silent
+  // fallback to mean, mirroring the shared-variable reconcile.
+  useEffect(() => {
+    // Guarded on capabilities: before they load, diffMutualProducts is empty
+    // and this would wipe a deep-linked product (the viewer's
+    // selectionCapabilitiesResolved lesson).
+    if (mode !== "diff" || !capabilities) return;
+    const valid = Boolean(lProduct) && diffMutualProducts.some((entry) => entry.key === lProduct);
+    const next = valid ? lProduct : "";
+    if (lProduct !== next) setLProduct(next);
+    if (rProduct !== next) setRProduct(next);
+  }, [mode, capabilities, diffMutualProducts, lProduct, rProduct]);
+
+  const diffSharedProductAvailability = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    for (const entry of diffMutualProducts) {
+      map[entry.key] = entry.key === "mean"
+        ? true
+        : Boolean(lProductAvailability[entry.key] && rProductAvailability[entry.key]);
+    }
+    return map;
+  }, [diffMutualProducts, lProductAvailability, rProductAvailability]);
+
+  const handleSharedProductChange = useCallback((value: string) => {
+    const normalized = value === "mean" ? "" : value.trim().toLowerCase();
+    setLProduct(normalized);
+    setRProduct(normalized);
+  }, []);
+
   // Diff-mode model changes reset that side's run; the reconcile effect keeps
   // the shared variable valid for the new pair (no notice — silent).
   const handleDiffLeftModelChange = useCallback((nextModel: string) => {
@@ -885,7 +1061,7 @@ export default function Compare() {
     rightGridMeta,
     leftModel: lModel,
     rightModel: rModel,
-    varKey: mode === "diff" ? lVariable : null,
+    varKey: mode === "diff" ? lRequestVariable : null,
     enabled: mode === "diff" && !leftLoader.loading && !rightLoader.loading,
     leftPrefetchUrls,
     rightPrefetchUrls,
@@ -1032,8 +1208,8 @@ export default function Compare() {
   // Mirror the latest selection + forecast hour into a ref so the map event
   // listeners (attached once, on map-ready) can build a fresh permalink
   // without capturing stale state in their closures.
-  const selectionStateRef = useRef({ lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, mode });
-  selectionStateRef.current = { lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, mode };
+  const selectionStateRef = useRef({ lModel, lVariable, lProduct, lRun, rModel, rVariable, rProduct, rRun, forecastHour, mode });
+  selectionStateRef.current = { lModel, lVariable, lProduct, lRun, rModel, rVariable, rProduct, rRun, forecastHour, mode };
 
   // Camera to apply to each map when it becomes ready. The compare maps
   // historically initialized at the region fit and IGNORED the permalink
@@ -1084,9 +1260,11 @@ export default function Compare() {
       withForeignSearchParams(buildComparePermalinkSearch({
         lm: selection.lModel,
         lv: selection.lVariable,
+        lp: selection.lProduct || undefined,
         lr: selection.lRun,
         rm: selection.rModel,
         rv: selection.rVariable,
+        rp: selection.rProduct || undefined,
         rr: selection.rRun,
         fh: selection.forecastHour,
         lat: nextLat,
@@ -1311,12 +1489,12 @@ export default function Compare() {
 
   const sharePermalink = useMemo(() => {
     const search = buildComparePermalinkSearch({
-      lm: lModel, lv: lVariable, lr: lRun,
-      rm: rModel, rv: rVariable, rr: rRun,
+      lm: lModel, lv: lVariable, lp: lProduct || undefined, lr: lRun,
+      rm: rModel, rv: rVariable, rp: rProduct || undefined, rr: rRun,
       fh: forecastHour, lat, lon, z, mode,
     });
     return `${window.location.origin}/compare${search}`;
-  }, [lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, lat, lon, z, mode]);
+  }, [lModel, lVariable, lProduct, lRun, rModel, rVariable, rProduct, rRun, forecastHour, lat, lon, z, mode]);
 
   // Valid time for the displayed (nearest shared) forecast hour — same run +
   // format the scrubber shows. Used in the diff-mode share summary.
@@ -1539,9 +1717,11 @@ export default function Compare() {
       const search = buildComparePermalinkSearch({
         lm: lModel,
         lv: lVariable,
+        lp: lProduct || undefined,
         lr: lRun,
         rm: rModel,
         rv: rVariable,
+        rp: rProduct || undefined,
         rr: rRun,
         fh: forecastHour,
         lat: camera.lat,
@@ -1552,7 +1732,7 @@ export default function Compare() {
       replaceUrlQuery(withForeignSearchParams(search));
     }, URL_SYNC_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [lModel, lVariable, lRun, rModel, rVariable, rRun, forecastHour, mode]);
+  }, [lModel, lVariable, lProduct, lRun, rModel, rVariable, rProduct, rRun, forecastHour, mode]);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -1657,6 +1837,9 @@ export default function Compare() {
               model={lModel}
               variable={lVariable}
               run={lRun}
+              product={lProduct}
+              products={lProducts}
+              productAvailability={lProductAvailability}
               groupedModelOptions={modelOptions}
               variableCatalog={variableCatalog}
               supportedVariableIds={leftLoader.variables.map(v => v.value)}
@@ -1665,6 +1848,7 @@ export default function Compare() {
               onModelChange={setLModel}
               onVariableChange={setLVariable}
               onRunChange={setLRun}
+              onProductChange={setLProduct}
             />
           </div>
 
@@ -1681,6 +1865,9 @@ export default function Compare() {
               model={rModel}
               variable={rVariable}
               run={rRun}
+              product={rProduct}
+              products={rProducts}
+              productAvailability={rProductAvailability}
               groupedModelOptions={modelOptions}
               variableCatalog={variableCatalog}
               supportedVariableIds={rightLoader.variables.map(v => v.value)}
@@ -1689,6 +1876,7 @@ export default function Compare() {
               onModelChange={setRModel}
               onVariableChange={setRVariable}
               onRunChange={setRRun}
+              onProductChange={setRProduct}
             />
             <div className="ml-auto flex shrink-0 items-center gap-2 pb-0.5">
               <CompareModeToggle mode={mode} onChange={handleModeChange} />
@@ -1732,6 +1920,9 @@ export default function Compare() {
             model={lModel}
             variable={lVariable}
             run={lRun}
+            product={lProduct}
+            products={lProducts}
+            productAvailability={lProductAvailability}
             groupedModelOptions={modelOptions}
             variableCatalog={variableCatalog}
             supportedVariableIds={leftLoader.variables.map(v => v.value)}
@@ -1740,11 +1931,15 @@ export default function Compare() {
             onModelChange={setLModel}
             onVariableChange={setLVariable}
             onRunChange={setLRun}
+            onProductChange={setLProduct}
           />
           <ComparePanelControls
             model={rModel}
             variable={rVariable}
             run={rRun}
+            product={rProduct}
+            products={rProducts}
+            productAvailability={rProductAvailability}
             groupedModelOptions={modelOptions}
             variableCatalog={variableCatalog}
             supportedVariableIds={rightLoader.variables.map(v => v.value)}
@@ -1753,6 +1948,7 @@ export default function Compare() {
             onModelChange={setRModel}
             onVariableChange={setRVariable}
             onRunChange={setRRun}
+            onProductChange={setRProduct}
           />
         </div>
 
@@ -1796,6 +1992,9 @@ export default function Compare() {
             lModel={lModel}
             rModel={rModel}
             sharedVariable={lVariable}
+            sharedProduct={lProduct}
+            mutualProducts={diffMutualProducts}
+            productAvailability={diffSharedProductAvailability}
             lRun={lRun}
             rRun={rRun}
             mode={mode}
@@ -1811,6 +2010,7 @@ export default function Compare() {
             onLeftModelChange={handleDiffLeftModelChange}
             onRightModelChange={handleDiffRightModelChange}
             onSharedVariableChange={handleSharedVariableChange}
+            onSharedProductChange={handleSharedProductChange}
             onLeftRunChange={setLRun}
             onRightRunChange={setRRun}
             onSwap={handleSwap}
@@ -2084,6 +2284,9 @@ export default function Compare() {
             lModel={lModel}
             rModel={rModel}
             sharedVariable={lVariable}
+            sharedProduct={lProduct}
+            mutualProducts={diffMutualProducts}
+            productAvailability={diffSharedProductAvailability}
             lRun={lRun}
             rRun={rRun}
             modelOptions={modelOptions}
@@ -2094,6 +2297,7 @@ export default function Compare() {
             onLeftModelChange={handleDiffLeftModelChange}
             onRightModelChange={handleDiffRightModelChange}
             onSharedVariableChange={handleSharedVariableChange}
+            onSharedProductChange={handleSharedProductChange}
             onLeftRunChange={setLRun}
             onRightRunChange={setRRun}
             onSwap={handleSwap}
@@ -2115,6 +2319,14 @@ export default function Compare() {
             rVariable={rVariable}
             lRun={lRun}
             rRun={rRun}
+            lProduct={lProduct}
+            rProduct={rProduct}
+            lProducts={lProducts}
+            rProducts={rProducts}
+            lProductAvailability={lProductAvailability}
+            rProductAvailability={rProductAvailability}
+            onLeftProductChange={setLProduct}
+            onRightProductChange={setRProduct}
             modelOptions={modelOptions}
             variableCatalog={variableCatalog}
             leftVariableIds={leftLoader.variables.map((v) => v.value)}

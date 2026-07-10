@@ -16,20 +16,29 @@ type NavItemProps = {
   label: string;
   onClick?: () => void;
   className?: string;
+  activeStyle?: "pill" | "underline";
 };
 
-function NavItem({ to, label, onClick, className }: NavItemProps) {
+function NavItem({ to, label, onClick, className, activeStyle = "pill" }: NavItemProps) {
   return (
     <NavLink
       to={to}
       onClick={onClick}
       {...routePrefetchIntentHandlers(to)}
       className={({ isActive }) =>
-        [
-          "text-sm font-medium transition px-3 py-1.5 rounded-md",
-          isActive ? "text-white bg-white/10" : "text-white/70 hover:text-white hover:bg-white/10",
-          className ?? "",
-        ].join(" ")
+        activeStyle === "underline"
+          ? [
+            "inline-flex items-center border-b-2 px-3 py-2 text-sm font-medium transition",
+            isActive
+              ? "border-cyan-300 text-cyan-300"
+              : "border-transparent text-white/70 hover:border-white/30 hover:text-white",
+            className ?? "",
+          ].join(" ")
+          : [
+            "rounded-md px-3 py-1.5 text-sm font-medium transition",
+            isActive ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/10 hover:text-white",
+            className ?? "",
+          ].join(" ")
       }
     >
       {label}
@@ -139,17 +148,28 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
         </NavLink>
 
         {isMarketingVariant ? (
-          <nav className="ml-auto hidden items-center gap-1 md:flex">
-            <PrefetchNavLink
-              to="/viewer"
-              className="inline-flex items-center rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3.5 py-2 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(35,196,255,0.14)] transition duration-150 hover:brightness-105"
-            >
-              Viewer
-            </PrefetchNavLink>
-            <NavItem to="/forecast" label="Forecast" className="ml-2 text-white/72 hover:text-white" />
-            <NavItem to="/climate" label="Climate" className="ml-0 text-white/72 hover:text-white" />
-            {showPricingNav ? <NavItem to="/pricing" label="Pricing" /> : null}
-            {adminEnabled ? <NavItem to="/admin" label="Admin" /> : null}
+          <nav aria-label="Product navigation" className="ml-auto hidden items-center gap-1 md:flex">
+            <NavItem to="/viewer" label="Viewer" activeStyle="underline" />
+            <NavItem to="/forecast" label="Forecast" activeStyle="underline" />
+            <NavItem to="/climate" label="Climate" activeStyle="underline" />
+            {showPricingNav ? <NavItem to="/pricing" label="Pricing" activeStyle="underline" /> : null}
+            {adminEnabled ? <NavItem to="/admin" label="Admin" activeStyle="underline" /> : null}
+          </nav>
+        ) : null}
+
+        {isMarketingVariant ? (
+          <span
+            aria-hidden="true"
+            className="nav-utility-divider mx-2 hidden h-7 w-px shrink-0 bg-white/10 md:block"
+          />
+        ) : null}
+
+        {isMarketingVariant ? (
+          <div
+            role="group"
+            aria-label="Account utilities"
+            className="hidden items-center gap-2 md:flex"
+          >
             <button
               type="button"
               onClick={openFeedback}
@@ -162,17 +182,17 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
             <Show when="signed-out">
               <NavLink
                 to="/login"
-                className="ml-3 rounded-lg px-2 py-2 text-sm text-white/62 transition duration-150 hover:text-white/88"
+                className="rounded-lg px-2 py-2 text-sm text-white/62 transition duration-150 hover:text-white/88"
               >
                 Login
               </NavLink>
             </Show>
             <Show when="signed-in">
-              <div className="ml-3 flex h-9 items-center">
+              <div className="flex h-9 items-center">
                 <UserButton {...clerkUserButtonProps} />
               </div>
             </Show>
-          </nav>
+          </div>
         ) : null}
 
         {showAppNav ? (
@@ -194,12 +214,6 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
 
         {isMarketingVariant ? (
           <div className="ml-auto flex items-center gap-2 md:hidden" ref={menuRef}>
-            <PrefetchNavLink
-              to="/viewer"
-              className="inline-flex items-center rounded-lg border border-cyan-200/35 bg-[linear-gradient(180deg,#97e7ff_0%,#76d5fb_100%)] px-3 py-2 text-sm font-semibold text-slate-950 shadow-[0_14px_30px_rgba(35,196,255,0.14)]"
-            >
-              Viewer
-            </PrefetchNavLink>
             <button
               type="button"
               className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-white/15 bg-white/5 text-white hover:bg-white/10"
@@ -223,14 +237,14 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
                 aria-label="Site navigation"
               >
                 <div className="flex flex-col gap-1">
-                  <NavItem to="/viewer" label="Viewer" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
-                  <NavItem to="/forecast" label="Forecast" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
-                  <NavItem to="/climate" label="Climate" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
+                  <NavItem to="/viewer" label="Viewer" activeStyle="underline" onClick={() => setMobileMenuOpen(false)} className="w-full" />
+                  <NavItem to="/forecast" label="Forecast" activeStyle="underline" onClick={() => setMobileMenuOpen(false)} className="w-full" />
+                  <NavItem to="/climate" label="Climate" activeStyle="underline" onClick={() => setMobileMenuOpen(false)} className="w-full" />
                   {showPricingNav ? (
-                    <NavItem to="/pricing" label="Pricing" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
+                    <NavItem to="/pricing" label="Pricing" activeStyle="underline" onClick={() => setMobileMenuOpen(false)} className="w-full" />
                   ) : null}
                   {adminEnabled ? (
-                    <NavItem to="/admin" label="Admin" onClick={() => setMobileMenuOpen(false)} className="text-white/90 hover:text-white" />
+                    <NavItem to="/admin" label="Admin" activeStyle="underline" onClick={() => setMobileMenuOpen(false)} className="w-full" />
                   ) : null}
                   <button
                     type="button"

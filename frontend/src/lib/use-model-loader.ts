@@ -44,6 +44,14 @@ export interface UseModelLoaderParams {
   /** "latest" or a specific run ID. */
   run: string;
   variable: string;
+  /**
+   * Runtime var id to REQUEST data for when it differs from `variable` —
+   * the ensemble stats product pattern (stats design §7): capability-derived
+   * facts (substrates, default fh, options) stay keyed on the base
+   * `variable`, while manifests/frames are fetched for the product id
+   * (e.g. "precip_total__p50"). Defaults to `variable`.
+   */
+  requestVariable?: string;
   region: string;
   ensembleView?: string;
   capabilities: CapabilitiesResponse;
@@ -79,7 +87,10 @@ export interface UseModelLoaderResult {
  */
 export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResult {
   const { model, run, variable, region, ensembleView, capabilities } = params;
-  const resolvedEnsembleView = ensembleView ?? "";
+  const requestVariable = (params.requestVariable ?? "").trim() || variable;
+  // Product var ids resolve directly (published runtime ids); an ensemble
+  // view would be a meaningless extra hop when a product is active.
+  const resolvedEnsembleView = requestVariable !== variable ? "" : (ensembleView ?? "");
 
   const [runs, setRuns] = useState<string[]>([]);
   const [runManifest, setRunManifest] = useState<RunManifestResponse | null>(null);
@@ -145,7 +156,11 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
   }, [runManifest]);
 
   const hasRenderableSelection = Boolean(
-    model && variable && (capabilityVarMap.has(variable) || manifestVarIds.has(variable)),
+    model && variable && (
+      capabilityVarMap.has(variable)
+      || manifestVarIds.has(variable)
+      || manifestVarIds.has(requestVariable)
+    ),
   );
 
   // ── Run resolution ─────────────────────────────────────────────────────
@@ -187,7 +202,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
       : run === "latest"
         ? "latest"
         : resolvedRun;
-  const selectionKey = `${model}:${selectionRunKey}:${variable}:${region}:${resolvedEnsembleView || "-"}`;
+  const selectionKey = `${model}:${selectionRunKey}:${requestVariable}:${region}:${resolvedEnsembleView || "-"}`;
 
   // ── Frame-hour projections (pure) ──────────────────────────────────────
   const frameHours = useMemo(() => {
@@ -237,7 +252,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
     if (!prefersGridSubstrate || run !== "latest") {
       setResolvedGridLatestRunId(null);
     }
-  }, [prefersGridSubstrate, model, run, variable, resolvedEnsembleView]);
+  }, [prefersGridSubstrate, model, run, variable, requestVariable, resolvedEnsembleView]);
 
   // Drop a resolved grid run id once retention prunes it from /runs — otherwise
   // frame fetches keep targeting a 404 run until the grid probe finishes.
@@ -340,7 +355,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
       if (run === "latest") {
         const results = await Promise.allSettled(
           latestGridRunCandidates.map((candidateRun) =>
-            fetchGridManifest(model, candidateRun, variable, region, resolvedEnsembleView, {
+            fetchGridManifest(model, candidateRun, requestVariable, region, resolvedEnsembleView, {
               signal: controller.signal,
             }).then((manifest) => ({ candidateRun, manifest })),
           ),
@@ -360,7 +375,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         return;
       }
 
-      const manifest = await fetchGridManifest(model, resolvedRun, variable, region, resolvedEnsembleView, {
+      const manifest = await fetchGridManifest(model, resolvedRun, requestVariable, region, resolvedEnsembleView, {
         signal: controller.signal,
       });
       if (controller.signal.aborted) {
@@ -395,6 +410,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
     resolvedRun,
     run,
     variable,
+    requestVariable,
     resolvedEnsembleView,
   ]);
 
@@ -431,7 +447,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         runManifest?.model === model &&
         (run === "latest" || runManifest?.run === run || runManifest?.run === resolvedRun);
       const manifestFrameList = manifestMatchesSelection
-        ? resolveManifestFrames(runManifest, variable)
+        ? resolveManifestFrames(runManifest, requestVariable)
         : { rows: [] as FrameRow[], hasFrameList: false };
 
       if (manifestMatchesSelection && manifestFrameList.hasFrameList) {
@@ -458,7 +474,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         if (!framesRunKey) {
           return;
         }
-        const rows = await fetchFrames(model, framesRunKey, variable, region, resolvedEnsembleView, {
+        const rows = await fetchFrames(model, framesRunKey, requestVariable, region, resolvedEnsembleView, {
           signal: controller.signal,
         });
         if (controller.signal.aborted) {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type TouchEvent as ReactTouchEvent } from "react";
 import { createPortal } from "react-dom";
+import type { EnsembleProductOption } from "@/lib/api";
 import { ArrowLeftRight, Layers, Moon, Sun, X } from "lucide-react";
 
 import {
@@ -45,6 +46,11 @@ type CompareMobileDrawerDiffProps = CompareMobileDrawerBaseProps & {
   sharedVariable: string;
   diffMutualVariables: string[];
   onSharedVariableChange: (value: string) => void;
+  // Ensemble stats product, shared like the variable (stats design §7).
+  sharedProduct: string;
+  mutualProducts: EnsembleProductOption[];
+  productAvailability: Record<string, boolean>;
+  onSharedProductChange: (value: string) => void;
 };
 
 type CompareMobileDrawerSplitProps = CompareMobileDrawerBaseProps & {
@@ -55,6 +61,15 @@ type CompareMobileDrawerSplitProps = CompareMobileDrawerBaseProps & {
   rightVariableIds: string[];
   onLeftVariableChange: (value: string) => void;
   onRightVariableChange: (value: string) => void;
+  // Ensemble stats products per panel (stats design §7).
+  lProduct: string;
+  rProduct: string;
+  lProducts: EnsembleProductOption[];
+  rProducts: EnsembleProductOption[];
+  lProductAvailability: Record<string, boolean>;
+  rProductAvailability: Record<string, boolean>;
+  onLeftProductChange: (value: string) => void;
+  onRightProductChange: (value: string) => void;
 };
 
 export type CompareMobileDrawerProps = CompareMobileDrawerDiffProps | CompareMobileDrawerSplitProps;
@@ -156,6 +171,9 @@ function DiffComparisonFields({
   rRun,
   sharedVariable,
   diffMutualVariables,
+  sharedProduct,
+  mutualProducts,
+  productAvailability,
   modelSelectOptions,
   leftRunOptions,
   rightRunOptions,
@@ -163,6 +181,7 @@ function DiffComparisonFields({
   onLeftModelChange,
   onRightModelChange,
   onSharedVariableChange,
+  onSharedProductChange,
   onLeftRunChange,
   onRightRunChange,
   onSwap,
@@ -173,6 +192,9 @@ function DiffComparisonFields({
   rRun: string;
   sharedVariable: string;
   diffMutualVariables: string[];
+  sharedProduct: string;
+  mutualProducts: EnsembleProductOption[];
+  productAvailability: Record<string, boolean>;
   modelSelectOptions: RunOption[];
   leftRunOptions: RunOption[];
   rightRunOptions: RunOption[];
@@ -180,6 +202,7 @@ function DiffComparisonFields({
   onLeftModelChange: (value: string) => void;
   onRightModelChange: (value: string) => void;
   onSharedVariableChange: (value: string) => void;
+  onSharedProductChange: (value: string) => void;
   onLeftRunChange: (value: string) => void;
   onRightRunChange: (value: string) => void;
   onSwap: () => void;
@@ -189,6 +212,10 @@ function DiffComparisonFields({
     label: variableCatalog.find((entry) => entry.value === key)?.label ?? key,
   }));
   const variablesDisabled = variableSelectOptions.length === 0;
+  const productSelectOptions = mutualProducts
+    .filter((entry) => entry.key === "mean" || productAvailability[entry.key])
+    .map((entry) => ({ value: entry.key, label: entry.long_label ?? entry.label ?? entry.key }));
+  const showProductSelect = productSelectOptions.length > 1;
 
   return (
     <>
@@ -219,6 +246,17 @@ function DiffComparisonFields({
         />
       </Field>
 
+      {showProductSelect ? (
+        <Field label="Product (Shared)" className="mt-3">
+          <DrawerSelect
+            value={sharedProduct || "mean"}
+            onValueChange={(value) => onSharedProductChange(value === "mean" ? "" : value)}
+            options={productSelectOptions}
+            placeholder="Product"
+          />
+        </Field>
+      ) : null}
+
       <div className="my-3 border-t border-white/[0.08]" />
 
       <div className="flex items-end gap-2">
@@ -242,6 +280,12 @@ function SplitComparisonFields({
   rRun,
   leftVariableIds,
   rightVariableIds,
+  lProduct,
+  rProduct,
+  lProducts,
+  rProducts,
+  lProductAvailability,
+  rProductAvailability,
   modelSelectOptions,
   leftRunOptions,
   rightRunOptions,
@@ -250,6 +294,8 @@ function SplitComparisonFields({
   onRightModelChange,
   onLeftVariableChange,
   onRightVariableChange,
+  onLeftProductChange,
+  onRightProductChange,
   onLeftRunChange,
   onRightRunChange,
   onSwap,
@@ -262,6 +308,12 @@ function SplitComparisonFields({
   rRun: string;
   leftVariableIds: string[];
   rightVariableIds: string[];
+  lProduct: string;
+  rProduct: string;
+  lProducts: EnsembleProductOption[];
+  rProducts: EnsembleProductOption[];
+  lProductAvailability: Record<string, boolean>;
+  rProductAvailability: Record<string, boolean>;
   modelSelectOptions: RunOption[];
   leftRunOptions: RunOption[];
   rightRunOptions: RunOption[];
@@ -270,6 +322,8 @@ function SplitComparisonFields({
   onRightModelChange: (value: string) => void;
   onLeftVariableChange: (value: string) => void;
   onRightVariableChange: (value: string) => void;
+  onLeftProductChange: (value: string) => void;
+  onRightProductChange: (value: string) => void;
   onLeftRunChange: (value: string) => void;
   onRightRunChange: (value: string) => void;
   onSwap: () => void;
@@ -281,11 +335,21 @@ function SplitComparisonFields({
     }));
   const leftVariableOptions = variableOptionsForIds(leftVariableIds);
   const rightVariableOptions = variableOptionsForIds(rightVariableIds);
+  const productOptionsFor = (
+    products: EnsembleProductOption[],
+    availability: Record<string, boolean>,
+  ): RunOption[] =>
+    products
+      .filter((entry) => entry.key === "mean" || availability[entry.key])
+      .map((entry) => ({ value: entry.key, label: entry.label ?? entry.key }));
+  const leftProductOptions = productOptionsFor(lProducts, lProductAvailability);
+  const rightProductOptions = productOptionsFor(rProducts, rProductAvailability);
+  const showProductRow = leftProductOptions.length > 1 || rightProductOptions.length > 1;
 
   return (
     <>
       <div className="flex items-end gap-2">
-        <Field label="Upper Product">
+        <Field label="Upper Model">
           <DrawerSelect value={lModel} onValueChange={onLeftModelChange} options={modelSelectOptions} placeholder="Model" />
         </Field>
         <button
@@ -296,7 +360,7 @@ function SplitComparisonFields({
         >
           <ArrowLeftRight className="h-4 w-4" />
         </button>
-        <Field label="Lower Product">
+        <Field label="Lower Model">
           <DrawerSelect value={rModel} onValueChange={onRightModelChange} options={modelSelectOptions} placeholder="Model" />
         </Field>
       </div>
@@ -321,6 +385,29 @@ function SplitComparisonFields({
           />
         </Field>
       </div>
+
+      {showProductRow ? (
+        <div className="mt-3 flex items-end gap-2">
+          <Field label="Upper Product">
+            <DrawerSelect
+              value={lProduct || "mean"}
+              onValueChange={(value) => onLeftProductChange(value === "mean" ? "" : value)}
+              options={leftProductOptions}
+              placeholder="Product"
+              disabled={leftProductOptions.length <= 1}
+            />
+          </Field>
+          <Field label="Lower Product">
+            <DrawerSelect
+              value={rProduct || "mean"}
+              onValueChange={(value) => onRightProductChange(value === "mean" ? "" : value)}
+              options={rightProductOptions}
+              placeholder="Product"
+              disabled={rightProductOptions.length <= 1}
+            />
+          </Field>
+        </div>
+      ) : null}
 
       <div className="my-3 border-t border-white/[0.08]" />
 
@@ -504,6 +591,10 @@ export function CompareMobileDrawer(props: CompareMobileDrawerProps) {
             rRun={props.rRun}
             sharedVariable={props.sharedVariable}
             diffMutualVariables={props.diffMutualVariables}
+            sharedProduct={props.sharedProduct}
+            mutualProducts={props.mutualProducts}
+            productAvailability={props.productAvailability}
+            onSharedProductChange={props.onSharedProductChange}
             modelSelectOptions={modelSelectOptions}
             leftRunOptions={props.leftRunOptions}
             rightRunOptions={props.rightRunOptions}
@@ -534,6 +625,12 @@ export function CompareMobileDrawer(props: CompareMobileDrawerProps) {
           rRun={props.rRun}
           leftVariableIds={props.leftVariableIds}
           rightVariableIds={props.rightVariableIds}
+          lProduct={props.lProduct}
+          rProduct={props.rProduct}
+          lProducts={props.lProducts}
+          rProducts={props.rProducts}
+          lProductAvailability={props.lProductAvailability}
+          rProductAvailability={props.rProductAvailability}
           modelSelectOptions={modelSelectOptions}
           leftRunOptions={props.leftRunOptions}
           rightRunOptions={props.rightRunOptions}
@@ -542,6 +639,8 @@ export function CompareMobileDrawer(props: CompareMobileDrawerProps) {
           onRightModelChange={props.onRightModelChange}
           onLeftVariableChange={props.onLeftVariableChange}
           onRightVariableChange={props.onRightVariableChange}
+          onLeftProductChange={props.onLeftProductChange}
+          onRightProductChange={props.onRightProductChange}
           onLeftRunChange={props.onLeftRunChange}
           onRightRunChange={props.onRightRunChange}
           onSwap={props.onSwap}
