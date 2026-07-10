@@ -316,6 +316,70 @@ def test_kuchera_ptype_gate_interval_averages_frozen_fraction(monkeypatch) -> No
     np.testing.assert_allclose(data, expected.astype(np.float32, copy=False), rtol=1e-6, atol=1e-6)
 
 
+def test_kuchera_ptype_gate_fallback_records_quality_flag(monkeypatch, tmp_path) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    apcp = np.array([[2.0, 1.0], [0.5, 3.0]], dtype=np.float32)
+    temp_850 = np.full((2, 2), -10.0, dtype=np.float32)
+    exact_apcp_pattern = ":APCP:surface:0-1 hour acc fcst:"
+
+    def _fake_fetch_variable(
+        *,
+        model_id,
+        product,
+        search_pattern,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        return_meta=False,
+    ):
+        del model_id, product, run_date, fh, herbie_kwargs
+        pattern = str(search_pattern)
+        if pattern == exact_apcp_pattern or pattern == f"{exact_apcp_pattern}$":
+            meta = {"inventory_line": exact_apcp_pattern, "search_pattern": pattern}
+            return (apcp, crs, transform, meta) if return_meta else (apcp, crs, transform)
+        if pattern == ":TMP:850 mb:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (temp_850, crs, transform, meta) if return_meta else (temp_850, crs, transform)
+        if pattern == ":CSNOW:surface:":
+            raise RuntimeError("simulated csnow fetch failure")
+        raise AssertionError(f"unexpected search pattern: {pattern}")
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(
+        derive_module,
+        "_kuchera_inventory_lines",
+        lambda *, model_id, product, run_date, fh, search_pattern: [exact_apcp_pattern],
+    )
+    monkeypatch.setattr(
+        derive_module,
+        "_resolve_cumulative_step_fhs",
+        lambda *, hints, fh, run_date=None, default_step_hours=6: [1],
+    )
+
+    ctx = derive_module.FetchContext()
+    ctx.data_root = str(tmp_path)
+    data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="hrrr",
+        var_key="snowfall_kuchera_total",
+        product="sfc",
+        run_date=datetime(2026, 3, 5, 17, 0),
+        fh=1,
+        var_spec_model=_kuchera_var_spec(),
+        var_capability=None,
+        model_plugin=_Plugin(),
+        ctx=ctx,
+    )
+
+    # Fail-open data behavior is unchanged: the gate falls back to all-ones and
+    # every step's precip counts as snow — but the frame must now carry the flag
+    # instead of shipping as quality=full.
+    assert np.all(data > 0.0)
+    quality = ctx.derive_quality[("snowfall_kuchera_total", 1)]
+    assert quality["quality"] == "degraded"
+    assert "ptype_gate_fallback" in quality["quality_flags"]
+
+
 def test_kuchera_ptype_gate_filters_interval_samples_to_step_cadence(monkeypatch) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()

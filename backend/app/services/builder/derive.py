@@ -1655,8 +1655,14 @@ def _ptype_intensity_fetch_optional_component(
             resampling=resampling,
             ctx=ctx,
         )
-    except Exception:
-        logger.debug("ptype_intensity optional component unavailable: model=%s var=%s fh=%03d", model_id, candidate, fh)
+    except Exception as exc:
+        logger.warning(
+            "ptype_intensity optional component unavailable: model=%s var=%s fh=%03d reason=%s",
+            model_id,
+            candidate,
+            fh,
+            exc,
+        )
         return None
     return np.asarray(data, dtype=np.float32)
 
@@ -2020,7 +2026,7 @@ def _ptype_intensity_ecmwf_phase_signals(
     target_region: str = "",
     target_grid_id: str = "",
     resampling: str = "",
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
     component_specs = (
         (str(hints.get("surface_temp_component") or "tmp2m"), -1.0, 1.0, 0.40, "surface"),
         (str(hints.get("low_temp_component") or "tmp925"), -1.5, 1.5, 0.25, "low"),
@@ -2029,6 +2035,7 @@ def _ptype_intensity_ecmwf_phase_signals(
 
     cold_fields: list[np.ndarray] = []
     cold_weights: list[float] = []
+    missing_components: list[str] = []
     surface_cold = np.zeros(expected_shape, dtype=np.float32)
     warm_nose = np.zeros(expected_shape, dtype=np.float32)
 
@@ -2047,6 +2054,7 @@ def _ptype_intensity_ecmwf_phase_signals(
             resampling=resampling,
         )
         if values is None or values.shape != expected_shape:
+            missing_components.append(var_key)
             continue
         cold, warm = _ptype_intensity_temp_signal(
             values,
@@ -2060,16 +2068,29 @@ def _ptype_intensity_ecmwf_phase_signals(
         else:
             warm_nose = np.maximum(warm_nose, warm)
 
+    if missing_components:
+        logger.warning(
+            "ptype_intensity ECMWF phase signals degraded: model=%s fh=%03d missing=%s",
+            model_id,
+            fh,
+            ",".join(missing_components),
+        )
+
     if not cold_fields:
         zeros = np.zeros(expected_shape, dtype=np.float32)
-        return zeros, zeros, zeros
+        return zeros, zeros, zeros, missing_components
 
     deep_cold = np.average(
         np.stack(cold_fields, axis=0),
         axis=0,
         weights=np.asarray(cold_weights, dtype=np.float32),
     ).astype(np.float32, copy=False)
-    return deep_cold, surface_cold.astype(np.float32, copy=False), warm_nose.astype(np.float32, copy=False)
+    return (
+        deep_cold,
+        surface_cold.astype(np.float32, copy=False),
+        warm_nose.astype(np.float32, copy=False),
+        missing_components,
+    )
 
 
 def _ptype_intensity_family_rates_ecmwf(
@@ -2202,8 +2223,9 @@ def _derive_ptype_intensity_rates_ecmwf(
     ctx: FetchContext | None,
     derive_component_target_grid: dict[str, str] | None,
     derive_component_resampling: str | None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, list[str]]:
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
+    quality_flags: list[str] = []
     _log_fetch_context_memory(
         label="ptype_intensity_ecmwf_entry",
         ctx=ctx,
@@ -2254,8 +2276,8 @@ def _derive_ptype_intensity_rates_ecmwf(
                 f"ptype_intensity ECMWF snow/precip grid mismatch for fh{fh:03d}"
             )
     except Exception:
-        logger.debug(
-            "ptype_intensity ECMWF snow component unavailable: model=%s fh=%03d var=%s",
+        logger.warning(
+            "ptype_intensity ECMWF snow component unavailable; treating snow as zero: model=%s fh=%03d var=%s",
             model_id,
             fh,
             snow_component,
@@ -2263,6 +2285,7 @@ def _derive_ptype_intensity_rates_ecmwf(
         )
         snow_step = np.zeros(total_step.shape, dtype=np.float32)
         snow_step[~np.isfinite(total_step)] = np.nan
+        quality_flags.append("snow_component_missing")
     _log_fetch_context_memory(
         label="ptype_intensity_ecmwf_after_fetch",
         ctx=ctx,
@@ -2272,7 +2295,7 @@ def _derive_ptype_intensity_rates_ecmwf(
         extra=f"shape={total_step.shape}",
     )
 
-    deep_cold, surface_cold, warm_nose = _ptype_intensity_ecmwf_phase_signals(
+    deep_cold, surface_cold, warm_nose, missing_phase_components = _ptype_intensity_ecmwf_phase_signals(
         model_id=model_id,
         product=product,
         run_date=run_date,
@@ -2286,6 +2309,8 @@ def _derive_ptype_intensity_rates_ecmwf(
         target_grid_id=target_grid_id,
         resampling=resampling,
     )
+    if missing_phase_components:
+        quality_flags.append("phase_signals_missing")
     _log_fetch_context_memory(
         label="ptype_intensity_ecmwf_after_phase_signals",
         ctx=ctx,
@@ -2309,7 +2334,7 @@ def _derive_ptype_intensity_rates_ecmwf(
         fh=fh,
         extra=f"shape={rain_rate.shape}",
     )
-    return rain_rate, snow_rate, ice_rate, src_crs, src_transform
+    return rain_rate, snow_rate, ice_rate, src_crs, src_transform, quality_flags
 
 
 def _ptype_intensity_family_rates(
@@ -4990,8 +5015,8 @@ def _derive_ptype_intensity_ecmwf(
     derive_component_target_grid: dict[str, str] | None = None,
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    del var_key, var_capability
-    rain_rate, snow_rate, ice_rate, src_crs, src_transform = _derive_ptype_intensity_rates_ecmwf(
+    del var_capability
+    rain_rate, snow_rate, ice_rate, src_crs, src_transform, quality_flags = _derive_ptype_intensity_rates_ecmwf(
         model_id=model_id,
         product=product,
         run_date=run_date,
@@ -5002,6 +5027,7 @@ def _derive_ptype_intensity_ecmwf(
         derive_component_target_grid=derive_component_target_grid,
         derive_component_resampling=derive_component_resampling,
     )
+    _record_derive_quality(ctx, var_key=var_key, fh=fh, quality_flags=quality_flags)
     indexed = _ptype_intensity_index_from_family_rates(
         rain_rate=rain_rate,
         snow_rate=snow_rate,
@@ -5025,10 +5051,10 @@ def _derive_ptype_intensity_component_ecmwf(
     derive_component_target_grid: dict[str, str] | None = None,
     derive_component_resampling: str | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
-    del var_key, var_capability
+    del var_capability
     hints = getattr(getattr(var_spec_model, "selectors", None), "hints", {})
     component = str(hints.get("ptype_component") or "").strip().lower()
-    rain_rate, snow_rate, ice_rate, src_crs, src_transform = _derive_ptype_intensity_rates_ecmwf(
+    rain_rate, snow_rate, ice_rate, src_crs, src_transform, quality_flags = _derive_ptype_intensity_rates_ecmwf(
         model_id=model_id,
         product=product,
         run_date=run_date,
@@ -5039,6 +5065,7 @@ def _derive_ptype_intensity_component_ecmwf(
         derive_component_target_grid=derive_component_target_grid,
         derive_component_resampling=derive_component_resampling,
     )
+    _record_derive_quality(ctx, var_key=var_key, fh=fh, quality_flags=quality_flags)
     component_values = {
         "rain": rain_rate,
         "snow": snow_rate,
@@ -5081,6 +5108,7 @@ def _derive_ptype_accumulation_ecmwf(
     component = str(hints.get("ptype_component") or "ice").strip().lower()
     precip_component = str(hints.get("precip_component") or "precip_total")
     snow_component = str(hints.get("snow_component") or "sf")
+    quality_flags: list[str] = []
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=3)
     use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
         derive_component_target_grid,
@@ -5172,8 +5200,8 @@ def _derive_ptype_accumulation_ecmwf(
             if snow_step.shape != total_step.shape or snow_crs != step_crs or snow_transform != step_transform:
                 raise ValueError(f"ptype accumulation ECMWF snow/precip grid mismatch for fh{int(step_fh):03d}")
         except Exception:
-            logger.debug(
-                "ptype accumulation ECMWF snow component unavailable: model=%s fh=%03d var=%s",
+            logger.warning(
+                "ptype accumulation ECMWF snow component unavailable; treating snow as zero: model=%s fh=%03d var=%s",
                 model_id,
                 int(step_fh),
                 snow_component,
@@ -5182,8 +5210,9 @@ def _derive_ptype_accumulation_ecmwf(
             snow_step = np.zeros(total_step.shape, dtype=np.float32)
             snow_step[~np.isfinite(total_step)] = np.nan
             snow_valid = np.isfinite(total_step)
+            quality_flags.append("snow_component_missing")
 
-        deep_cold, surface_cold, warm_nose = _ptype_intensity_ecmwf_phase_signals(
+        deep_cold, surface_cold, warm_nose, missing_phase_components = _ptype_intensity_ecmwf_phase_signals(
             model_id=model_id,
             product=product,
             run_date=run_date,
@@ -5197,6 +5226,8 @@ def _derive_ptype_accumulation_ecmwf(
             target_grid_id=target_grid_id,
             resampling=resampling,
         )
+        if missing_phase_components:
+            quality_flags.append("phase_signals_missing")
         _, rain_step, snow_family_step, ice_step = _ptype_intensity_family_rates_ecmwf(
             intensity=total_step,
             snow_lwe=snow_step,
@@ -5230,6 +5261,7 @@ def _derive_ptype_accumulation_ecmwf(
     if cumulative is None or valid_mask is None or src_crs is None or src_transform is None:
         raise ValueError(f"No cumulative ECMWF ptype source steps resolved for {model_id}/{var_key} fh{fh:03d}")
     result = np.where(valid_mask, cumulative, np.nan).astype(np.float32, copy=False)
+    _record_derive_quality(ctx, var_key=var_key, fh=fh, quality_flags=quality_flags)
     _log_fetch_context_memory(
         label="ptype_accumulation_ecmwf_after_loop",
         ctx=ctx,
@@ -6117,6 +6149,7 @@ def _derive_snowfall_kuchera_total_cumulative(
         "ratio_clamp_max_count": 0.0,
     }
     apcp_cumulative_fallback_used = False
+    ptype_gate_fallback_used = False
     current_step_fetch_counts: dict[str, int] = {"apcp": 0, "profile_temp": 0, "ptype": 0}
     surface_temp_cap_stats: dict[str, float] = {
         "applied_count": 0.0,
@@ -6505,7 +6538,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             step_apcp_for_snow = step_apcp_clean
             if use_ptype_gate:
                 _ptype_step_len, ptype_sample_fhs = ptype_interval_plan.get(int(step_fh), (0, [int(step_fh)]))
-                frozen_frac, _ptype_fallback_used, ptype_fetch_count = _kuchera_frozen_fraction_for_step(
+                frozen_frac, ptype_step_fallback_used, ptype_fetch_count = _kuchera_frozen_fraction_for_step(
                     model_id=model_id,
                     var_key=var_key,
                     product=str(ptype_product),
@@ -6520,6 +6553,7 @@ def _derive_snowfall_kuchera_total_cumulative(
                     ctx=ctx,
                     expected_shape=step_apcp_clean.shape,
                 )
+                ptype_gate_fallback_used = ptype_gate_fallback_used or bool(ptype_step_fallback_used)
                 if int(step_fh) == int(fh):
                     current_step_fetch_counts["ptype"] = current_step_fetch_counts.get("ptype", 0) + int(ptype_fetch_count)
                 step_apcp_for_snow = _apply_kuchera_ptype_gate(step_apcp_clean, frozen_frac)
@@ -6889,6 +6923,8 @@ def _derive_snowfall_kuchera_total_cumulative(
         quality_flags.append("slr_fallback_10to1")
     if apcp_cumulative_fallback_used:
         quality_flags.append("apcp_cumulative_fallback")
+    if ptype_gate_fallback_used:
+        quality_flags.append("ptype_gate_fallback")
     _record_derive_quality(
         ctx,
         var_key=var_key,
