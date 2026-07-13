@@ -16,7 +16,7 @@ import rasterio
 from rasterio.transform import Affine
 from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
-from ..config import grid_build_enabled
+from ..config import binary_sampling_models, grid_build_enabled
 from ..models.mrms import MRMS_MODEL
 from .builder.colorize import colorize_metadata
 from .builder.cog_writer import (
@@ -25,8 +25,8 @@ from .builder.cog_writer import (
     warp_to_target_grid,
     write_value_cog,
 )
-from .builder.pipeline import build_sidecar_json
-from .colormaps import MRMS_RADAR_PTYPE_BREAKS, MRMS_RADAR_PTYPE_ORDER
+from .builder.pipeline import build_sidecar_json, check_pre_encode_value_sanity
+from .colormaps import MRMS_RADAR_PTYPE_BREAKS, MRMS_RADAR_PTYPE_ORDER, get_color_map_spec
 from .observed_bundle_health import build_observed_bundle_health
 from .process_memory import current_rss_bytes, peak_rss_bytes
 from .publish_utils import (
@@ -64,6 +64,66 @@ MRMS_RECENT_PRECIP_COLOR_MAP_IDS: dict[str, str] = {
     "mrms_recent_precip_72h": "mrms_recent_precip_72h",
 }
 MRMS_RUNTIME_ARTIFACTS_PENDING_KEY = "runtime_artifacts_pending"
+
+
+def _pre_encode_gate_allows(
+    values: np.ndarray,
+    *,
+    var_id: str,
+    color_map_id: str,
+    forecast_hour: int,
+    binary_only: bool,
+) -> bool:
+    """Dual-mode pre-encode gate (COG->binary sampling migration), shared by
+    all four MRMS fresh-write sites. The check itself runs unconditionally on
+    every fresh frame write; ``binary_only`` decides only what a failure
+    means. Enforced (model allowlisted): failure or a gate error rejects the
+    frame before ANY artifact is written, matching pipeline.py's binary_only
+    branch. Shadow (default): log-only, frame governed by the COG path."""
+    try:
+        gate_ok = check_pre_encode_value_sanity(
+            values,
+            get_color_map_spec(color_map_id),
+            var_spec_model=MRMS_MODEL.get_var(var_id),
+            var_capability=MRMS_MODEL.get_var_capability(var_id),
+            label=f"{MRMS_MODEL_ID}/{var_id}/fh{int(forecast_hour):03d}",
+        )
+    except Exception:
+        if binary_only:
+            logger.exception(
+                "Pre-encode sanity gate errored — rejecting frame "
+                "model=%s var=%s fh%03d — frame not published",
+                MRMS_MODEL_ID,
+                var_id,
+                int(forecast_hour),
+            )
+            return False
+        logger.exception(
+            "Phase C shadow gate errored: pre-encode value sanity "
+            "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+            MRMS_MODEL_ID,
+            var_id,
+            int(forecast_hour),
+        )
+        return True
+    if not gate_ok:
+        if binary_only:
+            logger.error(
+                "Pre-encode sanity gate rejected frame model=%s var=%s "
+                "fh%03d — frame not published",
+                MRMS_MODEL_ID,
+                var_id,
+                int(forecast_hour),
+            )
+            return False
+        logger.warning(
+            "Phase C shadow gate failed: pre-encode value sanity "
+            "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+            MRMS_MODEL_ID,
+            var_id,
+            int(forecast_hour),
+        )
+    return True
 
 
 def _bytes_to_mib(num_bytes: int) -> float:
@@ -322,22 +382,26 @@ def publish_mrms_bundle(
         else:
             fresh_jobs.append((fh, frame))
 
-    def _write_fresh_frame(fh: int, frame: MRMSBundleFrame) -> tuple[int, bool]:
+    def _write_fresh_frame(fh: int, frame: MRMSBundleFrame) -> tuple[int, bool, bool]:
         """Write reflectivity frame, and radar_ptype frame if precip_flag available.
 
-        Returns (fh, has_ptype).
+        Returns (fh, wrote_reflectivity, has_ptype). A frame the enforced
+        pre-encode gate rejected reports wrote_reflectivity=False and drops
+        out of the bundle; a rejected ptype composite degrades the frame to
+        reflectivity-only, matching the existing ptype-failure path.
         """
-        write_mrms_frame(
+        if not write_mrms_frame(
             data_root=data_root,
             run_id=run_id,
             forecast_hour=fh,
             frame=frame,
             build_grid_artifacts=build_primary_grid_artifacts,
-        )
+        ):
+            return fh, False, False
         has_ptype = frame.precip_flag_values is not None
         if has_ptype:
             try:
-                write_mrms_radar_ptype_frame(
+                has_ptype = write_mrms_radar_ptype_frame(
                     data_root=data_root,
                     run_id=run_id,
                     forecast_hour=fh,
@@ -351,11 +415,13 @@ def publish_mrms_bundle(
                     exc_info=True,
                 )
                 has_ptype = False
-        return fh, has_ptype
+        return fh, True, has_ptype
 
     if max_workers <= 1 or len(fresh_jobs) <= 1:
         for fh, frame in fresh_jobs:
-            fh_result, has_ptype = _write_fresh_frame(fh, frame)
+            fh_result, wrote_refl, has_ptype = _write_fresh_frame(fh, frame)
+            if not wrote_refl:
+                continue
             targets.append((MRMS_VARIABLE_ID, fh_result))
             if has_ptype:
                 ptype_targets.append((MRMS_RADAR_PTYPE_VARIABLE_ID, fh_result))
@@ -367,12 +433,16 @@ def publish_mrms_bundle(
             }
             for future in concurrent.futures.as_completed(future_map):
                 fh = future_map[future]
-                fh_result, has_ptype = future.result()
+                fh_result, wrote_refl, has_ptype = future.result()
+                if not wrote_refl:
+                    continue
                 targets.append((MRMS_VARIABLE_ID, fh_result))
                 if has_ptype:
                     ptype_targets.append((MRMS_RADAR_PTYPE_VARIABLE_ID, fh_result))
     targets.sort(key=lambda item: item[1])
     ptype_targets.sort(key=lambda item: item[1])
+    if not targets:
+        raise ValueError("MRMS bundle publish requires at least one frame")
     supplemental_targets: dict[str, list[tuple[str, int]]] = {}
     for var_id, supplemental_frames in sorted((supplemental_variable_frames or {}).items()):
         if var_id not in MRMS_RECENT_PRECIP_COLOR_MAP_IDS:
@@ -382,14 +452,15 @@ def publish_mrms_bundle(
             key=lambda item: item.valid_time.astimezone(timezone.utc),
         )
         for fh, supplemental_frame in enumerate(ordered_supplemental_frames):
-            write_mrms_supplemental_frame(
+            if not write_mrms_supplemental_frame(
                 data_root=data_root,
                 run_id=run_id,
                 var_id=var_id,
                 forecast_hour=fh,
                 frame=supplemental_frame,
                 build_grid_artifacts=build_supplemental_grid_artifacts,
-            )
+            ):
+                continue
             supplemental_targets.setdefault(var_id, []).append((var_id, fh))
     all_targets = targets + ptype_targets + [
         target
@@ -431,16 +502,17 @@ def publish_mrms_bundle(
 
     promote_run(data_root=data_root, model=MRMS_MODEL_ID, run_id=run_id)
 
+    reflectivity_fhs = sorted(fh for _, fh in targets)
     manifest_variables: dict[str, Any] = {
         MRMS_VARIABLE_ID: {
             "expected_frames": manifest_target_frame_count,
-            "available_frames": len(ordered_valid_times),
+            "available_frames": len(reflectivity_fhs),
             "frames": [
                 {
                     "fh": fh,
-                    "valid_time": source_valid_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "valid_time": ordered_source_valid_times[fh].strftime("%Y-%m-%dT%H:%M:%SZ"),
                 }
-                for fh, source_valid_time in enumerate(ordered_source_valid_times)
+                for fh in reflectivity_fhs
             ],
         },
     }
@@ -505,13 +577,13 @@ def publish_mrms_bundle(
         "MRMS publish phase=complete run=%s elapsed=%.1fs frame_count=%d",
         run_id,
         time.monotonic() - started_at,
-        len(ordered_valid_times),
+        len(reflectivity_fhs),
     )
     return MRMSPublishResult(
         run_id=run_id,
         published_run_dir=published_run_dir,
         manifest_path=manifest_path,
-        frame_count=len(ordered_valid_times),
+        frame_count=len(reflectivity_fhs),
     )
 
 
@@ -522,7 +594,10 @@ def write_mrms_frame(
     forecast_hour: int,
     frame: MRMSBundleFrame,
     build_grid_artifacts: bool = True,
-) -> None:
+) -> bool:
+    """Write one reflectivity frame's artifacts. Returns False when the
+    enforced pre-encode gate rejected the frame (nothing written), mirroring
+    how build_frame signals a failed frame via status rather than raising."""
     phase_started_at = time.monotonic()
     logger.info(
         "MRMS publish phase=start run=%s var=%s fh=%03d",
@@ -557,6 +632,18 @@ def write_mrms_frame(
         time.monotonic() - phase_started_at,
     )
 
+    # Gate the warped array — the one both the COG and grid writes receive —
+    # not the colorize-only smoothed display copy computed below.
+    binary_only = MRMS_MODEL_ID in binary_sampling_models()
+    if not _pre_encode_gate_allows(
+        values,
+        var_id=MRMS_VARIABLE_ID,
+        color_map_id=MRMS_COLOR_MAP_ID,
+        forecast_hour=forecast_hour,
+        binary_only=binary_only,
+    ):
+        return False
+
     display_values = _display_values_for_colorize(values)
 
     fh_str = f"fh{int(forecast_hour):03d}"
@@ -577,19 +664,28 @@ def write_mrms_frame(
         metadata_only="true",
         rgba_mib="0.0",
     )
-    write_value_cog(
-        values,
-        value_path,
-        model=MRMS_MODEL_ID,
-        region=MRMS_REGION_ID,
-    )
-    logger.info(
-        "MRMS publish phase=cog_write run=%s var=%s fh=%03d elapsed=%.1fs",
-        run_id,
-        MRMS_VARIABLE_ID,
-        int(forecast_hour),
-        time.monotonic() - phase_started_at,
-    )
+    if binary_only:
+        # Value COG retired for binary-sampling models: the grid binary
+        # (written below) serves rendering and sampling, and the enforced
+        # gate above already applied the value-quality gate.
+        logger.info(
+            "Value COG write skipped (model=%s is binary-only)",
+            MRMS_MODEL_ID,
+        )
+    else:
+        write_value_cog(
+            values,
+            value_path,
+            model=MRMS_MODEL_ID,
+            region=MRMS_REGION_ID,
+        )
+        logger.info(
+            "MRMS publish phase=cog_write run=%s var=%s fh=%03d elapsed=%.1fs",
+            run_id,
+            MRMS_VARIABLE_ID,
+            int(forecast_hour),
+            time.monotonic() - phase_started_at,
+        )
 
     run_dt = datetime.now(timezone.utc)
     sidecar = build_sidecar_json(
@@ -641,6 +737,7 @@ def write_mrms_frame(
         int(forecast_hour),
         time.monotonic() - phase_started_at,
     )
+    return True
 
 
 def reuse_mrms_frame(
@@ -963,8 +1060,11 @@ def write_mrms_radar_ptype_frame(
     forecast_hour: int,
     frame: MRMSBundleFrame,
     build_grid_artifacts: bool = True,
-) -> None:
-    """Write an mrms_radar_ptype frame by compositing reflectivity + PrecipFlag."""
+) -> bool:
+    """Write an mrms_radar_ptype frame by compositing reflectivity + PrecipFlag.
+
+    Returns False when the enforced pre-encode gate rejected the frame
+    (nothing written) — the caller degrades to a reflectivity-only frame."""
     if frame.precip_flag_values is None:
         raise ValueError("Cannot write mrms_radar_ptype frame without precip_flag_values")
 
@@ -1025,6 +1125,19 @@ def write_mrms_radar_ptype_frame(
         precip_flag_mib=f"{_array_mib(precip_flag):.1f}",
     )
 
+    # Gate the composited indexed array with its own indexed spec (the real
+    # "mrms_radar_ptype" colormap carries ptype_breaks, so the categorical
+    # branch of the gate applies) — never reflectivity's continuous spec.
+    binary_only = MRMS_MODEL_ID in binary_sampling_models()
+    if not _pre_encode_gate_allows(
+        indexed,
+        var_id=MRMS_RADAR_PTYPE_VARIABLE_ID,
+        color_map_id=MRMS_RADAR_PTYPE_COLOR_MAP_ID,
+        forecast_hour=forecast_hour,
+        binary_only=binary_only,
+    ):
+        return False
+
     fh_str = f"fh{int(forecast_hour):03d}"
     staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_RADAR_PTYPE_VARIABLE_ID
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -1042,19 +1155,25 @@ def write_mrms_radar_ptype_frame(
         metadata_only="true",
         rgba_mib="0.0",
     )
-    write_value_cog(
-        indexed,
-        value_path,
-        model=MRMS_MODEL_ID,
-        region=MRMS_REGION_ID,
-    )
-    logger.info(
-        "MRMS publish phase=cog_write run=%s var=%s fh=%03d elapsed=%.1fs",
-        run_id,
-        MRMS_RADAR_PTYPE_VARIABLE_ID,
-        int(forecast_hour),
-        time.monotonic() - phase_started_at,
-    )
+    if binary_only:
+        logger.info(
+            "Value COG write skipped (model=%s is binary-only)",
+            MRMS_MODEL_ID,
+        )
+    else:
+        write_value_cog(
+            indexed,
+            value_path,
+            model=MRMS_MODEL_ID,
+            region=MRMS_REGION_ID,
+        )
+        logger.info(
+            "MRMS publish phase=cog_write run=%s var=%s fh=%03d elapsed=%.1fs",
+            run_id,
+            MRMS_RADAR_PTYPE_VARIABLE_ID,
+            int(forecast_hour),
+            time.monotonic() - phase_started_at,
+        )
 
     run_dt = datetime.now(timezone.utc)
     sidecar = build_sidecar_json(
@@ -1106,6 +1225,7 @@ def write_mrms_radar_ptype_frame(
         int(forecast_hour),
         time.monotonic() - phase_started_at,
     )
+    return True
 
 
 def write_mrms_supplemental_frame(
@@ -1116,8 +1236,8 @@ def write_mrms_supplemental_frame(
     forecast_hour: int,
     frame: MRMSSupplementalFrame,
     build_grid_artifacts: bool = True,
-) -> None:
-    _write_mrms_supplemental_frame_to_run_root(
+) -> bool:
+    return _write_mrms_supplemental_frame_to_run_root(
         run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
         run_id=run_id,
         var_id=var_id,
@@ -1135,7 +1255,12 @@ def _write_mrms_supplemental_frame_to_run_root(
     forecast_hour: int,
     frame: MRMSSupplementalFrame,
     build_grid_artifacts: bool,
-) -> None:
+) -> bool:
+    """Write one supplemental frame's artifacts into ``run_root`` — the shared
+    body for BOTH the staging bundle path and finalize_mrms_published_run's
+    deferred path (which writes directly into the published run dir), so the
+    pre-encode gate below covers both. Returns False when the enforced gate
+    rejected the frame (nothing written)."""
     color_map_id = MRMS_RECENT_PRECIP_COLOR_MAP_IDS.get(var_id)
     if not color_map_id:
         raise ValueError(f"Unsupported MRMS supplemental variable: {var_id}")
@@ -1165,6 +1290,16 @@ def _write_mrms_supplemental_frame_to_run_root(
         time.monotonic() - phase_started_at,
     )
 
+    binary_only = MRMS_MODEL_ID in binary_sampling_models()
+    if not _pre_encode_gate_allows(
+        warped_values,
+        var_id=var_id,
+        color_map_id=color_map_id,
+        forecast_hour=forecast_hour,
+        binary_only=binary_only,
+    ):
+        return False
+
     fh_str = f"fh{int(forecast_hour):03d}"
     staging_dir = run_root / var_id
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -1182,19 +1317,25 @@ def _write_mrms_supplemental_frame_to_run_root(
         metadata_only="true",
         rgba_mib="0.0",
     )
-    write_value_cog(
-        warped_values,
-        value_path,
-        model=MRMS_MODEL_ID,
-        region=MRMS_REGION_ID,
-    )
-    logger.info(
-        "MRMS publish phase=cog_write run=%s var=%s fh=%03d elapsed=%.1fs",
-        run_id,
-        var_id,
-        int(forecast_hour),
-        time.monotonic() - phase_started_at,
-    )
+    if binary_only:
+        logger.info(
+            "Value COG write skipped (model=%s is binary-only)",
+            MRMS_MODEL_ID,
+        )
+    else:
+        write_value_cog(
+            warped_values,
+            value_path,
+            model=MRMS_MODEL_ID,
+            region=MRMS_REGION_ID,
+        )
+        logger.info(
+            "MRMS publish phase=cog_write run=%s var=%s fh=%03d elapsed=%.1fs",
+            run_id,
+            var_id,
+            int(forecast_hour),
+            time.monotonic() - phase_started_at,
+        )
 
     run_dt = datetime.now(timezone.utc)
     sidecar = build_sidecar_json(
@@ -1246,6 +1387,7 @@ def _write_mrms_supplemental_frame_to_run_root(
         int(forecast_hour),
         time.monotonic() - phase_started_at,
     )
+    return True
 
 
 def finalize_mrms_published_run(
@@ -1287,17 +1429,19 @@ def finalize_mrms_published_run(
             supplemental_frames,
             key=lambda item: item.valid_time.astimezone(timezone.utc),
         )
+        written_items: list[tuple[int, MRMSSupplementalFrame]] = []
         for fh, supplemental_frame in enumerate(ordered_frames):
-            _write_mrms_supplemental_frame_to_run_root(
+            if _write_mrms_supplemental_frame_to_run_root(
                 run_root=published_run_root,
                 run_id=run_id,
                 var_id=var_id,
                 forecast_hour=fh,
                 frame=supplemental_frame,
                 build_grid_artifacts=False,
-            )
+            ):
+                written_items.append((fh, supplemental_frame))
         manifest_variables[var_id] = _supplemental_manifest_entry(
-            frames=ordered_frames,
+            frame_items=written_items,
             expected_frame_count=max(0, int(expected_counts.get(var_id, len(ordered_frames)))),
         )
         changed_supplemental_vars.add(var_id)
@@ -1340,12 +1484,12 @@ def finalize_mrms_published_run(
         )
 def _supplemental_manifest_entry(
     *,
-    frames: list[MRMSSupplementalFrame],
+    frame_items: list[tuple[int, MRMSSupplementalFrame]],
     expected_frame_count: int,
 ) -> dict[str, Any]:
     return {
         "expected_frames": max(0, int(expected_frame_count)),
-        "available_frames": len(frames),
+        "available_frames": len(frame_items),
         "frames": [
             {
                 "fh": fh,
@@ -1355,7 +1499,7 @@ def _supplemental_manifest_entry(
                     .strftime("%Y-%m-%dT%H:%M:%SZ")
                 ),
             }
-            for fh, frame in enumerate(frames)
+            for fh, frame in frame_items
         ],
     }
 

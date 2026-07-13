@@ -12,11 +12,11 @@ from typing import Any
 import numpy as np
 import rasterio
 
-from app.config import grid_build_enabled
+from app.config import binary_sampling_models, grid_build_enabled
 from app.models.goes_east import GOES_EAST_MODEL
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.cog_writer import write_value_cog
-from app.services.builder.pipeline import build_sidecar_json
+from app.services.builder.pipeline import build_sidecar_json, check_pre_encode_value_sanity
 from app.services.colormaps import get_color_map_spec
 from app.services.grid import (
     build_grid_manifests_for_run_root,
@@ -272,8 +272,11 @@ def publish_goes_bundle(
         raise ValueError("GOES bundle publish resolved to an empty rolling window")
 
     targets: list[tuple[str, int]] = []
+    written_fhs: list[int] = []
     for fh, frame in enumerate(ordered_inputs):
         if isinstance(frame, GOESPublishedFrame):
+            # Reuse is deliberately NOT gated: a reused frame is byte-identical
+            # to one that passed the pre-encode gate at its original write.
             reuse_goes_frame(
                 data_root=data_root,
                 run_id=run_id,
@@ -281,15 +284,19 @@ def publish_goes_bundle(
                 frame=frame,
                 band_config=band_config,
             )
-        else:
-            write_goes_frame(
-                data_root=data_root,
-                run_id=run_id,
-                forecast_hour=fh,
-                frame=frame,
-                band_config=band_config,
-            )
+        elif not write_goes_frame(
+            data_root=data_root,
+            run_id=run_id,
+            forecast_hour=fh,
+            frame=frame,
+            band_config=band_config,
+        ):
+            continue
         targets.append((var_id, fh))
+        written_fhs.append(fh)
+
+    if not targets:
+        raise ValueError("GOES bundle publish requires at least one frame")
 
     if grid_build_enabled():
         manifest_count = build_grid_manifests_for_run_root(
@@ -312,13 +319,13 @@ def publish_goes_bundle(
         **preserved_manifest_variables,
         var_id: {
             "expected_frames": manifest_target_frame_count,
-            "available_frames": len(ordered_valid_times),
+            "available_frames": len(written_fhs),
             "frames": [
                 {
                     "fh": fh,
-                    "valid_time": valid_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "valid_time": ordered_valid_times[fh].strftime("%Y-%m-%dT%H:%M:%SZ"),
                 }
-                for fh, valid_time in enumerate(ordered_valid_times)
+                for fh in written_fhs
             ],
         }
     }
@@ -352,7 +359,7 @@ def publish_goes_bundle(
         data_root=data_root,
         run_id=run_id,
         expected_frames=manifest_target_frame_count,
-        available_frames=len(ordered_valid_times),
+        available_frames=len(written_fhs),
         var_id=var_id,
     )
     _merge_preserved_manifest_variables(
@@ -369,7 +376,7 @@ def publish_goes_bundle(
         run_id=run_id,
         published_run_dir=published_run_dir,
         manifest_path=manifest_path,
-        frame_count=len(ordered_valid_times),
+        frame_count=len(written_fhs),
     )
 
 
@@ -380,19 +387,85 @@ def write_goes_frame(
     forecast_hour: int,
     frame: GOESBundleFrame,
     band_config: GOESBandConfig | None = None,
-) -> None:
+) -> bool:
+    """Write one band frame's artifacts. Returns False when the enforced
+    pre-encode gate rejected the frame (nothing written), mirroring how
+    build_frame signals a failed frame via status rather than raising."""
     band_config = _resolve_band_config(band_config)
     var_id = band_config.variable_id
     color_map_id = band_config.color_map_id
+    values = np.asarray(frame.values, dtype=np.float32)
+    var_spec_colormap = get_color_map_spec(color_map_id)
+    var_spec_model = GOES_EAST_MODEL.get_var(var_id)
+    var_capability = GOES_EAST_MODEL.get_var_capability(var_id)
+    # Pre-encode gate (COG->binary sampling migration): the check itself runs
+    # on every fresh frame write, per band-publish invocation. For a
+    # binary-sampling-allowlisted model it is ENFORCED — failure (or a gate
+    # error) rejects the frame before ANY artifact is written, matching
+    # pipeline.py's binary_only branch. Otherwise it stays the Phase C shadow
+    # gate: log-only.
+    binary_only = GOES_EAST_MODEL_ID in binary_sampling_models()
+    try:
+        gate_ok = check_pre_encode_value_sanity(
+            values,
+            var_spec_colormap,
+            var_spec_model=var_spec_model,
+            var_capability=var_capability,
+            label=f"{GOES_EAST_MODEL_ID}/{var_id}/fh{int(forecast_hour):03d}",
+        )
+    except Exception:
+        if binary_only:
+            logger.exception(
+                "Pre-encode sanity gate errored — rejecting frame "
+                "model=%s var=%s fh%03d — frame not published",
+                GOES_EAST_MODEL_ID,
+                var_id,
+                int(forecast_hour),
+            )
+            return False
+        logger.exception(
+            "Phase C shadow gate errored: pre-encode value sanity "
+            "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+            GOES_EAST_MODEL_ID,
+            var_id,
+            int(forecast_hour),
+        )
+        gate_ok = True
+    if not gate_ok:
+        if binary_only:
+            logger.error(
+                "Pre-encode sanity gate rejected frame model=%s var=%s "
+                "fh%03d — frame not published",
+                GOES_EAST_MODEL_ID,
+                var_id,
+                int(forecast_hour),
+            )
+            return False
+        logger.warning(
+            "Phase C shadow gate failed: pre-encode value sanity "
+            "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+            GOES_EAST_MODEL_ID,
+            var_id,
+            int(forecast_hour),
+        )
+
     fh_str = f"fh{int(forecast_hour):03d}"
     staging_dir = data_root / "staging" / GOES_EAST_MODEL_ID / run_id / var_id
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
-    values = np.asarray(frame.values, dtype=np.float32)
     _, colorize_meta = float_to_rgba(values, color_map_id, meta_var_key=var_id)
-    write_value_cog(values, value_path, model=GOES_EAST_MODEL_ID, region=GOES_EAST_REGION_ID)
+    if binary_only:
+        # Value COG retired for binary-sampling models: the grid binary
+        # (written below) serves rendering and sampling, and the enforced
+        # gate above already applied the value-quality gate.
+        logger.info(
+            "Value COG write skipped (model=%s is binary-only)",
+            GOES_EAST_MODEL_ID,
+        )
+    else:
+        write_value_cog(values, value_path, model=GOES_EAST_MODEL_ID, region=GOES_EAST_REGION_ID)
 
     source_metadata = dict(frame.source_metadata or {})
     if frame.source_bucket:
@@ -412,8 +485,8 @@ def write_goes_frame(
         fh=int(forecast_hour),
         run_date=datetime.now(timezone.utc),
         colorize_meta=colorize_meta,
-        var_spec=get_color_map_spec(color_map_id),
-        var_spec_model=GOES_EAST_MODEL.get_var(var_id),
+        var_spec=var_spec_colormap,
+        var_spec_model=var_spec_model,
         value_downsample_factor=1,
         quality=frame.quality,
         quality_flags=frame.quality_flags,
@@ -434,6 +507,7 @@ def write_goes_frame(
             transform=frame.transform,
             projection=frame.projection,
         )
+    return True
 
 
 def reuse_goes_frame(

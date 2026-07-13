@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import rasterio
 
-from app.config import grid_build_enabled
+from app.config import binary_sampling_models, grid_build_enabled
 from app.models.rtma_ru import CURRENT_ANALYSIS_MODEL
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.cog_writer import write_value_cog
@@ -27,10 +27,12 @@ from app.services.run_ids import format_run_id
 
 try:
     from app.services.builder.pipeline import build_sidecar_json as _shared_build_sidecar_json
+    from app.services.builder.pipeline import check_pre_encode_value_sanity
 except ModuleNotFoundError as exc:
     if exc.name != "brotli":
         raise
     _shared_build_sidecar_json = None
+    check_pre_encode_value_sanity = None
 
 try:
     from app.services.grid import (
@@ -186,9 +188,10 @@ def publish_current_analysis_bundle(
     if not variable_ids:
         raise ValueError("Current Analysis publish requires at least one variable")
 
+    written_pairs: list[tuple[str, int]] = []
     for fh, frame in enumerate(ordered_inputs):
         if isinstance(frame, CurrentAnalysisPublishedFrame):
-            reuse_current_analysis_frame(
+            written_vars = reuse_current_analysis_frame(
                 data_root=data_root,
                 run_id=run_id,
                 forecast_hour=fh,
@@ -196,28 +199,36 @@ def publish_current_analysis_bundle(
                 variable_ids=variable_ids,
             )
         else:
-            write_current_analysis_frame(
+            written_vars = write_current_analysis_frame(
                 data_root=data_root,
                 run_id=run_id,
                 forecast_hour=fh,
                 frame=frame,
                 variable_ids=variable_ids,
             )
+        written_pairs.extend((var_id, fh) for var_id in written_vars)
 
-    targets = [(var_id, fh) for var_id in variable_ids for fh in range(len(ordered_inputs))]
+    if not written_pairs:
+        raise ValueError("Current Analysis publish requires at least one frame")
+    written_var_set = {var_id for var_id, _ in written_pairs}
+    published_variable_ids = [var_id for var_id in variable_ids if var_id in written_var_set]
+    targets = sorted(written_pairs)
     if grid_build_enabled():
         _require_grid_support()
         build_grid_manifests_for_run_root(
             run_root=data_root / "staging" / CURRENT_ANALYSIS_MODEL_ID / run_id,
             model=CURRENT_ANALYSIS_MODEL_ID,
             run=run_id,
-            variables=tuple(variable_ids),
+            variables=tuple(published_variable_ids),
         )
 
     promote_run(data_root=data_root, model=CURRENT_ANALYSIS_MODEL_ID, run_id=run_id)
 
     ordered_valid_times = [item.valid_time.astimezone(timezone.utc) for item in ordered_inputs]
     manifest_target_frame_count = max(1, int(expected_frame_count)) if expected_frame_count is not None else len(ordered_valid_times)
+    representative_fhs = sorted(
+        fh for var_id, fh in written_pairs if var_id == CURRENT_ANALYSIS_REPRESENTATIVE_VAR_ID
+    )
     metadata = build_observed_bundle_health(
         latest_run=run_id,
         manifest={
@@ -225,10 +236,10 @@ def publish_current_analysis_bundle(
             "variables": {
                 CURRENT_ANALYSIS_REPRESENTATIVE_VAR_ID: {
                     "expected_frames": manifest_target_frame_count,
-                    "available_frames": len(ordered_valid_times),
+                    "available_frames": len(representative_fhs),
                     "frames": [
-                        {"fh": fh, "valid_time": valid_time.strftime("%Y-%m-%dT%H:%M:%SZ")}
-                        for fh, valid_time in enumerate(ordered_valid_times)
+                        {"fh": fh, "valid_time": ordered_valid_times[fh].strftime("%Y-%m-%dT%H:%M:%SZ")}
+                        for fh in representative_fhs
                     ],
                 }
             },
@@ -236,7 +247,7 @@ def publish_current_analysis_bundle(
         source=CURRENT_ANALYSIS_MODEL_ID,
         now_utc=publish_dt,
     )
-    metadata["variables_published"] = list(variable_ids)
+    metadata["variables_published"] = published_variable_ids
     write_run_manifest(
         data_root=data_root,
         model=CURRENT_ANALYSIS_MODEL_ID,
@@ -264,7 +275,7 @@ def publish_current_analysis_bundle(
         run_id=run_id,
         published_run_dir=published_run_dir,
         manifest_path=manifest_path,
-        frame_count=len(ordered_valid_times),
+        frame_count=len(representative_fhs),
     )
 
 
@@ -275,9 +286,20 @@ def write_current_analysis_frame(
     forecast_hour: int,
     frame: CurrentAnalysisBundleFrame,
     variable_ids: list[str],
-) -> None:
+) -> list[str]:
+    """Write one frame's artifacts. Returns the variable ids actually written;
+    a variable the enforced pre-encode gate rejected is skipped (nothing
+    written for it) while the rest of the frame proceeds, mirroring how
+    build_frame signals a failed frame via status rather than raising."""
     fh_str = f"fh{int(forecast_hour):03d}"
     shared_source_metadata = dict(frame.source_metadata or {})
+    # Pre-encode gate (COG->binary sampling migration): the check itself runs
+    # on every fresh (var, fh) write. For a binary-sampling-allowlisted model
+    # it is ENFORCED — failure (or a gate error) rejects the variable's frame
+    # before ANY artifact is written, matching pipeline.py's binary_only
+    # branch. Otherwise it stays the Phase C shadow gate: log-only.
+    binary_only = CURRENT_ANALYSIS_MODEL_ID in binary_sampling_models()
+    written: list[str] = []
     for var_id in variable_ids:
         values_raw = frame.values_by_var.get(var_id)
         if values_raw is None:
@@ -287,13 +309,69 @@ def write_current_analysis_frame(
         if not isinstance(color_map_id, str) or not color_map_id.strip():
             raise ValueError(f"Current Analysis variable {var_id!r} has no configured color map")
 
+        var_spec_colormap = get_color_map_spec(color_map_id)
+        var_spec_model = CURRENT_ANALYSIS_MODEL.get_var(var_id)
+        values = np.asarray(values_raw, dtype=np.float32)
+        if check_pre_encode_value_sanity is not None:
+            try:
+                gate_ok = check_pre_encode_value_sanity(
+                    values,
+                    var_spec_colormap,
+                    var_spec_model=var_spec_model,
+                    var_capability=capability,
+                    label=f"{CURRENT_ANALYSIS_MODEL_ID}/{var_id}/fh{int(forecast_hour):03d}",
+                )
+            except Exception:
+                if binary_only:
+                    logger.exception(
+                        "Pre-encode sanity gate errored — rejecting frame "
+                        "model=%s var=%s fh%03d — frame not published",
+                        CURRENT_ANALYSIS_MODEL_ID,
+                        var_id,
+                        int(forecast_hour),
+                    )
+                    continue
+                logger.exception(
+                    "Phase C shadow gate errored: pre-encode value sanity "
+                    "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                    CURRENT_ANALYSIS_MODEL_ID,
+                    var_id,
+                    int(forecast_hour),
+                )
+                gate_ok = True
+            if not gate_ok:
+                if binary_only:
+                    logger.error(
+                        "Pre-encode sanity gate rejected frame model=%s var=%s "
+                        "fh%03d — frame not published",
+                        CURRENT_ANALYSIS_MODEL_ID,
+                        var_id,
+                        int(forecast_hour),
+                    )
+                    continue
+                logger.warning(
+                    "Phase C shadow gate failed: pre-encode value sanity "
+                    "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                    CURRENT_ANALYSIS_MODEL_ID,
+                    var_id,
+                    int(forecast_hour),
+                )
+
         staging_dir = data_root / "staging" / CURRENT_ANALYSIS_MODEL_ID / run_id / var_id
         staging_dir.mkdir(parents=True, exist_ok=True)
         value_path = staging_dir / f"{fh_str}.val.cog.tif"
         sidecar_path = staging_dir / f"{fh_str}.json"
-        values = np.asarray(values_raw, dtype=np.float32)
         _, colorize_meta = float_to_rgba(values, color_map_id, meta_var_key=var_id)
-        write_value_cog(values, value_path, model=CURRENT_ANALYSIS_MODEL_ID, region=CURRENT_ANALYSIS_REGION_ID)
+        if binary_only:
+            # Value COG retired for binary-sampling models: the grid binary
+            # (written below) serves rendering and sampling, and the enforced
+            # gate above already applied the value-quality gate.
+            logger.info(
+                "Value COG write skipped (model=%s is binary-only)",
+                CURRENT_ANALYSIS_MODEL_ID,
+            )
+        else:
+            write_value_cog(values, value_path, model=CURRENT_ANALYSIS_MODEL_ID, region=CURRENT_ANALYSIS_REGION_ID)
 
         source_metadata = dict(shared_source_metadata)
         source_metadata.update(frame.source_metadata_by_var.get(var_id, {}))
@@ -305,8 +383,8 @@ def write_current_analysis_frame(
             fh=int(forecast_hour),
             run_date=datetime.now(timezone.utc),
             colorize_meta=colorize_meta,
-            var_spec=get_color_map_spec(color_map_id),
-            var_spec_model=CURRENT_ANALYSIS_MODEL.get_var(var_id),
+            var_spec=var_spec_colormap,
+            var_spec_model=var_spec_model,
             value_downsample_factor=1,
             quality=frame.quality,
             quality_flags=frame.quality_flags,
@@ -329,6 +407,8 @@ def write_current_analysis_frame(
                 transform=frame.transform,
                 projection=frame.projection,
             )
+        written.append(var_id)
+    return written
 
 
 def reuse_current_analysis_frame(
@@ -338,8 +418,13 @@ def reuse_current_analysis_frame(
     forecast_hour: int,
     frame: CurrentAnalysisPublishedFrame,
     variable_ids: list[str],
-) -> None:
+) -> list[str]:
+    """Hardlink a previously published frame into the new run. Returns the
+    variable ids reused. Deliberately NOT gated: a reused frame is
+    byte-identical to one that passed the pre-encode gate at its original
+    fresh write, so re-checking it here would re-verify already-gated bytes."""
     fh_str = f"fh{int(forecast_hour):03d}"
+    written: list[str] = []
     for var_id in variable_ids:
         source_value_path = frame.value_paths.get(var_id)
         sidecar = frame.sidecars.get(var_id)
@@ -376,6 +461,8 @@ def reuse_current_analysis_frame(
                         transform=ds.transform,
                         projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
                     )
+        written.append(var_id)
+    return written
 
 
 def _reuse_current_analysis_grid_artifacts(

@@ -1211,7 +1211,7 @@ function CurrentRadarCard({ lat, lon }: { lat: number; lon: number }) {
       <h2 className={cardHeadingClassName()}>
         Live Radar
       </h2>
-      <RadarPreviewCard lat={lat} lon={lon} className="mt-3 w-full flex-1" mapHeightClassName="h-full flex-1" />
+      <RadarPreviewCard lat={lat} lon={lon} className="mt-3 w-full flex-1" mapHeightClassName="h-full min-h-[12rem] flex-1 lg:min-h-0" />
     </section>
   );
 }
