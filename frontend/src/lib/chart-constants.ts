@@ -77,8 +77,13 @@ export const MODELS_TAB_VARIABLES = ["tmp2m", "precip_total", "wspd10m"] as cons
 // Ensemble guidance models (Ensembles tab, Phase 2). Mean-only products.
 export const ENSEMBLE_GUIDANCE_MODELS = ["eps", "gefs"] as const;
 
-// Variables the Ensembles tab requests in one meteogram call (Phase 2).
-export const ENSEMBLES_TAB_VARIABLES = ["tmp2m", "precip_total"] as const;
+// Mean-comparison variables remain intentionally narrower than member plumes.
+// tmp850 starts as member-only; adding its mean chart later is a deliberate
+// one-list expansion rather than an accidental side effect of member support.
+export const ENSEMBLE_MEAN_VARIABLES = ["tmp2m", "precip_total"] as const;
+
+// Variables available in an EPS/GEFS member view.
+export const ENSEMBLES_TAB_VARIABLES = ["tmp2m", "tmp850", "precip_total"] as const;
 
 // Models omitted from pills and meteogram requests outside CONUS.
 export const CONUS_ONLY_GUIDANCE_MODELS = new Set<string>(["nbm"]);

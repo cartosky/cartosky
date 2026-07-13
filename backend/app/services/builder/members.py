@@ -9,12 +9,12 @@ Members are processed **sequentially per member, ascending fh** (Phase 2
 design Section 12 / D6): the derived member variables (``precip_total``,
 ``snowfall_total``) are cumulative, so a member's fh-N frame depends on that
 member's fields at every prior step. Per (member, fh) the pass downloads ONE
-bundled subset (TMP + APCP + CSNOW as enabled — D5's member-bundled fetch,
-keeping the request count at members × fhs regardless of variable count),
-then:
+bundled subset (all enabled direct fields + APCP + CSNOW as needed — D5's
+member-bundled fetch, keeping the request count at members × fhs regardless
+of variable count), then:
 
-  * ``tmp2m``: convert -> warp -> gate -> slim write (the spike-validated
-    direct-field shape);
+  * direct fields (currently ``tmp2m`` and ``tmp850``): convert -> warp ->
+    gate -> slim write (the spike-validated direct-field shape);
   * ``precip_total`` / ``snowfall_total``: warp the step fields and fold them
     into per-member running cumulative state (target-grid space — bilinear
     warping is linear, so accumulating warped steps equals warping the
@@ -43,9 +43,10 @@ gepNN, ``member=0`` -> gec00.
 
 EPS (member pipeline Phase 4, design Section 13 / D7) runs through the SAME
 pass in ``pf_subset`` mode: ECMWF publishes all 50 perturbed members in one
-file per fh with no control, and both EPS member variables (``tmp2m``,
-``precip_total`` — ECMWF ``tp`` is natively run-cumulative) are direct
-fields. The unit of work is ``(var, fh)``, not ``(member, fh)``: the pass
+file per fh with no control, and all EPS member variables (currently
+``tmp2m``, ``tmp850``, and ``precip_total`` — ECMWF ``tp`` is natively
+run-cumulative) are direct fields. The unit of work is ``(var, fh)``, not
+``(member, fh)``: the pass
 resolves the SAME ``*.cartosky_pf.grib2`` subset the mean build downloaded
 (reused from the Herbie cache at its deterministic path, or re-downloaded
 via the same production range-fetch primitive on a miss), derives the
@@ -92,6 +93,7 @@ from .fetch import (
     _download_subset_with_inventory_rows,
     _eps_subset_fallback_path,
     _eps_subset_fallback_token,
+    _inventory_line_from_row,
     _inventory_row_byte_range,
     _inventory_search,
     _priority_candidates,
@@ -142,7 +144,8 @@ MODE_PF_SUBSET = "pf_subset"
 MEMBER_APCP_PATTERN = r":APCP:surface:[0-9]+-[0-9]+ hour acc"
 MEMBER_CSNOW_PATTERN = r":CSNOW:surface:"
 
-# GRIB band element -> bundle field key (rasterio GRIB driver band tags).
+# GRIB band element -> bundle field key fallback for single-level bundles.
+# Multi-level same-element fields use inventory-line mapping instead.
 _BUNDLE_ELEMENT_TO_FIELD = {"TMP": "tmp2m", "APCP": "apcp", "CSNOW": "csnow"}
 
 
@@ -581,9 +584,10 @@ class MemberFetchError(RuntimeError):
 def _bundle_fields_for_fh(plan: _MemberBuildPlan, fh: int) -> dict[str, str]:
     """Field key -> search pattern for everything needed at this fh."""
     fields: dict[str, str] = {}
-    tmp_ctx = plan.contexts.get("tmp2m")
-    if tmp_ctx is not None and fh in plan.fhs_by_var["tmp2m"]:
-        fields["tmp2m"] = tmp_ctx.search_patterns[0]
+    for base_var, ctx in plan.contexts.items():
+        if ctx.derived or fh not in plan.fhs_by_var[base_var] or not ctx.search_patterns:
+            continue
+        fields[base_var] = ctx.search_patterns[0]
     if plan.has_cumulative and fh in plan.step_fhs:
         fields["apcp"] = MEMBER_APCP_PATTERN
         if "snowfall_total" in plan.contexts:
@@ -594,11 +598,36 @@ def _bundle_fields_for_fh(plan: _MemberBuildPlan, fh: int) -> dict[str, str]:
 def _map_bundle_bands(
     band_elements: list[str],
     expected_fields: dict[str, str],
+    *,
+    band_inventory_lines: list[str] | None = None,
 ) -> dict[str, int]:
-    """GRIB band element names -> bundle field keys -> 1-based band index."""
+    """Map bundle bands to requested fields.
+
+    Inventory lines are authoritative when supplied because multiple vertical
+    levels share one GRIB element (for example tmp2m and tmp850 are both
+    ``TMP``). The element-only path remains as a fallback for single-level
+    bundles and synthetic callers.
+    """
+    if band_inventory_lines is not None and len(band_inventory_lines) != len(band_elements):
+        raise MemberFetchError(
+            "Bundle inventory/band count mismatch "
+            f"({len(band_inventory_lines)} inventory rows, {len(band_elements)} bands)"
+        )
     mapping: dict[str, int] = {}
     for band_index, element in enumerate(band_elements, start=1):
-        key = _BUNDLE_ELEMENT_TO_FIELD.get(_normalize_grib_element(element))
+        if band_inventory_lines is None:
+            key = _BUNDLE_ELEMENT_TO_FIELD.get(_normalize_grib_element(element))
+        else:
+            inventory_line = band_inventory_lines[band_index - 1]
+            matches = [
+                field for field, pattern in expected_fields.items()
+                if re.search(pattern, inventory_line)
+            ]
+            if len(matches) > 1:
+                raise MemberFetchError(
+                    f"Bundle inventory line matches multiple fields {matches}: {inventory_line}"
+                )
+            key = matches[0] if matches else None
         if key is None or key not in expected_fields:
             continue
         if key in mapping:
@@ -612,16 +641,41 @@ def _map_bundle_bands(
     return mapping
 
 
+def _ordered_bundle_inventory_lines(inventory: Any) -> list[str]:
+    """Inventory lines in the exact unique byte-range order written to disk."""
+    by_range: dict[tuple[int, int], str] = {}
+    for _, row in inventory.iterrows():
+        byte_range = _inventory_row_byte_range(row)
+        if byte_range is None:
+            continue
+        line = _inventory_line_from_row(row)
+        existing = by_range.get(byte_range)
+        if existing is not None and existing != line:
+            raise MemberFetchError(
+                f"Bundle inventory range {byte_range} has conflicting field labels"
+            )
+        by_range[byte_range] = line
+    if not by_range:
+        raise MemberFetchError("Bundle inventory produced no ordered byte ranges")
+    return [line for _byte_range, line in sorted(by_range.items())]
+
+
 def _read_bundle_subset(
     subset_path: Path,
     expected_fields: dict[str, str],
+    *,
+    band_inventory_lines: list[str] | None = None,
 ) -> dict[str, tuple[np.ndarray, Any, Any]]:
     with rasterio.open(subset_path) as src:
         band_elements = [
             str(src.tags(band_index).get("GRIB_ELEMENT", "") or "")
             for band_index in range(1, int(src.count) + 1)
         ]
-        mapping = _map_bundle_bands(band_elements, expected_fields)
+        mapping = _map_bundle_bands(
+            band_elements,
+            expected_fields,
+            band_inventory_lines=band_inventory_lines,
+        )
         return {
             key: (_read_rasterio_band(src, band_index=band_index), src.crs, src.transform)
             for key, band_index in mapping.items()
@@ -640,7 +694,9 @@ def _fetch_member_bundle(
 
     Reuses the production inventory-search + byte-range subset primitives
     (the EPS pf-subset pattern) with a combined regex pattern; band -> field
-    mapping comes from the GRIB band element tags.
+    mapping comes from the inventory rows in the same byte-range order used
+    to construct the subset, so same-element fields at different levels stay
+    distinct.
     """
     from herbie.core import Herbie  # lazy — matches production fetch style
 
@@ -697,6 +753,7 @@ def _fetch_member_bundle(
                             f"bundle inventory unavailable ({inv_result.reason}) "
                             f"member={member} fh{fh:03d} priority={priority}"
                         )
+                    band_inventory_lines = _ordered_bundle_inventory_lines(inventory)
                     subset_hint = Path(H.get_localFilePath(combined_pattern))
                     subset_path = _aggregation_subset_path(subset_hint, "cartosky_mbr")
                     with _subset_download_lock(subset_path):
@@ -718,7 +775,11 @@ def _fetch_member_bundle(
                                     f"bundle subset download failed member={member} "
                                     f"fh{fh:03d} priority={priority}"
                                 )
-                        return _read_bundle_subset(subset_path, fields)
+                        return _read_bundle_subset(
+                            subset_path,
+                            fields,
+                            band_inventory_lines=band_inventory_lines,
+                        )
                 except Exception as exc:  # noqa: BLE001 — recorded; next priority
                     last_exc = exc
                     logger.warning(
@@ -1263,27 +1324,28 @@ def _process_member(
             return
 
         try:
-            # tmp2m — direct field.
-            tmp_ctx = plan.contexts.get("tmp2m")
-            if tmp_ctx is not None and "tmp2m" in fields and fh in plan.fhs_by_var["tmp2m"]:
-                if fh in missing_by_var["tmp2m"]:
-                    raw, crs, transform = bundle["tmp2m"]
+            # Direct fields (tmp2m, tmp850, and future descriptor-driven vars).
+            for base_var, ctx in plan.contexts.items():
+                if ctx.derived or base_var not in fields or fh not in plan.fhs_by_var[base_var]:
+                    continue
+                if fh in missing_by_var[base_var]:
+                    raw, crs, transform = bundle[base_var]
                     converted = convert_units(
-                        raw, var_key="tmp2m", model_id=plan.model_id,
-                        var_capability=tmp_ctx.capability,
+                        raw, var_key=base_var, model_id=plan.model_id,
+                        var_capability=ctx.capability,
                     )
                     warped, dst_transform = warp_to_target_grid(
                         converted, crs, transform,
                         model=plan.model_id, region=plan.region,
-                        resampling=tmp_ctx.resampling, src_nodata=None,
+                        resampling=ctx.resampling, src_nodata=None,
                         dst_nodata=float("nan"), working_dtype=np.float32,
                     )
                     status = _gate_and_write(
-                        plan=plan, ctx=tmp_ctx, var_id=member_var_id("tmp2m", member),
+                        plan=plan, ctx=ctx, var_id=member_var_id(base_var, member),
                         fh=fh, values=warped, dst_transform=dst_transform,
                         staging_run_root=staging_run_root,
                     )
-                    _rec("tmp2m", fh, status,
+                    _rec(base_var, fh, status,
                          time.perf_counter() - frame_started if status == STATUS_WRITTEN else None)
 
             # Cumulative step — precip/snow.

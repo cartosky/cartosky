@@ -630,6 +630,14 @@ async def test_meteogram_include_members_contract(
 
     run_id = "20260306_00z"
     _publish_tmp2m(main_module.PUBLISHED_ROOT, main_module.MANIFESTS_ROOT, "gefs", run_id)
+    _publish_variable(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gefs",
+        run_id,
+        "tmp850",
+        "C",
+    )
     run_root = main_module.PUBLISHED_ROOT / "gefs" / run_id
     transform = from_origin(-101.0, 46.0, 1.0, 1.0)
     for fh in FRAME_HOURS:
@@ -639,6 +647,15 @@ async def test_meteogram_include_members_contract(
             var="tmp2m__mean",
             fh=fh,
             values=np.full((3, 3), 5.0, dtype=np.float32),
+            transform=transform,
+            projection="EPSG:4326",
+        )
+        grid_module.write_grid_frames_for_run_root(
+            run_root=run_root,
+            model="gefs",
+            var="tmp850__mean",
+            fh=fh,
+            values=np.full((3, 3), -5.0, dtype=np.float32),
             transform=transform,
             projection="EPSG:4326",
         )
@@ -654,10 +671,21 @@ async def test_meteogram_include_members_contract(
                 transform=transform,
                 projection="EPSG:4326",
             )
+    for member_var, value in (("tmp850__m01", -4.0), ("tmp850__control", -6.0)):
+        for fh in FRAME_HOURS:
+            write_slim_grid_frame_for_run_root(
+                run_root=run_root,
+                model="gefs",
+                var=member_var,
+                fh=fh,
+                values=np.full((3, 3), value, dtype=np.float32),
+                transform=transform,
+                projection="EPSG:4326",
+            )
 
     monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs")
 
-    body = _body(["gefs"], ["tmp2m"])
+    body = _body(["gefs"], ["tmp2m", "tmp850"])
     body["include_members"] = True
     response = await client.post("/api/v4/forecast/meteogram", json=body)
     assert response.status_code == 200
@@ -672,6 +700,14 @@ async def test_meteogram_include_members_contract(
     assert all(p["valid_time"] for p in members["m01"]["points"])
     assert [p["value"] for p in members["control"]["points"]] == [4.0] * len(FRAME_HOURS)
     assert members["m02"]["points"] is None
+
+    tmp850_payload = response.json()["series"]["gefs"]["variables"]["tmp850"]
+    tmp850_members = tmp850_payload["members"]
+    assert tmp850_payload["units"] == "C"
+    assert tmp850_members["mean"]["points"] == tmp850_payload["points"]
+    assert [p["value"] for p in tmp850_members["m01"]["points"]] == [-4.0] * len(FRAME_HOURS)
+    assert [p["value"] for p in tmp850_members["control"]["points"]] == [-6.0] * len(FRAME_HOURS)
+    assert tmp850_members["m02"]["points"] is None
 
     # include_members omitted -> no members key, and a distinct cache entry
     # (the cache key already varies by the flag).

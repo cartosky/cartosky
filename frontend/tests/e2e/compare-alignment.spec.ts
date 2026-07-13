@@ -8,6 +8,8 @@ import {
   shouldExposeCompareDiff,
 } from "../../src/lib/compare-alignment";
 import {
+  ENSEMBLE_MEAN_VARIABLES,
+  ENSEMBLES_TAB_VARIABLES,
   ensembleProbabilityRequestVariables,
   resolveEnsembleStatsRun,
 } from "../../src/lib/chart-constants";
@@ -66,4 +68,10 @@ test("probability requests stay within the six-variable contract", () => {
 test("ensemble stats follow the member run actually served, not a stale pin", () => {
   expect(resolveEnsembleStatsRun("20260710_00z", "20260710_06z")).toBe("20260710_06z");
   expect(resolveEnsembleStatsRun("20260710_00z", null)).toBeNull();
+});
+
+test("ensemble member variables include 850 mb temperature", () => {
+  expect(ENSEMBLES_TAB_VARIABLES).toEqual(["tmp2m", "tmp850", "precip_total"]);
+  expect(ENSEMBLE_MEAN_VARIABLES).toEqual(["tmp2m", "precip_total"]);
+  expect(ENSEMBLE_MEAN_VARIABLES).not.toContain("tmp850");
 });

@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { useMeteogram } from "@/hooks/useMeteogram";
 import {
+  ENSEMBLE_MEAN_VARIABLES,
   ENSEMBLES_TAB_VARIABLES,
   ENSEMBLE_STATS_CHARTS,
   ENSEMBLE_STATS_PERCENTILES,
@@ -47,6 +48,7 @@ type EnsembleView = "means" | (typeof MEMBER_PLUME_MODELS)[number];
 
 const VARIABLE_LABELS: Record<EnsembleVariable, string> = {
   tmp2m: "Temperature",
+  tmp850: "850 mb Temperature",
   precip_total: "Precipitation",
 };
 
@@ -125,8 +127,11 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
     viewParam && (plumeModels as readonly string[]).includes(viewParam)
       ? (viewParam as EnsembleView)
       : "means";
+  const memberModel = view === "means" ? null : view;
+  const selectableVariables =
+    view === "means" ? ENSEMBLE_MEAN_VARIABLES : ENSEMBLES_TAB_VARIABLES;
   const varParam = searchParams.get("ensemble_var");
-  const variable: EnsembleVariable = (ENSEMBLES_TAB_VARIABLES as readonly string[]).includes(
+  const variable: EnsembleVariable = (selectableVariables as readonly string[]).includes(
     varParam ?? "",
   )
     ? (varParam as EnsembleVariable)
@@ -153,13 +158,29 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
     [plumeModels],
   );
 
+  const handleViewChange = useCallback(
+    (nextView: string) => {
+      const next = new URLSearchParams(searchParams);
+      if (nextView === "means") {
+        next.delete("ensemble_view");
+        if (!(ENSEMBLE_MEAN_VARIABLES as readonly string[]).includes(variable)) {
+          next.delete("ensemble_var");
+        }
+      } else {
+        next.set("ensemble_view", nextView);
+      }
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams, variable],
+  );
+
   const variableOptions = useMemo(
     () =>
-      ENSEMBLES_TAB_VARIABLES.map((value) => ({
+      selectableVariables.map((value) => ({
         value,
         label: VARIABLE_LABELS[value],
       })),
-    [],
+    [selectableVariables],
   );
 
   // ── Pill filter state for the means view ─────────────────────────────────
@@ -260,7 +281,7 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
     lat,
     lon,
     models: eligibleModels,
-    variables: [...ENSEMBLES_TAB_VARIABLES],
+    variables: [...ENSEMBLE_MEAN_VARIABLES],
     pinnedRuns,
   });
 
@@ -281,11 +302,43 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
     lat,
     lon,
     models: plumeModels,
-    variables: [...ENSEMBLES_TAB_VARIABLES],
+    variables: [...ENSEMBLE_MEAN_VARIABLES],
     pinnedRuns: plumePinnedRuns,
     includeMembers: true,
     enabled: plumeModels.length > 0,
   });
+
+  // tmp850 is member-only for now and fetched lazily for the selected model.
+  // Keeping it out of the always-warmed two-model member request avoids a
+  // roughly 50% payload/sampling increase on every Ensembles-tab visit.
+  const tmp850PinnedRuns = useMemo(
+    () =>
+      memberModel && pinnedRuns[memberModel]
+        ? { [memberModel]: pinnedRuns[memberModel] }
+        : {},
+    [memberModel, pinnedRuns],
+  );
+  const {
+    data: tmp850MemberData,
+    loading: tmp850MembersLoading,
+    error: tmp850MembersError,
+    reload: reloadTmp850Members,
+  } = useMeteogram({
+    lat,
+    lon,
+    models: memberModel ? [memberModel] : [],
+    variables: ["tmp850"],
+    pinnedRuns: tmp850PinnedRuns,
+    includeMembers: true,
+    enabled: Boolean(memberModel && variable === "tmp850"),
+  });
+  const activeMemberData = variable === "tmp850" ? tmp850MemberData : memberData;
+  const activeMembersLoading =
+    variable === "tmp850" ? tmp850MembersLoading : membersLoading;
+  const activeMembersError =
+    variable === "tmp850" ? tmp850MembersError : membersError;
+  const reloadActiveMembers =
+    variable === "tmp850" ? reloadTmp850Members : reloadMembers;
 
   // Newest complete run per model — the selector ceiling. The backend reports
   // it directly as `latest_complete_run` (independent of pins), because
@@ -368,7 +421,6 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
   }, [data, eligibleKey, isUpdating]);
 
   // ── Member-view run selector ──────────────────────────────────────────────
-  const memberModel = view === "means" ? null : view;
   // Same shape as the pill run popovers: "Latest (18Z 7/06)" first, then only
   // the OLDER runs — the latest run is never listed twice.
   const memberRunOptions = useMemo(() => {
@@ -385,7 +437,7 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
       ? pinnedRuns[memberModel]
       : "latest";
   const memberServedRun = memberModel
-    ? memberData?.series?.[memberModel]?.run_id ?? null
+    ? activeMemberData?.series?.[memberModel]?.run_id ?? null
     : null;
 
   // ── Stats charts data (backlog B1 + B2) ─────────────────────────────────
@@ -524,7 +576,7 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
   // Only mention the control line when the served payload has one — EPS
   // publishes 50 pf members with no upstream control.
   const memberHasControl = memberModel
-    ? Boolean(memberData?.series?.[memberModel]?.variables?.[variable]?.members?.control)
+    ? Boolean(activeMemberData?.series?.[memberModel]?.variables?.[variable]?.members?.control)
     : false;
   const memberChartSubtitle = memberModel
     ? [
@@ -545,7 +597,7 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
             ariaLabel="Ensemble view"
             value={view}
             options={viewOptions}
-            onChange={(next) => setUrlParam("ensemble_view", next === "means" ? null : next)}
+            onChange={handleViewChange}
           />
           <ControlSelect
             label="Variable"
@@ -622,24 +674,26 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
             <ChartContainer
               title={memberChartTitle}
               subtitle={memberChartSubtitle}
-              isLoading={membersLoading && !memberData}
-              error={membersError}
-              onRetry={reloadMembers}
+              isLoading={activeMembersLoading && !activeMemberData}
+              error={activeMembersError}
+              onRetry={reloadActiveMembers}
               exportImage={{
                 headerText: memberChartTitle,
                 locationText,
                 filenameSlug: `${memberModel}-${variable}-members`,
               }}
             >
-              {variable === "tmp2m" ? (
+              {variable !== "precip_total" ? (
                 <EnsembleTemperaturePlumeChart
-                  response={memberData}
+                  response={activeMemberData}
                   model={memberModel!}
+                  variable={variable}
+                  unitsFallback={variable === "tmp850" ? "C" : "F"}
                   timezone={timezone}
                 />
               ) : (
                 <EnsemblePrecipPlumeChart
-                  response={memberData}
+                  response={activeMemberData}
                   model={memberModel!}
                   timezone={timezone}
                 />

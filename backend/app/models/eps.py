@@ -777,6 +777,7 @@ EPS_VARIABLE_CATALOG = {
             "supported_views": ["mean"],
             "default_view": "mean",
             "artifact_map": {"mean": "tmp850__mean"},
+            "members": {"count": 50, "control": False, "prefix": "m", "enabled": True},
         },
     ),
     "tmp850__mean": VariableCapability(

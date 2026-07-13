@@ -943,6 +943,7 @@ GEFS_VARIABLE_CATALOG = {
             "supported_views": ["mean"],
             "default_view": "mean",
             "artifact_map": {"mean": "tmp850__mean"},
+            "members": {"count": 30, "control": True, "prefix": "m", "enabled": True},
         },
     ),
     "tmp850__mean": VariableCapability(

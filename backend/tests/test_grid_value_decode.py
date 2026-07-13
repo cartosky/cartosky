@@ -76,6 +76,16 @@ ENSEMBLE_MODELS_UNDER_TEST = ("gefs", "eps")
 # catalog change cannot silently drift from what the canary compares.
 PUBLISHER_MODELS_UNDER_TEST = ("ndfd", "wpc")
 
+# Observed-product standalone publishers (current_analysis/RTMA-RU, MRMS,
+# GOES-East): poll-driven rolling-window publishers, minute-stamped run ids,
+# fh = valid-time sequence index. Scope derived through the same canary
+# intersection — and for current_analysis the exclusion buckets are genuinely
+# NON-empty (spres is packed and published but buildable=False; mslp is a
+# packing key registered under a normalize-alias with no catalog entry), so
+# the parameterized coverage below is 4 of the 6 packed vars; the excluded
+# pressure pair still gets a targeted packed-entry round-trip test.
+OBSERVED_MODELS_UNDER_TEST = ("current_analysis", "mrms", "goes-east")
+
 # The audited write-path-dead bare aliases per ensemble model (packed and
 # catalog-buildable, but runtime var-id resolution redirects every build to
 # the __mean twin, so no frame is ever written under these ids). Pinned so an
@@ -105,6 +115,10 @@ MODEL_VAR_PARAMS = [
 ] + [
     (model, var)
     for model in PUBLISHER_MODELS_UNDER_TEST
+    for var in _canary_scope_vars(model)
+] + [
+    (model, var)
+    for model in OBSERVED_MODELS_UNDER_TEST
     for var in _canary_scope_vars(model)
 ]
 
@@ -473,6 +487,240 @@ def test_wpc_precip_total_round_trips_at_seven_day_cumulative_extremes() -> None
         f"wpc/precip_total: cumulative-extreme round-trip exceeded {tol}\n"
         f"values={values}\ndecoded={decoded}\ndiff={np.abs(decoded - values)}"
     )
+
+
+# Expected canary exclusion buckets per observed model. current_analysis is
+# the first product in this migration whose buckets are non-empty: spres is
+# packed AND published (the publisher ignores buildable=False) but the canary
+# excludes it as non-buildable; mslp is a stray packing key registered under a
+# normalize-alias of spres with no catalog entry of its own.
+OBSERVED_EXPECTED_EXCLUSIONS = {
+    "current_analysis": {"non_buildable": ["spres"], "dead_alias": [], "uncataloged": ["mslp"]},
+    "mrms": {"non_buildable": [], "dead_alias": [], "uncataloged": []},
+    "goes-east": {"non_buildable": [], "dead_alias": [], "uncataloged": []},
+}
+
+
+@pytest.mark.parametrize("model", OBSERVED_MODELS_UNDER_TEST)
+def test_observed_scope_partitions_and_pins_exclusions(model: str) -> None:
+    """Pin each observed model's canary scope buckets and prove the Layer 1
+    parameterization covers exactly the canary scope — a catalog or packing
+    change that moves a variable between buckets fails loudly here."""
+    from backend.scripts.canary_binary_sampler import _scope_for_model
+
+    (
+        in_scope,
+        excluded_non_buildable,
+        excluded_dead_alias,
+        excluded_uncataloged,
+    ) = _scope_for_model(model)
+    expected = OBSERVED_EXPECTED_EXCLUSIONS[model]
+    assert excluded_non_buildable == expected["non_buildable"]
+    assert excluded_dead_alias == expected["dead_alias"]
+    assert excluded_uncataloged == expected["uncataloged"]
+
+    packed = set(_vars_for_model(model))
+    assert (
+        set(in_scope)
+        | set(excluded_non_buildable)
+        | set(excluded_dead_alias)
+        | set(excluded_uncataloged)
+    ) == packed
+
+    covered = {var for (mdl, var) in MODEL_VAR_PARAMS if mdl == model}
+    assert covered == set(in_scope)
+    assert covered, f"no parameterized variables for {model}"
+
+
+def test_observed_dtype_partition_uint8_only_for_mrms_radar_pair() -> None:
+    """The codebase's ONLY uint8 packings are mrms reflectivity and
+    mrms_radar_ptype — this Layer 1 extension is the first full-suite exercise
+    of the uint8 decode branch. Everything else in the three observed models
+    is uint16; a dtype change in either direction must be a deliberate,
+    audited event."""
+    for model in OBSERVED_MODELS_UNDER_TEST:
+        for var in _vars_for_model(model):
+            packing = _packing(model, var)
+            resolved = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+            if (model, var) in {("mrms", "reflectivity"), ("mrms", "mrms_radar_ptype")}:
+                assert resolved == GRID_DTYPE_UINT8, f"{model}/{var} must be uint8"
+            else:
+                assert resolved != GRID_DTYPE_UINT8, f"{model}/{var} must not be uint8"
+
+
+@pytest.mark.parametrize("var", ["spres", "mslp"])
+def test_current_analysis_pressure_offset_floor_round_trips(var: str) -> None:
+    """The canary excludes spres (non-buildable) and mslp (uncataloged alias
+    stray), but both packings exist — and both carry the migration's only
+    offset=800.0 floor. Realistic sea-level-pressure values round-trip within
+    scale/2 across the full observed record (~870 hPa Typhoon Tip to
+    ~1083.8 hPa Agata); anything below the 800 floor CLAMPS to 800.0 (code 0),
+    which for spres over the highest CONUS terrain (~580-650 hPa surface
+    pressure) is a real wrong-by-construction hazard should it ever be
+    surfaced — recorded here the way vort500's offset was."""
+    packing = _packing("current_analysis", var)
+    scale = float(packing["scale"])
+    offset = float(packing["offset"])
+    nodata = int(packing["nodata"])
+    dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+    assert offset == 800.0
+    assert scale == 0.1
+
+    values = np.array([870.0, 960.4, 1013.2, 1040.0, 1083.8], dtype=np.float32)
+    encoded = _encode_values(values, scale=scale, offset=offset, nodata=nodata, dtype=dtype)
+    decoded = _decode_values(encoded, model="current_analysis", var=var)
+    tol = scale / 2 + 1e-3
+    assert np.all(np.abs(decoded - values) <= tol)
+
+    below_floor = np.array([650.0, 799.9], dtype=np.float32)
+    encoded = _encode_values(below_floor, scale=scale, offset=offset, nodata=nodata, dtype=dtype)
+    decoded = _decode_values(encoded, model="current_analysis", var=var)
+    # Clamped to the 800.0 floor (code 0) — not nodata. 799.9 rounds to code
+    # -1 -> clip 0 as well.
+    assert np.all(decoded == np.float32(800.0))
+    assert not np.any(np.isnan(decoded))
+
+
+@pytest.mark.parametrize("var", ["tmp2m", "dp2m"])
+def test_current_analysis_temperature_negative_offset_round_trips_signed_values(var: str) -> None:
+    """Same signed-variable diligence as NDFD mint/maxt: offset=-100.0 (F)
+    puts sub-zero analysis temperatures in the low code range."""
+    packing = _packing("current_analysis", var)
+    scale = float(packing["scale"])
+    offset = float(packing["offset"])
+    nodata = int(packing["nodata"])
+    dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+    assert offset == -100.0
+
+    values = np.array([-70.0, -40.0, -39.97, -0.5, 0.0, 32.0], dtype=np.float32)
+    encoded = _encode_values(values, scale=scale, offset=offset, nodata=nodata, dtype=dtype)
+    decoded = _decode_values(encoded, model="current_analysis", var=var)
+    tol = scale / 2 + 1e-4
+    assert np.all(np.abs(decoded - values) <= tol)
+    assert np.all(decoded[values < -tol] < 0)
+
+
+@pytest.mark.parametrize("var", ["ir13", "wv9", "wv8"])
+def test_goes_ir_bands_round_trip_at_celsius_brightness_temp_extremes(var: str) -> None:
+    """The GOES binary stores CELSIUS: prepare_grid_display_values carries a
+    hardcoded K->C special case (values - 273.15) for these three bands, and
+    the packing (scale=0.01, offset=-100.0) is calibrated for Celsius
+    brightness temps. Realistic extremes (~-90 C coldest overshooting tops in
+    routine record events, up to warm-desert-surface +55/+60 C window temps)
+    round-trip within scale/2. HEADROOM CAVEAT, deliberate assert: the floor
+    is exactly -100.0 C — values below it CLAMP to -100.0. Documented
+    exceptional cold overshoots (W-Pacific record ~-111 C; rare CONUS-sector
+    events approach or pass -100 C) would clip; recorded as a known packing
+    boundary, not silently assumed comfortable."""
+    packing = _packing("goes-east", var)
+    scale = float(packing["scale"])
+    offset = float(packing["offset"])
+    nodata = int(packing["nodata"])
+    dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+    assert offset == -100.0
+    assert scale == 0.01
+
+    hi = _representable_max(scale, offset, nodata)
+    assert hi > 100.0  # warm end has enormous headroom
+
+    values = np.array([-99.99, -90.0, -89.97, -40.0, 0.0, 27.53, 40.0, 56.7], dtype=np.float32)
+    encoded = _encode_values(values, scale=scale, offset=offset, nodata=nodata, dtype=dtype)
+    decoded = _decode_values(encoded, model="goes-east", var=var)
+    tol = scale / 2 + 1e-3
+    assert np.all(np.abs(decoded - values) <= tol)
+    assert np.all(decoded[values < -tol] < 0)
+
+    # Below-floor clamp: a -110 C overshoot would decode as -100.0, not nodata.
+    clipped = _decode_values(
+        _encode_values(np.array([-110.0], dtype=np.float32), scale=scale, offset=offset, nodata=nodata, dtype=dtype),
+        model="goes-east",
+        var=var,
+    )
+    assert clipped[0] == np.float32(-100.0)
+    assert not np.isnan(clipped[0])
+
+
+def test_goes_vis2_reflectance_band_maps_exactly_onto_unit_interval() -> None:
+    """vis2 has no unit conversion and the table's only non-decimal scale,
+    1/65534: codes 0..65534 map reflectance 0.0..1.0 with the representable
+    max landing EXACTLY on 1.0."""
+    packing = _packing("goes-east", "vis2")
+    scale = float(packing["scale"])
+    offset = float(packing["offset"])
+    nodata = int(packing["nodata"])
+    dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+    assert offset == 0.0
+
+    hi = _representable_max(scale, offset, nodata)
+    assert hi == pytest.approx(1.0, abs=1e-9)
+
+    values = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=np.float32)
+    encoded = _encode_values(values, scale=scale, offset=offset, nodata=nodata, dtype=dtype)
+    decoded = _decode_values(encoded, model="goes-east", var="vis2")
+    assert np.all(np.abs(decoded - values) <= scale / 2 + 1e-6)
+
+
+def test_mrms_reflectivity_uint8_negative_signal_round_trips_and_subfloor_clamps() -> None:
+    """First uint8 Layer 1 fixture with REAL negative reflectivity, per the
+    sentinel/negative-clamp fix: weak echo is genuinely negative (observed to
+    ~-18 dBZ), so an all-positive fixture would miss exactly the bug class
+    just fixed. In-band negatives ([-10, 0)) must survive decode as
+    negatives; sub-floor signal ([-18, -10)) CLAMPS to the -10.0 packing
+    floor (code 0) — verified against _encode_values' actual clip behavior,
+    NOT nodata — meaning binary sampling reports -10.0 where the COG keeps
+    e.g. -15.5. That floor-vs-real-signal gap is a recorded packing finding."""
+    packing = _packing("mrms", "reflectivity")
+    scale = float(packing["scale"])
+    offset = float(packing["offset"])
+    nodata = int(packing["nodata"])
+    dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+    assert dtype == GRID_DTYPE_UINT8
+    assert offset == -10.0
+    assert scale == 0.5
+    assert nodata == 255
+
+    in_band = np.array([-10.0, -9.5, -4.5, -0.5, 0.0, 12.5, 47.5, 60.0], dtype=np.float32)
+    encoded = _encode_values(in_band, scale=scale, offset=offset, nodata=nodata, dtype=dtype)
+    assert encoded.dtype == np.uint8
+    decoded = _decode_values(encoded, model="mrms", var="reflectivity")
+    tol = scale / 2 + 1e-4
+    assert np.all(np.abs(decoded - in_band) <= tol)
+    assert np.all(decoded[in_band < -tol] < 0)  # negatives survive the uint8 path
+
+    sub_floor = np.array([-18.0, -15.5, -10.4], dtype=np.float32)
+    encoded = _encode_values(sub_floor, scale=scale, offset=offset, nodata=nodata, dtype=dtype)
+    decoded = _decode_values(encoded, model="mrms", var="reflectivity")
+    assert np.all(decoded == np.float32(-10.0))
+    assert not np.any(np.isnan(decoded))
+
+
+def test_mrms_radar_ptype_uint8_palette_indices_round_trip_exactly() -> None:
+    """Categorical/indexed uint8 packing (scale=1.0, offset=0): every palette
+    index across all four category bands round-trips EXACTLY — integer
+    equality, no tolerance — and the palette ceiling (67) sits far below the
+    uint8 code ceiling (254)."""
+    from app.services.colormaps import MRMS_RADAR_PTYPE_BREAKS
+
+    packing = _packing("mrms", "mrms_radar_ptype")
+    scale = float(packing["scale"])
+    offset = float(packing["offset"])
+    nodata = int(packing["nodata"])
+    dtype = grid_dtype(str(packing.get("dtype") or GRID_DTYPE))
+    assert dtype == GRID_DTYPE_UINT8
+    assert (scale, offset, nodata) == (1.0, 0.0, 255)
+
+    edges = sorted(
+        {int(b["offset"]) for b in MRMS_RADAR_PTYPE_BREAKS.values()}
+        | {int(b["offset"]) + int(b["count"]) - 1 for b in MRMS_RADAR_PTYPE_BREAKS.values()}
+    )
+    assert max(edges) == 67
+    assert max(edges) < nodata - 1
+
+    values = np.array(edges, dtype=np.float32)
+    encoded = _encode_values(values, scale=scale, offset=offset, nodata=nodata, dtype=dtype)
+    assert encoded.dtype == np.uint8
+    decoded = _decode_values(encoded, model="mrms", var="mrms_radar_ptype")
+    assert np.array_equal(decoded, values)
 
 
 def test_decode_branches_on_dtype_for_uint8_packed_variable() -> None:

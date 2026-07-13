@@ -31,7 +31,13 @@ os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNk
 from app import main as main_module
 from app.models.registry import MODEL_REGISTRY
 from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params
-from app.services.grid import _PACKING_BY_MODEL_VAR, write_grid_frame_for_run_root
+from app.services.grid import (
+    GRID_DTYPE,
+    _PACKING_BY_MODEL_VAR,
+    grid_dtype,
+    grid_frame_filename,
+    write_grid_frame_for_run_root,
+)
 from app.services.grid_display_prep import (
     grid_display_prep_config,
     prepare_grid_display_values,
@@ -94,9 +100,13 @@ def _write_pair(
         transform=transform,
         projection=projection,
     )
+    # The binary filename encodes the packing dtype (u16 for everything except
+    # MRMS's two uint8 variables).
+    packing = _PACKING_BY_MODEL_VAR.get((model, var), {})
+    bin_name = grid_frame_filename(0, dtype=grid_dtype(str(packing.get("dtype") or GRID_DTYPE)))
     return (
         cog_path,
-        var_dir / "grid" / "fh000.l0.u16.bin",
+        var_dir / "grid" / bin_name,
         var_dir / "grid" / "fh000.l0.meta.json",
     )
 
@@ -346,6 +356,31 @@ PHASE_G_ENSEMBLE_MODELS = ("gefs", "eps")
 # 100% Group 1 (zero display-prep entries).
 PHASE_G_PUBLISHER_MODELS = ("ndfd", "wpc")
 
+# Observed-product standalone publishers (current_analysis 2.5km, MRMS 1km,
+# GOES-East 4km — all CONUS). Scope via the canary intersection; for
+# current_analysis the buckets are genuinely non-empty (pinned below).
+PHASE_G_OBSERVED_MODELS = ("current_analysis", "mrms", "goes-east")
+
+# Observed variables whose grid binary stores a TRANSFORMED field, so the
+# generic Group 1 binary==COG assertion does not apply even though
+# sampling_tolerance_group classifies them Group 1:
+# - goes-east ir13/wv9/wv8: a hardcoded K->C special case at the top of
+#   prepare_grid_display_values (values - 273.15, not a display-prep config
+#   entry) means the binary is Celsius while the COG is Kelvin — a clean
+#   constant delta at every pixel, invisible to the classifier; the canary
+#   WILL flag it (~273.15 divergence) and that is handled at canary time.
+# - mrms reflectivity: display-prep smooth_sigma=0.45 at upscale 1 means the
+#   binary is a masked-gaussian-smoothed field vs the raw COG — a known
+#   Group-1-classifier blind spot (same category as ECMWF's floor; operator
+#   decision not to patch the classifier).
+# Each gets a dedicated parity test below instead of the generic one.
+OBSERVED_TRANSFORMED_BINARY_VARS = {
+    ("goes-east", "ir13"),
+    ("goes-east", "wv9"),
+    ("goes-east", "wv8"),
+    ("mrms", "reflectivity"),
+}
+
 
 def _model_scope(model: str) -> list[str]:
     return sorted(var for (mdl, var) in _PACKING_BY_MODEL_VAR if mdl == model)
@@ -367,6 +402,7 @@ _PHASE_G_SCOPE_BY_MODEL: dict[str, list[str]] = {
     **{model: _model_scope(model) for model in PHASE_G_MODELS},
     **{model: _canary_scope(model) for model in PHASE_G_ENSEMBLE_MODELS},
     **{model: _canary_scope(model) for model in PHASE_G_PUBLISHER_MODELS},
+    **{model: _canary_scope(model) for model in PHASE_G_OBSERVED_MODELS},
 }
 
 
@@ -379,7 +415,10 @@ def _group_params(group: int) -> list[tuple[str, str]]:
     ]
 
 
-GROUP1_PARAMS = _group_params(1)
+# Transformed-binary observed variables are excluded from the generic Group 1
+# parameterization (see OBSERVED_TRANSFORMED_BINARY_VARS) — dedicated tests
+# below cover them; the partition pin asserts nothing else was dropped.
+GROUP1_PARAMS = [p for p in _group_params(1) if p not in OBSERVED_TRANSFORMED_BINARY_VARS]
 GROUP2_PARAMS = _group_params(2)
 GROUP4_PARAMS = _group_params(4)
 
@@ -602,9 +641,13 @@ def _lattice_values(model: str, var: str, shape: tuple[int, int]) -> np.ndarray:
     packing = _PACKING_BY_MODEL_VAR[(model, var)]
     scale = float(packing["scale"])
     offset = float(packing["offset"])
+    nodata = int(packing["nodata"])
     step_mult = max(1, int(round(0.1 / scale))) if scale < 0.1 else 1
-    step = scale * step_mult
+    # Clamp the step so every fixture value stays inside the representable
+    # band — vis2's 1/65534 scale (band 0..1) would otherwise overflow it.
     count = shape[0] * shape[1]
+    step_mult = min(step_mult, max(1, (nodata - 1) // (100 + count)))
+    step = scale * step_mult
     codes = 100.0 + np.arange(count, dtype=np.float64)
     return (offset + codes * step).reshape(shape).astype(np.float32)
 
@@ -818,3 +861,262 @@ def test_group4_categorical_no_upscale_requires_exact_integer_equality(
     )
     assert raw is None
     assert no_data is True
+
+
+# ── Observed products (current_analysis, MRMS, GOES-East) ────────────
+
+# Expected classifier groups per the live sampling_tolerance_group() config:
+# ALL Group 1 across all three models — including mrms_radar_ptype (it has NO
+# categorical display-prep entry, unlike hrrr's radar_ptype which an entry
+# makes Group 4; its scale=1.0 lossless packing makes strict integer equality
+# hold anyway, asserted in its dedicated test) and the transformed-binary
+# variables (K->C constant offset / smoothing are invisible to the
+# classifier — the recorded Group-1 blind spot).
+EXPECTED_OBSERVED_GROUP_PARTITION = {
+    "current_analysis": {var: 1 for var in ("dp2m", "tmp2m", "wgst10m", "wspd10m")},
+    "mrms": {
+        var: 1
+        for var in (
+            "mrms_radar_ptype", "mrms_recent_precip_24h", "mrms_recent_precip_6h",
+            "mrms_recent_precip_72h", "reflectivity",
+        )
+    },
+    "goes-east": {var: 1 for var in ("ir13", "vis2", "wv8", "wv9")},
+}
+
+# (non_buildable, dead_alias, uncataloged) — current_analysis is the first
+# product in the migration with non-empty buckets: spres is packed AND
+# published (the publisher ignores buildable=False) but canary-excluded;
+# mslp is a stray packing key under a normalize-alias with no catalog entry.
+EXPECTED_OBSERVED_EXCLUSIONS = {
+    "current_analysis": (["spres"], [], ["mslp"]),
+    "mrms": ([], [], []),
+    "goes-east": ([], [], []),
+}
+
+
+def test_observed_partition_matches_classifier_and_canary_scope() -> None:
+    """Pin the observed-model parameterization: canary buckets, classifier
+    groups (all Group 1), and that the generic Group 1 coverage is exactly
+    the canary scope minus the transformed-binary exclusions — so neither an
+    unaudited catalog change nor a silent exclusion drop can slip through."""
+    from backend.scripts.canary_binary_sampler import _scope_for_model
+
+    for model, expected_groups in EXPECTED_OBSERVED_GROUP_PARTITION.items():
+        (
+            in_scope,
+            excluded_non_buildable,
+            excluded_dead_alias,
+            excluded_uncataloged,
+        ) = _scope_for_model(model)
+        exp_nb, exp_da, exp_unc = EXPECTED_OBSERVED_EXCLUSIONS[model]
+        assert excluded_non_buildable == exp_nb
+        assert excluded_dead_alias == exp_da
+        assert excluded_uncataloged == exp_unc
+        packed = set(_model_scope(model))
+        assert (
+            set(in_scope)
+            | set(excluded_non_buildable)
+            | set(excluded_dead_alias)
+            | set(excluded_uncataloged)
+        ) == packed
+
+        assert set(_PHASE_G_SCOPE_BY_MODEL[model]) == set(in_scope)
+        actual = {var: _tolerance_group(model, var) for var in in_scope}
+        assert actual == expected_groups, (
+            f"{model}: tolerance-group partition diverged from the observed "
+            f"audit — re-audit before extending the canary/tests.\n"
+            f"actual={actual}\nexpected={expected_groups}"
+        )
+
+        transformed = {v for (mdl, v) in OBSERVED_TRANSFORMED_BINARY_VARS if mdl == model}
+        assert transformed <= set(in_scope)
+        covered = {var for (mdl, var) in GROUP1_PARAMS if mdl == model}
+        assert covered == set(in_scope) - transformed
+        assert not [var for (mdl, var) in GROUP2_PARAMS if mdl == model]
+        assert not [var for (mdl, var) in GROUP4_PARAMS if mdl == model]
+
+
+@pytest.mark.parametrize("var", ["ir13", "wv9", "wv8"])
+def test_goes_ir_band_binary_stores_celsius_cog_stores_kelvin(
+    var: str, tmp_path: Path
+) -> None:
+    """The K->C conversion is a HARDCODED special case at the top of
+    prepare_grid_display_values (values - 273.15), not a display-prep config
+    entry — so the binary stores Celsius while the COG stores Kelvin, a fixed
+    273.15 offset at every pixel. The binary must round-trip the CELSIUS
+    field (packing offset=-100 is Celsius-calibrated); COG-vs-binary is a
+    clean constant delta. The canary will flag this as ~273.15 divergence —
+    expected and handled at canary time, not here."""
+    from app.services.grid_display_prep import prepare_grid_display_values as _prep
+
+    kelvin = np.array([[183.15, 233.15], [273.15, 313.15]], dtype=np.float32)
+
+    # Pin the hardcode itself: exact -273.15 shift, no other transformation.
+    display, prep_meta = _prep(model="goes-east", var=var, values=kelvin)
+    assert prep_meta == {"id": f"goes_{var}_display_celsius_v1", "unit_conversion": "K_to_C"}
+    assert np.allclose(display, kelvin - np.float32(273.15), atol=1e-4)
+
+    transform, projection = _model_grid_geometry("goes-east")
+    cog_path, frame_path, meta_path = _write_pair(
+        tmp_path,
+        model="goes-east",
+        var=var,
+        values=kelvin,
+        transform=transform,
+        projection=projection,
+    )
+
+    # Same resolution on both substrates (the conversion is not an upscale).
+    meta = json.loads(meta_path.read_text())
+    assert (meta["height"], meta["width"]) == kelvin.shape
+
+    scale = float(_PACKING_BY_MODEL_VAR[("goes-east", var)]["scale"])
+    for row_f, col_f in [(0.5, 0.5), (0.5, 1.5), (1.5, 0.5), (1.5, 1.5)]:
+        lat, lon = _lonlat_at(transform, projection, row_f, col_f)
+        cog_value = sample_point_value(cog_path, lat=lat, lon=lon)
+        binary_value = sample_binary_point_value(
+            frame_path, meta_path, model="goes-east", var=var, lat=lat, lon=lon
+        )
+        assert cog_value is not None
+        assert binary_value is not None
+        row, col = _meta_index(meta_path, lon=lon, lat=lat)
+        expected_c = float(kelvin[row, col]) - 273.15
+        # Binary is the Celsius value (1-decimal sampler rounding + scale/2).
+        assert binary_value == pytest.approx(expected_c, abs=0.05 + scale / 2 + 1e-3)
+        # COG stays Kelvin; the substrates differ by exactly the K->C offset
+        # (two independent 1-decimal roundings + packing quantization).
+        assert binary_value == pytest.approx(cog_value - 273.15, abs=0.11)
+
+
+def test_mrms_reflectivity_binary_stores_smoothed_field_group1_blind_spot(
+    tmp_path: Path,
+) -> None:
+    """mrms/reflectivity has a display-prep entry (smooth_sigma=0.45 at
+    upscale 1), so the binary stores a masked-gaussian-smoothed field while
+    the COG stores the raw warp — yet sampling_tolerance_group classifies it
+    Group 1 (no upscale, non-categorical). This is a KNOWN Group-1-classifier
+    blind spot, same category as ECMWF's floor, per the operator decision not
+    to patch the classifier. The authoritative parity assertion is therefore
+    against the real display-prep output (like Group 2), and the test proves
+    the binary-vs-COG divergence on gradients is real, not a decode bug.
+    The fixture includes real negative weak-echo signal per the
+    sentinel/negative-clamp fix."""
+    from app.services.grid_display_prep import prepare_grid_display_values as _prep
+
+    transform, projection = _model_grid_geometry("mrms")
+    # Sharp rain edge with negative weak echo on the left, one nodata cell.
+    values = np.full((6, 6), -9.5, dtype=np.float32)
+    values[:, 3:] = 55.0
+    values[0, 0] = np.nan
+
+    display, prep_meta = _prep(model="mrms", var="reflectivity", values=values)
+    assert prep_meta is not None
+    assert prep_meta["id"] == "mrms_reflectivity_display_v2"
+    assert prep_meta["upscale_factor"] == 1
+
+    cog_path, frame_path, meta_path = _write_pair(
+        tmp_path,
+        model="mrms",
+        var="reflectivity",
+        values=values,
+        transform=transform,
+        projection=projection,
+    )
+    assert frame_path.name == "fh000.l0.u8.bin"  # the uint8 substrate
+    meta = json.loads(meta_path.read_text())
+    assert (meta["height"], meta["width"]) == values.shape
+
+    scale = float(_PACKING_BY_MODEL_VAR[("mrms", "reflectivity")]["scale"])
+    tol = scale / 2 + 0.05 + 1e-3  # packing quantization + 1-decimal rounding
+    for row_f, col_f in [(1.5, 1.5), (2.5, 2.5), (2.5, 3.5), (4.5, 4.5)]:
+        lat, lon = _lonlat_at(transform, projection, row_f, col_f)
+        raw, no_data = read_binary_sample_value(
+            frame_path, meta_path, model="mrms", var="reflectivity", lat=lat, lon=lon
+        )
+        assert no_data is False
+        assert raw is not None
+        row, col = _meta_index(meta_path, lon=lon, lat=lat)
+        expected = float(display[row, col])
+        assert raw == pytest.approx(expected, abs=tol), (
+            f"binary sample diverged from the smoothed display field at "
+            f"({row_f}, {col_f}): raw={raw} expected={expected}"
+        )
+
+    # The blind spot made concrete: adjacent to the rain edge the smoothed
+    # binary and the raw COG genuinely disagree by several dBZ — a Group 1
+    # classification whose exact-equality contract does not hold by design.
+    lat, lon = _lonlat_at(transform, projection, 2.5, 2.5)
+    cog_value = sample_point_value(cog_path, lat=lat, lon=lon)
+    raw, _ = read_binary_sample_value(
+        frame_path, meta_path, model="mrms", var="reflectivity", lat=lat, lon=lon
+    )
+    assert cog_value == pytest.approx(-9.5, abs=0.05 + 1e-3)
+    assert raw is not None
+    assert abs(raw - cog_value) > 1.0
+
+    # Nodata stays nodata on both substrates through the smoothing.
+    lat, lon = _lonlat_at(transform, projection, 0.5, 0.5)
+    assert sample_point_value(cog_path, lat=lat, lon=lon) is None
+    raw, no_data = read_binary_sample_value(
+        frame_path, meta_path, model="mrms", var="reflectivity", lat=lat, lon=lon
+    )
+    assert raw is None
+    assert no_data is True
+
+
+def test_mrms_radar_ptype_uint8_integer_categories_exact_across_substrates(
+    tmp_path: Path,
+) -> None:
+    """Categorical palette indices on the uint8 substrate: no display prep, no
+    upscale, scale=1.0 lossless packing — the two samplers must return
+    exactly equal integer categories at centers, near boundaries, and on
+    boundaries, with zero tolerance. (The classifier puts this in Group 1 —
+    there is no categorical display-prep entry like hrrr radar_ptype's
+    Group 4 one — but strict integer equality is asserted here regardless,
+    because that is what the data demands.)"""
+    from app.services.colormaps import MRMS_RADAR_PTYPE_BREAKS
+
+    transform, projection = _model_grid_geometry("mrms")
+    height = width = 6
+    # Quadrants from the four REAL category bands: rain 0-19, snow 20-35,
+    # sleet 36-51, frzr 52-67.
+    rain = float(MRMS_RADAR_PTYPE_BREAKS["rain"]["offset"]) + 5.0
+    snow = float(MRMS_RADAR_PTYPE_BREAKS["snow"]["offset"]) + 5.0
+    sleet = float(MRMS_RADAR_PTYPE_BREAKS["sleet"]["offset"]) + 4.0
+    frzr = float(MRMS_RADAR_PTYPE_BREAKS["frzr"]["offset"]) + 8.0
+    values = np.zeros((height, width), dtype=np.float32)
+    values[:3, :3] = rain
+    values[:3, 3:] = snow
+    values[3:, :3] = sleet
+    values[3:, 3:] = frzr
+
+    cog_path, frame_path, meta_path = _write_pair(
+        tmp_path,
+        model="mrms",
+        var="mrms_radar_ptype",
+        values=values,
+        transform=transform,
+        projection=projection,
+    )
+    assert frame_path.name == "fh000.l0.u8.bin"
+    meta = json.loads(meta_path.read_text())
+    assert (meta["height"], meta["width"]) == (height, width)
+
+    quadrant_centers = [(1.5, 1.5), (1.5, 4.5), (4.5, 1.5), (4.5, 4.5)]
+    near_boundary = [(2.9, 2.9), (3.1, 3.1), (2.9, 3.1), (3.1, 2.9)]
+    on_boundary = [(3.0, 3.0), (3.0, 1.5), (1.5, 3.0)]
+    for row_f, col_f in quadrant_centers + near_boundary + on_boundary:
+        lat, lon = _lonlat_at(transform, projection, row_f, col_f)
+        cog_value = sample_point_value(cog_path, lat=lat, lon=lon)
+        binary_value = sample_binary_point_value(
+            frame_path, meta_path, model="mrms", var="mrms_radar_ptype", lat=lat, lon=lon
+        )
+        assert cog_value is not None
+        assert binary_value is not None
+        assert float(cog_value).is_integer()
+        assert float(binary_value).is_integer()
+        assert int(binary_value) == int(cog_value), (
+            f"mrms/mrms_radar_ptype categorical divergence at ({row_f}, {col_f}): "
+            f"cog={cog_value} binary={binary_value}"
+        )
