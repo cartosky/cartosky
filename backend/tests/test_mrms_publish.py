@@ -986,3 +986,46 @@ def test_radar_ptype_frame_warps_precip_flag_nearest(
         build_grid_artifacts=False,
     )
     assert warp_resamplings == ["bilinear", "nearest"]
+
+
+def test_warp_frame_with_nan_uses_normalized_convolution_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bilinear warps of NaN-masked frames must go through the stacked
+    # values+weights (normalized convolution) path so echo edges get the
+    # weighted average of real data instead of GDAL's kernel-touches-NaN
+    # nodata (which erodes and stair-steps edges).
+    calls: list[np.ndarray] = []
+
+    def _warp(values, *args, **kwargs):
+        calls.append(np.asarray(values, dtype=np.float32))
+        return np.asarray(values, dtype=np.float32), from_origin(-101.0, 46.0, 1.0, 1.0)
+
+    monkeypatch.setattr(mrms_publish, "warp_to_target_grid", _warp)
+
+    values = np.array([[np.nan, 20.0], [30.0, np.nan]], dtype=np.float32)
+    frame = _warpable_frame(values)
+
+    warped = mrms_publish._warp_frame_to_target_grid(values, frame=frame)
+
+    assert len(calls) == 1
+    assert calls[0].ndim == 3 and calls[0].shape[0] == 2  # stacked values+weights
+    assert np.array_equal(calls[0][1], np.isfinite(values).astype(np.float32))
+    # Identity warp: fully-covered pixels keep their value, uncovered are NaN.
+    assert warped[0, 1] == np.float32(20.0)
+    assert warped[1, 0] == np.float32(30.0)
+    assert np.isnan(warped[0, 0]) and np.isnan(warped[1, 1])
+
+
+def test_warp_frame_nearest_with_nan_keeps_single_nodata_warp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_warp_kwargs(monkeypatch)
+    values = np.array([[np.nan, 3.0]], dtype=np.float32)
+    frame = _warpable_frame(values)
+
+    mrms_publish._warp_frame_to_target_grid(values, frame=frame, resampling="nearest")
+
+    assert len(captured) == 1
+    assert captured[0]["resampling"] == "nearest"
+    assert np.isnan(captured[0]["src_nodata"])

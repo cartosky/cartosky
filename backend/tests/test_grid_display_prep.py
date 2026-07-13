@@ -310,3 +310,15 @@ def test_clamped_display_prep_variables_still_zero_negatives() -> None:
     prepared, _ = prepare_grid_display_values(model="ecmwf", var="snowfall_total", values=values)
 
     assert float(prepared.min()) >= 0.0
+
+
+def test_mrms_reflectivity_display_prep_sets_edge_fade_render_hint() -> None:
+    values = np.full((4, 4), 20.0, dtype=np.float32)
+
+    _, meta = prepare_grid_display_values(model="mrms", var="reflectivity", values=values)
+    assert meta is not None
+    assert meta.get("edge_fade") is True
+
+    _, other_meta = prepare_grid_display_values(model="gfs", var="precip_total", values=values)
+    assert other_meta is not None
+    assert "edge_fade" not in other_meta

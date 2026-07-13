@@ -21,6 +21,11 @@ class GridDisplayPrepConfig:
     # palette indices), so negatives are numeric noise and get zeroed. Set
     # False for variables where negative values are real signal (dBZ).
     clamp_negative: bool = True
+    # Render hint (values untouched): the viewer fades alpha where the
+    # bilinear kernel is partially nodata, instead of renormalizing to full
+    # opacity. Use for sparse fields whose nodata means "no signal" (radar
+    # echo edges), not for dense fields whose nodata is the domain boundary.
+    render_edge_fade: bool = False
 
 
 _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = {
@@ -94,6 +99,7 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         # Sentinels (-999/-99) arrive here already masked to NaN upstream.
         support_min_value=-35.0,
         clamp_negative=False,
+        render_edge_fade=True,
     ),
     ("hrrr", "radar_ptype"): GridDisplayPrepConfig(
         id="hrrr_radar_ptype_display_v3",
@@ -358,4 +364,6 @@ def prepare_grid_display_values(
     )
     if render_categorical_nearest:
         prep_meta["categorical_nearest"] = True
+    if config.render_edge_fade:
+        prep_meta["edge_fade"] = True
     return prepared, prep_meta

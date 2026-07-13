@@ -944,6 +944,11 @@ def _target_grid_transform() -> Affine:
     return transform
 
 
+# Minimum warped validity weight for a target pixel to keep a value. 0.5
+# keeps the data footprint neutral at nodata edges (no expansion, no erosion).
+_WARP_MIN_COVERAGE = 0.5
+
+
 def _warp_frame_to_target_grid(
     values: np.ndarray,
     *,
@@ -952,10 +957,35 @@ def _warp_frame_to_target_grid(
 ) -> np.ndarray:
     expected_height, expected_width = _expected_target_shape()
     if frame.source_crs is not None and frame.source_transform is not None:
+        values_f32 = np.asarray(values, dtype=np.float32)
+        finite_mask = np.isfinite(values_f32)
+        if resampling == "bilinear" and not finite_mask.all():
+            # Normalized-convolution warp: GDAL bilinear emits nodata for any
+            # kernel that touches NaN, which erodes and stair-steps echo edges
+            # at source-pixel granularity. Warping the zero-filled values and
+            # the validity weights together and dividing gives edge pixels the
+            # weighted average of only the real data in their kernel.
+            filled = np.where(finite_mask, values_f32, np.float32(0.0))
+            weights = finite_mask.astype(np.float32)
+            warped_pair, _ = warp_to_target_grid(
+                np.stack([filled, weights]),
+                frame.source_crs,
+                frame.source_transform,
+                model=MRMS_MODEL_ID,
+                region=MRMS_REGION_ID,
+                resampling="bilinear",
+                working_dtype=np.float32,
+            )
+            warped_num = np.asarray(warped_pair[0], dtype=np.float32)
+            warped_den = np.asarray(warped_pair[1], dtype=np.float32)
+            warped = np.full(warped_num.shape, np.nan, dtype=np.float32)
+            covered = np.isfinite(warped_den) & (warped_den >= _WARP_MIN_COVERAGE)
+            np.divide(warped_num, warped_den, out=warped, where=covered)
+            return warped
         # src_nodata=NaN keeps masked sentinels (and any other nodata) out of
         # the resampling kernel instead of blending them into real values.
         warped_values, _ = warp_to_target_grid(
-            values,
+            values_f32,
             frame.source_crs,
             frame.source_transform,
             model=MRMS_MODEL_ID,
