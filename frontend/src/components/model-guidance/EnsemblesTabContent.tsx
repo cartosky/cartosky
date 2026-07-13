@@ -424,17 +424,30 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
   );
   const probGtVariables = useMemo(
     () =>
-      (statsConfig?.probThresholds ?? [])
-        .filter((spec) => spec.direction === "gt")
-        .map((spec) => ensembleProbVarId(variable, spec.threshold, "gt")),
-    [variable, statsConfig],
+      hasStatsCharts
+        ? [
+            // Base variable anchors pin validation on the member run (same as
+            // percentileVariables). Prob-only requests fail the pin when stats
+            // lag members and the backend silently falls back to an older run.
+            variable,
+            ...(statsConfig?.probThresholds ?? [])
+              .filter((spec) => spec.direction === "gt")
+              .map((spec) => ensembleProbVarId(variable, spec.threshold, "gt")),
+          ]
+        : [],
+    [variable, hasStatsCharts, statsConfig],
   );
   const probLtVariables = useMemo(
     () =>
-      (statsConfig?.probThresholds ?? [])
-        .filter((spec) => spec.direction === "lt")
-        .map((spec) => ensembleProbVarId(variable, spec.threshold, "lt")),
-    [variable, statsConfig],
+      hasStatsCharts
+        ? [
+            variable,
+            ...(statsConfig?.probThresholds ?? [])
+              .filter((spec) => spec.direction === "lt")
+              .map((spec) => ensembleProbVarId(variable, spec.threshold, "lt")),
+          ]
+        : [],
+    [variable, hasStatsCharts, statsConfig],
   );
   const {
     data: percentileData,
@@ -691,6 +704,7 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
                   ltResponse={probLtData}
                   model={memberModel!}
                   variable={variable}
+                  expectedRun={statsRun}
                   thresholds={statsConfig.probThresholds}
                   thresholdUnitSuffix={statsConfig.thresholdUnitSuffix}
                   timezone={timezone}

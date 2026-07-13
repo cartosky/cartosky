@@ -28,7 +28,11 @@ import { buildComparePermalinkSearch, readComparePermalink, withForeignSearchPar
 
 import { mutualDiffEligibleVariables } from "@/lib/compare-diff-eligibility";
 import { useCompareDiff } from "@/lib/use-compare-diff";
-import { alignedMutualGridHours, runAlignmentOffsetHours, type GridMeta } from "@/lib/compare-diff";
+import {
+  reanchorForecastHourOnSwap,
+  runAlignmentOffsetHours,
+} from "@/lib/compare-alignment";
+import { alignedMutualGridHours, type GridMeta } from "@/lib/compare-diff";
 import { selectGridManifestLod } from "@/lib/grid-lod";
 import { buildMapRegionViews } from "@/lib/map-region-views";
 import { MAP_VIEW_DEFAULTS } from "@/lib/config";
@@ -1042,6 +1046,8 @@ export default function Compare() {
   );
   const leftGridMeta = useMemo(() => resolveGridMeta(leftLoader.gridManifest), [leftLoader.gridManifest]);
   const rightGridMeta = useMemo(() => resolveGridMeta(rightLoader.gridManifest), [rightLoader.gridManifest]);
+  const leftGridManifestCurrent = leftLoader.gridManifest?.var === lRequestVariable;
+  const rightGridManifestCurrent = rightLoader.gridManifest?.var === rRequestVariable;
 
   // Adjacent-hour frame URLs warmed into GridFrameCache after each diff settles,
   // so sequential scrubbing finds bytes already cached (no loading flash).
@@ -1062,7 +1068,12 @@ export default function Compare() {
     leftModel: lModel,
     rightModel: rModel,
     varKey: mode === "diff" ? lRequestVariable : null,
-    enabled: mode === "diff" && !leftLoader.loading && !rightLoader.loading,
+    enabled:
+      mode === "diff"
+      && !leftLoader.loading
+      && !rightLoader.loading
+      && leftGridManifestCurrent
+      && rightGridManifestCurrent,
     leftPrefetchUrls,
     rightPrefetchUrls,
   });
@@ -1472,13 +1483,33 @@ export default function Compare() {
   }, [captureComparePng, isScreenshotMode]);
 
   const handleSwap = useCallback(() => {
+    const offset = runAlignmentOffsetHours(leftLoader.resolvedRun, rightLoader.resolvedRun);
+    if (offset !== 0) {
+      setForecastHour((fh) => reanchorForecastHourOnSwap(fh, offset));
+    }
+    if (mode === "split") {
+      setLProduct(rProduct);
+      setRProduct(lProduct);
+    }
     setLModel(rModel);
     setLVariable(rVariable);
     setLRun(rRun);
     setRModel(lModel);
     setRVariable(lVariable);
     setRRun(lRun);
-  }, [lModel, lVariable, lRun, rModel, rVariable, rRun]);
+  }, [
+    leftLoader.resolvedRun,
+    rightLoader.resolvedRun,
+    mode,
+    lModel,
+    lVariable,
+    lRun,
+    lProduct,
+    rModel,
+    rVariable,
+    rRun,
+    rProduct,
+  ]);
 
   // ── Share to TWF ───────────────────────────────────────────────────────
   // The screenshot is produced server-side: TwfShareModal POSTs the /compare
