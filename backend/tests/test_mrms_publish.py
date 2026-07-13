@@ -902,3 +902,87 @@ def test_reuse_mrms_frame_reuses_existing_grid_artifacts_without_rewrite(
         meta = json.loads((grid_dir / "fh004.l0.meta.json").read_text())
         assert meta["fh"] == 4
         assert meta["file"] == "fh004.l0.u16.bin"
+
+
+# ---------------------------------------------------------------------------
+# _warp_frame_to_target_grid: nodata-aware resampling
+# ---------------------------------------------------------------------------
+
+
+def _capture_warp_kwargs(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    captured: list[dict] = []
+
+    def _warp(values, *args, **kwargs):
+        captured.append(kwargs)
+        return np.asarray(values, dtype=np.float32), from_origin(-101.0, 46.0, 1.0, 1.0)
+
+    monkeypatch.setattr(mrms_publish, "warp_to_target_grid", _warp)
+    return captured
+
+
+def _warpable_frame(values: np.ndarray) -> mrms_publish.MRMSBundleFrame:
+    return mrms_publish.MRMSBundleFrame(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        values=values,
+        source_crs="EPSG:4326",
+        source_transform=from_origin(-130.0, 55.0, 0.01, 0.01),
+    )
+
+
+def test_warp_frame_to_target_grid_declares_nan_src_nodata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_warp_kwargs(monkeypatch)
+    frame = _warpable_frame(np.zeros((2, 3), dtype=np.float32))
+
+    mrms_publish._warp_frame_to_target_grid(frame.values, frame=frame)
+
+    assert captured[0]["resampling"] == "bilinear"
+    assert np.isnan(captured[0]["src_nodata"])
+
+
+def test_warp_frame_to_target_grid_forwards_nearest_resampling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_warp_kwargs(monkeypatch)
+    frame = _warpable_frame(np.zeros((2, 3), dtype=np.float32))
+
+    mrms_publish._warp_frame_to_target_grid(frame.values, frame=frame, resampling="nearest")
+
+    assert captured[0]["resampling"] == "nearest"
+
+
+def test_radar_ptype_frame_warps_precip_flag_nearest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # PrecipFlag is categorical: bilinear blends round into wrong (or
+    # unmapped) flag codes, so the composite write must warp it nearest.
+    _configure_small_grid(monkeypatch)
+    monkeypatch.setattr(mrms_publish, "grid_build_enabled", lambda: False)
+
+    warp_resamplings: list[str] = []
+    real_warp = mrms_publish._warp_frame_to_target_grid
+
+    def _spy(values, *, frame, resampling="bilinear"):
+        warp_resamplings.append(resampling)
+        return real_warp(values, frame=frame, resampling=resampling)
+
+    monkeypatch.setattr(mrms_publish, "_warp_frame_to_target_grid", _spy)
+
+    refl = np.array([[25.0, 40.0, 12.0], [18.0, 33.0, 20.0]], dtype=np.float32)
+    flags = np.ones_like(refl)  # rain everywhere
+    frame = mrms_publish.MRMSBundleFrame(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        values=refl,
+        precip_flag_values=flags,
+    )
+
+    assert mrms_publish.write_mrms_radar_ptype_frame(
+        data_root=tmp_path,
+        run_id="20260327_1200z",
+        forecast_hour=0,
+        frame=frame,
+        build_grid_artifacts=False,
+    )
+    assert warp_resamplings == ["bilinear", "nearest"]

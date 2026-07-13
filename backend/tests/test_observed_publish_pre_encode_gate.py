@@ -418,7 +418,7 @@ def _mrms_harness(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(
         mrms_publish,
         "_warp_frame_to_target_grid",
-        lambda values, *, frame: np.asarray(values, dtype=np.float32),
+        lambda values, *, frame, resampling="bilinear": np.asarray(values, dtype=np.float32),
     )
     monkeypatch.setattr(mrms_publish, "_target_grid_transform", lambda: from_origin(0.0, 2.0, 1.0, 1.0))
     monkeypatch.setattr(
@@ -656,3 +656,38 @@ def test_mrms_finalize_deferred_supplemental_path_is_gated(
     entry = manifest["variables"]["mrms_recent_precip_6h"]
     assert entry["available_frames"] == 1
     assert [f["fh"] for f in entry["frames"]] == [1]
+
+
+def test_mrms_sparse_masked_reflectivity_passes_real_gate() -> None:
+    # With the NSSL sentinels (-999/-99) masked to NaN at decode, a typical
+    # reflectivity frame is legitimately >95% nodata; allow_sparse_frame on
+    # the mrms_reflectivity spec keeps the gate green while real echo exists.
+    sparse = np.full((10, 10), np.nan, dtype=np.float32)
+    sparse[0, 0] = 12.5
+    sparse[5, 5] = 30.0
+    assert (
+        mrms_publish.check_pre_encode_value_sanity(
+            sparse,
+            mrms_publish.get_color_map_spec("mrms_reflectivity"),
+            var_spec_model=mrms_publish.MRMS_MODEL.get_var("reflectivity"),
+            var_capability=mrms_publish.MRMS_MODEL.get_var_capability("reflectivity"),
+            label="mrms/reflectivity sparse pin",
+        )
+        is True
+    )
+
+
+def test_mrms_fully_empty_reflectivity_still_fails_real_gate() -> None:
+    # allow_sparse_frame must not swallow an entirely empty frame — that is
+    # still the empty-fetch/misalignment signal the nodata gate exists for.
+    empty = np.full((10, 10), np.nan, dtype=np.float32)
+    assert (
+        mrms_publish.check_pre_encode_value_sanity(
+            empty,
+            mrms_publish.get_color_map_spec("mrms_reflectivity"),
+            var_spec_model=mrms_publish.MRMS_MODEL.get_var("reflectivity"),
+            var_capability=mrms_publish.MRMS_MODEL.get_var_capability("reflectivity"),
+            label="mrms/reflectivity empty pin",
+        )
+        is False
+    )

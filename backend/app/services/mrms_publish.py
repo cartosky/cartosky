@@ -944,16 +944,24 @@ def _target_grid_transform() -> Affine:
     return transform
 
 
-def _warp_frame_to_target_grid(values: np.ndarray, *, frame: MRMSBundleFrame) -> np.ndarray:
+def _warp_frame_to_target_grid(
+    values: np.ndarray,
+    *,
+    frame: MRMSBundleFrame,
+    resampling: str = "bilinear",
+) -> np.ndarray:
     expected_height, expected_width = _expected_target_shape()
     if frame.source_crs is not None and frame.source_transform is not None:
+        # src_nodata=NaN keeps masked sentinels (and any other nodata) out of
+        # the resampling kernel instead of blending them into real values.
         warped_values, _ = warp_to_target_grid(
             values,
             frame.source_crs,
             frame.source_transform,
             model=MRMS_MODEL_ID,
             region=MRMS_REGION_ID,
-            resampling="bilinear",
+            resampling=resampling,
+            src_nodata=float("nan"),
             working_dtype=np.float32,
         )
         return np.asarray(warped_values, dtype=np.float32)
@@ -1088,14 +1096,16 @@ def write_mrms_radar_ptype_frame(
     reflectivity = _warp_frame_to_target_grid(reflectivity, frame=frame)
 
     precip_flag = np.asarray(frame.precip_flag_values, dtype=np.float32)
-    # PrecipFlag shares the same native grid as reflectivity, so warp the same way
+    # PrecipFlag shares the same native grid as reflectivity, but it is a
+    # categorical flag field: bilinear blends at category boundaries round
+    # into wrong (or unmapped) flag codes, so it must warp nearest-neighbor.
     pf_frame = MRMSBundleFrame(
         valid_time=frame.valid_time,
         values=precip_flag,
         source_crs=frame.source_crs,
         source_transform=frame.source_transform,
     )
-    precip_flag = _warp_frame_to_target_grid(precip_flag, frame=pf_frame)
+    precip_flag = _warp_frame_to_target_grid(precip_flag, frame=pf_frame, resampling="nearest")
     _log_mrms_publish_memory(
         "after_warp",
         run_id=run_id,

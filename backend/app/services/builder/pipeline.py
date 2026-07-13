@@ -734,6 +734,7 @@ def _check_value_array_sanity(
     allow_dry_frame = bool(var_spec.get("allow_dry_frame", False)) or bool(
         capability_frontend.get("allow_dry_frame") if isinstance(capability_frontend, dict) else False
     )
+    allow_sparse_frame = bool(var_spec.get("allow_sparse_frame", False))
     skip_physical_range_checks = is_non_physical_kind or is_non_physical_units or is_non_physical_flag
     is_categorical_ptype = spec_type in {"discrete", "indexed"} and bool(var_spec.get("ptype_breaks"))
 
@@ -766,6 +767,15 @@ def _check_value_array_sanity(
         if is_categorical_ptype and finite_count == 0:
             logger.warning(
                 "Dry categorical ptype frame allowed: nodata ratio %.1f%% (%s)",
+                nodata_ratio * 100,
+                label,
+            )
+        elif allow_sparse_frame and finite_count > 0:
+            # Sparse-by-nature products (e.g. observed radar with no-coverage/
+            # no-echo masked to NaN) are legitimately almost-all-nodata; a
+            # fully empty frame is still rejected as an empty-fetch signal.
+            logger.info(
+                "Sparse frame allowed: nodata ratio %.1f%% (%s)",
                 nodata_ratio * 100,
                 label,
             )

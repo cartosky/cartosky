@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -664,3 +665,46 @@ def test_run_postprocess_worker_drains_all_queued_requests(tmp_path: Path, monke
     assert processed == ["20260327_1204z", "20260327_1206z", "20260327_1208z"]
     assert list(mrms_poller._PENDING_POSTPROCESS) == []
     assert mrms_poller._POSTPROCESS_FUTURE is None
+
+
+def test_mask_mrms_sentinels_masks_reflectivity_codes_only() -> None:
+    values = np.array([[-999.0, -99.0], [-18.0, 40.0]], dtype=np.float32)
+
+    masked = mrms_poller._mask_mrms_sentinels(values, mrms_poller.MRMS_REFLECTIVITY_SENTINELS)
+
+    assert np.isnan(masked[0, 0])
+    assert np.isnan(masked[0, 1])
+    assert masked[1, 0] == np.float32(-18.0)
+    assert masked[1, 1] == np.float32(40.0)
+    # Input untouched (masking copies before writing)
+    assert values[0, 0] == np.float32(-999.0)
+
+
+def test_mask_mrms_sentinels_without_sentinels_is_passthrough() -> None:
+    values = np.array([[0.0, 25.5]], dtype=np.float32)
+
+    masked = mrms_poller._mask_mrms_sentinels(values, mrms_poller.MRMS_REFLECTIVITY_SENTINELS)
+
+    assert masked is values or np.array_equal(masked, values)
+
+
+def test_precip_values_to_inches_masks_qpe_sentinels_before_conversion() -> None:
+    # NSSL QPE sentinels are defined on the raw mm values: -1 missing,
+    # -3 no coverage. They must become NaN, not tiny negatives clamped to 0.
+    raw_mm = np.array([[-3.0, -1.0], [0.0, 25.4]], dtype=np.float32)
+
+    converted = mrms_poller._precip_values_to_inches(raw_mm)
+
+    assert np.isnan(converted[0, 0])
+    assert np.isnan(converted[0, 1])
+    assert converted[1, 0] == np.float32(0.0)
+    assert converted[1, 1] == pytest.approx(1.0)
+
+
+def test_precip_values_to_inches_floors_non_sentinel_negatives() -> None:
+    raw_mm = np.array([[-0.5, 12.7]], dtype=np.float32)
+
+    converted = mrms_poller._precip_values_to_inches(raw_mm)
+
+    assert converted[0, 0] == np.float32(0.0)
+    assert converted[0, 1] == pytest.approx(0.5)

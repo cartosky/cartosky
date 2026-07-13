@@ -1410,7 +1410,7 @@ def test_build_grid_for_run_supports_mrms_reflectivity(
     frame_meta = json.loads(frame_meta_path.read_text())
     assert frame_meta["width"] == values.shape[1]
     assert frame_meta["height"] == values.shape[0]
-    assert frame_meta["display_prep"]["id"] == "mrms_reflectivity_display_v1"
+    assert frame_meta["display_prep"]["id"] == "mrms_reflectivity_display_v2"
 
     manifest = json.loads(manifest_path.read_text())
     assert manifest["palette"]["color_map_id"] == "mrms_reflectivity"
@@ -1422,7 +1422,7 @@ def test_build_grid_for_run_supports_mrms_reflectivity(
     assert manifest["grid"]["units"] == "dBZ"
     assert manifest["grid"]["width"] == values.shape[1]
     assert manifest["grid"]["height"] == values.shape[0]
-    assert manifest["display_prep"]["id"] == "mrms_reflectivity_display_v1"
+    assert manifest["display_prep"]["id"] == "mrms_reflectivity_display_v2"
     assert [lod["level"] for lod in manifest["lods"]] == [0, 1, 2]
     assert manifest["lods"][1]["frames"][0]["file"] == "fh000.l1.u8.bin"
     assert manifest["lods"][2]["frames"][0]["file"] == "fh000.l2.u8.bin"
