@@ -301,8 +301,12 @@ def sample_binary_point_value(
 
     ``var`` must be the runtime variable id the frame was packed under, as with
     :func:`read_binary_sample_value`.
+
+    Reads through the seek primitive (result-identical to the full-frame read,
+    pinned by equality tests): the full-frame decode was ~70ms/sample on
+    MRMS's 1km CONUS grids, vs sub-millisecond for a one-pixel seek.
     """
-    value, no_data = read_binary_sample_value(
+    value, no_data = read_binary_sample_value_seek(
         frame_path,
         meta_path,
         model=model,
@@ -515,23 +519,55 @@ def sample_binary_batch_values(
     var: str,
     points: list[Any],
 ) -> dict[str, float | None]:
-    """Grid-binary twin of :func:`_sample_batch_values`: one frame read, one
-    value per point id, rounded to 1 decimal, ``None`` for out-of-bounds /
-    nodata / NaN pixels. ``var`` must be the runtime variable id the frame was
-    encoded under, since it selects the decode packing config.
+    """Grid-binary twin of :func:`_sample_batch_values`: one value per point
+    id, rounded to 1 decimal, ``None`` for out-of-bounds / nodata / NaN
+    pixels. ``var`` must be the runtime variable id the frame was encoded
+    under, since it selects the decode packing config.
+
+    Reads one pixel per point via seek instead of decoding the whole frame:
+    N seeks beat one full-frame decode for any realistic N (the crossover to
+    preferring a full read is in the thousands-of-points-on-one-frame range,
+    not a real traffic pattern for these routes — MRMS's 1km grids made the
+    full decode ~70ms while a seek is microseconds). Codes are decoded in one
+    vectorized :func:`_decode_values` call, preserving the single decode
+    authority, same as :func:`sample_member_values_seek`.
     """
     meta = _load_binary_frame_meta_cached(meta_path)
-    values = _read_binary_frame_values(frame_path, meta, model=model, var=var)
     height = int(meta["height"])
     width = int(meta["width"])
+    resolved_dtype, encoded_dtype = _binary_encoded_dtype(model, var)
+    itemsize = int(np.dtype(encoded_dtype).itemsize)
+    expected_size = expected_grid_frame_size_bytes(width=width, height=height, dtype=resolved_dtype)
+    actual_size = Path(frame_path).stat().st_size
+    if actual_size != expected_size:
+        raise ValueError(
+            f"Grid frame byte size mismatch: {frame_path} "
+            f"actual={actual_size} expected={expected_size}"
+        )
+
     out: dict[str, float | None] = {}
-    for point in points:
-        row, col = _sample_binary_frame_index(meta, lon=point.lon, lat=point.lat)
-        if row < 0 or row >= height or col < 0 or col >= width:
-            out[point.id] = None
-            continue
-        value = float(values[row, col])
-        out[point.id] = None if np.isnan(value) else round(value, 1)
+    pending_ids: list[str] = []
+    codes: list[bytes] = []
+    with open(frame_path, "rb") as handle:
+        for point in points:
+            row, col = _sample_binary_frame_index(meta, lon=point.lon, lat=point.lat)
+            if row < 0 or row >= height or col < 0 or col >= width:
+                out[point.id] = None
+                continue
+            offset = (row * width + col) * itemsize
+            handle.seek(offset)
+            payload = handle.read(itemsize)
+            if len(payload) != itemsize:
+                raise ValueError(f"Short read at offset {offset} in grid frame: {frame_path}")
+            codes.append(payload)
+            pending_ids.append(point.id)
+
+    if pending_ids:
+        encoded = np.frombuffer(b"".join(codes), dtype=encoded_dtype)
+        decoded = np.asarray(_decode_values(encoded, model=model, var=var)).ravel()
+        for point_id, value in zip(pending_ids, decoded):
+            value_f = float(value)
+            out[point_id] = None if np.isnan(value_f) else round(value_f, 1)
     return out
 
 

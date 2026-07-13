@@ -96,7 +96,6 @@ from .services.sampling import (
     _ds_cache_lock,
     _get_cached_dataset,
     _load_binary_frame_meta,
-    _read_binary_frame_values,
     _read_sample_value,
     _resolve_binary_grid_frame,
     _resolve_sidecar,
@@ -106,6 +105,7 @@ from .services.sampling import (
     _sample_dataset_index,
     _sample_dataset_xy,
     _sample_transformer,
+    read_binary_sample_value_seek,
     sample_binary_batch_values,
 )
 from .models.goes_east import GOES_EAST_MODEL_ID, GOES_EAST_RGB_LATEST_FILENAME
@@ -5807,13 +5807,18 @@ def sample(
             if binary_sampling:
                 # runtime_var (from _resolve_binary_grid_frame) is the id the
                 # frame was encoded (packed) under — it can differ from the
-                # requested var for aliases and ensemble views.
-                frame_values = _read_binary_frame_values(
-                    frame_path, frame_meta, model=model, var=runtime_var
+                # requested var for aliases and ensemble views. Seek-read one
+                # pixel instead of decoding the whole frame (the full-frame
+                # decode was ~70ms/sample on MRMS's 1km CONUS grids); the seek
+                # primitive is result-identical, pinned by equality tests.
+                value, no_data = read_binary_sample_value_seek(
+                    frame_path,
+                    meta_path,
+                    model=model,
+                    var=runtime_var,
+                    lat=lat,
+                    lon=lon,
                 )
-                raw_value = float(frame_values[row, col])
-                no_data = math.isnan(raw_value)
-                value = None if no_data else raw_value
             else:
                 value, no_data = _read_sample_value(ds, row=row, col=col, masked=False)
 

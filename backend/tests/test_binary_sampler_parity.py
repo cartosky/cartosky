@@ -1120,3 +1120,79 @@ def test_mrms_radar_ptype_uint8_integer_categories_exact_across_substrates(
             f"mrms/mrms_radar_ptype categorical divergence at ({row_f}, {col_f}): "
             f"cog={cog_value} binary={binary_value}"
         )
+
+
+def test_seek_sampler_matches_full_read_on_mrms_uint8_and_uint16(tmp_path: Path) -> None:
+    """Pin read_binary_sample_value_seek == read_binary_sample_value on the
+    two MRMS substrates the production routes now read through the seek
+    primitive: the uint8 1km reflectivity frames (whose full-frame decode was
+    ~70ms/sample — the reason for the call-site swap) and the uint16
+    recent-precip frames. Bit-for-bit tuple equality across in-bounds points
+    (including negative dBZ), a nodata pixel, and out-of-bounds points; a
+    truncated frame must raise identically on both paths."""
+    from app.services.sampling import read_binary_sample_value_seek
+
+    transform, projection = _model_grid_geometry("mrms")
+
+    cases = {
+        # Negative weak echo included per the sentinel/negative-clamp fix.
+        "reflectivity": np.array(
+            [
+                [-9.5, -4.5, 0.0, 12.5],
+                [20.0, np.nan, 47.5, 60.0],
+                [5.5, 33.0, -0.5, 41.5],
+            ],
+            dtype=np.float32,
+        ),
+        "mrms_recent_precip_24h": np.array(
+            [
+                [0.0, 0.25, 1.5, 3.75],
+                [7.5, np.nan, 12.25, 20.0],
+                [0.05, 2.4, 9.99, 15.0],
+            ],
+            dtype=np.float32,
+        ),
+    }
+    expected_bin_names = {
+        "reflectivity": "fh000.l0.u8.bin",
+        "mrms_recent_precip_24h": "fh000.l0.u16.bin",
+    }
+
+    for var, values in cases.items():
+        _cog_path, frame_path, meta_path = _write_pair(
+            tmp_path,
+            model="mrms",
+            var=var,
+            values=values,
+            transform=transform,
+            projection=projection,
+        )
+        assert frame_path.name == expected_bin_names[var]
+
+        height, width = values.shape
+        # Every cell center (covers negatives and the nodata pixel), plus
+        # fractional interior positions and out-of-bounds points.
+        positions = [
+            (r + 0.5, c + 0.5) for r in range(height) for c in range(width)
+        ] + [(0.25, 3.75), (2.9, 0.1), (-5.0, -5.0), (height + 3.0, width + 3.0)]
+        for row_f, col_f in positions:
+            lat, lon = _lonlat_at(transform, projection, row_f, col_f)
+            full = read_binary_sample_value(
+                frame_path, meta_path, model="mrms", var=var, lat=lat, lon=lon
+            )
+            seek = read_binary_sample_value_seek(
+                frame_path, meta_path, model="mrms", var=var, lat=lat, lon=lon
+            )
+            assert seek == full, (var, row_f, col_f, full, seek)
+
+        # Truncated frame: both paths refuse to mis-address, same error class.
+        frame_path.write_bytes(frame_path.read_bytes()[:-3])
+        lat, lon = _lonlat_at(transform, projection, 0.5, 0.5)
+        with pytest.raises(ValueError, match="size mismatch"):
+            read_binary_sample_value(
+                frame_path, meta_path, model="mrms", var=var, lat=lat, lon=lon
+            )
+        with pytest.raises(ValueError, match="size mismatch"):
+            read_binary_sample_value_seek(
+                frame_path, meta_path, model="mrms", var=var, lat=lat, lon=lon
+            )

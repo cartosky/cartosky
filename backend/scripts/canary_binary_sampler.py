@@ -104,6 +104,7 @@ from app.services.sampling import (
     _read_sample_value,
     _sample_dataset_index,
     read_binary_sample_value,
+    read_binary_sample_value_seek,
 )
 
 # ── Logging ──────────────────────────────────────────────────────────
@@ -1056,7 +1057,12 @@ def _bench_single(
     anchor: AnchorPoint,
     var: str,
 ) -> BenchmarkResult:
-    """Single-point latency: sample one point 200 times and aggregate."""
+    """Single-point latency: sample one point 200 times and aggregate.
+
+    Benchmarks time the SEEK primitive — the read the production routes now
+    use — not the full-frame-read primitive the correctness comparison uses
+    (both are equality-pinned; only their latency differs).
+    """
     cog_times: list[float] = []
     bin_times: list[float] = []
     for _ in range(200):
@@ -1069,7 +1075,7 @@ def _bench_single(
 
         t0 = time.perf_counter()
         try:
-            read_binary_sample_value(
+            read_binary_sample_value_seek(
                 frame_path, meta_path,
                 model=model, var=var,
                 lat=anchor.lat, lon=anchor.lon,
@@ -1104,7 +1110,7 @@ def _bench_batch(
 
         t0 = time.perf_counter()
         try:
-            read_binary_sample_value(
+            read_binary_sample_value_seek(
                 frame_path, meta_path,
                 model=model, var=var,
                 lat=pt.lat, lon=pt.lon,
@@ -1178,7 +1184,7 @@ def _bench_meteogram(
         t0 = time.perf_counter()
         try:
             if f_path.is_file() and m_path.is_file():
-                read_binary_sample_value(
+                read_binary_sample_value_seek(
                     f_path, m_path,
                     model=model_norm, var=var,
                     lat=anchor.lat, lon=anchor.lon,
