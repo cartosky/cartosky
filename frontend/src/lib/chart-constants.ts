@@ -189,19 +189,77 @@ export function plumeMemberStroke(memberIndex: number): string {
 /** Bold mean line on plume charts — white reads on top of any member hue. */
 export const PLUME_MEAN_STROKE = "#FFFFFF";
 
-// ── Ensemble stats meteogram charts (backlog B1) ───────────────────────────
+// ── Ensemble stats meteogram charts (backlog B1 + B2) ───────────────────────
 // MUST mirror the backend stats descriptors (`ensemble.stats` in
 // models/gefs.py + models/eps.py); var ids are derived with the same grammar
-// as models/base.py `ensemble_stats_product_ids`. Only variables listed in
-// ENSEMBLE_STATS_PROB_THRESHOLDS get band + probability charts under the
-// member views — to add one (e.g. snowfall_total: [1, 3, 6, 12] when a
-// snowfall variable joins the tab, or tmp2m with backlog B2), add its
-// threshold entry here.
+// as models/base.py `ensemble_stats_product_ids`. Only variables with an
+// ENSEMBLE_STATS_CHARTS entry get band + probability charts under the member
+// views — adding a variable (e.g. snowfall_total when it joins the tab) is
+// one entry here.
 
 export const ENSEMBLE_STATS_PERCENTILES = [10, 25, 50, 75, 90] as const;
 
-export const ENSEMBLE_STATS_PROB_THRESHOLDS: Partial<Record<string, readonly number[]>> = {
-  precip_total: [0.1, 0.25, 0.5, 1, 1.5, 2],
+export type EnsembleProbDirection = "gt" | "lt";
+
+export type EnsembleProbThresholdSpec = {
+  threshold: number;
+  direction: EnsembleProbDirection;
+  /** Explicit per-line stroke (B2 D-D ratified): cold rungs in blue shades
+   * (darker = colder), heat rungs yellow → orange → red (redder = hotter). */
+  stroke: string;
+};
+
+export type EnsembleStatsChartConfig = {
+  /** Display order = chart draw + tooltip order (cold ascending, then warm
+   * ascending). Per-direction counts must stay <= 6: each direction is one
+   * meteogram request (the request schema caps `variables` at 6). */
+  probThresholds: readonly EnsembleProbThresholdSpec[];
+  /** Unit suffix for per-line labels (`"` -> `> 0.5"`, `°F` -> `< 32°F`). */
+  thresholdUnitSuffix: string;
+  /** Lower-bound the band chart y-range at 0 (cumulative precip; NOT temp). */
+  clampZero: boolean;
+  unitsFallback: string;
+  formatValue: (value: number, units: string) => string;
+  /** Explanatory line for the probability card subtitle. */
+  probSubtitle: string;
+};
+
+function temperatureUnitsLabel(units: string): string {
+  return units === "F" || units === "C" ? `°${units}` : units;
+}
+
+export const ENSEMBLE_STATS_CHARTS: Partial<Record<string, EnsembleStatsChartConfig>> = {
+  precip_total: {
+    probThresholds: [
+      { threshold: 0.1, direction: "gt", stroke: "#60A5FA" },
+      { threshold: 0.25, direction: "gt", stroke: "#34D399" },
+      { threshold: 0.5, direction: "gt", stroke: "#FBBF24" },
+      { threshold: 1, direction: "gt", stroke: "#FB923C" },
+      { threshold: 1.5, direction: "gt", stroke: "#F87171" },
+      { threshold: 2, direction: "gt", stroke: "#E879F9" },
+    ],
+    thresholdUnitSuffix: '"',
+    clampZero: true,
+    unitsFallback: "in",
+    formatValue: (value, units) => `${value.toFixed(2)} ${units}`,
+    probSubtitle: "Chance that total precipitation exceeds each amount by that time",
+  },
+  tmp2m: {
+    probThresholds: [
+      { threshold: 0, direction: "lt", stroke: "#1D4ED8" },
+      { threshold: 20, direction: "lt", stroke: "#3B82F6" },
+      { threshold: 32, direction: "lt", stroke: "#93C5FD" },
+      { threshold: 50, direction: "gt", stroke: "#FACC15" },
+      { threshold: 70, direction: "gt", stroke: "#FB923C" },
+      { threshold: 90, direction: "gt", stroke: "#F87171" },
+      { threshold: 100, direction: "gt", stroke: "#DC2626" },
+    ],
+    thresholdUnitSuffix: "°F",
+    clampZero: false,
+    unitsFallback: "F",
+    formatValue: (value, units) => `${Math.round(value)} ${temperatureUnitsLabel(units)}`,
+    probSubtitle: "Chance that temperature is below or above each threshold",
+  },
 };
 
 /** `0.5 -> "0p5"`, `1 -> "1p0"` — mirrors backend `format_prob_threshold`. */
@@ -215,9 +273,13 @@ export function ensemblePercentileVarId(baseVar: string, percentile: number): st
   return `${baseVar}__p${String(percentile).padStart(2, "0")}`;
 }
 
-/** `("precip_total", 0.5) -> "precip_total__prob_gt_0p5"` */
-export function ensembleProbVarId(baseVar: string, threshold: number): string {
-  return `${baseVar}__prob_gt_${formatProbThresholdToken(threshold)}`;
+/** `("tmp2m", 32, "lt") -> "tmp2m__prob_lt_32p0"` */
+export function ensembleProbVarId(
+  baseVar: string,
+  threshold: number,
+  direction: EnsembleProbDirection,
+): string {
+  return `${baseVar}__prob_${direction}_${formatProbThresholdToken(threshold)}`;
 }
 
 /**
@@ -235,24 +297,6 @@ export function ensemblePercentileEdgeStroke(model: string): string {
   return `rgba(${rgb}, 0.5)`;
 }
 
-/**
- * Cool→hot stroke ramp for exceedance-probability lines, indexed by the
- * threshold's position in the configured list (lowest threshold = cool blue,
- * highest = magenta). Six stops cover the largest configured list.
- */
-export const ENSEMBLE_PROB_THRESHOLD_STROKES = [
-  "#60A5FA",
-  "#34D399",
-  "#FBBF24",
-  "#FB923C",
-  "#F87171",
-  "#E879F9",
-] as const;
-
-export function ensembleProbThresholdStroke(index: number): string {
-  const clamped = Math.max(0, Math.min(index, ENSEMBLE_PROB_THRESHOLD_STROKES.length - 1));
-  return ENSEMBLE_PROB_THRESHOLD_STROKES[clamped]!;
-}
 
 /** Control-member stroke (drawn dashed by the plume chart). White like the
  * mean — a model-colored dash got lost among the member hues; the dash

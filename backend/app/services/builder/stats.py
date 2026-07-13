@@ -53,6 +53,7 @@ from ...models.base import (
     ensemble_member_ids,
     ensemble_stats_descriptors,
     ensemble_stats_product_ids,
+    format_prob_threshold,
 )
 from ..colormaps import get_color_map_spec
 from ..grid import write_grid_frames_for_run_root
@@ -91,7 +92,8 @@ class _StatsVarContext:
     base_colormap_spec: dict[str, Any]
     member_ids: list[str]
     percentiles: list[int]
-    thresholds: list[float]
+    thresholds: list[float]  # exceedance (prob_gt)
+    lt_thresholds: list[float]  # non-exceedance (prob_lt, B2)
     products: dict[str, str]  # product_key -> runtime var id
 
 
@@ -141,6 +143,9 @@ def build_stats_plan(plugin: Any, model_id: str, run_id: str, region: str) -> _S
             member_ids=ensemble_member_ids(member_descriptor),
             percentiles=sorted(int(q) for q in (descriptor.get("percentiles") or [])),
             thresholds=sorted(float(t) for t in (descriptor.get("prob_thresholds") or [])),
+            lt_thresholds=sorted(
+                float(t) for t in (descriptor.get("prob_lt_thresholds") or [])
+            ),
             products=ensemble_stats_product_ids(base_var, descriptor),
         )
         fhs = sorted({int(fh) for fh in plugin.scheduled_fhs_for_var(base_var, cycle_hour)})
@@ -244,7 +249,7 @@ def _process_stats_unit(
     staging_run_root: Path,
     record: Callable[[str], None],
 ) -> None:
-    from .stats_math import prob_exceedance, sorted_nanpercentile
+    from .stats_math import prob_exceedance, prob_non_exceedance, sorted_nanpercentile
 
     product_ids = list(ctx.products.items())
     missing = [
@@ -279,6 +284,7 @@ def _process_stats_unit(
 
         percentile_values = sorted_nanpercentile(stack, ctx.percentiles)
         prob_values = prob_exceedance(stack, ctx.thresholds)
+        prob_lt_values = prob_non_exceedance(stack, ctx.lt_thresholds)
         by_key: dict[str, np.ndarray] = {}
         for i, q in enumerate(ctx.percentiles):
             by_key[f"p{q:02d}"] = percentile_values[i]
@@ -290,6 +296,10 @@ def _process_stats_unit(
                 ) < 1e-9
             )
             by_key[key] = prob_values[i]
+        for i, threshold in enumerate(ctx.lt_thresholds):
+            # Same token grammar as ensemble_stats_product_ids, so the key
+            # always exists in ctx.products.
+            by_key[f"prob_lt_{format_prob_threshold(threshold)}"] = prob_lt_values[i]
 
         prob_colormap = get_color_map_spec(PROBABILITY_COLOR_MAP_ID)
         for key, var_id in missing:

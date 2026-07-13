@@ -715,6 +715,19 @@ GEFS_VARIABLE_CATALOG = {
             # enumerate from this descriptor. Publishing itself additionally
             # requires the model on CARTOSKY_MEMBER_PUBLISH_MODELS.
             "members": {"count": 30, "control": True, "prefix": "m", "enabled": True},
+            # Tier 2 stats products (backlog B2, ratified 2026-07-10):
+            # temperature is TWO-SIDED — prob_lt_thresholds are cold rungs
+            # P(< 0/20/32°F), prob_thresholds are heat rungs
+            # P(> 50/70/90/100°F). Display units (°F); thresholds must stay
+            # >= 0 (the id grammar carries no sign). Both models enabled at
+            # once per D-E.
+            "stats": {
+                "percentiles": [10, 25, 50, 75, 90],
+                "prob_lt_thresholds": [0, 20, 32],
+                "prob_thresholds": [50, 70, 90, 100],
+                "label_noun": "temperature",
+                "enabled": True,
+            },
         },
     ),
     "tmp2m__mean": VariableCapability(

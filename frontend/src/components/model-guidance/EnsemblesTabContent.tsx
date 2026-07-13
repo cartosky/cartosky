@@ -20,8 +20,8 @@ import {
 import { useMeteogram } from "@/hooks/useMeteogram";
 import {
   ENSEMBLES_TAB_VARIABLES,
+  ENSEMBLE_STATS_CHARTS,
   ENSEMBLE_STATS_PERCENTILES,
-  ENSEMBLE_STATS_PROB_THRESHOLDS,
   MEMBER_PLUME_MODELS,
   ensemblePercentileVarId,
   ensembleProbVarId,
@@ -387,22 +387,23 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
     ? memberData?.series?.[memberModel]?.run_id ?? null
     : null;
 
-  // ── Stats charts data (backlog B1) ───────────────────────────────────────
+  // ── Stats charts data (backlog B1 + B2) ─────────────────────────────────
   // Percentile band + probability charts render below the plume when the
-  // selected variable has stats products. Two requests, not one: the
-  // meteogram request schema caps `variables` at 6 (main.py
-  // MeteogramRequest), and the band chart's vars (base + 5 percentiles) and
-  // the probability vars (≤6 thresholds) each exactly fit — no backend
-  // change needed. Both are pinned to the run the MEMBER payload serves so
-  // every chart on the page describes the same run: unpinned, "latest
+  // selected variable has an ENSEMBLE_STATS_CHARTS entry. Requests are
+  // chunked because the meteogram request schema caps `variables` at 6
+  // (main.py MeteogramRequest): the band chart's vars (base + 5 percentiles)
+  // exactly fit one request, and each probability DIRECTION (<= 6 thresholds
+  // by config contract) is its own request — precip has 6 gt rungs, tmp2m 3
+  // lt + 4 gt. All are pinned to the run the MEMBER payload serves so every
+  // chart on the page describes the same run: unpinned, "latest
   // members-ready" and "latest stats-ready" can briefly diverge while a
   // fresh run's stats pass finishes (~2 min after members promote). The base
   // variable rides along for the band chart's mean overlay — an ensemble
   // base series IS the mean. NOTE the backend silently falls back to the
   // latest complete run when a pinned run can't serve the requested vars, so
   // the card subtitles read the SERVED run_id, never the pin.
-  const statsThresholds = ENSEMBLE_STATS_PROB_THRESHOLDS[variable];
-  const hasStatsCharts = Boolean(statsThresholds);
+  const statsConfig = ENSEMBLE_STATS_CHARTS[variable];
+  const hasStatsCharts = Boolean(statsConfig);
   const statsRun = memberModel
     ? pinnedRuns[memberModel] ?? memberData?.series?.[memberModel]?.run_id ?? null
     : null;
@@ -421,10 +422,19 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
         : [],
     [variable, hasStatsCharts],
   );
-  const probVariables = useMemo(
+  const probGtVariables = useMemo(
     () =>
-      statsThresholds ? statsThresholds.map((t) => ensembleProbVarId(variable, t)) : [],
-    [variable, statsThresholds],
+      (statsConfig?.probThresholds ?? [])
+        .filter((spec) => spec.direction === "gt")
+        .map((spec) => ensembleProbVarId(variable, spec.threshold, "gt")),
+    [variable, statsConfig],
+  );
+  const probLtVariables = useMemo(
+    () =>
+      (statsConfig?.probThresholds ?? [])
+        .filter((spec) => spec.direction === "lt")
+        .map((spec) => ensembleProbVarId(variable, spec.threshold, "lt")),
+    [variable, statsConfig],
   );
   const {
     data: percentileData,
@@ -440,18 +450,40 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
     enabled: statsEnabled,
   });
   const {
-    data: probData,
-    loading: probLoading,
-    error: probError,
-    reload: reloadProbs,
+    data: probGtData,
+    loading: probGtLoading,
+    error: probGtError,
+    reload: reloadProbGt,
   } = useMeteogram({
     lat,
     lon,
     models: memberModel ? [memberModel] : [],
-    variables: probVariables,
+    variables: probGtVariables,
     pinnedRuns: statsPinnedRuns,
-    enabled: statsEnabled,
+    enabled: statsEnabled && probGtVariables.length > 0,
   });
+  const {
+    data: probLtData,
+    loading: probLtLoading,
+    error: probLtError,
+    reload: reloadProbLt,
+  } = useMeteogram({
+    lat,
+    lon,
+    models: memberModel ? [memberModel] : [],
+    variables: probLtVariables,
+    pinnedRuns: statsPinnedRuns,
+    enabled: statsEnabled && probLtVariables.length > 0,
+  });
+  const probLoading =
+    (probGtVariables.length > 0 && probGtLoading) ||
+    (probLtVariables.length > 0 && probLtLoading);
+  const probHasData = Boolean(probGtData || probLtData);
+  const probError = probGtError ?? probLtError;
+  const reloadProbs = useCallback(() => {
+    reloadProbGt();
+    reloadProbLt();
+  }, [reloadProbGt, reloadProbLt]);
 
   const statsRunSubtitle = useCallback(
     (served: string | null | undefined) => {
@@ -461,12 +493,6 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
     [statsRun],
   );
 
-  // Both stats charts are precip-only today (inches, 2 decimals); a new
-  // variable's formatting joins the ENSEMBLE_STATS_PROB_THRESHOLDS entry.
-  const formatStatsValue = useCallback(
-    (value: number, units: string) => `${value.toFixed(2)} ${units}`,
-    [],
-  );
   const statsNoun = VARIABLE_LABELS[variable].toLowerCase();
   const statsBandTitle = memberModel
     ? `${modelShortName(memberModel)} ${statsNoun} percentiles`
@@ -481,8 +507,12 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
     ? `${modelShortName(memberModel)} ${statsNoun} probabilities`
     : "";
   const statsProbSubtitle = [
-    memberModel ? statsRunSubtitle(probData?.series?.[memberModel]?.run_id) : null,
-    `Chance that total ${statsNoun} exceeds each amount by that time`,
+    memberModel
+      ? statsRunSubtitle(
+          (probGtData ?? probLtData)?.series?.[memberModel]?.run_id,
+        )
+      : null,
+    statsConfig?.probSubtitle,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -615,7 +645,7 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
               )}
             </ChartContainer>
           </section>
-          {hasStatsCharts ? (
+          {statsConfig ? (
             <section id={`ensemble-${memberModel}-percentiles`}>
               <ChartContainer
                 title={statsBandTitle}
@@ -633,21 +663,21 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
                   response={percentileData}
                   model={memberModel!}
                   variable={variable}
-                  unitsFallback="in"
-                  formatValue={formatStatsValue}
+                  unitsFallback={statsConfig.unitsFallback}
+                  formatValue={statsConfig.formatValue}
                   timezone={timezone}
-                  clampZero
+                  clampZero={statsConfig.clampZero}
                   emptyMessage="No percentile data available for this run yet."
                 />
               </ChartContainer>
             </section>
           ) : null}
-          {statsThresholds ? (
+          {statsConfig ? (
             <section id={`ensemble-${memberModel}-probabilities`}>
               <ChartContainer
                 title={statsProbTitle}
                 subtitle={statsProbSubtitle}
-                isLoading={probLoading && !probData}
+                isLoading={probLoading && !probHasData}
                 error={probError}
                 onRetry={reloadProbs}
                 exportImage={{
@@ -657,11 +687,12 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
                 }}
               >
                 <EnsembleProbabilityChart
-                  response={probData}
+                  gtResponse={probGtData}
+                  ltResponse={probLtData}
                   model={memberModel!}
                   variable={variable}
-                  thresholds={statsThresholds}
-                  thresholdUnitSuffix={'"'}
+                  thresholds={statsConfig.probThresholds}
+                  thresholdUnitSuffix={statsConfig.thresholdUnitSuffix}
                   timezone={timezone}
                   emptyMessage="No probability data available for this run yet."
                 />

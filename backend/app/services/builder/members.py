@@ -1034,7 +1034,7 @@ def _process_pf_unit(
                     converted, src.crs, src.transform,
                     model=plan.model_id, region=plan.region,
                     resampling=ctx.resampling, src_nodata=None,
-                    dst_nodata=float("nan"),
+                    dst_nodata=float("nan"), working_dtype=np.float32,
                 )
                 status = _gate_and_write(
                     plan=plan, ctx=ctx, var_id=member_var_id(base_var, member),
@@ -1121,6 +1121,7 @@ def _rebase_cumulative_state(
             csnow_native, crs, transform,
             model=plan.model_id, region=plan.region,
             resampling=snow_ctx.resampling, src_nodata=None, dst_nodata=float("nan"),
+            working_dtype=np.float32,
         )
     return state
 
@@ -1275,7 +1276,7 @@ def _process_member(
                         converted, crs, transform,
                         model=plan.model_id, region=plan.region,
                         resampling=tmp_ctx.resampling, src_nodata=None,
-                        dst_nodata=float("nan"),
+                        dst_nodata=float("nan"), working_dtype=np.float32,
                     )
                     status = _gate_and_write(
                         plan=plan, ctx=tmp_ctx, var_id=member_var_id("tmp2m", member),
@@ -1293,7 +1294,7 @@ def _process_member(
                     apcp_native, apcp_crs, apcp_transform,
                     model=plan.model_id, region=plan.region,
                     resampling=any_cum_ctx.resampling, src_nodata=None,
-                    dst_nodata=float("nan"),
+                    dst_nodata=float("nan"), working_dtype=np.float32,
                 )
                 state.dst_transform = dst_transform
 
@@ -1309,7 +1310,7 @@ def _process_member(
                         csnow_native, csnow_crs, csnow_transform,
                         model=plan.model_id, region=plan.region,
                         resampling=snow_ctx.resampling, src_nodata=None,
-                        dst_nodata=float("nan"),
+                        dst_nodata=float("nan"), working_dtype=np.float32,
                     )
                     # step_endpoints sampling: csnow at [step start, step end];
                     # the fh-0 endpoint is skipped per skip_zero_hour_sample.

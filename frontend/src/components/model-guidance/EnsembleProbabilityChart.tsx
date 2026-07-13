@@ -12,8 +12,8 @@ import {
   valueYAxis,
 } from "@/components/charts/chart-helpers";
 import {
-  ensembleProbThresholdStroke,
   ensembleProbVarId,
+  type EnsembleProbThresholdSpec,
 } from "@/lib/chart-constants";
 import type { MeteogramResponse } from "@/lib/meteogram-types";
 
@@ -21,15 +21,19 @@ const CHART_HEIGHT = 320;
 const LINE_WIDTH = 2;
 
 type Props = {
-  /** Stats meteogram response carrying `{base}__prob_gt_*` series. */
-  response: MeteogramResponse | null;
+  /** Exceedance (`prob_gt`) response — null when no gt thresholds exist. */
+  gtResponse: MeteogramResponse | null;
+  /** Non-exceedance (`prob_lt`) response — null when no lt thresholds exist.
+   * Separate responses because each direction is its own meteogram request
+   * (the request schema caps `variables` at 6; tmp2m has 7 thresholds). */
+  ltResponse: MeteogramResponse | null;
   /** Single ensemble model whose probabilities are drawn (e.g. "gefs"). */
   model: string;
   /** Base variable id (e.g. "precip_total"); prob ids derive from it. */
   variable: string;
-  /** Configured thresholds in display units (chart-constants matrix). */
-  thresholds: readonly number[];
-  /** Unit suffix for the per-line labels (e.g. `"` → `> 0.5"`). */
+  /** Configured threshold specs in display order (chart-constants matrix). */
+  thresholds: readonly EnsembleProbThresholdSpec[];
+  /** Unit suffix for the per-line labels (e.g. `°F` → `< 32°F`). */
   thresholdUnitSuffix: string;
   timezone: string | null;
   emptyMessage: string;
@@ -37,16 +41,17 @@ type Props = {
 };
 
 /**
- * Exceedance-probability chart (backlog B1): one line per configured
- * threshold on a fixed 0–100% axis, colored cool→hot by threshold severity.
- * Values are the stats grids' probability products sampled by the meteogram
- * (stats design §8) — identical to the probability maps. Thresholds whose
- * product is absent from the served run (e.g. a stats gate skip) are omitted
- * rather than drawn flat, keeping each remaining line's color stable via its
- * position in the CONFIGURED list.
+ * Exceedance/non-exceedance probability chart (backlog B1 + B2): one line per
+ * configured threshold on a fixed 0–100% axis. Strokes come from the config
+ * spec (B2 D-D: cold `< x` rungs in blue shades, warm `> x` rungs
+ * yellow→red). Values are the stats grids' probability products sampled by
+ * the meteogram (stats design §8) — identical to the probability maps.
+ * Thresholds whose product is absent from the served run (e.g. a stats gate
+ * skip) are omitted rather than drawn flat.
  */
 export function EnsembleProbabilityChart({
-  response,
+  gtResponse,
+  ltResponse,
   model,
   variable,
   thresholds,
@@ -55,16 +60,28 @@ export function EnsembleProbabilityChart({
   emptyMessage,
   nowMs,
 }: Props) {
+  // Both directions are pinned to the same run upstream, but each request
+  // can independently fall back when that run can't serve its vars — never
+  // mix two runs' probabilities in one chart.
+  const gtRun = gtResponse?.series?.[model]?.run_id ?? null;
+  const ltRun = ltResponse?.series?.[model]?.run_id ?? null;
+  const runsConsistent = !gtRun || !ltRun || gtRun === ltRun;
+
   const activeThresholds = useMemo(
     () =>
-      thresholds
-        .map((threshold, configIndex) => ({
-          threshold,
-          configIndex,
-          points: seriesPoints(response, model, ensembleProbVarId(variable, threshold)),
-        }))
-        .filter((entry) => entry.points != null),
-    [response, model, variable, thresholds],
+      runsConsistent
+        ? thresholds
+            .map((spec) => ({
+              spec,
+              points: seriesPoints(
+                spec.direction === "lt" ? ltResponse : gtResponse,
+                model,
+                ensembleProbVarId(variable, spec.threshold, spec.direction),
+              ),
+            }))
+            .filter((entry) => entry.points != null)
+        : [],
+    [runsConsistent, gtResponse, ltResponse, model, variable, thresholds],
   );
 
   const { data, hasData } = useMemo(
@@ -93,9 +110,9 @@ export function EnsembleProbabilityChart({
       series: [
         {},
         ...activeThresholds.map(
-          ({ threshold, configIndex }): uPlot.Series => ({
-            label: `> ${threshold}${thresholdUnitSuffix}`,
-            stroke: ensembleProbThresholdStroke(configIndex),
+          ({ spec }): uPlot.Series => ({
+            label: `${spec.direction === "lt" ? "<" : ">"} ${spec.threshold}${thresholdUnitSuffix}`,
+            stroke: spec.stroke,
             width: LINE_WIDTH,
             points: { show: false },
             value: (_u: uPlot, v: number | null) =>

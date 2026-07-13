@@ -10,13 +10,43 @@
 | # | Item | Status | Gate / trigger | Scope lives in |
 |---|------|--------|----------------|----------------|
 | B1 | **Meteogram percentile band + probability charts** (Ensembles tab) | SHIPPED 2026-07-09 (working tree) | — | Stats design §8 (data path); design note below |
-| B2 | **tmp2m ensemble products** | Deferred (D-A) | Product-design conversation — temperature wants threshold/risk maps (P(< 32°F), P(> 100°F)), which requires implementing the RESERVED `__prob_lt_{thr}` suffix (grammar already claims it) | Stats design §3; `classify_ensemble_var_id` in models/base.py |
+| B2 | **tmp2m ensemble products** (maps + meteogram charts, `__prob_lt_` implemented) | SHIPPED 2026-07-10 (working tree) | — | Design note below; stats design §3 |
 | B3 | **`__spread` map product** (P90 − P10 as a published grid) | Idea, unscoped | Wanted when spread maps matter; deliberately NOT a compare-tool mode | One descriptor-family addition to the stats pass; needs its own colormap + diff scale entries |
 | B4 | **pf-mean missing-member tolerance** (build EPS mean from ≥45 members when ranges fail validation) | SCOPED, deferred by Brian | Next upstream index/file corruption incident that costs a run | `ENSEMBLE_MEMBER_SCHEDULER_DESIGN.md` §15 (full scope incl. env knob, logging, member-pass asymmetry) |
 | B5 | **MSLP + member low locations** | Double-gated | Its own data-source sizing spike first (net-new variable for both models) | Pipeline plan Phase 6 note; reuses pressure-center machinery across member fields |
 | B6 | **Tier 3 — browsable per-member maps** | NO-GO (2026-07-06 sign-off) | Server resources expanded | Sizing spike doc §10; measured ~15 GB/run/var full-profile |
 | B7 | **Global coverage** (all tiers) | Deferred (2026-07-06 sign-off) | Brian green-lights global | Plan §3.7 keeps all member/stats code region-agnostic — no bboxes/dims hardcoded anywhere |
 | B8 | **Probability diff scale tuning** | Shipped at ±50 pp | Only if prod use shows the range too wide/narrow | One constant: `PROBABILITY_DIFF_SCALE` in compare-diff-scales.ts |
+
+## B2 design note — tmp2m ensemble products (SHIPPED)
+
+Ratified 2026-07-10 (D-A..E): percentiles p10/25/50/75/90; probability
+products are TWO-SIDED — cold rungs `P(< 0/20/32°F)` via the new
+`prob_lt_thresholds` descriptor key, heat rungs `P(> 50/70/90/100°F)` via
+the existing `prob_thresholds` key. Shared `ensemble_probability` ramp for
+both directions (D-C). Both models enabled in one stage (D-E).
+
+`__prob_lt_{thr}` (previously reserved) is now implemented end-to-end:
+`classify_ensemble_var_id` kind `"prob_lt"`, `prob_non_exceedance` in
+stats_math (strict `<` — a member exactly AT a threshold counts toward
+NEITHER direction), stats-pass product loop, `_PROB_PACK_SUFFIX_RE`
+`(gt|lt)`, serialization labels (`P(< 32°F)` — capability units "F"/"C"
+render as °F/°C), render-resampling classification → `ensemble_probability`.
+Compare diff scales already matched `prob_(gt|lt)` (±50 pp). **Grammar
+guard:** thresholds must be >= 0 — the id token carries no sign, so
+`ensemble_stats_product_ids` raises on negatives (extend the grammar
+deliberately before adding sub-zero rungs, e.g. P(< -10°F)).
+
+Meteogram charts (D-D): temperature bands reuse the B1 band chart (no
+zero-clamp, °F formatting); ONE probability chart carries all seven
+thresholds with explicit strokes — cold rungs in blue shades (darker =
+colder: 32 light blue → 0 dark blue), heat rungs yellow → orange → red
+(50 yellow → 100 deep red). Seven thresholds exceed the meteogram's 6-var
+request cap, so each DIRECTION is its own request (lt = 3, gt = 4; config
+contract: <= 6 per direction) and the chart drops both if the two served
+runs ever disagree. Per-variable chart config (thresholds + strokes +
+formatting + subtitle) lives in `ENSEMBLE_STATS_CHARTS` in
+chart-constants.ts — one entry per future variable.
 
 ## B1 design note — meteogram percentile/probability charts (SHIPPED)
 

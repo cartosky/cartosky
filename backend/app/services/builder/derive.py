@@ -234,16 +234,14 @@ def prune_fetch_context_after_frame(
 ) -> dict[str, int]:
     if ctx is None:
         return {}
+    # Prune for every derived kind. The ctx caches are pure memoization keyed by
+    # forecast hour; cross-frame state that must survive (incremental cumulative
+    # seeds) is kept via keep_fhs plus the staging-npz disk fallback in
+    # _kuchera_load_prior_cumulative. A strategy that ever needs cross-frame
+    # entries at other fhs must opt out explicitly here — the previous allowlist
+    # silently left new strategies unpruned instead.
     derive_kind = str(getattr(var_spec_model, "derive", "") or "").strip().lower()
-    handled_derive_kinds = {
-        "snowfall_kuchera_total_cumulative",
-        "ptype_accumulation_ecmwf",
-        "ptype_accumulation_cumulative",
-        "ptype_intensity_ecmwf",
-        "ptype_intensity_gfs",
-        "radar_ptype_combo",
-    }
-    if derive_kind not in handled_derive_kinds:
+    if not derive_kind:
         return {}
 
     keep_fhs = {int(fh)}

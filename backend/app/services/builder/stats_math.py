@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["sorted_nanpercentile", "prob_exceedance"]
+__all__ = ["sorted_nanpercentile", "prob_exceedance", "prob_non_exceedance"]
 
 
 def sorted_nanpercentile(stack: np.ndarray, percentiles: list[int]) -> np.ndarray:
@@ -81,6 +81,32 @@ def prob_exceedance(stack: np.ndarray, thresholds: list[float]) -> np.ndarray:
     for i, threshold in enumerate(thresholds):
         # NaN > x is False, so nansum semantics fall out of the comparison.
         count = np.sum(stack > np.float32(threshold), axis=0)
+        values = (100.0 * count / safe_valid).astype(np.float32)
+        out[i] = np.where(has, values, np.nan)
+    return out
+
+
+def prob_non_exceedance(stack: np.ndarray, thresholds: list[float]) -> np.ndarray:
+    """Probability (%) that a member is BELOW each threshold, per pixel.
+
+    ``100 * count(member < threshold) / valid_members`` — the ``prob_lt``
+    twin of :func:`prob_exceedance` (B2 temperature products: P(< 32°F)).
+    Strict ``<`` mirroring the strict ``>`` above, so a member exactly at
+    the threshold counts toward neither product. NaN where no member is
+    valid.
+    """
+    if stack.ndim != 3:
+        raise ValueError(f"Expected (members, H, W) stack, got shape {stack.shape}")
+    if not thresholds:
+        return np.empty((0,) + stack.shape[1:], dtype=np.float32)
+
+    valid = np.sum(~np.isnan(stack), axis=0)
+    has = valid > 0
+    out = np.full((len(thresholds),) + stack.shape[1:], np.nan, dtype=np.float32)
+    safe_valid = np.maximum(valid, 1).astype(np.float32)
+    for i, threshold in enumerate(thresholds):
+        # NaN < x is False — missing members never count as "below".
+        count = np.sum(stack < np.float32(threshold), axis=0)
         values = (100.0 * count / safe_valid).astype(np.float32)
         out[i] = np.where(has, values, np.nan)
     return out

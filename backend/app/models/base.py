@@ -446,8 +446,11 @@ def ensemble_stats_descriptors(plugin: Any) -> dict[str, dict[str, Any]]:
     canonical buildable variable's capability — e.g.
     ``ensemble.stats = {"percentiles": [10, 25, 50, 75, 90],
     "prob_thresholds": [0.10, 0.25, 0.50, 1.00, 1.50, 2.00],
-    "enabled": True}`` — never as per-product catalog entries. Adding a
-    variable or threshold later is a descriptor edit, nothing else.
+    "enabled": True}`` — never as per-product catalog entries.
+    ``prob_thresholds`` are exceedance (``P(> x)``); two-sided variables
+    (temperature, B2) add ``prob_lt_thresholds`` for non-exceedance
+    (``P(< x)``). Adding a variable or threshold later is a descriptor
+    edit, nothing else.
 
     Only buildable entries with ``enabled: true`` and at least one product
     are returned.
@@ -467,7 +470,8 @@ def ensemble_stats_descriptors(plugin: Any) -> dict[str, dict[str, Any]]:
             continue
         percentiles = stats.get("percentiles") or []
         thresholds = stats.get("prob_thresholds") or []
-        if not percentiles and not thresholds:
+        lt_thresholds = stats.get("prob_lt_thresholds") or []
+        if not percentiles and not thresholds and not lt_thresholds:
             continue
         descriptors[str(var_key).strip().lower()] = stats
     return descriptors
@@ -492,17 +496,35 @@ def parse_prob_threshold(token: str) -> float:
 def ensemble_stats_product_ids(base_var: str, descriptor: dict[str, Any]) -> dict[str, str]:
     """Ordered product_key -> runtime var id map for one stats descriptor.
 
-    Product keys are the id suffixes (``"p50"``, ``"prob_gt_0p5"``) — the
-    same tokens the viewer's product selector uses. Percentiles first
-    (ascending), then probability thresholds (ascending), matching the plan
-    §4.1 naming exactly.
+    Product keys are the id suffixes (``"p50"``, ``"prob_gt_0p5"``,
+    ``"prob_lt_32p0"``) — the same tokens the viewer's product selector
+    uses. Percentiles first (ascending), then non-exceedance thresholds
+    (ascending — the cold rungs read 0/20/32), then exceedance thresholds
+    (ascending), matching the plan §4.1 naming exactly.
+
+    Thresholds are display-unit values and must be >= 0: the token grammar
+    (``\\d+p\\d+`` across packing, canary, and frontend classification) has
+    no sign — a negative threshold would mint an unclassifiable id.
     """
     base = str(base_var).strip().lower()
     products: dict[str, str] = {}
     for q in sorted(int(q) for q in (descriptor.get("percentiles") or [])):
         key = f"p{q:02d}"
         products[key] = f"{base}__{key}"
+    for threshold in sorted(float(t) for t in (descriptor.get("prob_lt_thresholds") or [])):
+        if threshold < 0:
+            raise ValueError(
+                f"Negative prob_lt threshold {threshold} on {base}: the id "
+                "grammar carries no sign (extend it deliberately first)"
+            )
+        key = f"prob_lt_{format_prob_threshold(threshold)}"
+        products[key] = f"{base}__{key}"
     for threshold in sorted(float(t) for t in (descriptor.get("prob_thresholds") or [])):
+        if threshold < 0:
+            raise ValueError(
+                f"Negative prob_gt threshold {threshold} on {base}: the id "
+                "grammar carries no sign (extend it deliberately first)"
+            )
         key = f"prob_gt_{format_prob_threshold(threshold)}"
         products[key] = f"{base}__{key}"
     return products
@@ -510,10 +532,9 @@ def ensemble_stats_product_ids(base_var: str, descriptor: dict[str, Any]) -> dic
 
 # The single suffix grammar for ensemble-derived runtime var ids (plan §4.1:
 # written ONCE, shared by packing resolution, manifest tooling, capabilities
-# serialization, and canary scope classification). ``prob_lt`` is RESERVED
-# (stats design §3: temperature products will need "below" thresholds) but
-# deliberately unimplemented — classify_ensemble_var_id names it so nothing
-# else claims the token, and every consumer treats it as unsupported.
+# serialization, and canary scope classification). ``prob_lt`` (reserved by
+# the Phase 6 grammar) is IMPLEMENTED as of B2: temperature "below"
+# thresholds — P(< 32°F) etc.
 _ENSEMBLE_SUFFIX_RE = re.compile(
     r"^(?P<base>.+)__(?P<suffix>mean|control|m\d{2}|p\d{2}|prob_(?:gt|lt)_\d+p\d+)$"
 )
@@ -524,9 +545,8 @@ def classify_ensemble_var_id(var_id: str) -> tuple[str, str, Any] | None:
 
     Returns ``(base_var, kind, detail)`` where kind is one of ``"mean"``,
     ``"control"``, ``"member"`` (detail = member token), ``"percentile"``
-    (detail = int), ``"prob_gt"`` (detail = float threshold), or
-    ``"prob_lt_reserved"`` (recognized, NOT implemented — callers must treat
-    it as unsupported). ``None`` for ids with no ensemble suffix.
+    (detail = int), ``"prob_gt"`` or ``"prob_lt"`` (detail = float
+    threshold). ``None`` for ids with no ensemble suffix.
     """
     match = _ENSEMBLE_SUFFIX_RE.match(str(var_id or "").strip().lower())
     if match is None:
@@ -544,5 +564,5 @@ def classify_ensemble_var_id(var_id: str) -> tuple[str, str, Any] | None:
     if suffix.startswith("prob_gt_"):
         return (base, "prob_gt", parse_prob_threshold(suffix[len("prob_gt_"):]))
     if suffix.startswith("prob_lt_"):
-        return (base, "prob_lt_reserved", parse_prob_threshold(suffix[len("prob_lt_"):]))
+        return (base, "prob_lt", parse_prob_threshold(suffix[len("prob_lt_"):]))
     return None

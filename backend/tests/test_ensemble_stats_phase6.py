@@ -45,9 +45,9 @@ def test_classify_ensemble_var_id_grammar() -> None:
     assert classify_ensemble_var_id("tmp2m__m07") == ("tmp2m", "member", "m07")
     assert classify_ensemble_var_id("snowfall_total__p25") == ("snowfall_total", "percentile", 25)
     assert classify_ensemble_var_id("precip_total__prob_gt_0p5") == ("precip_total", "prob_gt", 0.5)
-    # prob_lt is RESERVED (stats design §3): recognized so nothing else
-    # claims the token, but flagged unimplemented for every consumer.
-    assert classify_ensemble_var_id("tmp2m__prob_lt_32p0") == ("tmp2m", "prob_lt_reserved", 32.0)
+    # prob_lt implemented with B2 (temperature "below" thresholds).
+    assert classify_ensemble_var_id("tmp2m__prob_lt_32p0") == ("tmp2m", "prob_lt", 32.0)
+    assert classify_ensemble_var_id("tmp2m__prob_lt_0p0") == ("tmp2m", "prob_lt", 0.0)
     # Non-ensemble ids pass through as None.
     assert classify_ensemble_var_id("tmp2m") is None
     assert classify_ensemble_var_id("precip_total__prob_gt_") is None
@@ -58,14 +58,18 @@ def test_classify_ensemble_var_id_grammar() -> None:
 def test_stats_descriptor_rollout_posture() -> None:
     gefs = ensemble_stats_descriptors(MODEL_REGISTRY["gefs"])
     # 6A (precip) gate passed 2026-07-08 -> 6B (snowfall) enabled; both carry
-    # the LOCKED §4.2 thresholds.
-    assert set(gefs) == {"precip_total", "snowfall_total"}
+    # the LOCKED §4.2 thresholds. B2 (2026-07-10) adds two-sided tmp2m on
+    # both models at once.
+    assert set(gefs) == {"precip_total", "snowfall_total", "tmp2m"}
     assert gefs["precip_total"]["percentiles"] == [10, 25, 50, 75, 90]
     assert gefs["precip_total"]["prob_thresholds"] == [0.10, 0.25, 0.50, 1.00, 1.50, 2.00]
     assert gefs["snowfall_total"]["prob_thresholds"] == [1, 3, 6, 12]
+    assert gefs["tmp2m"]["prob_lt_thresholds"] == [0, 20, 32]
+    assert gefs["tmp2m"]["prob_thresholds"] == [50, 70, 90, 100]
 
     eps = ensemble_stats_descriptors(MODEL_REGISTRY["eps"])
-    assert set(eps) == {"precip_total"}
+    assert set(eps) == {"precip_total", "tmp2m"}
+    assert eps["tmp2m"] == gefs["tmp2m"]
 
 
 def test_stats_descriptor_requires_enabled_and_products() -> None:
@@ -159,6 +163,57 @@ def test_prob_exceedance_counts_and_nan_pattern() -> None:
     assert np.array_equal(np.isfinite(pct[0]), np.isfinite(prob[0]))
 
 
+def test_prob_non_exceedance_counts_and_nan_pattern() -> None:
+    from backend.app.services.builder.stats_math import prob_non_exceedance
+
+    stack = np.full((4, 2, 2), np.nan, dtype=np.float32)
+    stack[:, 0, 0] = [10.0, 25.0, 33.0, 40.0]  # 4 valid
+    stack[:2, 0, 1] = [15.0, 18.0]             # 2 valid
+    stack[0, 1, 0] = 35.0                      # 1 valid
+    out = prob_non_exceedance(stack, [32.0, 20.0])
+    assert out[0, 0, 0] == pytest.approx(50.0)   # 2/4 < 32
+    assert out[1, 0, 0] == pytest.approx(25.0)   # 1/4 < 20
+    assert out[0, 0, 1] == pytest.approx(100.0)  # 2/2 < 32
+    assert out[0, 1, 0] == pytest.approx(0.0)    # 0/1 < 32
+    assert np.isnan(out[0, 1, 1])                # no valid members
+    # Strict '<' — a member exactly AT the threshold counts toward NEITHER
+    # direction (mirrors prob_exceedance's strict '>').
+    at = np.full((2, 1, 1), 32.0, dtype=np.float32)
+    assert prob_non_exceedance(at, [32.0])[0, 0, 0] == pytest.approx(0.0)
+    # NaN pattern identical to the percentile products.
+    stack2 = _member_stack()
+    pct = sorted_nanpercentile(stack2, [50])
+    prob = prob_non_exceedance(stack2, [15.0])
+    assert np.array_equal(np.isfinite(pct[0]), np.isfinite(prob[0]))
+
+
+def test_stats_product_ids_two_sided_and_sign_guard() -> None:
+    from backend.app.models.base import ensemble_stats_product_ids
+
+    descriptor = {
+        "percentiles": [50],
+        "prob_lt_thresholds": [32, 0, 20],
+        "prob_thresholds": [100, 50],
+        "enabled": True,
+    }
+    products = ensemble_stats_product_ids("tmp2m", descriptor)
+    # Percentiles, then cold rungs ascending, then heat rungs ascending.
+    assert list(products.items()) == [
+        ("p50", "tmp2m__p50"),
+        ("prob_lt_0p0", "tmp2m__prob_lt_0p0"),
+        ("prob_lt_20p0", "tmp2m__prob_lt_20p0"),
+        ("prob_lt_32p0", "tmp2m__prob_lt_32p0"),
+        ("prob_gt_50p0", "tmp2m__prob_gt_50p0"),
+        ("prob_gt_100p0", "tmp2m__prob_gt_100p0"),
+    ]
+    # The id grammar carries no sign: negative thresholds must fail loudly
+    # at descriptor time, not mint an unclassifiable id.
+    with pytest.raises(ValueError, match="Negative prob_lt"):
+        ensemble_stats_product_ids("tmp2m", {"prob_lt_thresholds": [-10]})
+    with pytest.raises(ValueError, match="Negative prob_gt"):
+        ensemble_stats_product_ids("tmp2m", {"prob_thresholds": [-0.5]})
+
+
 # ── Packing (stats design §6) ────────────────────────────────────────
 def test_percentile_packing_falls_back_to_mean_twin() -> None:
     from backend.app.services.grid import _PACKING_BY_MODEL_VAR, _packing_config, normalize_grid_pack_var_id
@@ -178,9 +233,14 @@ def test_probability_packing_explicit_generated_entries() -> None:
     assert grid._packing_config("eps", "precip_total__prob_gt_1p0") is not None
     # 6B: snowfall prob entries generate from its (now enabled) descriptor.
     assert grid._packing_config("gefs", "snowfall_total__prob_gt_6p0") is not None
+    # B2: tmp2m prob entries (both directions) generate from its descriptor.
+    assert grid._packing_config("gefs", "tmp2m__prob_gt_90p0") is not None
+    assert grid._packing_config("eps", "tmp2m__prob_lt_32p0") == {
+        "scale": 0.1, "offset": 0.0, "nodata": 65535, "units": "%",
+    }
     # Explicit entries only: a prob id no descriptor declares resolves to
-    # nothing (never a fallback) — tmp2m has no stats descriptor at all.
-    assert grid._packing_config("gefs", "tmp2m__prob_gt_90p0") is None
+    # nothing (never a fallback) — pwat has no stats descriptor at all.
+    assert grid._packing_config("gefs", "pwat__prob_gt_1p0") is None
 
 
 def test_probability_colormap_spec() -> None:
@@ -406,10 +466,26 @@ def test_capabilities_products_payload() -> None:
     snow_products = {p["key"]: p for p in snow_payload["ensemble"]["products"]}
     assert snow_products["prob_gt_6p0"]["label"] == 'P(> 6")'
     assert snow_products["prob_gt_6p0"]["long_label"] == 'Probability of snowfall > 6"'
-    # No stats descriptor at all -> unchanged shape.
+    # B2: tmp2m products are two-sided with degree-Fahrenheit labels,
+    # ordered mean, percentiles, cold rungs ascending, heat rungs ascending.
     tmp = MODEL_REGISTRY["gefs"].get_var_capability("tmp2m")
     tmp_payload = serialize_variable_capability("gefs", tmp)
-    assert "products" not in tmp_payload.get("ensemble", {})
+    tmp_products = tmp_payload["ensemble"]["products"]
+    tmp_by_key = {p["key"]: p for p in tmp_products}
+    assert tmp_by_key["prob_lt_32p0"]["label"] == "P(< 32\u00b0F)"
+    assert tmp_by_key["prob_lt_32p0"]["long_label"] == "Probability of temperature < 32\u00b0F"
+    assert tmp_by_key["prob_lt_32p0"]["overlay_label"] == "Prob. < 32\u00b0F"
+    assert tmp_by_key["prob_gt_100p0"]["label"] == "P(> 100\u00b0F)"
+    assert tmp_by_key["prob_lt_32p0"]["var_id"] == "tmp2m__prob_lt_32p0"
+    assert [p["key"] for p in tmp_products] == [
+        "mean", "p10", "p25", "p50", "p75", "p90",
+        "prob_lt_0p0", "prob_lt_20p0", "prob_lt_32p0",
+        "prob_gt_50p0", "prob_gt_70p0", "prob_gt_90p0", "prob_gt_100p0",
+    ]
+    # No stats descriptor at all -> unchanged shape.
+    pwat = MODEL_REGISTRY["gefs"].get_var_capability("pwat")
+    pwat_payload = serialize_variable_capability("gefs", pwat)
+    assert "products" not in pwat_payload.get("ensemble", {})
 
 
 def test_stats_pass_writes_frame_sidecars(tmp_path, stats_roster_plugin) -> None:

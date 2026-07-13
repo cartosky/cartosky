@@ -13,7 +13,9 @@ type StatKind = "mean" | "percentile" | "probability";
 
 function classifyStatKey(key: string): StatKind {
   if (!key || key === "mean") return "mean";
-  if (key.startsWith("prob_gt_")) return "probability";
+  // Both directions (stats design §4.1): prob_gt_* exceedance and
+  // prob_lt_* non-exceedance (B2 temperature cold rungs).
+  if (key.startsWith("prob_gt_") || key.startsWith("prob_lt_")) return "probability";
   return "percentile";
 }
 
