@@ -798,6 +798,11 @@ def _component_precheck_available(
     fh: int,
     var_key: str,
 ) -> bool:
+    # The raw internal model id must never reach the fetch layer: plugins like
+    # eps/ecmwf map to a different Herbie model id ("ifs"), and passing the
+    # internal id caused the July 6 eps/ifs readiness outage. Fetches below use
+    # request.model from plugin.herbie_request() instead.
+    del model_id
     spec = plugin.get_var(var_key) if hasattr(plugin, "get_var") else None
     selectors = getattr(spec, "selectors", None)
     search_patterns = list(getattr(selectors, "search", []) or [])
@@ -815,7 +820,7 @@ def _component_precheck_available(
                 search_pattern=str(pattern),
             )
             fetch_variable(
-                model_id=model_id,
+                model_id=request.model,
                 product=request.product,
                 search_pattern=str(pattern),
                 run_date=run_dt,

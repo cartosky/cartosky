@@ -124,6 +124,21 @@ _GRIB_DISK_CACHE_LOCK_WAITS = 0
 _EPS_FULL_FILE_CACHE_CLEANUP_LOCK = threading.Lock()
 _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS = 0.0
 
+# Internal CartoSky model ids that are NOT valid Herbie model names. Both map
+# to Herbie's "ifs" via their plugin's herbie_request(). Passing one verbatim
+# to Herbie is the July 6 eps/ifs incident class: probes/fetches against a
+# nonexistent Herbie model. Callers must resolve ids via
+# plugin.herbie_request().model before calling into this module.
+INTERNAL_ONLY_MODEL_IDS = frozenset({"eps", "ecmwf"})
+
+
+def _reject_internal_model_id(model_id: str) -> None:
+    if str(model_id).strip().lower() in INTERNAL_ONLY_MODEL_IDS:
+        raise ValueError(
+            f"model_id {model_id!r} is an internal CartoSky model id, not a Herbie model id; "
+            "resolve it via plugin.herbie_request().model before calling the fetch layer"
+        )
+
 _MISSING_VALUE_TAG_KEYS = (
     "missing_value",
     "_FillValue",
@@ -2522,6 +2537,7 @@ def inventory_lines_for_pattern(
     """Return inventory lines for a pattern with process-local cache/dedupe."""
     from herbie.core import Herbie
 
+    _reject_internal_model_id(model_id)
     kwargs = {
         "model": model_id,
         "product": product,
@@ -2624,6 +2640,7 @@ def product_hour_has_any_idx(
     """Cheap run-hour readiness probe using IDX, with optional GRIB fallback."""
     from herbie.core import Herbie
 
+    _reject_internal_model_id(model_id)
     kwargs = {
         "model": model_id,
         "product": product,
@@ -3695,6 +3712,7 @@ def fetch_variable(
     """
     from herbie.core import Herbie  # lazy — not always installed
 
+    _reject_internal_model_id(model_id)
     raw_herbie_kwargs = dict(herbie_kwargs or {})
     fetch_aggregation = str(raw_herbie_kwargs.pop("_cartosky_fetch_aggregation", "")).strip().lower()
     if fetch_aggregation == "ecmwf_direct_mean_or_pf_mean":

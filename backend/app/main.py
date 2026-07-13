@@ -3901,7 +3901,15 @@ async def forecast_page(
 
     # Per-upstream timings (present only on a cold build) → Server-Timing header,
     # visible in the browser Network tab. Kept out of the response body.
-    headers = {"Cache-Control": "public, max-age=60"}
+    nws_state = (payload.get("source_status") or {}).get("nws")
+    cache_control = (
+        "no-store"
+        if nws_state == "unavailable"
+        else "no-cache"
+        if nws_state == "degraded"
+        else "public, max-age=60"
+    )
+    headers = {"Cache-Control": cache_control}
     timing = payload.pop("_server_timing", None)
     if isinstance(timing, dict) and timing:
         headers["Server-Timing"] = _format_server_timing(

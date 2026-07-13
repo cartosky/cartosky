@@ -2072,6 +2072,46 @@ async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncCl
         yield test_client
 
 
+@pytest.mark.parametrize(
+    ("nws_status", "expected_cache_control"),
+    [
+        ("unavailable", "no-store"),
+        ("degraded", "no-cache"),
+        ("ok", "public, max-age=60"),
+    ],
+)
+async def test_forecast_page_cache_control_tracks_nws_state(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    nws_status: str,
+    expected_cache_control: str,
+) -> None:
+    async def fake_forecast_page(lat: float, lon: float, location_hint=None) -> dict:
+        return {
+            "location": {
+                "display_name": "Sioux Falls, SD",
+                "latitude": lat,
+                "longitude": lon,
+            },
+            "source_status": {
+                "primary_region_mode": "us_hybrid",
+                "nws": nws_status,
+                "open_meteo": "ok",
+            },
+            "current": {"source": "open_meteo" if nws_status == "unavailable" else "nws"},
+        }
+
+    monkeypatch.setattr(forecast_page_service, "get_forecast_page", fake_forecast_page)
+
+    response = await client.get(
+        "/api/v4/forecast-page",
+        params={"lat": 43.55, "lon": -96.73, "display_name": "Sioux Falls, SD"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == expected_cache_control
+
+
 async def test_forecast_page_routes_smoke(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

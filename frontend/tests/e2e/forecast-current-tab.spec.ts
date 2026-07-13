@@ -115,6 +115,30 @@ const FORECAST_PAYLOAD = {
   },
 };
 
+const OPEN_METEO_CORE_PAYLOAD = {
+  ...FORECAST_PAYLOAD,
+  source_status: { primary_region_mode: "us_hybrid", nws: "pending", open_meteo: "ok" },
+  current: {
+    ...FORECAST_PAYLOAD.current,
+    source: "open_meteo",
+    station: null,
+    temperature_f: 89,
+    short_text: "Mostly Sunny",
+  },
+  official_text_forecast: null,
+  afd: null,
+  alerts: [],
+  attribution: {
+    ...FORECAST_PAYLOAD.attribution,
+    current: "Open-Meteo",
+  },
+};
+
+const NWS_ENRICHED_PAYLOAD = {
+  ...FORECAST_PAYLOAD,
+  source_status: { primary_region_mode: "us_hybrid", nws: "ok", open_meteo: "ok" },
+};
+
 test.describe("Forecast current tab", () => {
   test("lands on Current and moves current conditions out of Hourly", async ({ page }) => {
     await page.route("**/api/v4/forecast-page/core**", async (route) => {
@@ -171,5 +195,145 @@ test.describe("Forecast current tab", () => {
     await expect(page.getByRole("heading", { name: "Current Conditions" })).toBeHidden();
     await expect(page.getByRole("heading", { name: "Live Radar" })).toBeHidden();
     await expect(page.getByText("Temperature · Next 24 Hours")).toBeVisible();
+  });
+
+  test("retries transient NWS-unavailable enrichment when a hidden tab becomes visible", async ({ page }) => {
+    await page.addInitScript(() => {
+      let state: DocumentVisibilityState = "hidden";
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => state,
+      });
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        get: () => state !== "visible",
+      });
+      Object.defineProperty(window, "__setForecastVisibility", {
+        configurable: true,
+        value: (nextState: DocumentVisibilityState) => {
+          state = nextState;
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      });
+    });
+
+    let enrichmentRequests = 0;
+    await page.route("**/api/v4/forecast-page/core**", async (route) => {
+      await route.fulfill({ json: OPEN_METEO_CORE_PAYLOAD });
+    });
+    await page.route("**/api/v4/forecast-page?**", async (route) => {
+      enrichmentRequests += 1;
+      if (enrichmentRequests === 1) {
+        await route.fulfill({
+          json: {
+            ...OPEN_METEO_CORE_PAYLOAD,
+            source_status: {
+              ...OPEN_METEO_CORE_PAYLOAD.source_status,
+              nws: "unavailable",
+            },
+          },
+        });
+        return;
+      }
+      await route.fulfill({ json: NWS_ENRICHED_PAYLOAD });
+    });
+    await page.route("**/api/v4/capabilities", async (route) => {
+      await route.fulfill({ json: { supported_models: [], model_catalog: {}, availability: {} } });
+    });
+    await page.route("**/api/regions", async (route) => {
+      await route.fulfill({ json: { regions: {} } });
+    });
+    await page.route("**/api/v4/forecast/meteogram", async (route) => {
+      await route.fulfill({ status: 204, body: "" });
+    });
+    await page.route("**/api/v4/mrms/latest/reflectivity/**", async (route) => {
+      await route.fulfill({ status: 404, body: "" });
+    });
+
+    await page.goto("/forecast?lat=43.55&lon=-96.73&name=Sioux%20Falls%2C%20SD");
+
+    await expect(page.getByText("Open-Meteo", { exact: true })).toBeVisible();
+    await expect.poll(() => enrichmentRequests).toBe(1);
+
+    await page.evaluate(() => {
+      const setVisibility = (window as Window & {
+        __setForecastVisibility?: (state: DocumentVisibilityState) => void;
+      }).__setForecastVisibility;
+      setVisibility?.("visible");
+    });
+
+    await expect.poll(() => enrichmentRequests).toBe(2);
+    await expect(page.getByText("NWS · Sioux Falls, Foss Field · 4.2 km", { exact: true })).toBeVisible();
+  });
+
+  test("retries degraded Open-Meteo current conditions after the degraded cache expires", async ({ page }) => {
+    await page.addInitScript(() => {
+      let state: DocumentVisibilityState = "hidden";
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => state,
+      });
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        get: () => state !== "visible",
+      });
+      Object.defineProperty(window, "__setForecastVisibility", {
+        configurable: true,
+        value: (nextState: DocumentVisibilityState) => {
+          state = nextState;
+          document.dispatchEvent(new Event("visibilitychange"));
+        },
+      });
+    });
+
+    let enrichmentRequests = 0;
+    await page.route("**/api/v4/forecast-page/core**", async (route) => {
+      await route.fulfill({ json: OPEN_METEO_CORE_PAYLOAD });
+    });
+    await page.route("**/api/v4/forecast-page?**", async (route) => {
+      enrichmentRequests += 1;
+      if (enrichmentRequests === 1) {
+        await route.fulfill({
+          json: {
+            ...OPEN_METEO_CORE_PAYLOAD,
+            source_status: {
+              ...OPEN_METEO_CORE_PAYLOAD.source_status,
+              nws: "degraded",
+            },
+          },
+        });
+        return;
+      }
+      await route.fulfill({ json: NWS_ENRICHED_PAYLOAD });
+    });
+    await page.route("**/api/v4/capabilities", async (route) => {
+      await route.fulfill({ json: { supported_models: [], model_catalog: {}, availability: {} } });
+    });
+    await page.route("**/api/regions", async (route) => {
+      await route.fulfill({ json: { regions: {} } });
+    });
+    await page.route("**/api/v4/forecast/meteogram", async (route) => {
+      await route.fulfill({ status: 204, body: "" });
+    });
+    await page.route("**/api/v4/mrms/latest/reflectivity/**", async (route) => {
+      await route.fulfill({ status: 404, body: "" });
+    });
+
+    await page.goto("/forecast?lat=43.55&lon=-96.73&name=Sioux%20Falls%2C%20SD");
+
+    await expect(page.getByText("Open-Meteo", { exact: true })).toBeVisible();
+    await expect.poll(() => enrichmentRequests).toBe(1);
+
+    await page.evaluate(() => {
+      const resumedAt = Date.now() + 66_000;
+      Date.now = () => resumedAt;
+      const setVisibility = (window as Window & {
+        __setForecastVisibility?: (state: DocumentVisibilityState) => void;
+      }).__setForecastVisibility;
+      setVisibility?.("visible");
+    });
+
+    await expect.poll(() => enrichmentRequests).toBe(2);
+    await expect(page.getByText("NWS · Sioux Falls, Foss Field · 4.2 km", { exact: true })).toBeVisible();
   });
 });
