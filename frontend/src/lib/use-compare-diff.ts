@@ -10,6 +10,7 @@ import {
 } from "@/lib/compare-diff";
 import { gridFrameCache } from "@/lib/grid-frame-cache";
 import { buildDiffLegend, getDiffScale } from "@/lib/compare-diff-scales";
+import { shouldExposeCompareDiff } from "@/lib/compare-alignment";
 
 const DIFF_DEBOUNCE_MS = 150;
 
@@ -33,6 +34,8 @@ export type UseCompareDiffParams = {
   /** Needed for the diverging legend title (Left − Right). */
   leftModel: string;
   rightModel: string;
+  leftRun: string;
+  rightRun: string;
   varKey: string | null;
   /** False when not in diff mode — the hook is a no-op returning null state. */
   enabled: boolean;
@@ -66,9 +69,20 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     rightGridMeta,
     leftModel,
     rightModel,
+    leftRun,
+    rightRun,
     varKey,
     enabled,
   } = params;
+
+  const inputsReady = shouldExposeCompareDiff({
+    enabled,
+    leftFrameUrl,
+    rightFrameUrl,
+    leftGridMeta,
+    rightGridMeta,
+    varKey,
+  });
 
   const [diffManifest, setDiffManifest] = useState<GridManifestResponse | null>(null);
   const [diffFrameUrl, setDiffFrameUrl] = useState<string | null>(null);
@@ -137,7 +151,7 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     }
   };
 
-  // Signature of the *selection* (models + variable). Frame-URL-only changes
+  // Signature of the *selection* (models + concrete runs + variable). Frame-URL-only changes
   // are scrub steps: the previous diff stays on screen while the next one
   // computes. Selection changes clear it — stale pixels under a new
   // variable/model label would be misleading.
@@ -147,17 +161,14 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     const epoch = epochRef.current + 1;
     epochRef.current = epoch;
 
-    const selectionSig = `${leftModel}|${rightModel}|${varKey ?? ""}`;
+    const selectionSig = `${leftModel}|${leftRun}|${rightModel}|${rightRun}|${varKey ?? ""}`;
     const selectionChanged = selectionSigRef.current !== selectionSig;
     selectionSigRef.current = selectionSig;
 
     // Readiness must always re-confirm for the new selection (screenshot gate).
     setReadySteps(RESET_STEPS);
 
-    const ready = Boolean(
-      enabled && leftFrameUrl && rightFrameUrl && leftGridMeta && rightGridMeta && varKey,
-    );
-    if (!ready) {
+    if (!inputsReady) {
       cancelPrefetch();
       revokePublishedBlob();
       setDiffManifest(null);
@@ -286,7 +297,10 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     rightGridMeta,
     leftModel,
     rightModel,
+    leftRun,
+    rightRun,
     varKey,
+    inputsReady,
     legendForSelection,
   ]);
 
@@ -296,5 +310,17 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
     cancelPrefetch();
   }, []);
 
+  // Effects clear retained state after commit; mask it during render as well so
+  // stale pixels can never appear for one frame under a new selection label.
+  if (!inputsReady) {
+    return {
+      diffManifest: null,
+      diffFrameUrl: null,
+      diffLegend: null,
+      isLoading: false,
+      error: null,
+      readySteps: RESET_STEPS,
+    };
+  }
   return { diffManifest, diffFrameUrl, diffLegend, isLoading, error, readySteps };
 }

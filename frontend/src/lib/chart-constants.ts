@@ -282,6 +282,24 @@ export function ensembleProbVarId(
   return `${baseVar}__prob_${direction}_${formatProbThresholdToken(threshold)}`;
 }
 
+/** Probability-only request chunk; deliberately excludes the base variable. */
+export function ensembleProbabilityRequestVariables(
+  baseVar: string,
+  direction: EnsembleProbDirection,
+): string[] {
+  return (ENSEMBLE_STATS_CHARTS[baseVar]?.probThresholds ?? [])
+    .filter((spec) => spec.direction === direction)
+    .map((spec) => ensembleProbVarId(baseVar, spec.threshold, direction));
+}
+
+/** Stats must follow the member payload the API actually served, never a URL pin. */
+export function resolveEnsembleStatsRun(
+  _pinnedRun: string | null | undefined,
+  memberServedRun: string | null | undefined,
+): string | null {
+  return memberServedRun ?? null;
+}
+
 /**
  * Percentile band fills: outer = 10–90th, inner = 25–75th drawn over it (the
  * overlap reads darker). Model family hue matches the plume/mean charts.
@@ -305,4 +323,3 @@ export function plumeControlStroke(model: string): string {
   void model;
   return PLUME_MEAN_STROKE;
 }
-

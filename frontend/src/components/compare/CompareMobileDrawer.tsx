@@ -35,6 +35,7 @@ type CompareMobileDrawerBaseProps = {
   onLeftRunChange: (value: string) => void;
   onRightRunChange: (value: string) => void;
   onSwap: () => void;
+  swapDisabled: boolean;
   basemapMode: BasemapMode;
   onToggleBasemap: () => void;
   showLegends: boolean;
@@ -185,6 +186,7 @@ function DiffComparisonFields({
   onLeftRunChange,
   onRightRunChange,
   onSwap,
+  swapDisabled,
 }: {
   lModel: string;
   rModel: string;
@@ -206,6 +208,7 @@ function DiffComparisonFields({
   onLeftRunChange: (value: string) => void;
   onRightRunChange: (value: string) => void;
   onSwap: () => void;
+  swapDisabled: boolean;
 }) {
   const variableSelectOptions = diffMutualVariables.map((key) => ({
     value: key,
@@ -226,8 +229,9 @@ function DiffComparisonFields({
         <button
           type="button"
           onClick={onSwap}
+          disabled={swapDisabled}
           aria-label="Swap left and right models"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.14] bg-[#07111f] text-white/55 transition-all hover:border-white/30 hover:text-white"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.14] bg-[#07111f] text-white/55 transition-all hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
         >
           <ArrowLeftRight className="h-4 w-4" />
         </button>
@@ -299,6 +303,7 @@ function SplitComparisonFields({
   onLeftRunChange,
   onRightRunChange,
   onSwap,
+  swapDisabled,
 }: {
   lModel: string;
   rModel: string;
@@ -327,6 +332,7 @@ function SplitComparisonFields({
   onLeftRunChange: (value: string) => void;
   onRightRunChange: (value: string) => void;
   onSwap: () => void;
+  swapDisabled: boolean;
 }) {
   const variableOptionsForIds = (ids: string[]): RunOption[] =>
     ids.map((key) => ({
@@ -355,8 +361,9 @@ function SplitComparisonFields({
         <button
           type="button"
           onClick={onSwap}
+          disabled={swapDisabled}
           aria-label="Swap upper and lower panels"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.14] bg-[#07111f] text-white/55 transition-all hover:border-white/30 hover:text-white"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.14] bg-[#07111f] text-white/55 transition-all hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
         >
           <ArrowLeftRight className="h-4 w-4" />
         </button>
@@ -605,6 +612,7 @@ export function CompareMobileDrawer(props: CompareMobileDrawerProps) {
             onLeftRunChange={props.onLeftRunChange}
             onRightRunChange={props.onRightRunChange}
             onSwap={props.onSwap}
+            swapDisabled={props.swapDisabled}
           />
         )}
       />,
@@ -644,6 +652,7 @@ export function CompareMobileDrawer(props: CompareMobileDrawerProps) {
           onLeftRunChange={props.onLeftRunChange}
           onRightRunChange={props.onRightRunChange}
           onSwap={props.onSwap}
+          swapDisabled={props.swapDisabled}
         />
       )}
     />,

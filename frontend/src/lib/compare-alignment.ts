@@ -1,5 +1,11 @@
 import { parseRunId } from "@/lib/time-axis";
 
+type GridManifestIdentity = {
+  model: string;
+  run: string;
+  var: string;
+};
+
 /**
  * Forecast-hour offset that aligns the right run's frames to the left run's
  * valid times: a left frame at hour `h` and a right frame at hour
@@ -47,4 +53,40 @@ export function alignedMutualGridHours(
 ): number[] {
   const rightSet = new Set(rightHours);
   return leftHours.filter((hour) => rightSet.has(hour + offsetHours));
+}
+
+/** A loaded manifest is usable only for the complete current selection. */
+export function gridManifestMatchesSelection(
+  manifest: GridManifestIdentity | null | undefined,
+  model: string,
+  resolvedRun: string,
+  requestVariable: string,
+): boolean {
+  return Boolean(
+    manifest
+    && resolvedRun
+    && resolvedRun !== "latest"
+    && manifest.model === model
+    && manifest.run === resolvedRun
+    && manifest.var === requestVariable,
+  );
+}
+
+/** Synchronous render gate for diff state retained from a previous selection. */
+export function shouldExposeCompareDiff(args: {
+  enabled: boolean;
+  leftFrameUrl: string | null;
+  rightFrameUrl: string | null;
+  leftGridMeta: object | null;
+  rightGridMeta: object | null;
+  varKey: string | null;
+}): boolean {
+  return Boolean(
+    args.enabled
+    && args.leftFrameUrl
+    && args.rightFrameUrl
+    && args.leftGridMeta
+    && args.rightGridMeta
+    && args.varKey,
+  );
 }

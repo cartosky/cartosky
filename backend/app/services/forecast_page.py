@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from .. import config
+from ..models.base import classify_ensemble_var_id
 from . import nws as nws_service
 from . import sampling
 from .run_ids import parse_run_id_datetime
@@ -3166,6 +3167,19 @@ def _member_series_for_model_var(
     return members_block
 
 
+def _pinned_run_validation_variables(variables: list[str]) -> list[str]:
+    """Add base anchors for derived stats without expanding sampled output."""
+    validation = list(variables)
+    for var in variables:
+        classified = classify_ensemble_var_id(var)
+        if classified is None:
+            continue
+        base, kind, _detail = classified
+        if kind in {"percentile", "prob_gt", "prob_lt"} and base not in validation:
+            validation.append(base)
+    return validation
+
+
 def get_forecast_meteogram(
     *,
     lat: float,
@@ -3201,6 +3215,7 @@ def get_forecast_meteogram(
         normalized = str(var or "").strip().lower()
         if normalized and normalized not in norm_vars:
             norm_vars.append(normalized)
+    pin_validation_vars = _pinned_run_validation_variables(norm_vars)
 
     if include_members:
         unsupported = [m for m in norm_models if not _model_supports_members(m)]
@@ -3251,7 +3266,7 @@ def get_forecast_meteogram(
             if pinned_run:
                 concrete = sampling.resolve_run(model, pinned_run, region=region)
                 if concrete and sampling.run_complete_for_variables(
-                    model, concrete, norm_vars, region=region
+                    model, concrete, pin_validation_vars, region=region
                 ):
                     resolved = concrete
             if resolved is None and include_members and _model_supports_members(model):

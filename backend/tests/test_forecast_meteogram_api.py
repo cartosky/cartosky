@@ -376,6 +376,91 @@ async def test_meteogram_pinned_unknown_run_falls_back(client: httpx.AsyncClient
     assert gfs["status"] == "ok"
 
 
+def test_pinned_probability_validation_anchors_to_base_variable() -> None:
+    helper = getattr(
+        main_module.forecast_page_service,
+        "_pinned_run_validation_variables",
+        None,
+    )
+    assert helper is not None
+    probability_vars = [
+        "precip_total__prob_gt_0p1",
+        "precip_total__prob_gt_0p25",
+        "precip_total__prob_gt_0p5",
+        "precip_total__prob_gt_1p0",
+        "precip_total__prob_gt_1p5",
+        "precip_total__prob_gt_2p0",
+    ]
+    assert helper(probability_vars) == [*probability_vars, "precip_total"]
+    assert helper(["tmp2m"]) == ["tmp2m"]
+
+
+async def test_pinned_probability_request_stays_on_base_complete_run(
+    client: httpx.AsyncClient,
+) -> None:
+    older_run = "20260306_00z"
+    newer_run = "20260306_06z"
+    base_var = "precip_total"
+    probability_vars = [
+        "precip_total__prob_gt_0p1",
+        "precip_total__prob_gt_0p25",
+        "precip_total__prob_gt_0p5",
+        "precip_total__prob_gt_1p0",
+        "precip_total__prob_gt_1p5",
+        "precip_total__prob_gt_2p0",
+    ]
+    _publish_tmp2m(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gefs",
+        older_run,
+        set_latest=False,
+    )
+    _publish_variable(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gefs",
+        older_run,
+        base_var,
+        "in",
+    )
+    for probability_var in probability_vars:
+        _publish_variable(
+            main_module.PUBLISHED_ROOT,
+            main_module.MANIFESTS_ROOT,
+            "gefs",
+            older_run,
+            probability_var,
+            "%",
+        )
+    _publish_tmp2m(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gefs",
+        newer_run,
+        set_latest=True,
+    )
+    _publish_variable(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gefs",
+        newer_run,
+        base_var,
+        "in",
+    )
+    _reset_main_caches()
+
+    body = _body(["gefs"], probability_vars)
+    body["pinned_runs"] = {"gefs": newer_run}
+    response = await client.post("/api/v4/forecast/meteogram", json=body)
+
+    assert response.status_code == 200
+    gefs = response.json()["series"]["gefs"]
+    assert gefs["run_id"] == newer_run
+    assert gefs["status"] == "partial"
+    assert all(gefs["variables"][var]["points"] is None for var in probability_vars)
+
+
 async def test_meteogram_no_complete_run_is_unavailable(client: httpx.AsyncClient) -> None:
     # nam has only a building run (2 of 10 frames) -> no complete run -> unavailable.
     _publish_tmp2m(

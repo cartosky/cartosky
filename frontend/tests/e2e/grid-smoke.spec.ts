@@ -611,6 +611,112 @@ async function stubViewerVariableFallbackRoutes(page: Page) {
   });
 }
 
+const OFFSET_LEFT_RUN = '20260330_12z';
+const OFFSET_RIGHT_RUN = '20260330_00z';
+const OFFSET_HOURS = [0, 6, 12, 18, 24];
+
+function offsetValidTime(run: string, fh: number) {
+  const cycle = run === OFFSET_LEFT_RUN ? 12 : 0;
+  return new Date(Date.UTC(2026, 2, 30, cycle + fh)).toISOString();
+}
+
+function offsetRunManifest(model: string, run: string) {
+  return {
+    model,
+    run,
+    region: 'conus',
+    variables: {
+      tmp2m: {
+        display_name: 'Temperature 2m',
+        kind: 'continuous',
+        units: 'F',
+        frames: OFFSET_HOURS.map((fh) => ({ fh, valid_time: offsetValidTime(run, fh) })),
+      },
+    },
+  };
+}
+
+function offsetFrames(run: string) {
+  return OFFSET_HOURS.map((fh) => ({
+    fh,
+    has_cog: true,
+    run,
+    valid_time: offsetValidTime(run, fh),
+    meta: { meta: { valid_time: offsetValidTime(run, fh), units: 'F', kind: 'continuous', display_name: 'Temperature 2m' } },
+  }));
+}
+
+function offsetGridManifest(model: string, run: string) {
+  return {
+    manifest_version: 1,
+    subtype: 'grid',
+    model,
+    run,
+    var: 'tmp2m',
+    projection: 'EPSG:3857',
+    bbox: [-14920000.0, 7356000.0, -14914000.0, 7362000.0],
+    grid: { width: 2, height: 2, dtype: 'uint16', endianness: 'little', scale: 0.1, offset: -100.0, nodata: 65535, units: 'F' },
+    palette: { color_map_id: 'tmp2m', kind: 'continuous', transparent_below_min: null, transparent_zero: false },
+    lods: [{
+      level: 0,
+      width: 2,
+      height: 2,
+      frames: OFFSET_HOURS.map((fh) => ({
+        fh,
+        file: `fh${String(fh).padStart(3, '0')}.l0.u16.bin`,
+        valid_time: offsetValidTime(run, fh),
+        url: `/api/v4/grid/${model}/${run}/tmp2m/fh${String(fh).padStart(3, '0')}.l0.u16.bin`,
+      })),
+    }],
+  };
+}
+
+async function stubCompareOffsetRoutes(
+  page: Page,
+  waitForGridManifest: () => Promise<void> = async () => {},
+) {
+  await stubSharedViewerRoutes(page);
+  const regions = regionPayload();
+  regions.regions.conus.defaultCenter = [-98.58, 39.83];
+  await page.route('**/api/regions', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(regions) });
+  });
+  const capabilities = variableFallbackCapabilityPayload();
+  capabilities.availability.hrrr.latest_run = OFFSET_LEFT_RUN;
+  capabilities.availability.hrrr.published_runs = [OFFSET_LEFT_RUN];
+  capabilities.availability.gfs.latest_run = OFFSET_RIGHT_RUN;
+  capabilities.availability.gfs.published_runs = [OFFSET_RIGHT_RUN];
+  await page.route('**/api/v4/capabilities', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(capabilities) });
+  });
+  for (const [model, run] of [['hrrr', OFFSET_LEFT_RUN], ['gfs', OFFSET_RIGHT_RUN]] as const) {
+    await page.route(`**/api/v4/${model}/runs`, async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([run]) });
+    });
+    for (const runKey of ['latest', run]) {
+      await page.route(`**/api/v4/${model}/${runKey}/manifest**`, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(offsetRunManifest(model, run)) });
+      });
+      await page.route(`**/api/v4/${model}/${runKey}/tmp2m/frames**`, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(offsetFrames(run)) });
+      });
+      await page.route(`**/api/v4/${model}/${runKey}/tmp2m/grid-manifest**`, async (route) => {
+        await waitForGridManifest();
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(offsetGridManifest(model, run)) });
+      });
+    }
+  }
+  await page.route('**/api/v4/grid/hrrr/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_A.buffer) });
+  });
+  await page.route('**/api/v4/grid/gfs/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
+  });
+  await page.route('**/static/cities/v1/cities_conus_can_v2.json', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ type: 'FeatureCollection', features: [] }) });
+  });
+}
+
 async function stubViewerSpcEmptyStateRoutes(page: Page) {
   await stubSharedViewerRoutes(page);
   await page.route('**/api/v4/capabilities', async (route) => {
@@ -658,6 +764,78 @@ test.describe('compare diff hour resolution', () => {
 });
 
 test.describe('Grid-only smoke', () => {
+  test('compare swap preserves valid time when both offset runs are selected as Latest', async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop-only swap control.');
+    let releaseGridManifests: () => void = () => {};
+    const gridManifestGate = new Promise<void>((resolve) => {
+      releaseGridManifests = resolve;
+    });
+    await stubCompareOffsetRoutes(page, () => gridManifestGate);
+    await page.goto('/compare?lm=hrrr&lv=tmp2m&lr=latest&rm=gfs&rv=tmp2m&rr=latest&fh=6&lat=39.83&lon=-98.58&z=4');
+    const swapButton = page.getByRole('button', { name: 'Swap left and right panels' }).first();
+    await expect(swapButton).toBeDisabled({ timeout: 15_000 });
+    releaseGridManifests();
+    await expect(page.getByText('FH 6 / 18', { exact: true })).toBeVisible();
+    await expect(swapButton).toBeEnabled();
+    await swapButton.click();
+    await expect(page.getByText('FH 18 / 6', { exact: true })).toBeVisible();
+  });
+
+  test('compare diff hides the prior result in the selection-change commit', async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop-only swap control.');
+    let blockGridManifests = false;
+    let releaseGridManifests: () => void = () => {};
+    const gridManifestGate = new Promise<void>((resolve) => {
+      releaseGridManifests = resolve;
+    });
+    await stubCompareOffsetRoutes(
+      page,
+      () => (blockGridManifests ? gridManifestGate : Promise.resolve()),
+    );
+    await page.goto('/compare?mode=diff&lm=hrrr&lv=tmp2m&lr=latest&rm=gfs&rv=tmp2m&rr=latest&fh=6&lat=39.83&lon=-98.58&z=4');
+
+    const oldLegend = page.getByText('Difference: HRRR − GFS', { exact: true });
+    const swapButton = page.getByRole('button', { name: 'Swap left and right panels' }).first();
+    await expect(oldLegend).toBeVisible({ timeout: 15_000 });
+    await expect(swapButton).toBeEnabled();
+    blockGridManifests = true;
+
+    await page.evaluate(() => {
+      const probeWindow = window as typeof window & {
+        __staleDiffAtSelectionCommit?: boolean | null;
+      };
+      probeWindow.__staleDiffAtSelectionCommit = null;
+      const observer = new MutationObserver(() => {
+        const button = document.querySelector<HTMLButtonElement>(
+          'button[aria-label="Swap left and right panels"]',
+        );
+        if (!button?.disabled) {
+          return;
+        }
+        probeWindow.__staleDiffAtSelectionCommit =
+          document.body.textContent?.includes('Difference: HRRR − GFS') ?? false;
+        observer.disconnect();
+      });
+      observer.observe(document.body, {
+        attributes: true,
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    });
+
+    await swapButton.click();
+    await expect.poll(() => page.evaluate(() => (
+      window as typeof window & { __staleDiffAtSelectionCommit?: boolean | null }
+    ).__staleDiffAtSelectionCommit)).toBe(false);
+    await expect(oldLegend).toBeHidden();
+    await expect(swapButton).toBeDisabled();
+
+    releaseGridManifests();
+    await expect(page.getByText('Difference: GFS − HRRR', { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(swapButton).toBeEnabled();
+  });
+
   test('grid-default viewer path avoids retired legacy requests', async ({ page }) => {
     const loopRequests: string[] = [];
     const tileRequests: string[] = [];
