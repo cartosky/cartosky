@@ -28,7 +28,12 @@ import { buildComparePermalinkSearch, readComparePermalink, withForeignSearchPar
 
 import { mutualDiffEligibleVariables } from "@/lib/compare-diff-eligibility";
 import { useCompareDiff } from "@/lib/use-compare-diff";
-import { alignedMutualGridHours, runAlignmentOffsetHours, type GridMeta } from "@/lib/compare-diff";
+import {
+  gridManifestMatchesSelection,
+  reanchorForecastHourOnSwap,
+  runAlignmentOffsetHours,
+} from "@/lib/compare-alignment";
+import { alignedMutualGridHours, type GridMeta } from "@/lib/compare-diff";
 import { selectGridManifestLod } from "@/lib/grid-lod";
 import { buildMapRegionViews } from "@/lib/map-region-views";
 import { MAP_VIEW_DEFAULTS } from "@/lib/config";
@@ -495,6 +500,7 @@ function DiffControlBar({
   onLeftRunChange,
   onRightRunChange,
   onSwap,
+  swapDisabled,
   onShare,
   onSettingsClick,
   onDismissNotice,
@@ -524,6 +530,7 @@ function DiffControlBar({
   onLeftRunChange: (value: string) => void;
   onRightRunChange: (value: string) => void;
   onSwap: () => void;
+  swapDisabled: boolean;
   onShare: () => void;
   onSettingsClick: () => void;
   onDismissNotice: () => void;
@@ -562,7 +569,8 @@ function DiffControlBar({
         <button
           type="button"
           onClick={onSwap}
-          className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/[0.14] bg-[#07111f] text-white/50 shadow-[0_2px_8px_rgba(0,0,0,0.5)] transition-all hover:border-white/30 hover:text-white"
+          disabled={swapDisabled}
+          className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/[0.14] bg-[#07111f] text-white/50 shadow-[0_2px_8px_rgba(0,0,0,0.5)] transition-all hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:border-white/[0.14] disabled:hover:text-white/50"
           aria-label="Swap left and right panels"
           title="Swap panels"
         >
@@ -1042,6 +1050,19 @@ export default function Compare() {
   );
   const leftGridMeta = useMemo(() => resolveGridMeta(leftLoader.gridManifest), [leftLoader.gridManifest]);
   const rightGridMeta = useMemo(() => resolveGridMeta(rightLoader.gridManifest), [rightLoader.gridManifest]);
+  const leftGridManifestCurrent = gridManifestMatchesSelection(
+    leftLoader.gridManifest,
+    lModel,
+    leftLoader.resolvedRun,
+    lRequestVariable,
+  );
+  const rightGridManifestCurrent = gridManifestMatchesSelection(
+    rightLoader.gridManifest,
+    rModel,
+    rightLoader.resolvedRun,
+    rRequestVariable,
+  );
+  const swapDisabled = !leftGridManifestCurrent || !rightGridManifestCurrent;
 
   // Adjacent-hour frame URLs warmed into GridFrameCache after each diff settles,
   // so sequential scrubbing finds bytes already cached (no loading flash).
@@ -1061,8 +1082,15 @@ export default function Compare() {
     rightGridMeta,
     leftModel: lModel,
     rightModel: rModel,
+    leftRun: leftLoader.resolvedRun,
+    rightRun: rightLoader.resolvedRun,
     varKey: mode === "diff" ? lRequestVariable : null,
-    enabled: mode === "diff" && !leftLoader.loading && !rightLoader.loading,
+    enabled:
+      mode === "diff"
+      && !leftLoader.loading
+      && !rightLoader.loading
+      && leftGridManifestCurrent
+      && rightGridManifestCurrent,
     leftPrefetchUrls,
     rightPrefetchUrls,
   });
@@ -1472,13 +1500,48 @@ export default function Compare() {
   }, [captureComparePng, isScreenshotMode]);
 
   const handleSwap = useCallback(() => {
+    // Loader state clears in a passive effect after the selection changes. Do
+    // not calculate against a manifest that belongs to the previous selection.
+    if (
+      !leftGridManifestCurrent
+      || !rightGridManifestCurrent
+      || !leftLoader.gridManifest
+      || !rightLoader.gridManifest
+    ) {
+      return;
+    }
+    const offset = runAlignmentOffsetHours(
+      leftLoader.gridManifest.run,
+      rightLoader.gridManifest.run,
+    );
+    if (offset !== 0) {
+      setForecastHour((fh) => reanchorForecastHourOnSwap(fh, offset));
+    }
+    if (mode === "split") {
+      setLProduct(rProduct);
+      setRProduct(lProduct);
+    }
     setLModel(rModel);
     setLVariable(rVariable);
     setLRun(rRun);
     setRModel(lModel);
     setRVariable(lVariable);
     setRRun(lRun);
-  }, [lModel, lVariable, lRun, rModel, rVariable, rRun]);
+  }, [
+    leftGridManifestCurrent,
+    rightGridManifestCurrent,
+    leftLoader.gridManifest,
+    rightLoader.gridManifest,
+    mode,
+    lModel,
+    lVariable,
+    lRun,
+    lProduct,
+    rModel,
+    rVariable,
+    rRun,
+    rProduct,
+  ]);
 
   // ── Share to TWF ───────────────────────────────────────────────────────
   // The screenshot is produced server-side: TwfShareModal POSTs the /compare
@@ -1523,7 +1586,12 @@ export default function Compare() {
     // Never snap against a mid-hydration hour list: while a loader is still
     // resolving, its hours can be a partial subset (e.g. just [0]) and the
     // intersection would snap the hour somewhere wildly wrong.
-    if (leftLoader.loading || rightLoader.loading) {
+    if (
+      leftLoader.loading
+      || rightLoader.loading
+      || !leftGridManifestCurrent
+      || !rightGridManifestCurrent
+    ) {
       return;
     }
     if (mutualAlignedHours.length === 0) {
@@ -1536,6 +1604,8 @@ export default function Compare() {
   }, [
     leftLoader.loading,
     rightLoader.loading,
+    leftGridManifestCurrent,
+    rightGridManifestCurrent,
     mutualAlignedHours,
     forecastHour,
   ]);
@@ -2014,6 +2084,7 @@ export default function Compare() {
             onLeftRunChange={setLRun}
             onRightRunChange={setRRun}
             onSwap={handleSwap}
+            swapDisabled={swapDisabled}
             onShare={handleShare}
             onSettingsClick={handleSettingsClick}
             onDismissNotice={() => setDiffNotice(null)}
@@ -2083,7 +2154,8 @@ export default function Compare() {
               type="button"
               onClick={(e) => { e.stopPropagation(); handleSwap(); }}
               onMouseDown={(e) => e.stopPropagation()}
-              className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex h-7 w-7 items-center justify-center rounded-lg border border-white/[0.14] bg-[#07111f] text-white/50 transition-all hover:border-white/30 hover:text-white shadow-[0_2px_8px_rgba(0,0,0,0.5)]"
+              disabled={swapDisabled}
+              className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex h-7 w-7 items-center justify-center rounded-lg border border-white/[0.14] bg-[#07111f] text-white/50 transition-all hover:border-white/30 hover:text-white shadow-[0_2px_8px_rgba(0,0,0,0.5)] disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:border-white/[0.14] disabled:hover:text-white/50"
               aria-label="Swap left and right panels"
               title="Swap panels"
             >
@@ -2301,6 +2373,7 @@ export default function Compare() {
             onLeftRunChange={setLRun}
             onRightRunChange={setRRun}
             onSwap={handleSwap}
+            swapDisabled={swapDisabled}
             basemapMode={basemapMode}
             onToggleBasemap={() => setBasemapMode((prev) => (prev === "dark" ? "light" : "dark"))}
             showLegends={showLegends}
@@ -2340,6 +2413,7 @@ export default function Compare() {
             onLeftRunChange={setLRun}
             onRightRunChange={setRRun}
             onSwap={handleSwap}
+            swapDisabled={swapDisabled}
             basemapMode={basemapMode}
             onToggleBasemap={() => setBasemapMode((prev) => (prev === "dark" ? "light" : "dark"))}
             showLegends={showLegends}

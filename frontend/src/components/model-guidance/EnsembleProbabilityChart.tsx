@@ -31,6 +31,8 @@ type Props = {
   model: string;
   /** Base variable id (e.g. "precip_total"); prob ids derive from it. */
   variable: string;
+  /** Member plume run the chart must match; mismatched fallback runs are hidden. */
+  expectedRun?: string | null;
   /** Configured threshold specs in display order (chart-constants matrix). */
   thresholds: readonly EnsembleProbThresholdSpec[];
   /** Unit suffix for the per-line labels (e.g. `°F` → `< 32°F`). */
@@ -54,6 +56,7 @@ export function EnsembleProbabilityChart({
   ltResponse,
   model,
   variable,
+  expectedRun,
   thresholds,
   thresholdUnitSuffix,
   timezone,
@@ -62,14 +65,17 @@ export function EnsembleProbabilityChart({
 }: Props) {
   // Both directions are pinned to the same run upstream, but each request
   // can independently fall back when that run can't serve its vars — never
-  // mix two runs' probabilities in one chart.
+  // mix two runs' probabilities in one chart or the member plume run.
   const gtRun = gtResponse?.series?.[model]?.run_id ?? null;
   const ltRun = ltResponse?.series?.[model]?.run_id ?? null;
   const runsConsistent = !gtRun || !ltRun || gtRun === ltRun;
+  const matchesMemberRun =
+    !expectedRun || ((!gtRun || gtRun === expectedRun) && (!ltRun || ltRun === expectedRun));
+  const chartRunsConsistent = runsConsistent && matchesMemberRun;
 
   const activeThresholds = useMemo(
     () =>
-      runsConsistent
+      chartRunsConsistent
         ? thresholds
             .map((spec) => ({
               spec,
@@ -81,7 +87,7 @@ export function EnsembleProbabilityChart({
             }))
             .filter((entry) => entry.points != null)
         : [],
-    [runsConsistent, gtResponse, ltResponse, model, variable, thresholds],
+    [chartRunsConsistent, gtResponse, ltResponse, model, variable, thresholds],
   );
 
   const { data, hasData } = useMemo(

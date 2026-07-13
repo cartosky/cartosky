@@ -24,8 +24,9 @@ import {
   ENSEMBLE_STATS_PERCENTILES,
   MEMBER_PLUME_MODELS,
   ensemblePercentileVarId,
-  ensembleProbVarId,
+  ensembleProbabilityRequestVariables,
   modelShortName,
+  resolveEnsembleStatsRun,
 } from "@/lib/chart-constants";
 import { eligibleEnsembleModels } from "@/lib/eligible-ensemble-models";
 import { useEntitlements } from "@/lib/entitlements";
@@ -398,14 +399,14 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
   // chart on the page describes the same run: unpinned, "latest
   // members-ready" and "latest stats-ready" can briefly diverge while a
   // fresh run's stats pass finishes (~2 min after members promote). The base
-  // variable rides along for the band chart's mean overlay — an ensemble
-  // base series IS the mean. NOTE the backend silently falls back to the
-  // latest complete run when a pinned run can't serve the requested vars, so
-  // the card subtitles read the SERVED run_id, never the pin.
+  // variable rides along only for the band chart's mean overlay — an ensemble
+  // base series IS the mean. Probability chunks remain probability-only so
+  // precip's six thresholds still fit the API's six-variable limit; backend
+  // pin validation derives the base anchor without adding it to this request.
   const statsConfig = ENSEMBLE_STATS_CHARTS[variable];
   const hasStatsCharts = Boolean(statsConfig);
   const statsRun = memberModel
-    ? pinnedRuns[memberModel] ?? memberData?.series?.[memberModel]?.run_id ?? null
+    ? resolveEnsembleStatsRun(pinnedRuns[memberModel], memberServedRun)
     : null;
   const statsPinnedRuns = useMemo(
     () => (memberModel && statsRun ? { [memberModel]: statsRun } : {}),
@@ -424,17 +425,17 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
   );
   const probGtVariables = useMemo(
     () =>
-      (statsConfig?.probThresholds ?? [])
-        .filter((spec) => spec.direction === "gt")
-        .map((spec) => ensembleProbVarId(variable, spec.threshold, "gt")),
-    [variable, statsConfig],
+      hasStatsCharts
+        ? ensembleProbabilityRequestVariables(variable, "gt")
+        : [],
+    [variable, hasStatsCharts],
   );
   const probLtVariables = useMemo(
     () =>
-      (statsConfig?.probThresholds ?? [])
-        .filter((spec) => spec.direction === "lt")
-        .map((spec) => ensembleProbVarId(variable, spec.threshold, "lt")),
-    [variable, statsConfig],
+      hasStatsCharts
+        ? ensembleProbabilityRequestVariables(variable, "lt")
+        : [],
+    [variable, hasStatsCharts],
   );
   const {
     data: percentileData,
@@ -691,6 +692,7 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
                   ltResponse={probLtData}
                   model={memberModel!}
                   variable={variable}
+                  expectedRun={statsRun}
                   thresholds={statsConfig.probThresholds}
                   thresholdUnitSuffix={statsConfig.thresholdUnitSuffix}
                   timezone={timezone}
