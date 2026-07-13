@@ -318,6 +318,7 @@ def test_mrms_reflectivity_display_prep_sets_edge_fade_render_hint() -> None:
     _, meta = prepare_grid_display_values(model="mrms", var="reflectivity", values=values)
     assert meta is not None
     assert meta.get("edge_fade") is True
+    assert meta.get("edge_fill_value") == 0.0
 
     _, other_meta = prepare_grid_display_values(model="gfs", var="precip_total", values=values)
     assert other_meta is not None

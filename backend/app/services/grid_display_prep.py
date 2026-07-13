@@ -21,10 +21,11 @@ class GridDisplayPrepConfig:
     # palette indices), so negatives are numeric noise and get zeroed. Set
     # False for variables where negative values are real signal (dBZ).
     clamp_negative: bool = True
-    # Render hint (values untouched): the viewer fades alpha where the
-    # bilinear kernel is partially nodata, instead of renormalizing to full
-    # opacity. Use for sparse fields whose nodata means "no signal" (radar
-    # echo edges), not for dense fields whose nodata is the domain boundary.
+    # Render hint (values untouched): the viewer interpolates toward
+    # edge_fill_value where the bilinear kernel is partially nodata, so echo
+    # boundaries render as smooth iso-contours instead of hard texel boxes.
+    # Use for sparse fields whose nodata means "no signal" (radar echo
+    # edges), not for dense fields whose nodata is the domain boundary.
     render_edge_fade: bool = False
 
 
@@ -366,4 +367,8 @@ def prepare_grid_display_values(
         prep_meta["categorical_nearest"] = True
     if config.render_edge_fade:
         prep_meta["edge_fade"] = True
+        # 0.0 dBZ sits below the reflectivity color floor (5 dBZ), matching
+        # the valid-0 skirt legacy frames carried, so the rendered contour
+        # position is identical to the pre-masking display.
+        prep_meta["edge_fill_value"] = 0.0
     return prepared, prep_meta

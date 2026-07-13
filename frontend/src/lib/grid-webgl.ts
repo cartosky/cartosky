@@ -524,6 +524,11 @@ function edgeFadeForManifest(manifest: GridManifestResponse | null): boolean {
   return Boolean(manifest?.display_prep?.edge_fade);
 }
 
+function edgeFillValueForManifest(manifest: GridManifestResponse | null): number {
+  const value = Number(manifest?.display_prep?.edge_fill_value);
+  return Number.isFinite(value) ? value : 0;
+}
+
 function radarPtypePackedForManifest(manifest: GridManifestResponse | null): boolean {
   const colorMapId = String(manifest?.palette?.color_map_id ?? "").trim().toLowerCase();
   return colorMapId === "radar_ptype";
@@ -838,6 +843,7 @@ type ProgramBindings = {
   categoricalLocation: WebGLUniformLocation | null;
   categoricalNearestLocation: WebGLUniformLocation | null;
   edgeFadeLocation: WebGLUniformLocation | null;
+  edgeFillValueLocation: WebGLUniformLocation | null;
   radarPtypePackedLocation: WebGLUniformLocation | null;
   radarPtypeOffsetsLocation: WebGLUniformLocation | null;
   radarPtypeCountsLocation: WebGLUniformLocation | null;
@@ -1364,6 +1370,7 @@ export class GridWebglLayerController {
       uniform float u_categorical;
       uniform float u_categoricalNearest;
       uniform float u_edgeFade;
+      uniform float u_edgeFillValue;
       uniform float u_radarPtypePacked;
       uniform vec4 u_radarPtypeOffsets;
       uniform vec4 u_radarPtypeCounts;
@@ -1481,6 +1488,34 @@ export class GridWebglLayerController {
           return vec4(0.0, 0.0, 0.0, 0.0);
         }
 
+        // Edge fill (sparse fields like radar): nodata neighbours contribute
+        // u_edgeFillValue at their ORIGINAL bilinear weights, so the visible
+        // boundary is the smooth iso-contour where the interpolated surface
+        // crosses the transparency floor — curved, sub-texel edges instead of
+        // the hard texel boxes the renormalising path below produces. This
+        // reproduces exactly how legacy frames (whose nodata was a valid-0
+        // skirt) rendered, without putting fabricated values in the data.
+        if (u_edgeFade > 0.5) {
+          float bwe00 = (1.0 - f.x) * (1.0 - f.y);
+          float bwe10 = f.x * (1.0 - f.y);
+          float bwe01 = (1.0 - f.x) * f.y;
+          float bwe11 = f.x * f.y;
+          float e00 = w00 > 0.5 ? v00 : u_edgeFillValue;
+          float e10 = w10 > 0.5 ? v10 : u_edgeFillValue;
+          float e01 = w01 > 0.5 ? v01 : u_edgeFillValue;
+          float e11 = w11 > 0.5 ? v11 : u_edgeFillValue;
+          float decodedEdge = e00 * bwe00 + e10 * bwe10 + e01 * bwe01 + e11 * bwe11;
+          if (decodedEdge <= u_transparentBelowMin) {
+            return vec4(0.0, 0.0, 0.0, 0.0);
+          }
+          float denomEdge = max(0.000001, u_valueMax - u_valueMin);
+          float tEdge = clamp((decodedEdge - u_valueMin) / denomEdge, 0.0, 1.0);
+          if (u_powerNormGamma > 0.0 && u_powerNormGamma != 1.0) {
+            tEdge = pow(tEdge, u_powerNormGamma);
+          }
+          return texture2D(u_lut, vec2(tEdge, 0.5));
+        }
+
         // Replace nodata texels with 0 contribution for the lerp.
         float s00 = v00 > -1e29 ? v00 : 0.0;
         float s10 = v10 > -1e29 ? v10 : 0.0;
@@ -1534,14 +1569,6 @@ export class GridWebglLayerController {
         }
 
         vec4 color = texture2D(u_lut, vec2(t, 0.5));
-        // Edge fade (sparse fields like radar): the weight renormalisation
-        // above holds full value right up to the nodata cutoff, which renders
-        // as hard texel boxes at echo edges. A tight sigmoid on the kernel's
-        // valid coverage anti-aliases the boundary at the 50%-coverage
-        // contour (~1px) — a linear fade here reads as a blurry halo.
-        if (u_edgeFade > 0.5) {
-          color.a *= smoothstep(0.35, 0.65, wSum);
-        }
         return color;
       }
 
@@ -1805,6 +1832,7 @@ export class GridWebglLayerController {
       categoricalLocation: gl.getUniformLocation(this.program, "u_categorical"),
       categoricalNearestLocation: gl.getUniformLocation(this.program, "u_categoricalNearest"),
       edgeFadeLocation: gl.getUniformLocation(this.program, "u_edgeFade"),
+      edgeFillValueLocation: gl.getUniformLocation(this.program, "u_edgeFillValue"),
       radarPtypePackedLocation: gl.getUniformLocation(this.program, "u_radarPtypePacked"),
       radarPtypeOffsetsLocation: gl.getUniformLocation(this.program, "u_radarPtypeOffsets"),
       radarPtypeCountsLocation: gl.getUniformLocation(this.program, "u_radarPtypeCounts"),
@@ -2503,6 +2531,7 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.categoricalLocation, categoricalPaletteForManifest(this.manifest) ? 1 : 0);
     gl.uniform1f(bindings.categoricalNearestLocation, categoricalNearestForManifest(this.manifest) ? 1 : 0);
     gl.uniform1f(bindings.edgeFadeLocation, edgeFadeForManifest(this.manifest) ? 1 : 0);
+    gl.uniform1f(bindings.edgeFillValueLocation, edgeFillValueForManifest(this.manifest));
     gl.uniform1f(bindings.radarPtypePackedLocation, radarPtypePackedForManifest(this.manifest) ? 1 : 0);
     const radarPtypeBreaks = radarPtypeBreaksForDisplay(this.manifest, this.legend);
     gl.uniform4f(bindings.radarPtypeOffsetsLocation, ...radarPtypeBreaks.offsets);
