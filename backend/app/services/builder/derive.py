@@ -63,6 +63,11 @@ _KUCHERA_SURFACE_TEMP_CAP_COLD_F_DEFAULT = np.float32(30.0)
 _KUCHERA_SURFACE_TEMP_CAP_WARM_F_DEFAULT = np.float32(34.0)
 _KUCHERA_SURFACE_TEMP_CAP_COLD_RATIO_DEFAULT = np.float32(18.0)
 _KUCHERA_SURFACE_TEMP_CAP_WARM_RATIO_DEFAULT = np.float32(10.0)
+# Display-only bias applied to the snow ptype-intensity rate at index binning
+# so the rendered snow shading matches the reference product. This must NEVER be
+# baked into the stored family/component snow planes, which are served raw
+# (liquid-equivalent, same scale as the rain plane) by the public sample API.
+PTYPE_SNOW_DISPLAY_BOOST = 2.0
 _APCP_ACCUM_HOUR_WINDOW_RE = re.compile(
     r":APCP:surface:(\d+)-(\d+)\s*hour acc(?:\s*fcst|@\([^)]*\))",
     re.IGNORECASE,
@@ -2497,7 +2502,7 @@ def _ptype_intensity_index_from_gfs_family_rates(
     # The competitor's ptype snow shading is slightly amplified relative to the
     # liquid-equivalent step accumulation base. Keep that as a modest display-only
     # bias rather than a large arbitrary boost.
-    snow_display_boost = np.float32(2.0)
+    snow_display_boost = np.float32(PTYPE_SNOW_DISPLAY_BOOST)
     type_levels = {
         "rain": np.asarray([0.0, 0.01, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], dtype=np.float32),
         "snow": np.asarray([0.05, 0.25, 0.50, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0], dtype=np.float32),
@@ -2661,13 +2666,13 @@ def _derive_ptype_intensity_gfs_family(
         snow_rate=snow_rate,
         ice_rate=ice_rate,
     )
-    snow_display = (2.0 * np.nan_to_num(snow_rate, nan=0.0)).astype(np.float32, copy=False)
-    snow_display[~np.isfinite(prate)] = np.nan
+    snow_component = np.nan_to_num(snow_rate, nan=0.0).astype(np.float32, copy=False)
+    snow_component[~np.isfinite(prate)] = np.nan
 
     family = {
         "indexed": indexed.astype(np.float32, copy=False),
         "rain": rain_rate.astype(np.float32, copy=False),
-        "snow": snow_display.astype(np.float32, copy=False),
+        "snow": snow_component.astype(np.float32, copy=False),
         "ice": ice_rate.astype(np.float32, copy=False),
         "src_crs": src_crs,
         "src_transform": src_transform,
@@ -5055,7 +5060,7 @@ def _derive_ptype_intensity_ecmwf(
         rain_rate=rain_rate,
         snow_rate=snow_rate,
         ice_rate=ice_rate,
-        snow_display_boost=2.0,
+        snow_display_boost=PTYPE_SNOW_DISPLAY_BOOST,
     )
     return indexed.astype(np.float32, copy=False), src_crs, src_transform
 
@@ -5099,7 +5104,7 @@ def _derive_ptype_intensity_component_ecmwf(
         values = np.zeros(rain_rate.shape, dtype=np.float32)
         values[~np.isfinite(rain_rate)] = np.nan
     elif component == "snow":
-        values = (2.0 * np.nan_to_num(values, nan=0.0)).astype(np.float32, copy=False)
+        values = np.nan_to_num(values, nan=0.0).astype(np.float32, copy=False)
         values[~np.isfinite(rain_rate)] = np.nan
     return values.astype(np.float32, copy=False), src_crs, src_transform
 

@@ -28,7 +28,7 @@ where no listed dependency applies.
 
 ## Wave 0 — Decisions, validation, and observability (all independent)
 
-1. **1.5 exposure check. — DONE 2026-07-14: exposed → Wave 1 item 7 promoted.**
+1. ~~**1.5 exposure check. — DONE 2026-07-14: exposed → Wave 1 item 7 promoted.**~~
    Determine whether the 2×-boosted ptype snow component planes reach value
    sampling (sample/binary-sampling API). The vars are
    `internal_only`/`buildable=False`, but per the canary-script findings
@@ -105,9 +105,17 @@ where no listed dependency applies.
    (AND-validity/NaN or per-var degraded flags) and quality persistence,
    including the incremental-resume case so pre-change cached state cannot
    contaminate later frames. Bump affected strategy revisions.
-7. **1.5 fix (confirmed exposed by the Wave 0 check, 2026-07-14):** store
-   unboosted rates in family/component planes (boost only in index binning)
-   and hoist the 4× hardcoded `2.0` constant.
+7. ~~**1.5 fix (confirmed exposed by the Wave 0 check, 2026-07-14).~~ —
+   **DONE 2026-07-14, verifier-CONFIRMED:** unboosted rates stored in
+   family/component planes (GFS family storage + ECMWF component access);
+   boost applied only inside index binning via the hoisted
+   `PTYPE_SNOW_DISPLAY_BOOST` constant, so indexed/rendered output is
+   bit-identical. Regression test pins both halves (plane unboosted, binning
+   still boosted) and was demonstrated RED pre-fix. No cache/fingerprint
+   coupling needed: the plane's only consumer is the published component
+   artifact — accumulations use categorical masks + precip, the family cache
+   is per-frame, and no cumulative cache stores these planes. Already-written
+   frames keep 2× values until aged out (tmp850_anom precedent).
 
 ## Wave 2 — Member and artifact integrity
 

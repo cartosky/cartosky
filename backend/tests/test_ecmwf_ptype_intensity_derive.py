@@ -96,7 +96,11 @@ def test_ecmwf_ptype_intensity_prefers_snow_from_sf_step(monkeypatch) -> None:
     assert out_crs == crs
     assert out_transform == transform
     assert 16.0 <= indexed[0, 0] <= 25.0
-    assert snow_values[0, 0] > 0.0
+    # The stored snow component plane is the raw liquid-equivalent snow rate with
+    # NO display boost baked in: the sf step is 0.05 - 0.02 = 0.03 m LWE, which
+    # converts to 0.03 * 39.37... in. The 2x display bias lives only in binning.
+    expected_snow_rate = np.float32(0.03 * 39.37007874015748)
+    np.testing.assert_allclose(snow_values[0, 0], expected_snow_rate, rtol=1e-5, atol=1e-5)
     assert rain_values[0, 0] == 0.0
 
 
