@@ -438,6 +438,120 @@ async def test_status_results_reports_zero_frame_grid_variable_as_incomplete_not
     assert incomplete_row["incomplete_variables"] == ["ptype_intensity"]
 
 
+async def test_status_results_surfaces_persistent_ensemble_stats_roster_alert(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    real_datetime = admin_telemetry.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return real_datetime(2026, 7, 14, 18, 0, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+    frozen_ts = FrozenDateTime.now(admin_telemetry.timezone.utc).timestamp()
+    monkeypatch.setattr(main_module.time, "time", lambda: frozen_ts)
+
+    run_id = "20260714_12z"
+    _write_manifest(
+        main_module.DATA_ROOT / "manifests" / "gefs" / f"{run_id}.json",
+        model_id="gefs",
+        run_id=run_id,
+        variables={"tmp2m": [0, 6]},
+        last_updated="2026-07-14T17:30:00Z",
+    )
+    _write_grid_runtime(
+        main_module.DATA_ROOT,
+        model_id="gefs",
+        run_id=run_id,
+        variable_id="tmp2m__mean",
+        hours=[0, 6],
+    )
+    health_path = (
+        main_module.DATA_ROOT
+        / "status"
+        / "ensemble_stats"
+        / "gefs"
+        / f"{run_id}.json"
+    )
+    health_path.parent.mkdir(parents=True, exist_ok=True)
+    health_path.write_text(
+        json.dumps(
+            {
+                "contract_version": "1.0",
+                "model_id": "gefs",
+                "run_id": run_id,
+                "updated_at": int(frozen_ts) - 60,
+                "alert_after_passes": 3,
+                "units": [
+                    {
+                        "base_var": "precip_total",
+                        "forecast_hour": 120,
+                        "missing_members": ["m17"],
+                        "consecutive_passes": 3,
+                        "first_seen_at": int(frozen_ts) - 600,
+                        "last_seen_at": int(frozen_ts) - 60,
+                        "alerting": True,
+                    }
+                ],
+            }
+        )
+    )
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=gefs&include_details=true",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "warning"
+    assert rows[0]["issue_type"] == "stats_incomplete"
+    assert rows[0]["stats_incomplete_alert_count"] == 1
+    assert rows[0]["summary"] == (
+        "1 ensemble stats unit has remained incomplete across at least 3 stats passes."
+    )
+    assert rows[0]["stats_incomplete_units"] == [
+        {
+            "base_var": "precip_total",
+            "forecast_hour": 120,
+            "missing_members": ["m17"],
+            "consecutive_passes": 3,
+            "first_seen_at": int(frozen_ts) - 600,
+            "last_seen_at": int(frozen_ts) - 60,
+            "alerting": True,
+        }
+    ]
+
+    # The dedicated stats fields remain available without hiding a more
+    # severe artifact error on the same run.
+    grid_frame = (
+        main_module.DATA_ROOT
+        / "published"
+        / "gefs"
+        / run_id
+        / "tmp2m__mean"
+        / "grid"
+        / "fh006.l0.u16.bin"
+    )
+    grid_frame.unlink()
+    admin_telemetry.clear_operational_status_cache()
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=gefs&include_details=true",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+    row = response.json()["results"][0]
+    assert row["status"] == "error"
+    assert row["issue_type"] == "artifact_failure"
+    assert row["stats_incomplete_alert_count"] == 1
+    assert row["stats_incomplete_units"][0]["base_var"] == "precip_total"
+
+
 async def test_status_results_suppresses_latest_artifact_failures_while_runtime_artifacts_pending(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

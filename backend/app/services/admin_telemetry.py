@@ -14,6 +14,7 @@ from typing import Any
 import rasterio
 
 from ..models.registry import MODEL_REGISTRY
+from .ensemble_stats_health import load_ensemble_stats_health
 from .grid import expected_grid_frame_size_bytes, grid_manifest_path, grid_supported
 from .observed_bundle_health import build_observed_bundle_health, is_observed_model_capability, parse_iso_datetime
 from .run_ids import RUN_ID_RE, parse_run_id_datetime
@@ -1213,6 +1214,13 @@ def _scan_run_issue(
         latest_for_model=latest_for_model,
         now_utc=now_utc,
     )
+    stats_health = load_ensemble_stats_health(data_root, model_id, run_id) or {}
+    stats_incomplete_units = [
+        dict(unit)
+        for unit in stats_health.get("units", [])
+        if isinstance(unit, dict) and unit.get("alerting") is True
+    ]
+    stats_incomplete_alert_count = len(stats_incomplete_units)
 
     base_row = {
         "id": f"{model_id}:{run_id}",
@@ -1246,6 +1254,8 @@ def _scan_run_issue(
         "degraded_reason": observed_bundle.get("degraded_reason"),
         "observation_to_publish_latency_seconds": observed_bundle.get("observation_to_publish_latency_seconds"),
         "runtime_artifacts_pending": runtime_artifacts_pending,
+        "stats_incomplete_alert_count": stats_incomplete_alert_count,
+        "stats_incomplete_units": stats_incomplete_units if include_details else [],
     }
 
     if manifest is None:
@@ -1614,6 +1624,16 @@ def _scan_run_issue(
         issue_type = "run_incomplete"
         summary = f"Run is incomplete at {available_frames}/{expected_frames} frames."
 
+    if stats_incomplete_alert_count > 0 and status != "error":
+        status = "warning"
+        issue_type = "stats_incomplete"
+        noun = "unit has" if stats_incomplete_alert_count == 1 else "units have"
+        threshold = int(stats_health.get("alert_after_passes") or 3)
+        summary = (
+            f"{stats_incomplete_alert_count} ensemble stats {noun} remained incomplete "
+            f"across at least {threshold} stats passes."
+        )
+
     build_age_reference_ts = now_ts if latest_for_model and available_frames < expected_frames else last_updated_at
     run_age_hours = (
         round(max(0.0, (build_age_reference_ts - build_started_at) / 3600.0), 1)
@@ -1621,13 +1641,14 @@ def _scan_run_issue(
         else base_row["run_age_hours"]
     )
 
+    stats_updated_at = int(stats_health.get("updated_at") or 0)
     return {
         **base_row,
         "run_age_hours": run_age_hours,
         "status": status,
         "issue_type": issue_type,
         "summary": summary,
-        "last_updated_at": last_updated_at,
+        "last_updated_at": max(last_updated_at, stats_updated_at),
         "expected_frames": expected_frames,
         "available_frames": available_frames,
         "completion_pct": completion_pct,

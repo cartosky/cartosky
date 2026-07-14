@@ -12,7 +12,7 @@ import {
 import { formatObservedValidTime, formatRunLabel } from "@/lib/time-axis";
 
 type WindowValue = "24h" | "7d" | "30d";
-type ViewFilter = "issues" | "ongoing" | "artifacts" | "stale" | "all";
+type ViewFilter = "issues" | "stats" | "ongoing" | "artifacts" | "stale" | "all";
 type StatusTone = "pass" | "info" | "warning" | "fail";
 
 const ADMIN_POLL_INTERVAL_MS = 5 * 60 * 1000;
@@ -63,6 +63,7 @@ function issueLabel(issueType: string): string {
   if (issueType === "run_stalled") return "Run stalled";
   if (issueType === "run_ongoing") return "Run ongoing";
   if (issueType === "run_incomplete") return "Run incomplete";
+  if (issueType === "stats_incomplete") return "Stats roster incomplete";
   if (issueType === "stale_run") return "Stale latest run";
   if (issueType === "bundle_unavailable") return "Bundle unavailable";
   if (issueType === "bundle_stalled") return "Bundle stalled";
@@ -160,6 +161,7 @@ function CompactMetric(props: {
 function filterRows(rows: StatusResult[], view: ViewFilter): StatusResult[] {
   if (view === "all") return rows;
   if (view === "issues") return rows.filter((row) => row.status === "warning" || row.status === "error");
+  if (view === "stats") return rows.filter((row) => (row.stats_incomplete_alert_count ?? 0) > 0);
   if (view === "ongoing") return rows.filter((row) => row.issue_type === "run_ongoing");
   if (view === "artifacts") return rows.filter((row) => row.issue_type === "artifact_failure" || row.issue_type === "manifest_missing" || row.issue_type === "manifest_invalid");
   return rows.filter((row) => (
@@ -174,6 +176,7 @@ function filterRows(rows: StatusResult[], view: ViewFilter): StatusResult[] {
 
 function viewLabel(view: ViewFilter): string {
   if (view === "issues") return "Open pipeline issues";
+  if (view === "stats") return "Ensemble stats alerts";
   if (view === "ongoing") return "Ongoing runs";
   if (view === "artifacts") return "Artifact and manifest failures";
   if (view === "stale") return "Stale or stalled runs";
@@ -319,6 +322,7 @@ export default function AdminStatusPage() {
 
   const modelOptions = Array.from(new Set(results.map((item) => item.model_id))).sort();
   const issueRows = results.filter((row) => row.status === "warning" || row.status === "error");
+  const statsRows = results.filter((row) => (row.stats_incomplete_alert_count ?? 0) > 0);
   const ongoingRows = results.filter((row) => row.issue_type === "run_ongoing");
   const artifactRows = results.filter((row) => row.issue_type === "artifact_failure" || row.issue_type === "manifest_missing" || row.issue_type === "manifest_invalid");
   const staleRows = results.filter((row) => (
@@ -335,6 +339,8 @@ export default function AdminStatusPage() {
       ? "No retained published runs were found for the current window."
       : viewFilter === "issues"
         ? "No operational issues were found in the retained published runs."
+        : viewFilter === "stats"
+          ? "No persistent ensemble stats roster gaps were found."
         : viewFilter === "ongoing"
           ? "No retained latest runs are currently building."
         : viewFilter === "artifacts"
@@ -364,7 +370,7 @@ export default function AdminStatusPage() {
         ) : null}
 
         <div className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
             <CompactMetric
               label="Retained runs"
               value={results.length}
@@ -377,6 +383,13 @@ export default function AdminStatusPage() {
               accentClassName="text-amber-300"
               active={viewFilter === "issues"}
               onClick={() => setViewFilter("issues")}
+            />
+            <CompactMetric
+              label="Stats alerts"
+              value={statsRows.length}
+              accentClassName="text-amber-300"
+              active={viewFilter === "stats"}
+              onClick={() => setViewFilter("stats")}
             />
             <CompactMetric
               label="Ongoing runs"
@@ -439,6 +452,7 @@ export default function AdminStatusPage() {
               className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-white outline-none"
             >
               <option value="issues">Open issues</option>
+              <option value="stats">Ensemble stats alerts</option>
               <option value="ongoing">Ongoing runs</option>
               <option value="artifacts">Artifact failures</option>
               <option value="stale">Stale or stalled</option>
@@ -607,6 +621,27 @@ export default function AdminStatusPage() {
                 <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Summary</div>
                 <div className="mt-3 text-sm leading-6 text-white/78">{selected.summary}</div>
               </div>
+
+              {(selected.stats_incomplete_units ?? []).length > 0 ? (
+                <div className="border-t border-amber-400/18 pt-5">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-100/72">Persistent stats roster gaps</div>
+                  <div className="mt-3 space-y-3">
+                    {(selected.stats_incomplete_units ?? []).map((unit) => (
+                      <div key={`${unit.base_var}-${unit.forecast_hour}`} className="rounded-xl border border-amber-400/15 bg-amber-500/[0.06] px-4 py-3 text-sm">
+                        <div className="font-medium text-amber-50">
+                          {unit.base_var} · {formatForecastHour(unit.forecast_hour)} · {unit.consecutive_passes} passes
+                        </div>
+                        <div className="mt-1 text-amber-100/68">
+                          Missing {unit.missing_members.length > 0 ? unit.missing_members.join(", ") : "member roster data"}
+                        </div>
+                        <div className="mt-1 text-xs text-white/44">
+                          First seen {formatTimestamp(unit.first_seen_at)} · last seen {formatTimestamp(unit.last_seen_at)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="grid gap-4 border-t border-white/8 pt-5 sm:grid-cols-3">
                 <div className="border-l border-white/10 pl-4">

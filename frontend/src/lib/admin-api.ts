@@ -157,6 +157,16 @@ export type StatusResult = {
   unreadable_artifact_count: number;
   incomplete_variable_count: number;
   incomplete_variables: string[];
+  stats_incomplete_alert_count?: number;
+  stats_incomplete_units?: Array<{
+    base_var: string;
+    forecast_hour: number;
+    missing_members: string[];
+    consecutive_passes: number;
+    first_seen_at: number;
+    last_seen_at: number;
+    alerting: boolean;
+  }>;
   sample_paths: Array<{
     variable_id: string;
     forecast_hour: number;

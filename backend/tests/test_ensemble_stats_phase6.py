@@ -5,6 +5,8 @@ See docs/ENSEMBLE_STATS_GRIDS_DESIGN.md. Synthetic arrays only — no network.
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
@@ -374,8 +376,8 @@ def test_stats_pass_completeness_gate_skips_partial_rosters(
     assert summary.complete  # skipped-incomplete is not failure
     staging = tmp_path / "staging" / "gefs" / run_id
     assert not (staging / "precip_total__p50" / "grid" / "fh012.l0.u16.bin").exists()
-    # Pending excludes the partial fh — the pass has converged for now.
-    assert not stats_mod.stats_pass_pending(
+    # The partial fh drives bounded health-only passes until the alert threshold.
+    assert stats_mod.stats_pass_pending(
         plugin=stats_roster_plugin, model_id="gefs", run_id=run_id, data_root=tmp_path,
     )
 
@@ -393,6 +395,151 @@ def test_stats_pass_completeness_gate_skips_partial_rosters(
         stats_mod.STATUS_WRITTEN: 2,
         stats_mod.STATUS_RESUMED: 2,
     }
+
+
+def test_stats_pass_persists_and_clears_repeated_incomplete_roster_alert(
+    tmp_path, stats_roster_plugin,
+) -> None:
+    """A roster gap becomes visible after three full stats passes and the
+    durable warning disappears as soon as the missing member recovers."""
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        _publish_member_precip(tmp_path, run_id, member, 6, 0.8)
+    for member in ("m01", "m02"):
+        _publish_member_precip(tmp_path, run_id, member, 12, 0.8)
+
+    health_path = (
+        tmp_path / "status" / "ensemble_stats" / "gefs" / f"{run_id}.json"
+    )
+    for expected_passes in (1, 2, 3):
+        summary = stats_mod.run_stats_pass(
+            plugin=stats_roster_plugin,
+            model_id="gefs",
+            run_id=run_id,
+            data_root=tmp_path,
+            region="na",
+        )
+        assert summary.incomplete_units == [
+            {
+                "base_var": "precip_total",
+                "forecast_hour": 12,
+                "missing_members": ["control"],
+            }
+        ]
+        payload = json.loads(health_path.read_text())
+        assert payload["units"][0]["consecutive_passes"] == expected_passes
+        assert payload["units"][0]["alerting"] is (expected_passes >= 3)
+        assert stats_mod.stats_pass_pending(
+            plugin=stats_roster_plugin,
+            model_id="gefs",
+            run_id=run_id,
+            data_root=tmp_path,
+        ) is (expected_passes < 3)
+
+    _publish_member_precip(tmp_path, run_id, "control", 12, 0.8)
+    stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+    assert not health_path.exists()
+
+
+def test_stats_pass_does_not_alert_for_future_hour_with_zero_member_frames(
+    tmp_path, stats_roster_plugin,
+) -> None:
+    """A wholly absent roster is normal future work; only a partial roster
+    is evidence that one or more members may be wedged."""
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        _publish_member_precip(tmp_path, run_id, member, 6, 0.8)
+
+    for _ in range(3):
+        summary = stats_mod.run_stats_pass(
+            plugin=stats_roster_plugin,
+            model_id="gefs",
+            run_id=run_id,
+            data_root=tmp_path,
+            region="na",
+        )
+        assert summary.incomplete_units == []
+
+    health_path = (
+        tmp_path / "status" / "ensemble_stats" / "gefs" / f"{run_id}.json"
+    )
+    assert not health_path.exists()
+
+
+def test_stats_health_persistence_failure_does_not_block_stats_publish(
+    tmp_path, stats_roster_plugin, monkeypatch,
+) -> None:
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        for fh in (6, 12):
+            _publish_member_precip(tmp_path, run_id, member, fh, 0.8)
+
+    def _fail_health_write(**_kwargs):
+        raise OSError("status filesystem unavailable")
+
+    monkeypatch.setattr(
+        stats_mod, "update_ensemble_stats_health", _fail_health_write,
+    )
+    summary = stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+
+    assert summary.counts == {stats_mod.STATUS_WRITTEN: 4}
+    assert summary.complete
+
+
+def test_preempted_stats_pass_does_not_advance_incomplete_roster_alert(
+    tmp_path,
+) -> None:
+    from backend.app.services.ensemble_stats_health import (
+        load_ensemble_stats_health,
+        update_ensemble_stats_health,
+    )
+
+    unit = {
+        "base_var": "precip_total",
+        "forecast_hour": 12,
+        "missing_members": ["control"],
+    }
+    update_ensemble_stats_health(
+        data_root=tmp_path,
+        model_id="gefs",
+        run_id="20260706_00z",
+        incomplete_units=[unit],
+        pass_complete=True,
+        now_ts=100,
+    )
+    update_ensemble_stats_health(
+        data_root=tmp_path,
+        model_id="gefs",
+        run_id="20260706_00z",
+        incomplete_units=[unit],
+        pass_complete=False,
+        now_ts=200,
+    )
+
+    payload = load_ensemble_stats_health(
+        tmp_path, "gefs", "20260706_00z",
+    )
+    assert payload is not None
+    assert payload["units"][0]["consecutive_passes"] == 1
+    assert payload["units"][0]["last_seen_at"] == 100
 
 
 def test_stats_pass_preemption(tmp_path, stats_roster_plugin) -> None:
