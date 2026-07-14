@@ -128,6 +128,9 @@ def test_build_frame_runs_phase_c_gates_as_parallel_non_authoritative_checks(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    # Exercises build_frame's retained COG path: opt the model out of the
+    # (now default) binary-only substrate.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs")
     plugin = _Plugin()
     var_spec_model = SimpleNamespace(
         id="tmp2m",

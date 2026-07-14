@@ -3061,14 +3061,15 @@ def _model_supports_members(model: str) -> bool:
 
     Requires the ensemble.members descriptor on the model's capability
     catalog (member pipeline Phase 2 design R7/D1 — supported_views
-    intentionally stays ["mean"] and is not consulted) AND the model on the
-    binary-sampling allowlist: member frames exist only as grid binaries, so
-    a model on the COG path has no substrate to serve them from.
+    intentionally stays ["mean"] and is not consulted) AND binary sampling
+    enabled for the model (the default; only a CARTOSKY_COG_SAMPLING_MODELS
+    opt-out disables it): member frames exist only as grid binaries, so a
+    model on the COG path has no substrate to serve them from.
     """
     if not _MEMBER_SERIES_PAYLOAD_SUPPORTED:
         return False
     normalized = str(model or "").strip().lower()
-    if normalized not in config.binary_sampling_models():
+    if not config.binary_sampling_enabled(normalized):
         return False
     try:
         from ..models.base import ensemble_member_descriptors
@@ -3290,14 +3291,14 @@ def get_forecast_meteogram(
             run_ids[model] = None
             latest_complete_ids[model] = None
 
-    # Binary-sampling allowlist (migration plan Phase F): allowlisted models
-    # sample grid binaries via _sample_variable_series_binary; everything else
-    # keeps the value-COG fan-out. The substrate split is folded into the cache
-    # key ("cog" when no requested model is allowlisted — byte-identical to the
-    # pre-allowlist key — otherwise "binary:<models>") so a substrate flip can
-    # never serve a payload cached under the other substrate.
-    binary_models = config.binary_sampling_models()
-    active_binary = sorted(m for m in norm_models if m in binary_models)
+    # Binary sampling is the default substrate (COG->binary migration
+    # complete); a model appears on the COG fan-out only via the
+    # CARTOSKY_COG_SAMPLING_MODELS opt-out. The substrate split stays folded
+    # into the cache key ("cog" when no requested model samples binary —
+    # byte-identical to the pre-allowlist key — otherwise "binary:<models>")
+    # so a substrate flip can never serve a payload cached under the other
+    # substrate.
+    active_binary = sorted(m for m in norm_models if config.binary_sampling_enabled(m))
     sampling_source = "binary:" + ",".join(active_binary) if active_binary else "cog"
 
     cache_key = _meteogram_cache_key(
@@ -3337,10 +3338,10 @@ def get_forecast_meteogram(
         if not run_id:
             series[model] = {"status": "unavailable", "run_id": None}
             continue
-        if model in binary_models:
-            # Allowlisted: sample this model's grid binaries; the result shape
+        if config.binary_sampling_enabled(model):
+            # The default: sample this model's grid binaries; the result shape
             # matches the COG assembly below, so status/series handling is
-            # shared. Non-allowlisted models in the same request still take the
+            # shared. Opted-out models in the same request still take the
             # COG fan-out.
             attach_members = include_members and _model_supports_members(model)
             for var in norm_vars:
@@ -3456,10 +3457,10 @@ def _sample_variable_series_binary(
     ``{"units": ..., "points": [{"fh", "valid_time", "value"}, ...]}`` or
     ``{"units": ..., "points": None, "error": "artifact_not_found"}``.
 
-    Called from ``get_forecast_meteogram`` only for models on the
-    ``CARTOSKY_BINARY_SAMPLING_MODELS`` allowlist (empty by default — no model
-    takes this path until the migration plan's cutover); also exercised
-    directly by the Phase E COG-vs-binary comparison test.
+    Called from ``get_forecast_meteogram`` for every binary-sampling model —
+    the default for all models since the migration cutover; only a
+    ``CARTOSKY_COG_SAMPLING_MODELS`` opt-out takes the COG fan-out instead.
+    Also exercised directly by the Phase E COG-vs-binary comparison test.
     """
     frames, units = sampling.manifest_frame_entries(model, run_id, var, region=region)
     value_by_fh: dict[int, float | None] = {}

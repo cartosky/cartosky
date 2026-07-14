@@ -16,6 +16,8 @@ from app.services import goes_publish, goes_rgb_publish
 
 
 def _configure_band_publish(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Exercises the retained legacy COG publish flow for the band publisher.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "goes-east")
     monkeypatch.setattr(goes_publish, "grid_build_enabled", lambda: False)
     monkeypatch.setattr(
         goes_publish,

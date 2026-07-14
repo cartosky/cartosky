@@ -48,10 +48,16 @@ from app.services.wpc_source import WPCSourceField
 
 
 def _set_allowlist(monkeypatch: pytest.MonkeyPatch, allowlist: str) -> None:
+    """Post-inversion shim preserving this file's original mode semantics:
+    a truthy value = binary mode, which is now the zero-config DEFAULT; "" =
+    the old shadow/COG mode, now expressed by opting this file's models out
+    via CARTOSKY_COG_SAMPLING_MODELS. The retired opt-in allowlist env is
+    always cleared (it is a no-op)."""
+    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS", raising=False)
     if allowlist:
-        monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", allowlist)
+        monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     else:
-        monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS", raising=False)
+        monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "ndfd,wpc")
 
 
 def _fail_if_called(name: str):

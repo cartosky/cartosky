@@ -425,6 +425,13 @@ Gaps mapping to findings:
 
 ## 7. Recommended sequence
 
+> **Superseded for remaining work (2026-07-14):** the quick-wins list below is
+> complete; sequencing for everything still open now lives in
+> `BUILD_PIPELINE_ROADMAP_2026-07-14.md` (wave-based hybrid risk/dependency
+> ordering, incl. the cache-fingerprint prerequisite for the 1.x semantic
+> fixes and the fetch-safety-before-parallelism dependency). The lists below
+> are kept as the historical record.
+
 **Quick wins, high impact (all S effort):**
 1. ~~ECMWF ptype warp-params fix + warped-mode test (1.1 — wrong ice/rain classification in prod today)~~ **DONE 2026-07-07**
 2. ~~Readiness-cache `fh` keying (2.6) — closes the July 6 gate-bypass class for all later forecast hours~~ **DONE 2026-07-07**

@@ -3570,7 +3570,7 @@ def _frame_has_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: st
     # `has_cog` means "a hover-samplable frame exists". Binary-sampling models
     # no longer publish value COGs, so the equivalent signal is the published
     # grid binary frame — the artifact /api/v4/sample reads for them.
-    if model.strip().lower() in app_config.binary_sampling_models():
+    if app_config.binary_sampling_enabled(model):
         return _resolve_binary_grid_frame(model, run, var, fh, ensemble_view=ensemble_view, region=region) is not None
     return _resolve_val_cog(model, run, var, fh, ensemble_view=ensemble_view, region=region) is not None
 
@@ -5702,7 +5702,7 @@ def sample(
     # resolve and read the grid binary; everything else keeps the value-COG
     # path byte-for-byte. Either way the substrate lands in the cache key so a
     # flip can never serve a value cached under the other substrate.
-    binary_sampling = model.strip().lower() in app_config.binary_sampling_models()
+    binary_sampling = app_config.binary_sampling_enabled(model)
     sampling_source = "binary" if binary_sampling else "cog"
     val_cog: Path | None = None
     frame_path: Path | None = None
@@ -5912,7 +5912,7 @@ def sample_batch(
     # Binary-sampling allowlist (migration plan Phase F): same split as
     # /api/v4/sample — allowlisted models read the grid binary, everything
     # else keeps the value-COG path, and the substrate lands in the cache key.
-    binary_sampling = body.model.strip().lower() in app_config.binary_sampling_models()
+    binary_sampling = app_config.binary_sampling_enabled(body.model)
     sampling_source = "binary" if binary_sampling else "cog"
     val_cog: Path | None = None
     binary_frame: tuple[Path, Path, str] | None = None

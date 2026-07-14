@@ -51,7 +51,7 @@ _CA_TIME = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
 
 
 def _ca_binary_only_harness(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "current_analysis")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     monkeypatch.setattr(rtma_ru_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(
         rtma_ru_publish,
@@ -114,7 +114,7 @@ _GOES_TIME = datetime(2026, 7, 14, 15, 0, tzinfo=timezone.utc)
 def test_goes_binary_only_frames_survive_load_and_reuse(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "goes-east")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     monkeypatch.setattr(goes_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(
         goes_publish,
@@ -166,7 +166,7 @@ _MRMS_TIME = datetime(2026, 7, 14, 18, 0, tzinfo=timezone.utc)
 
 
 def _mrms_binary_only_harness(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "mrms")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     monkeypatch.setattr(mrms_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(
         mrms_publish,

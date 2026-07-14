@@ -36,6 +36,9 @@ def _write_test_value_raster(path: Path, values: np.ndarray) -> None:
 
 
 def _configure_small_grid(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests exercise the retained legacy COG publish flow: opt mrms out
+    # of the (now default) binary-only substrate.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "mrms")
     monkeypatch.setattr(mrms_publish, "_expected_target_shape", lambda: (2, 3))
     monkeypatch.setattr(
         mrms_publish,

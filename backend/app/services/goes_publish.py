@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 import rasterio
 
-from app.config import binary_sampling_models, grid_build_enabled
+from app.config import binary_sampling_enabled, grid_build_enabled
 from app.models.goes_east import GOES_EAST_MODEL
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.cog_writer import write_value_cog
@@ -422,7 +422,7 @@ def write_goes_frame(
     # error) rejects the frame before ANY artifact is written, matching
     # pipeline.py's binary_only branch. Otherwise it stays the Phase C shadow
     # gate: log-only.
-    binary_only = GOES_EAST_MODEL_ID in binary_sampling_models()
+    binary_only = binary_sampling_enabled(GOES_EAST_MODEL_ID)
     try:
         gate_ok = check_pre_encode_value_sanity(
             values,

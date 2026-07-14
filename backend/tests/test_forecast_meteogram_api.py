@@ -166,6 +166,10 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     _publish_tmp2m(published_root, manifests_root, "gfs", run_id)
     _publish_tmp2m(published_root, manifests_root, "ecmwf", run_id)
 
+    # These fixtures publish COG-only frames: opt the fixture models out of
+    # the (now default) binary-only substrate.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs,ecmwf")
+
     monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
     monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
     monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
@@ -561,8 +565,8 @@ async def test_meteogram_binary_allowlist_switches_substrate_and_cache_key(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Phase F Step 2: CARTOSKY_BINARY_SAMPLING_MODELS routes allowlisted models
-    # to the grid-binary sampler. Publish gfs tmp2m binaries whose value (5.0)
+    # Post-inversion: binary is the default; CARTOSKY_COG_SAMPLING_MODELS is
+    # the opt-out that routes a model back to the COG sampler. Publish gfs tmp2m binaries whose value (5.0)
     # differs from the COGs (1.3) so the substrate actually serving the payload
     # is observable, then prove: empty allowlist -> COG values; allowlist=gfs ->
     # binary values for gfs only, WITHOUT clearing the meteogram cache in
@@ -593,9 +597,9 @@ async def test_meteogram_binary_allowlist_switches_substrate_and_cache_key(
         points = first_payload["series"][model]["variables"]["tmp2m"]["points"]
         assert all(p["value"] == TEST_VALUE for p in points)
 
-    # Allowlist gfs (test-local only): gfs flips to the binary substrate, ecmwf
-    # in the same request stays on the COG path.
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gfs")
+    # Drop gfs from the opt-out (test-local only): gfs flips to the binary
+    # substrate, ecmwf in the same request stays on the COG path.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "ecmwf")
     second = await client.post("/api/v4/forecast/meteogram", json=body)
     assert second.status_code == 200
     second_payload = second.json()
@@ -606,9 +610,9 @@ async def test_meteogram_binary_allowlist_switches_substrate_and_cache_key(
     ecmwf_points = second_payload["series"]["ecmwf"]["variables"]["tmp2m"]["points"]
     assert all(p["value"] == TEST_VALUE for p in ecmwf_points)
 
-    # Back to empty: the original "cog" cache key must be unchanged by all of
-    # the above — this request is a cache hit on the first payload, verbatim.
-    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS")
+    # Back to both opted out: the original "cog" cache key must be unchanged by
+    # all of the above — this request is a cache hit on the first payload, verbatim.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs,ecmwf")
     third = await client.post("/api/v4/forecast/meteogram", json=body)
     assert third.status_code == 200
     assert third.json() == first_payload
@@ -683,7 +687,7 @@ async def test_meteogram_include_members_contract(
                 projection="EPSG:4326",
             )
 
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
 
     body = _body(["gefs"], ["tmp2m", "tmp850"])
     body["include_members"] = True
@@ -2135,7 +2139,7 @@ async def test_meteogram_members_prefers_members_ready_run(
         run_root=older_root, model="gefs", run=older, variables=("tmp2m__m01",),
     )
 
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
 
     body = _body(["gefs"], ["tmp2m"])
     body["include_members"] = True

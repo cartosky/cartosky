@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from app.config import binary_sampling_models, grid_build_enabled
+from app.config import binary_sampling_enabled, grid_build_enabled
 from app.models.wpc import WPC_MODEL
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.cog_writer import warp_to_target_grid, write_value_cog
@@ -151,11 +151,12 @@ def _write_wpc_frame(
     var_spec_colormap = get_color_map_spec(str(var_capability.color_map_id))
     var_spec_model = WPC_MODEL.get_var(var_id)
     # Pre-encode gate (COG->binary sampling migration): the check itself runs
-    # on every frame. For a binary-sampling-allowlisted model it is ENFORCED —
+    # on every frame. For a binary-sampling model (the default; a
+    # CARTOSKY_COG_SAMPLING_MODELS opt-out disables it) it is ENFORCED —
     # failure (or a gate error) rejects the frame before ANY artifact is
     # written, matching pipeline.py's binary_only branch. Otherwise it stays
     # the Phase C shadow gate: log-only, frame governed by the COG path.
-    binary_only = WPC_MODEL_ID in binary_sampling_models()
+    binary_only = binary_sampling_enabled(WPC_MODEL_ID)
     if check_pre_encode_value_sanity is not None:
         try:
             gate_ok = check_pre_encode_value_sanity(

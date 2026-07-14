@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import rasterio
 
-from app.config import binary_sampling_models, grid_build_enabled
+from app.config import binary_sampling_enabled, grid_build_enabled
 from app.models.rtma_ru import CURRENT_ANALYSIS_MODEL
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.cog_writer import write_value_cog
@@ -309,11 +309,11 @@ def write_current_analysis_frame(
     fh_str = f"fh{int(forecast_hour):03d}"
     shared_source_metadata = dict(frame.source_metadata or {})
     # Pre-encode gate (COG->binary sampling migration): the check itself runs
-    # on every fresh (var, fh) write. For a binary-sampling-allowlisted model
+    # on every fresh (var, fh) write. For a binary-sampling model (the default)
     # it is ENFORCED — failure (or a gate error) rejects the variable's frame
     # before ANY artifact is written, matching pipeline.py's binary_only
     # branch. Otherwise it stays the Phase C shadow gate: log-only.
-    binary_only = CURRENT_ANALYSIS_MODEL_ID in binary_sampling_models()
+    binary_only = binary_sampling_enabled(CURRENT_ANALYSIS_MODEL_ID)
     written: list[str] = []
     for var_id in variable_ids:
         values_raw = frame.values_by_var.get(var_id)

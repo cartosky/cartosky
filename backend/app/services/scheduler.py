@@ -24,7 +24,7 @@ from rasterio.enums import Resampling
 
 from app.models.registry import MODEL_REGISTRY
 from app.config import (
-    binary_sampling_models,
+    binary_sampling_enabled,
     grid_build_enabled,
     member_publish_models,
     stats_publish_models,
@@ -644,15 +644,15 @@ def _frame_primary_artifact_path(
 ) -> Path:
     """The artifact whose presence marks a frame as built.
 
-    Normally the staging value COG. Binary-sampling models
-    (``CARTOSKY_BINARY_SAMPLING_MODELS``) no longer write value COGs, so the
+    Binary-sampling models (every model unless opted out via
+    ``CARTOSKY_COG_SAMPLING_MODELS``) do not write value COGs, so the
     equivalent completion marker is the grid frame's metadata sidecar — the
     last artifact ``write_grid_frame_for_run_root`` writes, so its presence
     implies the frame bytes are present too. Without this substitution the
     build frontier would treat every binary-only frame as forever-missing and
     runs would never promote.
     """
-    if str(model).strip().lower() in binary_sampling_models():
+    if binary_sampling_enabled(str(model)):
         plugin = MODEL_REGISTRY.get(model)
         runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
         del region

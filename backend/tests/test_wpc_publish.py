@@ -98,6 +98,9 @@ def test_publish_wpc_bundle_warps_native_grid_before_write(
 ) -> None:
     captured: dict[str, object] = {}
 
+    # Exercises the retained legacy COG flow: opt wpc out of the (now
+    # default) binary-only substrate.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "wpc")
     monkeypatch.setattr(wpc_publish, "grid_build_enabled", lambda: False)
     monkeypatch.setattr(
         wpc_publish,

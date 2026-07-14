@@ -60,6 +60,9 @@ def test_publish_ndfd_bundle_warps_native_grid_before_write(
 ) -> None:
     captured: dict[str, object] = {}
 
+    # Exercises the retained legacy COG flow: opt ndfd out of the (now
+    # default) binary-only substrate.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "ndfd")
     monkeypatch.setattr(ndfd_publish, "grid_build_enabled", lambda: False)
     monkeypatch.setattr(
         ndfd_publish,

@@ -34,7 +34,7 @@ from typing import Any
 import numpy as np
 import rasterio
 
-from app.config import binary_sampling_models, grid_build_enabled
+from app.config import binary_sampling_enabled, grid_build_enabled
 from app.services.builder.cog_writer import (
     _gdal,
     compute_transform_and_shape,
@@ -1807,7 +1807,7 @@ def build_frame(
         # The pre-encode sanity gate is therefore ENFORCED for these models —
         # a failure rejects the frame exactly like check_value_sanity does on
         # the COG path. For everything else it stays a Phase C shadow gate.
-        binary_only = model.strip().lower() in binary_sampling_models()
+        binary_only = binary_sampling_enabled(model)
         if binary_only:
             # No try/except: an unexpected gate error propagates to the outer
             # handler (cleanup + "failed"), matching how a check_value_sanity

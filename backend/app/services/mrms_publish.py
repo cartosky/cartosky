@@ -16,7 +16,7 @@ import rasterio
 from rasterio.transform import Affine
 from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
-from ..config import binary_sampling_models, grid_build_enabled
+from ..config import binary_sampling_enabled, grid_build_enabled
 from ..models.mrms import MRMS_MODEL
 from .builder.colorize import colorize_metadata
 from .builder.cog_writer import (
@@ -655,7 +655,7 @@ def write_mrms_frame(
 
     # Gate the warped array — the one both the COG and grid writes receive —
     # not the colorize-only smoothed display copy computed below.
-    binary_only = MRMS_MODEL_ID in binary_sampling_models()
+    binary_only = binary_sampling_enabled(MRMS_MODEL_ID)
     if not _pre_encode_gate_allows(
         values,
         var_id=MRMS_VARIABLE_ID,
@@ -1223,7 +1223,7 @@ def write_mrms_radar_ptype_frame(
     # Gate the composited indexed array with its own indexed spec (the real
     # "mrms_radar_ptype" colormap carries ptype_breaks, so the categorical
     # branch of the gate applies) — never reflectivity's continuous spec.
-    binary_only = MRMS_MODEL_ID in binary_sampling_models()
+    binary_only = binary_sampling_enabled(MRMS_MODEL_ID)
     if not _pre_encode_gate_allows(
         indexed,
         var_id=MRMS_RADAR_PTYPE_VARIABLE_ID,
@@ -1385,7 +1385,7 @@ def _write_mrms_supplemental_frame_to_run_root(
         time.monotonic() - phase_started_at,
     )
 
-    binary_only = MRMS_MODEL_ID in binary_sampling_models()
+    binary_only = binary_sampling_enabled(MRMS_MODEL_ID)
     if not _pre_encode_gate_allows(
         warped_values,
         var_id=var_id,
