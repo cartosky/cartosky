@@ -367,6 +367,27 @@ def cumulative_roster_plugin(monkeypatch):
     return _PluginProxy()
 
 
+def test_build_member_plan_rejects_off_cadence_derived_fhs(
+    cumulative_roster_plugin,
+) -> None:
+    class _OffCadenceProxy:
+        def __getattr__(self, name):
+            return getattr(cumulative_roster_plugin, name)
+
+        def scheduled_fhs_for_var(self, var_key, cycle_hour):
+            if var_key in {"precip_total", "snowfall_total"}:
+                return [0, 7, 12]
+            return [0, 6, 12]
+
+    with pytest.raises(
+        ValueError,
+        match=r"gefs.*precip_total.*7.*6-hour cumulative step grid",
+    ):
+        members.build_member_plan(
+            _OffCadenceProxy(), "gefs", "20260706_00z", "na",
+        )
+
+
 def test_member_pass_resume_and_pending(tmp_path, small_roster_plugin, monkeypatch) -> None:
     data_root = tmp_path
     run_id = "20260706_00z"
@@ -510,6 +531,59 @@ def test_cumulative_resume_rebases_from_written_frames(tmp_path, cumulative_rost
     assert np.nanmax(np.abs(precip12 - 0.157)) < 0.021  # one extra quantization step
     snow12, _ = members._decode_member_frame(staging_root, "gefs", "snowfall_total__m01", 12)
     assert np.nanmax(np.abs(snow12 - 1.575)) < 0.11
+
+
+def test_cumulative_resume_replays_steps_after_last_complete_scheduled_frame(
+    tmp_path, cumulative_roster_plugin, monkeypatch,
+) -> None:
+    class _SparseScheduleProxy:
+        def __getattr__(self, name):
+            return getattr(cumulative_roster_plugin, name)
+
+        def scheduled_fhs_for_var(self, var_key, cycle_hour):
+            return [0, 12, 24]
+
+    plugin = _SparseScheduleProxy()
+    fake_bundle, calls = _make_fake_bundle(apcp_value=2.0, csnow_value=1.0)
+    monkeypatch.setattr(members, "_fetch_member_bundle", fake_bundle)
+    run_id = "20260706_00z"
+    members.run_member_pass(
+        plugin=plugin, model_id="gefs", run_id=run_id,
+        data_root=tmp_path, region="na", workers=1,
+    )
+    staging_root = tmp_path / "staging" / "gefs" / run_id
+
+    # Simulate a lost fh24 for m01. The synthetic cumulative grid also has
+    # fh18, but sparse schedules never wrote a cumulative checkpoint there.
+    for var in ("tmp2m__m01", "precip_total__m01", "snowfall_total__m01"):
+        for artifact in (staging_root / var / "grid").glob("fh024.*"):
+            artifact.unlink()
+    calls.clear()
+
+    summary = members.run_member_pass(
+        plugin=plugin, model_id="gefs", run_id=run_id,
+        data_root=tmp_path, region="na", workers=1,
+    )
+
+    assert summary.counts == {
+        members.STATUS_RESUMED: 18,
+        members.STATUS_WRITTEN: 3,
+    }
+    assert summary.complete
+    # Rebase at the last complete scheduled checkpoint, then replay every
+    # cumulative step after it so fh18 is not silently omitted from fh24.
+    assert ("m01", 12, ("csnow",)) in calls
+    assert ("m01", 18, ("apcp", "csnow")) in calls
+    assert ("m01", 24, ("apcp", "csnow", "tmp2m")) in calls
+
+    precip24, _ = members._decode_member_frame(
+        staging_root, "gefs", "precip_total__m01", 24,
+    )
+    assert np.nanmax(np.abs(precip24 - 0.315)) < 0.021
+    snow24, _ = members._decode_member_frame(
+        staging_root, "gefs", "snowfall_total__m01", 24,
+    )
+    assert np.nanmax(np.abs(snow24 - 3.15)) < 0.11
 
 
 def test_cumulative_bundle_failure_aborts_member_chain(tmp_path, cumulative_roster_plugin, monkeypatch) -> None:

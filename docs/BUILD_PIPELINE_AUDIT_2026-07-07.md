@@ -265,6 +265,20 @@ Fix (M): run Herbie calls under a deadline; cap the follower wait at 60–90 s i
 
 ### 4.1 HIGH — Cumulative member scheduling assumes derived fhs align with step_hours multiples
 
+**RESOLVED 2026-07-14.** `build_member_plan` now rejects a cumulative derived
+schedule containing forecast hours outside its configured step grid. Resume now
+selects the latest prior forecast hour that was both scheduled for every
+cumulative variable and complete for that member, then replays every intervening
+cumulative step before the first missing output. When no common complete
+checkpoint exists, the member rebuilds cumulative state from the first step while
+leaving already-complete outputs untouched. This is deliberately fail-fast at the
+whole-model member-plan boundary: invalid schedule configuration returns a logged
+`STATUS_ERROR` on each attempted pass rather than silently skipping one variable;
+detection remains log-dependent until the separate persistent
+`skipped_incomplete` observability follow-up lands. Regressions:
+`test_build_member_plan_rejects_off_cadence_derived_fhs` and
+`test_cumulative_resume_replays_steps_after_last_complete_scheduled_frame`.
+
 **Re-verified 2026-07-09, still fully open — deep-dive checked against `675a5883` ("feat: implement mean coverage cap and backfill logic for member frames", 2026-07-08), the one commit that substantially touched this area since the audit was written.** That commit adds a `mean_coverage_only` cap and an idle-backfill pass for a *different, orthogonal* problem — recovering mean coverage on superseded runs whose upstream data was defective (see `docs/ENSEMBLE_MEMBER_SCHEDULER_DESIGN.md` §14, the EPS `20260708_00z` rh700 incident it documents). It does not touch, validate, or harden the `step_fhs`/`prior_steps` mechanics this finding describes.
 
 `members.py:487-573` (`build_member_plan`), `587` (`_bundle_fields_for_fh`, empty-return gate `583-589`), `1204-1226` (resume/rebase). Two unguarded failure modes, both confirmed still present at current line numbers: (a) `step_fhs` is still computed as a pure synthetic grid (`step_fhs = list(range(cumulative.step_hours, max_step_fh + 1, cumulative.step_hours))`, `members.py:557`) independent of the derived var's actual scheduled fhs — a scheduled derived fh that isn't a `step_hours` multiple is never in `step_fhs`, so `_bundle_fields_for_fh` never requests it and returns `{}` — the frame is never recorded (not written, not FETCH_FAILED, not ERROR) and `member_pass_pending` (`members.py:1384-1407`) stays True forever; the scheduler re-runs the pass indefinitely. (b) Resume still picks `base_fh = prior_steps[-1]` (`members.py:1206, 1211`) from the **step grid**, not from scheduled/written frames; sparser cumulative scheduling (e.g. 24 h vars on 6 h steps) → `_decode_member_frame` (`members.py:1062-1072`) hits a missing file, raises, caught by the generic `except Exception` (`1223-1226`) → `STATUS_ERROR` every pass, member permanently wedged (next pass recomputes the identical `resume_fh` and hits the same missing file). Latent only because GEFS/EPS schedules happen to align.
@@ -279,7 +293,7 @@ But it does threaten Tier-2's **completeness**, permanently: 4.1's failure mode 
 
 Net: kept **HIGH**. The reviewer's factual point (schedules currently align, no confirmed incident) is correct and is why this has stayed *latent* rather than *active* — but the downstream consequence, now that there's a real consumer to point at, is more severe than "member pipeline wedges," it's "a live percentile/probability product can silently and permanently stop updating for a variable, with no alerting." That is a legitimate MED→HIGH argument the original write-up didn't have, because Tier-2 didn't exist yet when 4.1 was first written.
 
-Fix (S), now a live-production prerequisite rather than a pre-Tier-2 gate — both original recommendations remain unaddressed: plan-time validation in `build_member_plan` that scheduled derived fhs ⊆ step_fhs; rebase from the last complete *scheduled* frame instead of the raw step grid. Consider also alerting on `skipped_incomplete` units that persist across N consecutive stats passes for the same (var, fh) as a cheap detection layer independent of the underlying fix.
+~~Fix (S), now a live-production prerequisite rather than a pre-Tier-2 gate — plan-time validation in `build_member_plan` that scheduled derived fhs ⊆ step_fhs; rebase from the last complete *scheduled* frame instead of the raw step grid.~~ **DONE 2026-07-14.** Still consider alerting on `skipped_incomplete` units that persist across N consecutive stats passes for the same (var, fh) as a cheap detection layer independent of the underlying fix.
 
 **Scope note:** `stats.py` itself has not been audited to the depth of the rest of this document (it wasn't in scope when this audit was written, and this pass only read it to answer the 4.1 severity question). A dedicated audit pass of the Tier-2 pipeline — its own retry/error handling, the `sorted_nanpercentile`/`prob_exceedance` math in `stats_math`, RSS behavior at `_process_stats_unit`'s member-stack decode, and interaction with run retention — is recommended as follow-up work, not covered here.
 
@@ -413,7 +427,7 @@ Gaps mapping to findings:
 5. ~~Quality-flag threading for fail-open fallbacks (1.2)~~ **DONE 2026-07-10** (flags only; the fail-closed-gate question is deliberately deferred — see 1.2's status note)
 6. ~~Prune-policy fix (2.4) + float32 member warps — plausible (not yet measured) contributors to the swap incident; also codify `GDAL_CACHEMAX` in the repo unit templates.~~ **DONE 2026-07-10** (all three parts; see 2.4/2.3/3.11 status notes). Run `MALLOC_ARENA_MAX=2` as its own isolated, measured canary — don't bundle it into this same deploy (2.3) — **still open, deliberately not included here**
 7. ~~Scheduler `request.model` fix + internal-id guard in `fetch_variable` (2.5) — July 6 incident class~~ **DONE 2026-07-10** (guard extended to all three public Herbie-facing entry points, incl. the readiness probe the actual incident went through — see 2.5's status note)
-8. **Member scheduling validation (4.1)** — moved up 2026-07-09: no longer a pre-Tier-2 gate, now a live-production prerequisite (Tier-2 stats shipped on GEFS+EPS; 4.1's wedge failure mode can silently and permanently stop that product's percentile output for a variable — see 4.1's severity discussion). Plan-time `derived fhs ⊆ step_fhs` validation + rebase-from-last-scheduled-frame.
+8. ~~**Member scheduling validation (4.1)** — plan-time `derived fhs ⊆ step_fhs` validation + rebase-from-last-scheduled-frame.~~ **DONE 2026-07-14** (resume replays every cumulative step after the selected checkpoint; no-checkpoint recovery replays from the first step; persistent incomplete-roster alerting remains a separate follow-up).
 9. pf member-count validation (4.3), `step_fhs[-1] == fh` assertion (1.4)
 
 Each quick win should land with a narrow regression test for its incident class: ECMWF warped ptype ice, readiness by fh, stale-manifest eviction, HTTP 200 range rejection, ptype fallback quality flags.

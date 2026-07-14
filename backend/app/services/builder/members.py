@@ -558,6 +558,21 @@ def build_member_plan(
     if derived_with_fhs:
         max_step_fh = max(max(fhs_by_var[v]) for v in derived_with_fhs)
         step_fhs = list(range(cumulative.step_hours, max_step_fh + 1, cumulative.step_hours))
+        step_fh_set = set(step_fhs)
+        off_cadence = {
+            var: sorted(set(fhs_by_var[var]) - step_fh_set)
+            for var in derived_with_fhs
+            if set(fhs_by_var[var]) - step_fh_set
+        }
+        if off_cadence:
+            details = ", ".join(
+                f"{var}={fhs}" for var, fhs in off_cadence.items()
+            )
+            raise ValueError(
+                f"{model_id} member plan derived schedule invalid: {details}; "
+                f"expected all derived fhs on the {cumulative.step_hours}-hour "
+                "cumulative step grid"
+            )
 
     all_fhs = sorted({fh for fhs in fhs_by_var.values() for fh in fhs} | set(step_fhs))
     return _MemberBuildPlan(
@@ -1187,6 +1202,38 @@ def _rebase_cumulative_state(
     return state
 
 
+def _last_complete_cumulative_checkpoint(
+    *,
+    plan: _MemberBuildPlan,
+    member: str,
+    staging_run_root: Path,
+    resume_fh: int,
+) -> int | None:
+    """Latest scheduled fh that can safely seed every cumulative field."""
+    cumulative_vars = [
+        base_var for base_var, ctx in plan.contexts.items() if ctx.derived
+    ]
+    if not cumulative_vars:
+        return None
+
+    common_fhs = set(plan.fhs_by_var[cumulative_vars[0]])
+    for base_var in cumulative_vars[1:]:
+        common_fhs.intersection_update(plan.fhs_by_var[base_var])
+
+    for fh in sorted((fh for fh in common_fhs if fh < resume_fh), reverse=True):
+        if all(
+            member_frame_is_complete(
+                staging_run_root,
+                plan.model_id,
+                member_var_id(base_var, member),
+                fh,
+            )
+            for base_var in cumulative_vars
+        ):
+            return fh
+    return None
+
+
 def _gate_and_write(
     *,
     plan: _MemberBuildPlan,
@@ -1260,7 +1307,7 @@ def _process_member(
         return
 
     resume_fh = min(min(fhs) for fhs in missing_by_var.values() if fhs)
-    work_fhs = [fh for fh in plan.all_fhs if fh >= resume_fh]
+    work_start_fh = resume_fh
 
     def _mark_remaining(status: str, from_fh: int) -> None:
         for base_var, fhs in missing_by_var.items():
@@ -1270,12 +1317,17 @@ def _process_member(
 
     state = _CumulativeState()
     if plan.has_cumulative:
-        prior_steps = [s for s in plan.step_fhs if s < resume_fh]
-        if prior_steps:
+        checkpoint_fh = _last_complete_cumulative_checkpoint(
+            plan=plan,
+            member=member,
+            staging_run_root=staging_run_root,
+            resume_fh=resume_fh,
+        )
+        if checkpoint_fh is not None:
             try:
                 state = _rebase_cumulative_state(
                     plan=plan, member=member, staging_run_root=staging_run_root,
-                    base_fh=prior_steps[-1], should_stop=should_stop,
+                    base_fh=checkpoint_fh, should_stop=should_stop,
                 )
             except MemberFetchError as exc:
                 if "preempted" in str(exc):
@@ -1283,7 +1335,7 @@ def _process_member(
                     return
                 logger.warning(
                     "Member %s rebase fetch failed at fh%03d: %s",
-                    member, prior_steps[-1], exc,
+                    member, checkpoint_fh, exc,
                 )
                 _mark_remaining(STATUS_FETCH_FAILED, resume_fh)
                 return
@@ -1291,6 +1343,16 @@ def _process_member(
                 logger.exception("Member %s cumulative rebase failed", member)
                 _mark_remaining(STATUS_ERROR, resume_fh)
                 return
+            next_steps = [fh for fh in plan.step_fhs if fh > checkpoint_fh]
+            if next_steps:
+                work_start_fh = min(resume_fh, next_steps[0])
+        else:
+            # No scheduled, complete frame can seed every cumulative field.
+            # Replay the chain from its first step and leave write decisions to
+            # missing_by_var so already-complete artifacts are not overwritten.
+            work_start_fh = min(resume_fh, plan.step_fhs[0])
+
+    work_fhs = [fh for fh in plan.all_fhs if fh >= work_start_fh]
 
     for fh in work_fhs:
         if should_stop():
