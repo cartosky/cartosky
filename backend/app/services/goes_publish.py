@@ -87,8 +87,11 @@ class GOESBundleFrame:
 class GOESPublishedFrame:
     valid_time: datetime
     slot_time: datetime
-    value_path: Path
+    # None for binary-only frames (post value-COG cutover): reuse links their
+    # grid artifacts via sidecar_path instead.
+    value_path: Path | None
     sidecar: dict[str, Any]
+    sidecar_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -209,7 +212,13 @@ def load_latest_published_goes_frames(
             continue
         value_path = var_dir / f"fh{fh:03d}.val.cog.tif"
         sidecar_path = var_dir / f"fh{fh:03d}.json"
-        if not value_path.is_file() or not sidecar_path.is_file():
+        if not sidecar_path.is_file():
+            continue
+        # Substrate-aware admission: sidecar plus EITHER artifact. Binary-only
+        # frames (post value-COG cutover) have grid artifacts but no COG —
+        # requiring the COG here silently collapsed the rolling reuse window.
+        has_cog = value_path.is_file()
+        if not has_cog and not _published_grid_meta_exists(published_run_dir, var_id, fh):
             continue
         try:
             sidecar = json.loads(sidecar_path.read_text())
@@ -223,7 +232,15 @@ def load_latest_published_goes_frames(
         slot_time = None
         if isinstance(source_metadata, dict):
             slot_time = _parse_iso_datetime(source_metadata.get("slot_time"))
-        frames.append(GOESPublishedFrame(valid_time=valid_time, slot_time=slot_time or valid_time, value_path=value_path, sidecar=sidecar))
+        frames.append(
+            GOESPublishedFrame(
+                valid_time=valid_time,
+                slot_time=slot_time or valid_time,
+                value_path=value_path if has_cog else None,
+                sidecar=sidecar,
+                sidecar_path=sidecar_path,
+            )
+        )
     frames.sort(key=lambda item: item.slot_time)
     return run_id, frames
 
@@ -277,13 +294,14 @@ def publish_goes_bundle(
         if isinstance(frame, GOESPublishedFrame):
             # Reuse is deliberately NOT gated: a reused frame is byte-identical
             # to one that passed the pre-encode gate at its original write.
-            reuse_goes_frame(
+            if not reuse_goes_frame(
                 data_root=data_root,
                 run_id=run_id,
                 forecast_hour=fh,
                 frame=frame,
                 band_config=band_config,
-            )
+            ):
+                continue
         elif not write_goes_frame(
             data_root=data_root,
             run_id=run_id,
@@ -517,31 +535,42 @@ def reuse_goes_frame(
     forecast_hour: int,
     frame: GOESPublishedFrame,
     band_config: GOESBandConfig | None = None,
-) -> None:
+) -> bool:
+    """Hardlink a previously published frame into the new run. Returns False
+    when nothing samplable could be reused (binary-only frame with no grid
+    artifacts to link and no COG fallback) so the caller drops the frame
+    instead of publishing it substrate-less."""
     band_config = _resolve_band_config(band_config)
     var_id = band_config.variable_id
+    # The grid-artifact reuse only needs an fh-named path in the source var
+    # dir; the sidecar works when the frame is binary-only (no COG).
+    reference_path = frame.value_path or frame.sidecar_path
+    if reference_path is None:
+        return False
     fh_str = f"fh{int(forecast_hour):03d}"
     staging_dir = data_root / "staging" / GOES_EAST_MODEL_ID / run_id / var_id
     staging_dir.mkdir(parents=True, exist_ok=True)
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
-    _link_or_copy(frame.value_path, value_path)
-
-    sidecar = dict(frame.sidecar)
-    sidecar["run"] = run_id
-    sidecar["fh"] = int(forecast_hour)
-    sidecar["valid_time"] = frame.valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    write_json_atomic(sidecar_path, sidecar)
 
     if grid_build_enabled():
         if not _reuse_goes_grid_artifacts(
             data_root=data_root,
             run_id=run_id,
             forecast_hour=int(forecast_hour),
-            source_value_path=frame.value_path,
+            source_value_path=reference_path,
             source_var_id=var_id,
         ):
-            with rasterio.open(value_path) as ds:
+            if frame.value_path is None:
+                logger.warning(
+                    "Skipping GOES reuse: no grid artifacts and no value COG "
+                    "fallback var=%s fh%03d source=%s",
+                    var_id,
+                    int(forecast_hour),
+                    reference_path,
+                )
+                return False
+            with rasterio.open(frame.value_path) as ds:
                 write_grid_frames_for_run_root(
                     run_root=data_root / "staging" / GOES_EAST_MODEL_ID / run_id,
                     model=GOES_EAST_MODEL_ID,
@@ -551,6 +580,16 @@ def reuse_goes_frame(
                     transform=ds.transform,
                     projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
                 )
+
+    if frame.value_path is not None:
+        _link_or_copy(frame.value_path, value_path)
+
+    sidecar = dict(frame.sidecar)
+    sidecar["run"] = run_id
+    sidecar["fh"] = int(forecast_hour)
+    sidecar["valid_time"] = frame.valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    write_json_atomic(sidecar_path, sidecar)
+    return True
 
 
 def _reuse_goes_grid_artifacts(
@@ -613,6 +652,13 @@ def _forecast_hour_from_artifact_name(path: Path) -> int | None:
         return int(token.removeprefix("fh"))
     except ValueError:
         return None
+
+
+def _published_grid_meta_exists(run_root: Path, var_id: str, fh: int) -> bool:
+    """True when the level-0 grid frame meta exists for (var, fh) — the
+    binary-substrate frame marker used for loader admission."""
+    grid_dir = resolved_grid_dir_for_run_root(run_root, var_id)
+    return (grid_dir / f"fh{int(fh):03d}.l0.meta.json").is_file()
 
 
 def _prepare_stage_run_dir(

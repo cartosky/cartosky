@@ -2245,6 +2245,22 @@ def _fetch_ecmwf_pf_mean_variable(
                             ) from exc
                         data, crs, transform, member_count = _aggregate_grib_subset_mean(subset_path)
 
+                    expected_member_count = int(len(pf_inventory))
+                    if int(member_count) != expected_member_count:
+                        # A short subset would ship a plausible-looking mean
+                        # computed over fewer members. Drop the cached subset so
+                        # the retry redownloads instead of reusing the partial
+                        # file, then fail loudly (audit 4.3).
+                        try:
+                            subset_path.unlink()
+                        except OSError:
+                            pass
+                        raise RuntimeError(
+                            f"ECMWF EPS pf-mean subset covered {int(member_count)} of "
+                            f"{expected_member_count} perturbed members for {model_id} "
+                            f"fh{fh:03d} pattern={search_pattern!r}"
+                        )
+
                 meta = {
                     "inventory_line": first_inventory_line or f"aggregate:{search_pattern}:pf_mean",
                     "search_pattern": str(search_pattern),

@@ -8,6 +8,12 @@ import {
   shouldExposeCompareDiff,
 } from "../../src/lib/compare-alignment";
 import {
+  resolveCompareDiffCityLabelMode,
+  shouldShowBlockingDiffLoader,
+} from "../../src/lib/compare-diff-presentation";
+import { getDiffScale } from "../../src/lib/compare-diff-scale-values";
+import { DIFF_GRID_FRAME_CACHE_MAX_BYTES } from "../../src/lib/grid-frame-cache";
+import {
   ENSEMBLE_MEAN_VARIABLES,
   ENSEMBLES_TAB_VARIABLES,
   ensembleProbabilityRequestVariables,
@@ -57,6 +63,36 @@ test("stale diff output is synchronously hidden when inputs are not current", ()
   expect(shouldExposeCompareDiff(ready)).toBe(true);
   expect(shouldExposeCompareDiff({ ...ready, enabled: false })).toBe(false);
   expect(shouldExposeCompareDiff({ ...ready, leftFrameUrl: null })).toBe(false);
+});
+
+test("a pending scrub keeps the published diff visible without a blocking loader", () => {
+  expect(shouldShowBlockingDiffLoader({
+    isLoading: true,
+    publishedFrameUrl: "blob:published-diff",
+  })).toBe(false);
+  expect(shouldShowBlockingDiffLoader({
+    isLoading: true,
+    publishedFrameUrl: null,
+  })).toBe(true);
+});
+
+test("500mb height anomaly differences suppress numeric city values", () => {
+  expect(resolveCompareDiffCityLabelMode({
+    leftModel: "gfs",
+    variable: "hgt500_anom",
+  })).toBe("name-only");
+});
+
+test("500mb height anomaly differences use a contrast-preserving 100m scale", () => {
+  expect(getDiffScale("hgt500_anom")).toEqual({ maxAbs: 100, units: "m" });
+});
+
+test("diff frame cache holds the active GFS-ECMWF pair and its six-frame warm window", () => {
+  const gfsFrameBytes = 682 * 657 * 2;
+  const ecmwfFrameBytes = 1893 * 1825 * 2;
+  const activePlusWarmWindowBytes = (gfsFrameBytes + ecmwfFrameBytes) * 7;
+
+  expect(DIFF_GRID_FRAME_CACHE_MAX_BYTES).toBeGreaterThanOrEqual(activePlusWarmWindowBytes);
 });
 
 test("probability requests stay within the six-variable contract", () => {

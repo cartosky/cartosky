@@ -212,10 +212,14 @@ class MRMSPublishResult:
 class MRMSPublishedFrame:
     valid_time: datetime
     source_valid_time: datetime | None
-    value_path: Path
+    # None for binary-only frames (post value-COG cutover): reuse links their
+    # grid artifacts via sidecar_path instead.
+    value_path: Path | None
     sidecar: dict[str, Any]
     ptype_value_path: Path | None = None
     ptype_sidecar: dict[str, Any] | None = None
+    sidecar_path: Path | None = None
+    ptype_sidecar_path: Path | None = None
 
 
 def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list[MRMSPublishedFrame]]:
@@ -273,7 +277,13 @@ def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list
             continue
         sidecar_path = refl_dir / f"fh{fh_int:03d}.json"
         value_path = refl_dir / f"fh{fh_int:03d}.val.cog.tif"
-        if not sidecar_path.is_file() or not value_path.is_file():
+        if not sidecar_path.is_file():
+            continue
+        # Substrate-aware admission: sidecar plus EITHER artifact. Binary-only
+        # frames (post value-COG cutover) have grid artifacts but no COG —
+        # requiring the COG here silently collapsed the rolling reuse window.
+        has_cog = value_path.is_file()
+        if not has_cog and not _published_grid_meta_exists(published_run_dir, MRMS_VARIABLE_ID, fh_int):
             continue
         try:
             sidecar = json.loads(sidecar_path.read_text())
@@ -287,16 +297,23 @@ def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list
         except ValueError:
             continue
 
-        # Check for paired mrms_radar_ptype artifacts
+        # Check for paired mrms_radar_ptype artifacts (same substrate-aware
+        # admission as reflectivity above).
         ptype_value_path: Path | None = None
         ptype_sidecar_data: dict[str, Any] | None = None
+        ptype_sidecar_source: Path | None = None
         if fh_int in ptype_fh_set:
             ptype_val = ptype_dir / f"fh{fh_int:03d}.val.cog.tif"
             ptype_sc = ptype_dir / f"fh{fh_int:03d}.json"
-            if ptype_val.is_file() and ptype_sc.is_file():
+            ptype_has_cog = ptype_val.is_file()
+            if ptype_sc.is_file() and (
+                ptype_has_cog
+                or _published_grid_meta_exists(published_run_dir, MRMS_RADAR_PTYPE_VARIABLE_ID, fh_int)
+            ):
                 try:
                     ptype_sidecar_data = json.loads(ptype_sc.read_text())
-                    ptype_value_path = ptype_val
+                    ptype_sidecar_source = ptype_sc
+                    ptype_value_path = ptype_val if ptype_has_cog else None
                 except (OSError, json.JSONDecodeError):
                     pass
 
@@ -304,10 +321,12 @@ def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list
             MRMSPublishedFrame(
                 valid_time=valid_time,
                 source_valid_time=_source_valid_time_from_sidecar(sidecar, fallback=valid_time),
-                value_path=value_path,
+                value_path=value_path if has_cog else None,
                 sidecar=sidecar,
                 ptype_value_path=ptype_value_path,
                 ptype_sidecar=ptype_sidecar_data,
+                sidecar_path=sidecar_path,
+                ptype_sidecar_path=ptype_sidecar_source,
             )
         )
 
@@ -369,13 +388,15 @@ def publish_mrms_bundle(
     fresh_jobs: list[tuple[int, MRMSBundleFrame]] = []
     for fh, frame in enumerate(ordered_frame_inputs):
         if isinstance(frame, MRMSPublishedFrame):
-            reused_ptype = reuse_mrms_frame(
+            reused_refl, reused_ptype = reuse_mrms_frame(
                 data_root=data_root,
                 run_id=run_id,
                 forecast_hour=fh,
                 frame=frame,
                 build_grid_artifacts=build_primary_grid_artifacts,
             )
+            if not reused_refl:
+                continue
             targets.append((MRMS_VARIABLE_ID, fh))
             if reused_ptype:
                 ptype_targets.append((MRMS_RADAR_PTYPE_VARIABLE_ID, fh))
@@ -747,38 +768,45 @@ def reuse_mrms_frame(
     forecast_hour: int,
     frame: MRMSPublishedFrame,
     build_grid_artifacts: bool = True,
-) -> bool:
-    """Reuse a previously published reflectivity frame (and its ptype frame if available).
+) -> tuple[bool, bool]:
+    """Reuse a previously published reflectivity frame (and its ptype frame if
+    available).
 
-    Returns True if a paired mrms_radar_ptype frame was also reused.
+    Returns ``(reused_reflectivity, reused_ptype)``. Reflectivity reuse fails
+    (False, False) only when nothing samplable can be carried forward — a
+    binary-only frame with no grid artifacts to link and no COG fallback —
+    so the caller drops the frame instead of publishing it substrate-less.
     """
     fh_str = f"fh{int(forecast_hour):03d}"
+    # The grid-artifact reuse only needs an fh-named path in the source var
+    # dir; the sidecar works when the frame is binary-only (no COG).
+    reference_path = frame.value_path or frame.sidecar_path
+    if reference_path is None:
+        return False, False
     staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_VARIABLE_ID
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
 
-    _link_or_copy(frame.value_path, value_path)
-
-    sidecar = dict(frame.sidecar)
-    sidecar["run"] = run_id
-    sidecar["fh"] = int(forecast_hour)
-    sidecar["valid_time"] = frame.valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if frame.source_valid_time is not None:
-        source_metadata = dict(sidecar.get("source_metadata") or {})
-        source_metadata["actual_valid_time"] = frame.source_valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        sidecar["source_metadata"] = source_metadata
-    write_json_atomic(sidecar_path, sidecar)
     if build_grid_artifacts and grid_build_enabled():
         if not _reuse_mrms_grid_artifacts(
             data_root=data_root,
             run_id=run_id,
             var=MRMS_VARIABLE_ID,
             forecast_hour=int(forecast_hour),
-            source_value_path=frame.value_path,
+            source_value_path=reference_path,
         ):
-            with rasterio.open(value_path) as ds:
+            if frame.value_path is None:
+                logger.warning(
+                    "Skipping MRMS reuse: no grid artifacts and no value COG "
+                    "fallback var=%s fh%03d source=%s",
+                    MRMS_VARIABLE_ID,
+                    int(forecast_hour),
+                    reference_path,
+                )
+                return False, False
+            with rasterio.open(frame.value_path) as ds:
                 write_grid_frames_for_run_root(
                     run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
                     model=MRMS_MODEL_ID,
@@ -789,9 +817,23 @@ def reuse_mrms_frame(
                     projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
                 )
 
+    if frame.value_path is not None:
+        _link_or_copy(frame.value_path, value_path)
+
+    sidecar = dict(frame.sidecar)
+    sidecar["run"] = run_id
+    sidecar["fh"] = int(forecast_hour)
+    sidecar["valid_time"] = frame.valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if frame.source_valid_time is not None:
+        source_metadata = dict(sidecar.get("source_metadata") or {})
+        source_metadata["actual_valid_time"] = frame.source_valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        sidecar["source_metadata"] = source_metadata
+    write_json_atomic(sidecar_path, sidecar)
+
     # Reuse paired mrms_radar_ptype artifacts if they exist
     has_ptype = False
-    if frame.ptype_value_path is not None and frame.ptype_sidecar is not None:
+    ptype_reference = frame.ptype_value_path or frame.ptype_sidecar_path
+    if ptype_reference is not None and frame.ptype_sidecar is not None:
         try:
             ptype_staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_RADAR_PTYPE_VARIABLE_ID
             ptype_staging_dir.mkdir(parents=True, exist_ok=True)
@@ -799,7 +841,31 @@ def reuse_mrms_frame(
             ptype_value_path = ptype_staging_dir / f"{fh_str}.val.cog.tif"
             ptype_sidecar_path = ptype_staging_dir / f"{fh_str}.json"
 
-            _link_or_copy(frame.ptype_value_path, ptype_value_path)
+            if build_grid_artifacts and grid_build_enabled():
+                if not _reuse_mrms_grid_artifacts(
+                    data_root=data_root,
+                    run_id=run_id,
+                    var=MRMS_RADAR_PTYPE_VARIABLE_ID,
+                    forecast_hour=int(forecast_hour),
+                    source_value_path=ptype_reference,
+                ):
+                    if frame.ptype_value_path is None:
+                        raise ValueError(
+                            "no ptype grid artifacts and no value COG fallback"
+                        )
+                    with rasterio.open(frame.ptype_value_path) as ds:
+                        write_grid_frames_for_run_root(
+                            run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+                            model=MRMS_MODEL_ID,
+                            var=MRMS_RADAR_PTYPE_VARIABLE_ID,
+                            fh=int(forecast_hour),
+                            values=ds.read(1).astype(np.float32, copy=False),
+                            transform=ds.transform,
+                            projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
+                        )
+
+            if frame.ptype_value_path is not None:
+                _link_or_copy(frame.ptype_value_path, ptype_value_path)
 
             ptype_sc = dict(frame.ptype_sidecar)
             ptype_sc["run"] = run_id
@@ -810,24 +876,6 @@ def reuse_mrms_frame(
                 ptype_source_metadata["actual_valid_time"] = frame.source_valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 ptype_sc["source_metadata"] = ptype_source_metadata
             write_json_atomic(ptype_sidecar_path, ptype_sc)
-            if build_grid_artifacts and grid_build_enabled():
-                if not _reuse_mrms_grid_artifacts(
-                    data_root=data_root,
-                    run_id=run_id,
-                    var=MRMS_RADAR_PTYPE_VARIABLE_ID,
-                    forecast_hour=int(forecast_hour),
-                    source_value_path=frame.ptype_value_path,
-                ):
-                    with rasterio.open(ptype_value_path) as ds:
-                        write_grid_frames_for_run_root(
-                            run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
-                            model=MRMS_MODEL_ID,
-                            var=MRMS_RADAR_PTYPE_VARIABLE_ID,
-                            fh=int(forecast_hour),
-                            values=ds.read(1).astype(np.float32, copy=False),
-                            transform=ds.transform,
-                            projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
-                        )
             has_ptype = True
         except Exception:
             logger.warning(
@@ -835,7 +883,7 @@ def reuse_mrms_frame(
                 forecast_hour,
                 exc_info=True,
             )
-    return has_ptype
+    return True, has_ptype
 
 
 def _reuse_mrms_grid_artifacts(
@@ -901,6 +949,13 @@ def _forecast_hour_from_artifact_name(path: Path) -> int | None:
         return int(token.removeprefix("fh"))
     except ValueError:
         return None
+
+
+def _published_grid_meta_exists(run_root: Path, var_id: str, fh: int) -> bool:
+    """True when the level-0 grid frame meta exists for (var, fh) — the
+    binary-substrate frame marker used for loader admission."""
+    grid_dir = resolved_grid_dir_for_run_root(run_root, var_id)
+    return (grid_dir / f"fh{int(fh):03d}.l0.meta.json").is_file()
 
 
 def _prepare_stage_run_dir(*, data_root: Path, run_id: str) -> None:
@@ -1471,13 +1526,17 @@ def finalize_mrms_published_run(
         )
         written_items: list[tuple[int, MRMSSupplementalFrame]] = []
         for fh, supplemental_frame in enumerate(ordered_frames):
+            # Grid artifacts are written inline. The old flow deferred them to
+            # _build_published_run_grid_artifacts, which re-encodes from the
+            # value COG — a COG that no longer exists once the model is
+            # binary-only, which published sidecar-only (unsampleable) frames.
             if _write_mrms_supplemental_frame_to_run_root(
                 run_root=published_run_root,
                 run_id=run_id,
                 var_id=var_id,
                 forecast_hour=fh,
                 frame=supplemental_frame,
-                build_grid_artifacts=False,
+                build_grid_artifacts=bool(build_grid_artifacts),
             ):
                 written_items.append((fh, supplemental_frame))
         manifest_variables[var_id] = _supplemental_manifest_entry(
@@ -1503,11 +1562,21 @@ def finalize_mrms_published_run(
 
     if build_grid_artifacts and grid_build_enabled():
         if changed_supplemental_vars:
+            # Grid frames were written inline (or hardlinked by
+            # _copy_published_variable_artifacts) above — only the per-var
+            # grid manifests still need building for the changed variables.
             grid_variables = [
                 var_id
                 for var_id in MRMS_RECENT_PRECIP_VARIABLE_IDS
                 if var_id in changed_supplemental_vars and (published_run_root / var_id).is_dir()
             ]
+            if grid_variables:
+                build_grid_manifests_for_run_root(
+                    run_root=published_run_root,
+                    model=MRMS_MODEL_ID,
+                    run=run_id,
+                    variables=tuple(dict.fromkeys(grid_variables)),
+                )
         else:
             grid_variables = [MRMS_VARIABLE_ID]
             if (published_run_root / MRMS_RADAR_PTYPE_VARIABLE_ID).is_dir():
@@ -1517,11 +1586,11 @@ def finalize_mrms_published_run(
                 for var_id in MRMS_RECENT_PRECIP_VARIABLE_IDS
                 if (published_run_root / var_id).is_dir()
             )
-        _build_published_run_grid_artifacts(
-            data_root=data_root,
-            run_id=run_id,
-            variables=tuple(dict.fromkeys(grid_variables)),
-        )
+            _build_published_run_grid_artifacts(
+                data_root=data_root,
+                run_id=run_id,
+                variables=tuple(dict.fromkeys(grid_variables)),
+            )
 def _supplemental_manifest_entry(
     *,
     frame_items: list[tuple[int, MRMSSupplementalFrame]],
@@ -1588,6 +1657,16 @@ def _copy_published_variable_artifacts(
             continue
         _link_or_copy(source_path, target_dir / source_path.name)
 
+    # Carry the grid artifacts too — post value-COG cutover they are the only
+    # samplable substrate, and the old COG-read rebuild that used to recreate
+    # them cannot run without COGs.
+    source_grid_dir = resolved_grid_dir_for_run_root(data_root / "published" / MRMS_MODEL_ID / source_run_id, var_id)
+    if source_grid_dir.is_dir():
+        target_grid_dir = target_dir / "grid"
+        for source_path in sorted(source_grid_dir.iterdir()):
+            if source_path.is_file():
+                _link_or_copy(source_path, target_grid_dir / source_path.name)
+
 
 def _build_published_run_grid_artifacts(
     *,
@@ -1603,17 +1682,27 @@ def _build_published_run_grid_artifacts(
         if not var_dir.is_dir():
             continue
 
-        grid_dir = var_dir / "grid"
-        if grid_dir.exists():
-            shutil.rmtree(grid_dir, ignore_errors=True)
-
+        # Non-destructive backfill: never delete existing grid artifacts (they
+        # may be the frame's ONLY substrate post value-COG cutover, with no
+        # COG left to rebuild them from). Only fill in frames that are missing
+        # grid artifacts AND still have a COG to re-encode.
         wrote_any = False
         for sidecar_path in sorted(var_dir.glob("fh*.json")):
             fh = _forecast_hour_from_artifact_name(sidecar_path)
             if fh is None:
                 continue
+            if _published_grid_meta_exists(run_root, var_id, fh):
+                wrote_any = True
+                continue
             value_path = var_dir / f"fh{fh:03d}.val.cog.tif"
             if not value_path.is_file():
+                logger.warning(
+                    "MRMS grid backfill impossible: no grid artifacts and no "
+                    "value COG for %s/%s fh%03d",
+                    run_id,
+                    var_id,
+                    fh,
+                )
                 continue
             with rasterio.open(value_path) as ds:
                 write_grid_frames_for_run_root(

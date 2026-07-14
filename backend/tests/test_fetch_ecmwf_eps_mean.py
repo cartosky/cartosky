@@ -810,3 +810,59 @@ def test_fetch_variable_reuses_cached_eps_full_grib(monkeypatch, tmp_path: Path)
     metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
     assert metrics["counters"].get("eps_full_file_cache_store", 0) == 1
     assert metrics["counters"].get("eps_full_file_cache_hit", 0) == 1
+
+
+def test_fetch_variable_rejects_partial_eps_pf_mean_aggregation(monkeypatch, tmp_path: Path) -> None:
+    """Audit 4.3: a subset covering fewer bands than the pf inventory must fail
+    loudly (and evict the cached partial subset) instead of shipping a mean
+    silently computed over fewer members."""
+
+    class _TmpPathHerbie(_FakeHerbie):
+        def get_localFilePath(self, search_pattern: str) -> str:
+            return str(tmp_path / "eps-subset.grib2")
+
+    fake_herbie_core = ModuleType("herbie.core")
+    fake_herbie_core.Herbie = _TmpPathHerbie
+
+    subset_paths: list[Path] = []
+
+    def _fake_download_subset(_herbie, **kwargs):
+        out_path = Path(kwargs["out_path"])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"GRIB-partial-subset")
+        subset_paths.append(out_path)
+        return out_path
+
+    def _fake_aggregate_subset(_path):
+        data = np.array([[3.0]], dtype=np.float32)
+        crs = rasterio.crs.CRS.from_epsg(4326)
+        transform = rasterio.transform.from_origin(-101.0, 46.0, 1.0, 1.0)
+        # The _FakeHerbie inventory lists 2 pf members; only 1 band made it.
+        return data, crs, transform, 1
+
+    monkeypatch.setattr(fetch_module, "_retry_sleep_seconds", lambda: 0.0)
+
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
+        with patch(
+            "app.services.builder.fetch._download_subset_with_inventory_rows",
+            side_effect=_fake_download_subset,
+        ), patch(
+            "app.services.builder.fetch._aggregate_grib_subset_mean",
+            side_effect=_fake_aggregate_subset,
+        ):
+            with pytest.raises(RuntimeError, match="pf-mean") as excinfo:
+                fetch_variable(
+                    model_id="ifs",
+                    product="enfo",
+                    search_pattern=":2t:",
+                    run_date=datetime(2026, 4, 19, 0, 0),
+                    fh=0,
+                    herbie_kwargs={"_cartosky_fetch_aggregation": "ecmwf_pf_mean", "priority": ["azure"]},
+                    return_meta=True,
+                )
+
+    assert "covered 1 of 2 perturbed members" in str(excinfo.value.__cause__)
+    # The partial subset must not be left behind as a cached poison file that
+    # every retry would silently reuse.
+    assert subset_paths
+    assert all(not path.exists() for path in subset_paths)

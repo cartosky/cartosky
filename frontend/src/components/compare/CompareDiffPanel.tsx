@@ -6,6 +6,10 @@ import { MapCanvas, type BasemapMode } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { GridManifestResponse } from "@/lib/api";
 import { OVERLAY_DEFAULT_OPACITY } from "@/lib/config";
+import {
+  resolveCompareDiffCityLabelMode,
+  shouldShowBlockingDiffLoader,
+} from "@/lib/compare-diff-presentation";
 import type { MapRegionView } from "@/lib/map-region-views";
 import { CompareDiffLegend } from "@/components/compare/CompareDiffLegend";
 
@@ -66,6 +70,11 @@ function CompareDiffPanelComponent({
 }: CompareDiffPanelProps) {
   const frameUrl = diffFrameUrl;
   const gridActive = Boolean(diffManifest && frameUrl);
+  const showBlockingLoader = shouldShowBlockingDiffLoader({
+    isLoading,
+    publishedFrameUrl: frameUrl,
+  });
+  const cityLabelMode = resolveCompareDiffCityLabelMode({ leftModel, variable });
 
   // MapCanvas selection identity — changes whenever the diff frame changes so the
   // controller reloads. The blob URL is unique per compute, so it is sufficient.
@@ -173,6 +182,7 @@ function CompareDiffPanelComponent({
         gridLegend={gridActive ? diffLegend : null}
         gridActive={gridActive}
         variable={variable}
+        cityLabelMode={cityLabelMode}
         region={region}
         regionViews={regionViews}
         opacity={OVERLAY_DEFAULT_OPACITY}
@@ -188,7 +198,7 @@ function CompareDiffPanelComponent({
 
       {showLegend && diffLegend ? <CompareDiffLegend legend={diffLegend} /> : null}
 
-      {isLoading ? (
+      {showBlockingLoader ? (
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#04101e]/35 backdrop-blur-[1px]">
           <Loader2 className="h-6 w-6 animate-spin text-cyan-200/80" />
         </div>

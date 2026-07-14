@@ -10,6 +10,8 @@ Severity legend: **HIGH** = wrong data shipped or prod-incident cause; **MED** =
 
 **Progress (2026-07-10):** quick-win #5 done — 1.2 (quality-flag threading for fail-open fallbacks: `ptype_gate_fallback`, `phase_signals_missing`, `snow_component_missing`; logs promoted to warning; fallback data semantics deliberately unchanged and now pinned by tests). Five new tests, each confirmed to fail pre-fix. Incidental find while regression-sweeping: `test_derive_bundle_cache.py::test_derive_bundle_reuses_fetch_and_warp_cache` fails on unmodified main (inventory-step expectation, pre-existing, unrelated to 1.2; fixed the same day in a spun-off session). Quick-win #6 also done the same day — 2.4 prune-allowlist inversion, 3.11 float32 member warps, 2.3 `GDAL_CACHEMAX` template codification; `MALLOC_ARENA_MAX=2` intentionally left for its own measured canary. Quick-win #7 done as well — 2.5 model-id leak: precheck now uses `request.model`, and `eps`/`ecmwf` are rejected at all three public Herbie-facing fetch entry points (see 2.5).
 
+**Progress (2026-07-14):** quick-wins #8 (4.1 member scheduling, landed via `d92dfd3a` after independent review) and #9 (1.4 step-sequence guard + 4.3 pf member-count validation) done — **the §7 quick-wins list is complete**. Remaining from this audit: the deferred decisions (MALLOC_ARENA_MAX canary, fail-closed Kuchera gate, `skipped_incomplete` alerting), the medium projects (§7: per-step timings 3.6 first, then 3.1/3.2/3.4/3.8, stats.py audit), and the 5.1 refactor.
+
 **Live-log validation (2026-07-08):** a real in-progress EPS (`ifs`) run's scheduler logs were reviewed against this audit, then cross-checked against ECMWF's real public feed (`data.ecmwf.int`). Findings 3.1 and 4.4 were confirmed, sharpened, and extended — no new bugs were found, but several mechanisms were pinned down precisely with first-hand data: the catch-up round is a hard barrier (a fast variable's worker sits idle waiting for the slowest variable in the same round, not just capped at one in-flight fh); only one of ~13 EPS mean variables (`hgt500__mean`) ever attempts the cheap precomputed-mean path, and it fails on every observed hour of a still-in-progress run — **confirmed** (not hypothesized) to be expected behavior, since ECMWF publishes that statistics product as a single bundle per horizon only once the run substantially completes, not incrementally; and `tmp850__mean` is a missed candidate for the same cheap path once available.
 
 **Full re-verification pass (2026-07-09):** every citation into `fetch.py`, `scheduler.py`, and `members.py` was re-checked against current disk state, since 27 commits (659 lines across those three files) landed after this doc was first written — none of them fixes to findings here, all unrelated/adjacent feature work. `derive.py`, `pipeline.py`, `cog_writer.py`, and `colorize.py` were untouched by any of those commits, so every citation into those files below is still exact. Outcome of the re-check:
@@ -30,7 +32,7 @@ Severity legend: **HIGH** = wrong data shipped or prod-incident cause; **MED** =
 
 ## 1. Data-accuracy findings (derive logic)
 
-### 1.1 HIGH — ECMWF ptype thermal signals silently drop to zero in warped-component mode
+~~### 1.1 HIGH — ECMWF ptype thermal signals silently drop to zero in warped-component mode~~
 
 **STATUS: FIXED 2026-07-07.** `_ptype_intensity_ecmwf_phase_signals` now accepts and forwards `use_warped`/`target_region`/`target_grid_id`/`resampling` to its component fetches, matching the GFS path; both call sites (intensity + accumulation) pass their in-scope warp state through. New test `test_ecmwf_ptype_intensity_uses_warped_component_fetches_when_requested` in `backend/tests/test_ecmwf_ptype_intensity_derive.py` asserts every thermal/precip fetch carries the warp params and that a cold/no-sf profile classifies as snow (confirmed to fail against the pre-fix code).
 
@@ -40,7 +42,7 @@ Consequence: classification in `_ptype_intensity_family_rates_ecmwf` (`derive.py
 
 Fix (S): thread the four warp params through, exactly as `_ptype_intensity_thermal_fields` does for GFS; add a warped-mode ECMWF test mirroring `test_ptype_intensity_uses_warped_component_fetches_when_requested`.
 
-### 1.2 HIGH — Fail-open fallbacks produce confidently wrong frames with no quality flag
+~~### 1.2 HIGH — Fail-open fallbacks produce confidently wrong frames with no quality flag~~
 
 **STATUS: FIXED 2026-07-10** (quality-flag threading; fail-open data behavior intentionally unchanged — see note). All three paths now record degraded quality via the existing `_record_derive_quality` mechanism and log at warning level:
 - Kuchera: the ptype-gate fallback flag is no longer discarded at the call site — it accumulates across steps (mirroring `apcp_cumulative_fallback_used`) and ships as `ptype_gate_fallback` in `quality_flags`.
@@ -62,7 +64,9 @@ Fix (S — highest correctness-per-line payoff in the file): thread the existing
 
 Fix: AND-merge validity (NaN where any contributing step was invalid) or record a per-var degraded-quality flag.
 
-### 1.4 MED — No guard that the accumulation step sequence ends at the requested fh
+~~### 1.4 MED — No guard that the accumulation step sequence ends at the requested fh~~
+
+**STATUS: FIXED 2026-07-14.** New `_require_cumulative_steps_end_at_fh` helper raises `ValueError` (fail the frame loudly) when the resolved step sequence is empty or doesn't end at the requested fh; called by all five accumulation strategies (`precip_total_cumulative`, `snowfall_total_10to1_cumulative`, `snowfall_kuchera_total_cumulative`, `ptype_accumulation_cumulative`, `ptype_accumulation_ecmwf`) immediately after `_resolve_cumulative_step_fhs`. Deliberately NOT applied to `_ptype_intensity_fetch_direct_cumulative_step` (a sixth caller that appeared after this finding was written): it differences endpoints fetched at the actual fh and computes duration from the real gap, so off-grid hours are handled correctly there and must stay lenient. Deploy derisk: a registry scan of all 4,680 scheduled (model, var, cycle, fh) combos across 17 models confirmed zero current violations — the guard can only fire on future cadence-hint drift, which is its purpose. Tests in `backend/tests/test_cumulative_step_guard.py` (helper unit tests incl. the 3h→6h transition case, plus mock-free integration tests proving `precip_total`/ECMWF ptype accumulation raise before any fetch); all confirmed to fail pre-fix.
 
 `_resolve_cumulative_step_fhs` (`derive.py:3046-3097`) and all four callers: `range(step_hours, fh+1, step_hours)` silently drops the tail partial window when `fh % step_hours != 0` or when `step_hours_after_fh` transition hints don't land on fh. The derive returns an accumulation valid through the last step but published/labeled as valid at `fh`. If cadence hints drift from upstream reality (model cadence change), users see precipitation "pause" on off-cadence frames.
 
@@ -130,7 +134,7 @@ Fix: standardize on `isfinite & >= 0` via a shared helper.
 
 Fix (S): rename-swap — `os.rename(published, trash)` → `os.rename(tmp, published)` → delete trash in background. Two renames = milliseconds of exposure.
 
-### 2.2 HIGH — Manifests are never evicted with their runs
+~~### 2.2 HIGH — Manifests are never evicted with their runs~~
 
 **STATUS: FIXED 2026-07-07.** New `_enforce_manifest_retention` prunes `manifests/<model>/<run>.json` with the same `effective_keep_runs` as staging/published retention, called alongside them in `_process_run`; `LATEST.json` and non-run files are left untouched. Tests `test_enforce_manifest_retention_prunes_only_old_run_manifests` and `test_enforce_manifest_retention_noops_below_keep_count` in `backend/tests/test_scheduler_promote_retention.py`.
 
@@ -146,7 +150,7 @@ Two follow-ups remain:
 - **Config drift (S):** ~~the cap exists only on the live hosts; the repo's `deployment/systemd/` unit files and `scheduler*.env.example` files don't carry it. A rebuilt or newly provisioned host from the repo templates would silently lose the cap. Codify `GDAL_CACHEMAX` in the checked-in templates (and audit the other scheduler units for the same drift).~~ **DONE 2026-07-10:** `Environment=GDAL_CACHEMAX=256` added to all 17 `deployment/systemd/csky-*-scheduler.service` templates with a comment noting it matches the operator-set prod cap. `csky-api.service` and the canary unit were left untouched — the operator confirmation covered scheduler units only; extending the cap to the API process is a separate decision.
 - **Narrowed swap suspects, causal link not yet measured** (caveat added 2026-07-09, per independent review): with the block cache bounded, the remaining native-heap candidates from the EPS memory audit are glibc arena growth, the Python-side prune-allowlist gap (2.4), float64 member warps, and RAM-buffered payloads — full-file `.content` responses (3.2) and the ~51 simultaneous pf range payloads (3.11 bullets). None of these is confirmed against measured RSS/cache evidence to be *the* cause of the original swap incident — they're plausible candidates from code inspection, not a proven root cause. `MALLOC_ARENA_MAX=2` specifically should be tested as an isolated, measured canary (before/after RSS comparison on one host) rather than bundled into the same deploy as the 2.4 prune-policy fix — bundling them would make it impossible to attribute any RSS improvement to either change. The `malloc_trim`-after-runs (`scheduler.py:1737-1750`) and restart-on-success (`RESTART_ON_SUCCESS_MODELS`, `scheduler.py:183`, check at `1773`, invoked at `3148`) mitigations should stay until those are addressed.
 
-### 2.4 HIGH — Memory-prune allowlist silently skips two of the heaviest derive strategies
+~~### 2.4 HIGH — Memory-prune allowlist silently skips two of the heaviest derive strategies~~
 
 **STATUS: FIXED 2026-07-10** (audit's option a — allowlist inverted to prune-for-every-derived-kind). `prune_fetch_context_after_frame` now prunes whenever the var spec carries a non-empty `derive` kind; the six-kind allowlist is gone, so `precip_total_cumulative`, `snowfall_total_10to1_cumulative`, the component strategies, and both anomaly strategies are covered, and new strategies default to pruned instead of never-pruned. Safety was verified per strategy before inverting: all ctx caches are fh-keyed memoization; incremental cumulative seeds survive via `keep_fhs={fh}` (the just-stored entry is what the next frame loads as prior) plus the staging-npz disk fallback in `_kuchera_load_prior_cumulative`; `anomaly_departure` touches only the current fh (climatology baselines load from disk, not ctx); `precip_accum_anomaly_departure`'s window endpoints are frame-specific keys, with the disk fallback covering recursive cumulative seeds. Worst case of over-pruning is a disk/npz reload, never wrong data. New tests in `backend/tests/test_fetch_context_lifecycle.py`: `test_prune_fetch_context_after_frame_covers_previously_unpruned_strategies` (parameterized over all seven previously-skipped kinds, each confirmed to fail pre-fix) and `test_prune_fetch_context_after_frame_noops_without_derive_kind` (pins the non-derived gate). The float32 member-warp companion fix (3.11 bullet) and the `GDAL_CACHEMAX` template codification (2.3) landed in the same pass; `MALLOC_ARENA_MAX=2` was deliberately NOT bundled, per 2.3's isolated-canary note.
 
@@ -154,7 +158,7 @@ Two follow-ups remain:
 
 Fix (S): invert to opt-out (prune for every derived var) or make pruning an explicit per-strategy policy on `DeriveStrategy`; new strategies currently default to "never pruned".
 
-### 2.5 HIGH — Model-id leak class (July 6 eps/ifs incident) has a live instance
+~~### 2.5 HIGH — Model-id leak class (July 6 eps/ifs incident) has a live instance~~
 
 **STATUS: FIXED 2026-07-10.** Both halves landed:
 - `_component_precheck_available` now fetches with `request.model` from the `plugin.herbie_request(...)` it constructs (the raw `model_id` param is explicitly `del`'d with a comment naming the incident class, matching the codebase's del-idiom rather than cascading a signature change through `_kuchera_rebuild_profile_ready`).
@@ -164,7 +168,7 @@ Fix (S): invert to opt-out (prune for every derived var) or make pruning an expl
 
 Fix (S): use `request.model`/`request.product` within `scheduler.py:792-830`; add a guard in `fetch_variable` rejecting known internal-only ids (e.g. `eps`).
 
-### 2.6 MED — Readiness-probe cache key omits `fh`
+~~### 2.6 MED — Readiness-probe cache key omits `fh`~~
 
 **STATUS: FIXED 2026-07-07.** Both cache-key forms in `_ensure_products_ready` now include `fh` (`{model}|{product}|fh{NNN}` and `{product_name}|fh{NNN}`), so a ready probe at one fh no longer bypasses the fail-closed gate for later hours of the same target; negative results are also now scoped per fh. New test `test_ensure_products_ready_readiness_cache_is_scoped_per_forecast_hour` in `backend/tests/test_pipeline_readiness_gate.py` (confirmed to fail against the pre-fix code). Note: the bare `product_name` cross-sub-model collision risk mentioned below is not addressed by this fix.
 
@@ -192,7 +196,7 @@ Fix (M): allow 2+ in-flight fhs per target for non-derived vars (readiness cache
 
 Fix (M): retry the range request 2–3× with short backoff before the full-file fallback; cap fallback by Content-Length; route the fallback through the EPS full-file cache when enabled.
 
-### 3.3 MED — Byte-range correctness: HTTP 200 passes as a "subset"
+~~### 3.3 MED — Byte-range correctness: HTTP 200 passes as a "subset"~~
 
 **STATUS: FIXED 2026-07-07** (now at `fetch.py:3181-3234`, 206 check at `3194-3223`; re-verified in place 2026-07-09). `_network_fetch_range_bytes` now streams the response and rejects non-206 responses before buffering the body, unless `Content-Length` exactly matches the requested slice; it also rejects a 206 payload whose length doesn't match the requested range (truncation). New metrics `range_request_not_honored`/`range_payload_truncated`; new tests `test_network_fetch_range_bytes_rejects_full_file_200_response`, `test_network_fetch_range_bytes_accepts_200_when_body_is_exactly_the_slice`, `test_network_fetch_range_bytes_rejects_truncated_206_payload` in `backend/tests/test_fetch_range_cache.py`.
 
@@ -263,7 +267,7 @@ Fix (M): run Herbie calls under a deadline; cap the follower wait at 60–90 s i
 
 ## 4. Robustness & latent hazards
 
-### 4.1 HIGH — Cumulative member scheduling assumes derived fhs align with step_hours multiples
+~~### 4.1 HIGH — Cumulative member scheduling assumes derived fhs align with step_hours multiples~~
 
 **RESOLVED 2026-07-14.** `build_member_plan` now rejects a cumulative derived
 schedule containing forecast hours outside its configured step grid. Resume now
@@ -301,7 +305,9 @@ Net: kept **HIGH**. The reviewer's factual point (schedules currently align, no 
 
 `members.py:771-800` (`_pf_band_member_numbers`, called from `_resolve_pf_subset` at `803-941`, call site `895`; re-verified 2026-07-09, guard logic byte-for-byte unchanged): the index-derived mapping is correct only if `_download_subset_with_inventory_rows` (fetch.py) writes unique byte ranges sorted by (start,end) AND GDAL exposes bands in file order. The count/uniqueness validations would still pass if a future fetch.py change reorders writes — silently relabeling all 50 EPS members. Fix (S–M): cross-check each band's perturbation number from GRIB band metadata (`GRIB_PDS_TEMPLATE_NUMBERS`/`GRIB_IDS`) against the derived number, or pin fetch.py's sort contract with a test.
 
-### 4.3 MED — EPS pf-mean can silently average fewer than 50 members
+~~### 4.3 MED — EPS pf-mean can silently average fewer than 50 members~~
+
+**STATUS: FIXED 2026-07-14.** `_fetch_ecmwf_pf_mean_variable` now validates `member_count == len(pf_inventory)` after aggregation (inside the subset download lock) and raises on mismatch — and, critically, **unlinks the cached subset first**: the subset file is cached on disk, so without the eviction every retry would re-aggregate the same partial file and the failure would never self-heal on transient causes. The raise flows into the existing per-priority retry loop (transient partial → redownload fixes it; persistent → loud `RuntimeError` instead of a plausible-looking mean over fewer members). Test `test_fetch_variable_rejects_partial_eps_pf_mean_aggregation` in `backend/tests/test_fetch_ecmwf_eps_mean.py` (confirmed to fail pre-fix) pins both the raise and the cache eviction. Residual (independent verification, accepted): the guard assumes one band per pf inventory row, which holds because ECMWF's eccodes-style indexes carry `_length` for every message; if a future index omitted byte ranges for a message (the 4.5 wgrib2-style gap — not applicable to ECMWF today), a legitimate fetch would trip the guard and fail loudly instead of shipping a short mean — the intended failure direction, but an availability cost to know about.
 
 `fetch.py:1965-1966`: an empty local-read payload is `continue`d; `_aggregate_grib_subset_mean` counts whatever bands exist; `meta["member_count"]` is recorded (`fetch.py:2213`) but never validated against the expected pf count (EPS = 50). A partial subset yields a plausible but wrong mean. Fix (S): compare `member_count` to `len(pf_inventory)`, raise on mismatch. (Band subsetting itself is correct — only pf rows' ranges are fetched; the 51-band cost is aggregation read, not over-download.)
 
@@ -405,7 +411,7 @@ Strong existing coverage: Kuchera (SLR formula, cumdiff, windows, incremental-vs
 
 Gaps mapping to findings:
 - ~~No ECMWF ptype test in warped-component mode~~ **Closed 2026-07-07** — added as part of 1.1's fix (`test_ecmwf_ptype_intensity_uses_warped_component_fetches_when_requested`); left here as a stale leftover until caught by independent review 2026-07-09.
-- No `step_fhs[-1] == fh` / off-cadence fh test (1.4)
+- ~~No `step_fhs[-1] == fh` / off-cadence fh test (1.4)~~ **Closed 2026-07-14** — `backend/tests/test_cumulative_step_guard.py`, added with 1.4's fix.
 - No missing-mid-step accumulation test asserting NaN/flag semantics (1.3 — the existing test covers csnow skip only, not APCP-step loss)
 - No `_normalize_ptype_probability` percent/fraction boundary test (1.6)
 - No NaN-in-categorical-mask radar test (1.8)
@@ -428,7 +434,7 @@ Gaps mapping to findings:
 6. ~~Prune-policy fix (2.4) + float32 member warps — plausible (not yet measured) contributors to the swap incident; also codify `GDAL_CACHEMAX` in the repo unit templates.~~ **DONE 2026-07-10** (all three parts; see 2.4/2.3/3.11 status notes). Run `MALLOC_ARENA_MAX=2` as its own isolated, measured canary — don't bundle it into this same deploy (2.3) — **still open, deliberately not included here**
 7. ~~Scheduler `request.model` fix + internal-id guard in `fetch_variable` (2.5) — July 6 incident class~~ **DONE 2026-07-10** (guard extended to all three public Herbie-facing entry points, incl. the readiness probe the actual incident went through — see 2.5's status note)
 8. ~~**Member scheduling validation (4.1)** — plan-time `derived fhs ⊆ step_fhs` validation + rebase-from-last-scheduled-frame.~~ **DONE 2026-07-14** (resume replays every cumulative step after the selected checkpoint; no-checkpoint recovery replays from the first step; persistent incomplete-roster alerting remains a separate follow-up).
-9. pf member-count validation (4.3), `step_fhs[-1] == fh` assertion (1.4)
+9. ~~pf member-count validation (4.3), `step_fhs[-1] == fh` assertion (1.4)~~ **DONE 2026-07-14** (4.3 includes cached-subset eviction on mismatch so retries can self-heal; 1.4 guard applied to the five accumulation strategies only, verified zero violations across all 4,680 currently scheduled combos — see both status notes). **Quick-wins list complete.**
 
 Each quick win should land with a narrow regression test for its incident class: ECMWF warped ptype ice, readiness by fh, stale-manifest eviction, HTTP 200 range rejection, ptype fallback quality flags.
 

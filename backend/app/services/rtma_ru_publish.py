@@ -72,8 +72,12 @@ class CurrentAnalysisBundleFrame:
 @dataclass(frozen=True)
 class CurrentAnalysisPublishedFrame:
     valid_time: datetime
+    # Value COG paths for the variables that HAVE one. Post-cutover
+    # (binary-only) frames have no COG: they appear in sidecar_paths/sidecars
+    # only, and reuse links their grid artifacts instead.
     value_paths: dict[str, Path]
     sidecars: dict[str, dict[str, Any]]
+    sidecar_paths: dict[str, Path] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -130,26 +134,37 @@ def load_latest_published_current_analysis_frames(
         if valid_time is None:
             continue
         value_paths: dict[str, Path] = {}
+        sidecar_paths: dict[str, Path] = {}
         sidecars: dict[str, dict[str, Any]] = {}
         for var_id in variable_ids:
             var_dir = published_run_dir / var_id
             value_path = var_dir / f"fh{fh:03d}.val.cog.tif"
             sidecar_path = var_dir / f"fh{fh:03d}.json"
-            if not value_path.is_file() or not sidecar_path.is_file():
+            if not sidecar_path.is_file():
+                continue
+            # Substrate-aware admission: a frame counts when the sidecar plus
+            # EITHER artifact exists. Binary-only frames (post value-COG
+            # cutover) have grid artifacts but no COG — requiring the COG here
+            # silently collapsed the rolling reuse window after the flip.
+            has_cog = value_path.is_file()
+            if not has_cog and not _published_grid_meta_exists(published_run_dir, var_id, fh):
                 continue
             try:
                 sidecar = json.loads(sidecar_path.read_text())
             except (OSError, json.JSONDecodeError):
                 continue
-            value_paths[var_id] = value_path
+            if has_cog:
+                value_paths[var_id] = value_path
+            sidecar_paths[var_id] = sidecar_path
             sidecars[var_id] = sidecar
-        if not value_paths:
+        if not sidecar_paths:
             continue
         frames.append(
             CurrentAnalysisPublishedFrame(
                 valid_time=valid_time,
                 value_paths=value_paths,
                 sidecars=sidecars,
+                sidecar_paths=sidecar_paths,
             )
         )
     frames.sort(key=lambda item: item.valid_time.astimezone(timezone.utc))
@@ -427,20 +442,18 @@ def reuse_current_analysis_frame(
     written: list[str] = []
     for var_id in variable_ids:
         source_value_path = frame.value_paths.get(var_id)
+        source_sidecar_path = frame.sidecar_paths.get(var_id)
         sidecar = frame.sidecars.get(var_id)
-        if source_value_path is None or sidecar is None:
+        # The grid-artifact reuse only needs an fh-named path in the source
+        # var dir to locate the source run/fh; the sidecar works when the
+        # frame is binary-only (no COG).
+        reference_path = source_value_path or source_sidecar_path
+        if sidecar is None or reference_path is None:
             continue
         staging_dir = data_root / "staging" / CURRENT_ANALYSIS_MODEL_ID / run_id / var_id
         staging_dir.mkdir(parents=True, exist_ok=True)
         value_path = staging_dir / f"{fh_str}.val.cog.tif"
         sidecar_path = staging_dir / f"{fh_str}.json"
-        _link_or_copy(source_value_path, value_path)
-
-        retargeted_sidecar = dict(sidecar)
-        retargeted_sidecar["run"] = run_id
-        retargeted_sidecar["fh"] = int(forecast_hour)
-        retargeted_sidecar["valid_time"] = frame.valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        write_json_atomic(sidecar_path, retargeted_sidecar)
 
         if grid_build_enabled():
             _require_grid_support()
@@ -449,9 +462,21 @@ def reuse_current_analysis_frame(
                 run_id=run_id,
                 forecast_hour=int(forecast_hour),
                 var_id=var_id,
-                source_value_path=source_value_path,
+                source_value_path=reference_path,
             ):
-                with rasterio.open(value_path) as ds:
+                if source_value_path is None:
+                    # Binary-only frame with no linkable grid artifacts and no
+                    # COG to re-encode from: nothing samplable can be reused.
+                    # Skip it rather than publish a substrate-less frame.
+                    logger.warning(
+                        "Skipping current_analysis reuse: no grid artifacts and "
+                        "no value COG fallback var=%s fh%03d source=%s",
+                        var_id,
+                        int(forecast_hour),
+                        reference_path,
+                    )
+                    continue
+                with rasterio.open(source_value_path) as ds:
                     write_grid_frames_for_run_root(
                         run_root=data_root / "staging" / CURRENT_ANALYSIS_MODEL_ID / run_id,
                         model=CURRENT_ANALYSIS_MODEL_ID,
@@ -461,6 +486,15 @@ def reuse_current_analysis_frame(
                         transform=ds.transform,
                         projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
                     )
+
+        if source_value_path is not None:
+            _link_or_copy(source_value_path, value_path)
+
+        retargeted_sidecar = dict(sidecar)
+        retargeted_sidecar["run"] = run_id
+        retargeted_sidecar["fh"] = int(forecast_hour)
+        retargeted_sidecar["valid_time"] = frame.valid_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        write_json_atomic(sidecar_path, retargeted_sidecar)
         written.append(var_id)
     return written
 
@@ -523,7 +557,7 @@ def _collect_variable_ids(
     variable_ids: set[str] = set()
     for frame in frames:
         if isinstance(frame, CurrentAnalysisPublishedFrame):
-            variable_ids.update(str(var_id) for var_id in frame.value_paths.keys())
+            variable_ids.update(str(var_id) for var_id in frame.sidecars.keys())
         else:
             variable_ids.update(str(var_id) for var_id in frame.values_by_var.keys())
     ordered_catalog = tuple(CURRENT_ANALYSIS_MODEL.capabilities.variable_catalog.keys())
@@ -540,6 +574,15 @@ def _forecast_hour_from_artifact_name(path: Path) -> int | None:
         return int(token.removeprefix("fh"))
     except ValueError:
         return None
+
+
+def _published_grid_meta_exists(run_root: Path, var_id: str, fh: int) -> bool:
+    """True when the level-0 grid frame meta exists for (var, fh) — the
+    binary-substrate frame marker used for loader admission."""
+    if resolved_grid_dir_for_run_root is None:
+        return False
+    grid_dir = resolved_grid_dir_for_run_root(run_root, var_id)
+    return (grid_dir / f"fh{int(fh):03d}.l0.meta.json").is_file()
 
 
 def _prepare_stage_run_dir(*, data_root: Path, run_id: str) -> None:

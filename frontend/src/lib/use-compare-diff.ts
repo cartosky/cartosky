@@ -179,9 +179,8 @@ export function useCompareDiff(params: UseCompareDiffParams): UseCompareDiffResu
       return;
     }
 
-    // Scrub steps keep the previous diff visible (the loading overlay renders
-    // on top when a network fetch is needed); only a selection change clears
-    // to blank. Cached scrub steps skip the overlay entirely.
+    // Scrub steps keep the previous diff visible while a network fetch runs;
+    // only a selection change clears to blank and uses the blocking loader.
     const bothCached = gridFrameCache.has(leftFrameUrl!) && gridFrameCache.has(rightFrameUrl!);
     if (selectionChanged) {
       revokePublishedBlob();

@@ -3132,6 +3132,31 @@ def _resolve_cumulative_step_fhs(
     return list(range(step_hours, fh + 1, step_hours))
 
 
+def _require_cumulative_steps_end_at_fh(
+    step_fhs: list[int],
+    *,
+    fh: int,
+    model_id: str,
+    var_key: str,
+) -> None:
+    """Guard against cadence-hint drift silently truncating an accumulation.
+
+    ``_resolve_cumulative_step_fhs`` drops any tail window that does not land
+    on the configured cadence, so a frame labeled ``fh`` would otherwise ship
+    an accumulation valid only through the last resolved step (audit 1.4).
+    Only the accumulation strategies call this; the intensity step differencer
+    handles off-grid hours correctly and must stay lenient.
+    """
+    if not step_fhs or int(step_fhs[-1]) != int(fh):
+        tail = [int(item) for item in step_fhs[-3:]] if step_fhs else []
+        raise ValueError(
+            f"Cumulative step sequence for {model_id}/{var_key} does not end at "
+            f"requested fh{int(fh):03d} (resolved tail={tail}); cadence hints are "
+            "out of sync with the schedule and the accumulation would silently "
+            "omit the tail window"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Shared infrastructure for cumulative APCP strategies
 # ---------------------------------------------------------------------------
@@ -5108,6 +5133,7 @@ def _derive_ptype_accumulation_ecmwf(
     snow_component = str(hints.get("snow_component") or "sf")
     quality_flags: list[str] = []
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=3)
+    _require_cumulative_steps_end_at_fh(step_fhs, fh=fh, model_id=model_id, var_key=var_key)
     use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
         derive_component_target_grid,
         derive_component_resampling,
@@ -5323,6 +5349,7 @@ def _derive_precip_total_cumulative(
         and str(apcp_component).strip() == "apcp_step"
     )
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
+    _require_cumulative_steps_end_at_fh(step_fhs, fh=fh, model_id=model_id, var_key=var_key)
     cadence_hint = _cadence_hint_suffix(hints)
     logger.info("derive %s fh%03d apcp_steps=%d%s", var_key, fh, len(step_fhs), cadence_hint)
     logger.debug("derive %s fh%03d apcp_steps=%s", var_key, fh, step_fhs)
@@ -5619,6 +5646,7 @@ def _derive_snowfall_total_10to1_cumulative(
     snow_inches_scale = 0.03937007874015748 * slr
 
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
+    _require_cumulative_steps_end_at_fh(step_fhs, fh=fh, model_id=model_id, var_key=var_key)
     if str(model_id).strip().lower() == "gfs" and snow_interval_sample_mode == "three_point":
         cadence_sample_fhs = {0, *[int(step_fh) for step_fh in step_fhs]}
     # Build interval plan: step_fh → (step_len, sample_fhs).
@@ -6051,6 +6079,7 @@ def _derive_snowfall_kuchera_total_cumulative(
     )
 
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
+    _require_cumulative_steps_end_at_fh(step_fhs, fh=fh, model_id=model_id, var_key=var_key)
     if not step_fhs:
         raise ValueError(f"No cumulative Kuchera source steps resolved for {model_id}/{var_key} fh{fh:03d}")
     ptype_interval_plan: dict[int, tuple[int, list[int]]] = {}
@@ -7006,6 +7035,7 @@ def _derive_ptype_accumulation_cumulative(
     )
     cache_version = str(hints.get("cumulative_cache_version", "")).strip() or None
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
+    _require_cumulative_steps_end_at_fh(step_fhs, fh=fh, model_id=model_id, var_key=var_key)
     cadence_sample_fhs: set[int] | None = None
     if str(model_id).strip().lower() == "gfs" and sample_mode == "three_point":
         cadence_sample_fhs = {0, *[int(step_fh) for step_fh in step_fhs]}

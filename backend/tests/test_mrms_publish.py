@@ -824,7 +824,7 @@ def test_reuse_mrms_frame_writes_grids_without_generic_value_cog_helper(
     monkeypatch.setattr(mrms_publish, "write_grid_frame_from_value_cog_for_run_root", _fail_generic_helper, raising=False)
     monkeypatch.setattr(mrms_publish, "write_grid_frames_for_run_root", _capture_grid_write)
 
-    has_ptype = mrms_publish.reuse_mrms_frame(
+    _reused_refl, has_ptype = mrms_publish.reuse_mrms_frame(
         data_root=tmp_path,
         run_id="20260327_1208z",
         forecast_hour=0,
@@ -885,7 +885,7 @@ def test_reuse_mrms_frame_reuses_existing_grid_artifacts_without_rewrite(
         ptype_sidecar={"valid_time": "2026-03-27T12:15:00Z"},
     )
 
-    has_ptype = mrms_publish.reuse_mrms_frame(
+    _reused_refl, has_ptype = mrms_publish.reuse_mrms_frame(
         data_root=tmp_path,
         run_id="20260327_1208z",
         forecast_hour=4,
