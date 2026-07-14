@@ -89,6 +89,13 @@ SCREENSHOT_REQUESTS_TOTAL = Counter(
     registry=_REGISTRY,
 )
 
+FRAMES_404_TOTAL = Counter(
+    "cartosky_frames_404_total",
+    "Classified 404s from frames/grid serving routes.",
+    labelnames=("endpoint", "reason"),
+    registry=_REGISTRY,
+)
+
 
 def prometheus_enabled() -> bool:
     raw = os.getenv("CARTOSKY_PROMETHEUS_ENABLED", "").strip().lower()
@@ -135,6 +142,12 @@ def record_sample_cache_result(*, endpoint: str, result: str, amount: int = 1) -
     with _SUMMARY_LOCK:
         key = (endpoint_label, result_label)
         _SAMPLE_CACHE_RESULTS[key] = _SAMPLE_CACHE_RESULTS.get(key, 0) + increment
+
+
+def record_frames_404(*, endpoint: str, reason: str) -> None:
+    endpoint_label = str(endpoint).strip() or "unknown"
+    reason_label = str(reason).strip() or "unknown"
+    FRAMES_404_TOTAL.labels(endpoint=endpoint_label, reason=reason_label).inc()
 
 
 def set_sample_cache_entries(*, endpoint: str, entries: int) -> None:

@@ -178,6 +178,27 @@ export type StatusResult = {
   }>;
 };
 
+export type Frames404Sample = {
+  ts_iso: string;
+  endpoint: string;
+  model: string | null;
+  run_requested: string | null;
+  run_resolved: string | null;
+  var: string | null;
+  filename_or_fh: string | null;
+  reason: string;
+  seconds_since_publish: number | null;
+};
+
+export type Frames404Summary = {
+  since: string | null;
+  totals_by_reason: Record<string, number>;
+  today: Record<string, number>;
+  last_7_days: Record<string, number>;
+  recency_buckets: Record<string, { lt1s: number; lt5s: number; gte5s: number }>;
+  recent: Frames404Sample[];
+};
+
 export type StatusResultsResponse = {
   window: string;
   filters: {
@@ -185,6 +206,7 @@ export type StatusResultsResponse = {
     status: string | null;
   };
   results: StatusResult[];
+  frames_404?: Frames404Summary;
 };
 
 export type StatusRunDetailResponse = {

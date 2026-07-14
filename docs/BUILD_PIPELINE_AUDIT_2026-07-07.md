@@ -72,7 +72,7 @@ Fix: AND-merge validity (NaN where any contributing step was invalid) or record 
 
 Fix (S): assert `step_fhs and step_fhs[-1] == fh` (raise or flag degraded) — catches hint/cadence drift permanently.
 
-### 1.5 MED (exposure unconfirmed) — Snow "component" planes carry a hidden 2× display boost
+~~### 1.5 MED (exposure unconfirmed) — Snow "component" planes carry a hidden 2× display boost~~
 
 `derive.py:2465-2486`, `2629-2635` (GFS `snow_display = 2.0 * snow_rate` stored as the family's `snow` plane), `derive.py:5039-5041` (ECMWF ×2). The value grid for the `snow` ptype component is 2× the 3-h-equivalent liquid intensity while rain/ice are unboosted, so the three family planes are mutually inconsistent.
 

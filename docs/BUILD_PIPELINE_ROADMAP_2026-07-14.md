@@ -28,7 +28,7 @@ where no listed dependency applies.
 
 ## Wave 0 — Decisions, validation, and observability (all independent)
 
-1. ~~**1.5 exposure check. — DONE 2026-07-14: exposed → Wave 1 item 7 promoted.**~~
+~~1. 1.5 exposure check.~~ **— DONE 2026-07-14: exposed → Wave 1 item 7 promoted.**
    Determine whether the 2×-boosted ptype snow component planes reach value
    sampling (sample/binary-sampling API). The vars are
    `internal_only`/`buildable=False`, but per the canary-script findings
@@ -43,18 +43,48 @@ where no listed dependency applies.
    `ptype_intensity_{rain,snow,ice}` all return HTTP 200 with numeric values
    (`noData:false`) to unauthenticated requests. Reachable by any client that
    knows the id string; no first-party UI surface requests them.
-2. **Post-4.1 GEFS production canary.** One member pass on a live run:
-   confirm member pending clears, no `cumulative rebase failed` errors, and
-   percentile/probability frames continue through the run. (Left over from the
-   4.1 close-out checklist.)
-3. **Persistent `skipped_incomplete` alerting.** Alert when the same
-   (var, fh) stats unit stays `skipped_incomplete` across N consecutive
-   passes. Pure observability, zero data risk, and the only detection layer
-   for 4.1-class member wedges — do not wait for Wave 2.
-4. **2.1 telemetry check.** Instrument before deciding: a counter on the
-   frames route distinguishing 404s within ~1 s of a publish swap (residual
-   2.1 rename-gap class) from stale-run-id 404s (the fixed 2.2 class). A week
-   of data answers whether Wave 5's atomic-pointer work is warranted.
+~~2. Post-4.1 GEFS production canary.~~ **— DONE 2026-07-14: PASSED.** One member
+   pass on a live run: confirm member pending clears, no `cumulative rebase
+   failed` errors, and percentile/probability frames continue through the run.
+   *Result:* gefs 20260714_12z member pass on the restarted (post-d92dfd3a)
+   scheduler: `Member pass summary … written=7998 complete=True
+   preempted=False`, `Stats pass summary … written=2060 complete=True`, zero
+   `cumulative rebase failed`, zero `derived schedule invalid`,
+   no pending-scan failures. Counts exactly match the pre-4.1 baseline runs
+   (00z/06z same day), and percentile/probability products
+   (`tmp2m__p50/__prob_gt_*`, `snowfall_total__p90`,
+   `precip_total__prob_gt_1p0`) serve real values through terminal fh384 via
+   the sample API. Ops note: scheduler units load code at process start —
+   a repo pull alone does not deploy to a running unit (the first canary
+   attempt observed pre-4.1 passes for exactly this reason).
+~~3. Persistent `skipped_incomplete` alerting.~~ **— DONE 2026-07-14
+   (Codex, 35533433):** per-(model, run) ensemble stats health JSON under
+   `data_root/status/ensemble_stats/`, consecutive-pass tracking wired into
+   stats.py, `alerting=true` once the same unit stays `skipped_incomplete`
+   for ≥3 consecutive passes; surfaced via `/api/v4/admin/status/results`
+   and the admin status page ("Stats roster incomplete" issue type).
+   Original scope: alert when the same (var, fh) stats unit stays
+   `skipped_incomplete` across N consecutive passes — the only detection
+   layer for 4.1-class member wedges.
+~~4. 2.1 telemetry check.~~ **— INSTRUMENTED 2026-07-14 (verifier-CONFIRMED);
+   decision pending ~1 week of prod data after deploy.** Instrument before
+   deciding: a counter on the frames route distinguishing 404s within ~1 s of
+   a publish swap (residual 2.1 rename-gap class) from stale-run-id 404s (the
+   fixed 2.2 class). A week of data answers whether Wave 5's atomic-pointer
+   work is warranted.
+   *Implementation:* `frames_404_telemetry.py` service — all 404 sites on
+   `_get_grid_file`/`list_frames`/`get_grid_manifest` classified as
+   `stale_run` / `swap_gap` (file missing but listed in current manifest, the
+   2.1 signature) / `manifest_skew` (file present, manifest unlisted) /
+   `not_published` / `manifest_missing` / `size_mismatch` / `not_supported`,
+   with `seconds_since_publish` recency buckets (lt1s/lt5s/gte5s) on the two
+   swap classes. Persisted JSON at `data_root/status/frames_404/telemetry.json`
+   (14-day retention, survives API restarts), Prometheus
+   `cartosky_frames_404_total{endpoint,reason}`, and a "Frame 404 telemetry"
+   panel on the admin /status page (Codex #3 pattern). Responses verified
+   byte-identical; zero added work on 2xx paths. **Decision rule:** if
+   `swap_gap`+`manifest_skew` stay ~0 over a week while `stale_run` carries
+   the volume, Wave 5 item 2 is not warranted.
 5. **2.3 `MALLOC_ARENA_MAX=2` canary.** One host, isolated, measured
    (before/after RSS). No bundled memory changes in the same deploy.
 6. **Dedicated `stats.py` audit.** Read-only; per the 4.1 scope note: retry and
@@ -105,7 +135,7 @@ where no listed dependency applies.
    (AND-validity/NaN or per-var degraded flags) and quality persistence,
    including the incremental-resume case so pre-change cached state cannot
    contaminate later frames. Bump affected strategy revisions.
-7. ~~**1.5 fix (confirmed exposed by the Wave 0 check, 2026-07-14).~~ —
+~~7. **1.5 fix (confirmed exposed by the Wave 0 check, 2026-07-14).~~ —
    **DONE 2026-07-14, verifier-CONFIRMED:** unboosted rates stored in
    family/component planes (GFS family storage + ECMWF component access);
    boost applied only inside index binning via the hoisted

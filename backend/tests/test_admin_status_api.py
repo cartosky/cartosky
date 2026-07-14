@@ -234,6 +234,7 @@ def isolate_environment(tmp_path: Path) -> None:
     admin_telemetry.TELEMETRY_DB_PATH = telemetry_db
     admin_telemetry._db_initialized = False
     admin_telemetry.clear_operational_status_cache()
+    main_module.frames_404_telemetry.reset()
 
     main_module.DATA_ROOT = data_root
     main_module.PUBLISHED_ROOT = data_root / "published"
@@ -1054,3 +1055,103 @@ async def test_status_results_treats_vector_only_spc_run_as_valid_bundle(client:
 async def test_status_results_requires_admin(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v4/admin/status/results?window=30d")
     assert response.status_code == 401
+
+
+def _seed_grid_run(*, model_id: str, run_id: str, variable_id: str, hours: list[int]) -> Path:
+    _write_manifest(
+        main_module.DATA_ROOT / "manifests" / model_id / f"{run_id}.json",
+        model_id=model_id,
+        run_id=run_id,
+        variables={variable_id: hours},
+    )
+    _write_grid_runtime(
+        main_module.DATA_ROOT,
+        model_id=model_id,
+        run_id=run_id,
+        variable_id=variable_id,
+        hours=hours,
+    )
+    return main_module.DATA_ROOT / "published" / model_id / run_id / variable_id / "grid"
+
+
+def _frames_404_summary() -> dict:
+    return main_module.frames_404_telemetry.load_frames_404_summary(main_module.DATA_ROOT)
+
+
+async def test_grid_file_stale_run_404_is_classified_and_unchanged(
+    client: httpx.AsyncClient,
+) -> None:
+    # Valid-format run id that never published: run resolution fails (class 2.2).
+    response = await client.get("/api/v4/grid/hrrr/20260714_00z/tmp2m/fh006.l0.u16.bin")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Run not found"}
+
+    totals = _frames_404_summary()["totals_by_reason"]
+    assert totals == {"stale_run": 1}
+
+
+async def test_grid_file_swap_gap_404_when_listed_but_missing_on_disk(
+    client: httpx.AsyncClient,
+) -> None:
+    grid_dir = _seed_grid_run(model_id="hrrr", run_id="20260714_12z", variable_id="tmp2m", hours=[0, 6])
+    # File listed in the manifest but absent from disk: the 2.1 swap-gap signature.
+    (grid_dir / "fh006.l0.u16.bin").unlink()
+
+    response = await client.get("/api/v4/grid/hrrr/20260714_12z/tmp2m/fh006.l0.u16.bin")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Grid artifact not found"}
+
+    summary = _frames_404_summary()
+    assert summary["totals_by_reason"] == {"swap_gap": 1}
+    sample = summary["recent"][0]
+    assert sample["reason"] == "swap_gap"
+    assert sample["run_resolved"] == "20260714_12z"
+    assert sample["seconds_since_publish"] is not None
+
+
+async def test_grid_file_not_published_404_when_missing_and_unlisted(
+    client: httpx.AsyncClient,
+) -> None:
+    _seed_grid_run(model_id="hrrr", run_id="20260714_12z", variable_id="tmp2m", hours=[0, 6])
+    # Never built, not listed: benign — client asked for a frame that does not exist.
+    response = await client.get("/api/v4/grid/hrrr/20260714_12z/tmp2m/fh099.l0.u16.bin")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Grid artifact not found"}
+
+    assert _frames_404_summary()["totals_by_reason"] == {"not_published": 1}
+
+
+async def test_grid_file_manifest_skew_404_when_present_but_unlisted(
+    client: httpx.AsyncClient,
+) -> None:
+    grid_dir = _seed_grid_run(model_id="hrrr", run_id="20260714_12z", variable_id="tmp2m", hours=[0, 6])
+    # File present on disk but absent from the manifest: reverse-direction skew.
+    (grid_dir / "fh012.l0.u16.bin").write_bytes(b"\x00\x00" * 4)
+
+    response = await client.get("/api/v4/grid/hrrr/20260714_12z/tmp2m/fh012.l0.u16.bin")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Grid artifact not listed in manifest"}
+
+    assert _frames_404_summary()["totals_by_reason"] == {"manifest_skew": 1}
+
+
+async def test_status_results_includes_frames_404_section(
+    client: httpx.AsyncClient,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    grid_dir = _seed_grid_run(model_id="hrrr", run_id="20260714_12z", variable_id="tmp2m", hours=[0, 6])
+    (grid_dir / "fh006.l0.u16.bin").unlink()
+    await client.get("/api/v4/grid/hrrr/20260714_12z/tmp2m/fh006.l0.u16.bin")
+    await client.get("/api/v4/grid/hrrr/20260714_00z/tmp2m/fh006.l0.u16.bin")
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+    assert response.status_code == 200
+    frames_404 = response.json()["frames_404"]
+    assert frames_404["totals_by_reason"] == {"swap_gap": 1, "stale_run": 1}
+    assert frames_404["recency_buckets"]["swap_gap"]["lt1s"] >= 0
+    assert len(frames_404["recent"]) == 2
+    assert isinstance(frames_404["since"], str)

@@ -6,6 +6,7 @@ import {
   fetchAdminAuthStatus,
   fetchAdminStatusRunDetail,
   fetchAdminStatusResults,
+  type Frames404Summary,
   type StatusResult,
   type TwfStatus,
 } from "@/lib/admin-api";
@@ -183,12 +184,130 @@ function viewLabel(view: ViewFilter): string {
   return "All retained runs";
 }
 
+function formatIsoTimestamp(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return parsed.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatSecondsSincePublish(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  return `${Number(value).toFixed(value < 10 ? 2 : 1)}s`;
+}
+
+function RecencyBuckets(props: { buckets?: { lt1s: number; lt5s: number; gte5s: number } }) {
+  const buckets = props.buckets ?? { lt1s: 0, lt5s: 0, gte5s: 0 };
+  return (
+    <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-white/58">
+      <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">&lt;1s {buckets.lt1s}</span>
+      <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">&lt;5s {buckets.lt5s}</span>
+      <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">≥5s {buckets.gte5s}</span>
+    </div>
+  );
+}
+
+function Frames404Panel(props: { summary: Frames404Summary | null }) {
+  const summary = props.summary;
+  if (!summary) return null;
+  const totals = summary.totals_by_reason ?? {};
+  const reasonTotal = (reason: string) => totals[reason] ?? 0;
+  const contextReasons: Array<[string, string]> = [
+    ["stale_run", "Stale run (2.2)"],
+    ["not_published", "Not published"],
+    ["not_supported", "Not supported"],
+    ["size_mismatch", "Size mismatch"],
+    ["manifest_missing", "Manifest missing"],
+  ];
+  const recent = summary.recent ?? [];
+  return (
+    <AdminSurface
+      className="mt-4 p-4"
+      title="Frame 404 telemetry"
+      headerRight={
+        <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white/60">
+          since {formatIsoTimestamp(summary.since)}
+        </div>
+      }
+    >
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded-2xl border border-amber-400/18 bg-amber-500/[0.06] px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-100/72">Swap gap (2.1)</div>
+          <div className="mt-2 text-[1.6rem] font-semibold tracking-tight text-amber-200">{reasonTotal("swap_gap")}</div>
+          <RecencyBuckets buckets={summary.recency_buckets?.swap_gap} />
+        </div>
+        <div className="rounded-2xl border border-amber-400/18 bg-amber-500/[0.06] px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-100/72">Manifest skew (2.1)</div>
+          <div className="mt-2 text-[1.6rem] font-semibold tracking-tight text-amber-200">{reasonTotal("manifest_skew")}</div>
+          <RecencyBuckets buckets={summary.recency_buckets?.manifest_skew} />
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-3">
+        {contextReasons.map(([reason, label]) => (
+          <div key={reason} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/44">{label}</div>
+            <div className="mt-1 text-lg font-semibold text-white/82">{reasonTotal(reason)}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-max min-w-[720px] border-separate border-spacing-y-2 text-left text-sm">
+          <thead className="text-white/48">
+            <tr>
+              <th className="px-3 py-2 font-medium">Time</th>
+              <th className="px-3 py-2 font-medium">Endpoint</th>
+              <th className="px-3 py-2 font-medium">Model / Run / Var</th>
+              <th className="px-3 py-2 font-medium">Reason</th>
+              <th className="px-3 py-2 font-medium">s-since-publish</th>
+            </tr>
+          </thead>
+          <tbody>
+            {recent.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-6 text-center text-white/48">
+                  No frame 404s recorded yet.
+                </td>
+              </tr>
+            ) : (
+              recent.map((sample, index) => (
+                <tr key={`${sample.ts_iso}-${index}`} className="bg-white/[0.03] text-white/82">
+                  <td className="rounded-l-2xl border-y border-l border-white/10 px-3 py-2 text-white/62">{formatIsoTimestamp(sample.ts_iso)}</td>
+                  <td className="border-y border-white/10 px-3 py-2">{sample.endpoint}</td>
+                  <td className="border-y border-white/10 px-3 py-2 text-white/70">
+                    {[sample.model, sample.run_resolved ?? sample.run_requested, sample.var].filter(Boolean).join(" / ") || "—"}
+                  </td>
+                  <td className="border-y border-white/10 px-3 py-2">
+                    <StatusBadge
+                      tone={sample.reason === "swap_gap" || sample.reason === "manifest_skew" ? "warning" : "info"}
+                      label={sample.reason}
+                    />
+                  </td>
+                  <td className="rounded-r-2xl border-y border-r border-white/10 px-3 py-2 text-white/62">{formatSecondsSincePublish(sample.seconds_since_publish)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </AdminSurface>
+  );
+}
+
 export default function AdminStatusPage() {
   const [status, setStatus] = useState<TwfStatus | null>(null);
   const [windowValue, setWindowValue] = useState<WindowValue>("30d");
   const [modelFilter, setModelFilter] = useState<string>("all");
   const [viewFilter, setViewFilter] = useState<ViewFilter>("issues");
   const [results, setResults] = useState<StatusResult[]>([]);
+  const [frames404, setFrames404] = useState<Frames404Summary | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<StatusResult | null>(null);
   const [selectedDetailLoading, setSelectedDetailLoading] = useState(false);
@@ -219,6 +338,7 @@ export default function AdminStatusPage() {
         });
         if (cancelled) return;
         setResults(response.results);
+        setFrames404(response.frames_404 ?? null);
         setError(null);
       } catch (nextError) {
         if (cancelled) return;
@@ -545,6 +665,8 @@ export default function AdminStatusPage() {
           </table>
         </div>
       </AdminSurface>
+
+      <Frames404Panel summary={frames404} />
 
       {selected ? (
         <>

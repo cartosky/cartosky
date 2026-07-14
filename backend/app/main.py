@@ -110,7 +110,7 @@ from .services.sampling import (
 )
 from .models.goes_east import GOES_EAST_MODEL_ID, GOES_EAST_RGB_LATEST_FILENAME
 from .services.admin_telemetry import get_build_duration_averages, get_latest_build_durations
-from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, otel_tracing, prometheus_metrics, share_media as share_media_service, stripe_billing
+from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, frames_404_telemetry, otel_tracing, prometheus_metrics, share_media as share_media_service, stripe_billing
 from .services import nws as nws_service
 from backend.app import config as app_config
 from backend.app.auth.clerk import ClerkPrincipal, fetch_clerk_user_profile, maybe_clerk_user, require_clerk_admin, require_clerk_user
@@ -2112,6 +2112,7 @@ async def admin_status_results(
             limit=limit,
             include_details=include_details,
         ),
+        "frames_404": admin_telemetry.build_frames_404_section(data_root=DATA_ROOT),
     }
 
 
@@ -5151,6 +5152,10 @@ def list_frames(
             otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
     if resolved is None:
+        _emit_frames_404(
+            endpoint="frames", reason="stale_run", model=model, run_requested=run,
+            run_resolved=None, var=var, region=region,
+        )
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
 
     manifest_started_at = time.perf_counter()
@@ -5161,6 +5166,11 @@ def list_frames(
         manifest = _load_manifest(model, resolved, region=region)
     manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
     if manifest is None:
+        _emit_frames_404(
+            endpoint="frames", reason="manifest_missing", model=model, run_requested=run,
+            run_resolved=resolved, var=var,
+            runtime_var=_runtime_var_id_for_request(model, var, ensemble_view), region=region,
+        )
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
 
     variables = manifest.get("variables")
@@ -5251,9 +5261,17 @@ def get_grid_manifest(
             otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
     if resolved is None:
+        _emit_frames_404(
+            endpoint="grid_manifest", reason="stale_run", model=model, run_requested=run,
+            run_resolved=None, var=var, region=region,
+        )
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
     runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
     if not grid_supported(model, runtime_var):
+        _emit_frames_404(
+            endpoint="grid_manifest", reason="not_supported", model=model, run_requested=run,
+            run_resolved=resolved, var=var, runtime_var=runtime_var, region=region,
+        )
         return Response(status_code=404, content='{"error": "grid manifest not enabled"}', media_type="application/json")
 
     manifest_started_at = time.perf_counter()
@@ -5264,6 +5282,10 @@ def get_grid_manifest(
         manifest = _load_grid_manifest(model, resolved, var, ensemble_view=ensemble_view, region=region)
     manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
     if manifest is None:
+        _emit_frames_404(
+            endpoint="grid_manifest", reason="manifest_missing", model=model, run_requested=run,
+            run_resolved=resolved, var=var, runtime_var=runtime_var, region=region,
+        )
         return Response(status_code=404, content='{"error": "grid manifest not found"}', media_type="application/json")
 
     version_token = _grid_version_token(model, resolved, runtime_var, region=region)
@@ -5539,33 +5561,22 @@ def get_rgb_file(
     )
 
 
-def _get_grid_file(
-    model: str,
-    run: str,
-    var: str,
-    filename: str,
+def _match_grid_manifest_file(
+    manifest: dict[str, Any] | None,
+    safe_filename: str,
     *,
-    region: str | None = None,
-    principal: ClerkPrincipal | None = None,
-):
-    entitlements.require_product_access(principal, model)
-    started_at = time.perf_counter()
-    resolved = _resolve_run(model, run, region=region)
-    if resolved is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-    if not grid_supported(model, var):
-        raise HTTPException(status_code=404, detail="Grid artifact not enabled")
-    safe_filename = Path(filename).name
-    candidate = grid_frame_path(DATA_ROOT, model, resolved, var, 0, region=region).parent / safe_filename
-    if not candidate.is_file():
-        raise HTTPException(status_code=404, detail="Grid artifact not found")
-    manifest = _load_grid_manifest(model, resolved, var, region=region)
-    grid_meta = manifest.get("grid") if isinstance(manifest, dict) else None
-    width = int(grid_meta.get("width") or 0) if isinstance(grid_meta, dict) else 0
-    height = int(grid_meta.get("height") or 0) if isinstance(grid_meta, dict) else 0
-    dtype = str(grid_meta.get("dtype") or "uint16") if isinstance(grid_meta, dict) else "uint16"
+    width: int,
+    height: int,
+    dtype: str,
+) -> tuple[bool, int, int, str]:
+    """Locate safe_filename among a grid manifest's LOD/contour frames.
+
+    Returns (matched, width, height, dtype) with the geometry refined to the
+    matched frame. Shared by the grid-file route and the frames_404 classifier
+    so both agree on whether a requested frame is actually published.
+    """
     lods = manifest.get("lods") if isinstance(manifest, dict) else None
-    matched_manifest_file = False
+    matched = False
     if isinstance(lods, list):
         for lod in lods:
             if not isinstance(lod, dict):
@@ -5576,9 +5587,9 @@ def _get_grid_file(
             if any(isinstance(frame, dict) and str(frame.get("file") or "").strip() == safe_filename for frame in frames):
                 width = int(lod.get("width") or width)
                 height = int(lod.get("height") or height)
-                matched_manifest_file = True
+                matched = True
                 break
-    if not matched_manifest_file and isinstance(manifest, dict):
+    if not matched and isinstance(manifest, dict):
         contours = manifest.get("contours")
         if isinstance(contours, dict):
             for contour_meta in contours.values():
@@ -5598,16 +5609,140 @@ def _get_grid_file(
                         width = int(lod.get("width") or contour_grid.get("width") or 0)
                         height = int(lod.get("height") or contour_grid.get("height") or 0)
                         dtype = str(contour_grid.get("dtype") or dtype)
-                        matched_manifest_file = True
+                        matched = True
                         break
-                if matched_manifest_file:
+                if matched:
                     break
+    return matched, width, height, dtype
+
+
+def _seconds_since_publish(
+    model: str, resolved: str, runtime_var: str, *, region: str | None = None
+) -> float | None:
+    """Seconds since the most recent publish-relevant mtime for a resolved run.
+
+    Measures how tightly a 404 clusters around a publish swap (roadmap 2.1
+    signature). Stat-only, on the 404 path; OSError → ignored path → None if
+    nothing is stat-able.
+    """
+    del region
+    mtimes: list[float] = []
+    for path in (
+        PUBLISHED_ROOT / model / resolved,
+        grid_manifest_path(DATA_ROOT, model, resolved, runtime_var),
+        _manifest_path(model, resolved),
+    ):
+        try:
+            mtimes.append(path.stat().st_mtime)
+        except OSError:
+            continue
+    if not mtimes:
+        return None
+    return max(0.0, time.time() - max(mtimes))
+
+
+def _emit_frames_404(
+    *,
+    endpoint: str,
+    reason: str,
+    model: str,
+    run_requested: str,
+    run_resolved: str | None,
+    var: str,
+    runtime_var: str | None = None,
+    filename_or_fh: str | None = None,
+    region: str | None = None,
+) -> None:
+    """Best-effort classified-404 telemetry. Never alters or blocks the route."""
+    try:
+        seconds = None
+        if run_resolved is not None:
+            seconds = _seconds_since_publish(
+                model, run_resolved, runtime_var or var, region=region,
+            )
+        frames_404_telemetry.record_frames_404(
+            data_root=DATA_ROOT,
+            endpoint=endpoint,
+            reason=reason,
+            model=model,
+            run_requested=run_requested,
+            run_resolved=run_resolved,
+            var=var,
+            filename_or_fh=filename_or_fh,
+            seconds_since_publish=seconds,
+        )
+    except Exception:  # noqa: BLE001 - telemetry must never break the route
+        logger.debug("frames_404 telemetry record failed", exc_info=True)
+
+
+def _get_grid_file(
+    model: str,
+    run: str,
+    var: str,
+    filename: str,
+    *,
+    region: str | None = None,
+    principal: ClerkPrincipal | None = None,
+):
+    entitlements.require_product_access(principal, model)
+    started_at = time.perf_counter()
+    resolved = _resolve_run(model, run, region=region)
+    if resolved is None:
+        _emit_frames_404(
+            endpoint="grid_file", reason="stale_run", model=model, run_requested=run,
+            run_resolved=None, var=var, filename_or_fh=Path(filename).name,
+        )
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not grid_supported(model, var):
+        _emit_frames_404(
+            endpoint="grid_file", reason="not_supported", model=model, run_requested=run,
+            run_resolved=resolved, var=var, filename_or_fh=Path(filename).name, region=region,
+        )
+        raise HTTPException(status_code=404, detail="Grid artifact not enabled")
+    safe_filename = Path(filename).name
+    candidate = grid_frame_path(DATA_ROOT, model, resolved, var, 0, region=region).parent / safe_filename
+    if not candidate.is_file():
+        # File missing on disk: a frame listed in the current manifest is the
+        # 2.1 swap-gap signature (published state internally inconsistent); an
+        # unlisted frame is benign (never built / never existed).
+        reason = "not_published"
+        try:
+            classify_manifest = _load_grid_manifest(model, resolved, var, region=region)
+            matched, _, _, _ = _match_grid_manifest_file(
+                classify_manifest, safe_filename, width=0, height=0, dtype="uint16",
+            )
+            reason = "swap_gap" if matched else "not_published"
+        except Exception:  # noqa: BLE001 - classification is best-effort
+            reason = "not_published"
+        _emit_frames_404(
+            endpoint="grid_file", reason=reason, model=model, run_requested=run,
+            run_resolved=resolved, var=var, filename_or_fh=safe_filename, region=region,
+        )
+        raise HTTPException(status_code=404, detail="Grid artifact not found")
+    manifest = _load_grid_manifest(model, resolved, var, region=region)
+    grid_meta = manifest.get("grid") if isinstance(manifest, dict) else None
+    width = int(grid_meta.get("width") or 0) if isinstance(grid_meta, dict) else 0
+    height = int(grid_meta.get("height") or 0) if isinstance(grid_meta, dict) else 0
+    dtype = str(grid_meta.get("dtype") or "uint16") if isinstance(grid_meta, dict) else "uint16"
+    matched_manifest_file, width, height, dtype = _match_grid_manifest_file(
+        manifest, safe_filename, width=width, height=height, dtype=dtype,
+    )
     if not matched_manifest_file:
+        # File exists on disk but the manifest does not list it: reverse-
+        # direction publish inconsistency, also swap-window evidence.
+        _emit_frames_404(
+            endpoint="grid_file", reason="manifest_skew", model=model, run_requested=run,
+            run_resolved=resolved, var=var, filename_or_fh=safe_filename, region=region,
+        )
         raise HTTPException(status_code=404, detail="Grid artifact not listed in manifest")
     if width > 0 and height > 0:
         expected_size_bytes = expected_grid_frame_size_bytes(width=width, height=height, dtype=dtype)
         actual_size_bytes = candidate.stat().st_size
         if actual_size_bytes != expected_size_bytes:
+            _emit_frames_404(
+                endpoint="grid_file", reason="size_mismatch", model=model, run_requested=run,
+                run_resolved=resolved, var=var, filename_or_fh=safe_filename, region=region,
+            )
             raise HTTPException(status_code=404, detail="Grid artifact invalid")
     timing_header = _format_server_timing(
         [

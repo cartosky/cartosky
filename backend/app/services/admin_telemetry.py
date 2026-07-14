@@ -15,6 +15,7 @@ import rasterio
 
 from ..models.registry import MODEL_REGISTRY
 from .ensemble_stats_health import load_ensemble_stats_health
+from .frames_404_telemetry import load_frames_404_summary
 from .grid import expected_grid_frame_size_bytes, grid_manifest_path, grid_supported
 from .observed_bundle_health import build_observed_bundle_health, is_observed_model_capability, parse_iso_datetime
 from .run_ids import RUN_ID_RE, parse_run_id_datetime
@@ -432,6 +433,24 @@ def _stalled_run_idle_minutes(model_id: str) -> int:
 def clear_operational_status_cache() -> None:
     with _operational_status_cache_lock:
         _operational_status_cache.clear()
+
+
+def build_frames_404_section(*, data_root: Path, recent_limit: int = 20) -> dict[str, Any]:
+    """Frames/grid 404 telemetry for the admin status dashboard.
+
+    Surfaces the swap_gap / manifest_skew classes (audit 2.1) with their
+    seconds-since-publish recency buckets alongside stale_run / not_published
+    context, plus a capped tail of recent samples.
+    """
+    summary = load_frames_404_summary(data_root)
+    return {
+        "since": summary.get("since"),
+        "totals_by_reason": summary.get("totals_by_reason", {}),
+        "today": summary.get("today", {}),
+        "last_7_days": summary.get("last_7_days", {}),
+        "recency_buckets": summary.get("recency_buckets", {}),
+        "recent": list(summary.get("recent", []))[: max(0, int(recent_limit))],
+    }
 
 
 def _published_run_ids(data_root: Path, model_id: str, *, keep_runs: int) -> list[str]:
