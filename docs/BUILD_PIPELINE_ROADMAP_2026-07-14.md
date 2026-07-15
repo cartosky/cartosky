@@ -208,7 +208,11 @@ where no listed dependency applies.
    Negative scalar steps are now invalid rather than clamped to valid zero;
    mask validity uses the same helper with the upper bound enforced. Revision
    bump: `precip_total_cumulative` only (the sole strategy whose validity
-   behavior changes — the others already enforced this).
+   behavior changes — the others already enforced this). **Follow-up
+   2026-07-15:** the GEFS member-pass `precip_step_contribution` helper was
+   brought into the same finite-and-nonnegative contract after its production
+   parity test exposed the stale finite-only behavior; a negative-sentinel
+   regression now pins the member path too.
 ~~4. **1.7.** Binarize ptype-accumulation masks only when the threshold hint
    (`ptype_mask_threshold`) is explicitly configured; otherwise keep the
    fractional mean (mirror snowfall).~~ **— DONE 2026-07-15 (PR A, local).**

@@ -610,6 +610,27 @@ def test_cumulative_bundle_failure_aborts_member_chain(tmp_path, cumulative_rost
 
 
 # ── D6: parity with the production derive strategies ─────────────────
+def test_precip_member_step_treats_negative_sentinels_as_invalid() -> None:
+    step = np.array([[-1.0, 0.0, 2.0, np.nan]], dtype=np.float32)
+
+    contribution, valid = members.precip_step_contribution(step)
+    field = members.cumulative_field(contribution, valid)
+
+    np.testing.assert_array_equal(
+        contribution,
+        np.array([[0.0, 0.0, 2.0, 0.0]], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        valid,
+        np.array([[False, True, True, False]], dtype=bool),
+    )
+    np.testing.assert_allclose(
+        field,
+        np.array([[np.nan, 0.0, 2.0, np.nan]], dtype=np.float32),
+        equal_nan=True,
+    )
+
+
 def _synthetic_steps(rng_seed: int = 7) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
     rng = np.random.default_rng(rng_seed)
     apcp: dict[int, np.ndarray] = {}

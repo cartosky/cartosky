@@ -203,11 +203,11 @@ def member_frame_is_complete(run_root: Path, model: str, var_id: str, fh: int) -
 # ── Pure cumulative step math (parity-pinned to the production derive) ──────
 def precip_step_contribution(step_data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Mirror of the production precip cumulative ``_process_step``:
-    contribution = max(step, 0) where finite else 0; valid = finite(step)."""
-    step_clean = np.where(
-        np.isfinite(step_data), np.maximum(step_data, 0.0), 0.0,
-    ).astype(np.float32)
-    return step_clean, np.isfinite(step_data)
+    contribution = step where finite and nonnegative else 0; validity uses
+    the same finite-and-nonnegative D1 contract as every cumulative derive."""
+    step_valid = np.isfinite(step_data) & (step_data >= 0.0)
+    step_clean = np.where(step_valid, step_data, 0.0).astype(np.float32)
+    return step_clean, step_valid
 
 
 def snowfall_step_contribution(
