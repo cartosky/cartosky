@@ -4901,12 +4901,13 @@ def _derive_radar_ptype_family(
 
     mask_stack = np.stack([rain, snow, sleet, frzr], axis=0).astype(np.float32, copy=False)
     mask_max = np.nanmax(mask_stack, axis=0)
-    ptype_idx = np.argmax(np.nan_to_num(mask_stack, nan=-1.0), axis=0).astype(np.int32)
+    selection_stack = np.nan_to_num(mask_stack, nan=-1.0)
+    ptype_idx = np.argmax(selection_stack, axis=0).astype(np.int32)
     ptype_codes = np.array(RADAR_PTYPE_ORDER)
     ptype = ptype_codes[ptype_idx]
 
-    rain_mask = mask_stack[0]
-    snow_mask = mask_stack[1]
+    rain_mask = selection_stack[0]
+    snow_mask = selection_stack[1]
     frzr_transition = (ptype == "frzr") & ((rain_mask > 0) | (snow_mask > 0))
     if np.any(frzr_transition):
         prefer_rain = rain_mask >= snow_mask
