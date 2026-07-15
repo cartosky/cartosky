@@ -4901,7 +4901,7 @@ def _derive_radar_ptype_family(
 
     mask_stack = np.stack([rain, snow, sleet, frzr], axis=0).astype(np.float32, copy=False)
     mask_max = np.nanmax(mask_stack, axis=0)
-    ptype_idx = np.argmax(mask_stack, axis=0).astype(np.int32)
+    ptype_idx = np.argmax(np.nan_to_num(mask_stack, nan=-1.0), axis=0).astype(np.int32)
     ptype_codes = np.array(RADAR_PTYPE_ORDER)
     ptype = ptype_codes[ptype_idx]
 

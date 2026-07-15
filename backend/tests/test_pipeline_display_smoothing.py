@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from app.services.builder.colorize import colorize_metadata, float_to_rgba
 from app.services.builder.pipeline import _prepare_display_data_for_colorize, _warp_resampling_for_variable
@@ -41,6 +42,40 @@ def test_discrete_kind_remains_passthrough() -> None:
         var_key="ptype_intensity",
     )
     np.testing.assert_array_equal(display, data)
+
+
+def test_discrete_colormap_rejects_mismatched_level_and_color_counts() -> None:
+    spec = {
+        "type": "discrete",
+        "levels": [0.0, 1.0, 2.0, 3.0],
+        "colors": ["#000000", "#ffffff"],
+        "units": "test",
+    }
+
+    with pytest.raises(ValueError, match="colors length"):
+        float_to_rgba(
+            np.array([[1.5]], dtype=np.float32),
+            "mismatched_discrete_test",
+            spec_override=spec,
+        )
+
+
+@pytest.mark.parametrize("color_count", [3, 4])
+def test_discrete_colormap_accepts_boundary_and_lower_bound_conventions(color_count: int) -> None:
+    spec = {
+        "type": "discrete",
+        "levels": [0.0, 1.0, 2.0, 3.0],
+        "colors": ["#000000", "#555555", "#aaaaaa", "#ffffff"][:color_count],
+        "units": "test",
+    }
+
+    rgba, _ = float_to_rgba(
+        np.array([[1.5]], dtype=np.float32),
+        "supported_discrete_test",
+        spec_override=spec,
+    )
+
+    assert int(rgba[3, 0, 0]) == 255
 
 
 def test_precip_and_snow_use_bilinear_warp_resampling_across_models() -> None:

@@ -183,6 +183,36 @@ def test_radar_ptype_components_preserve_classified_reflectivity(monkeypatch) ->
     np.testing.assert_array_equal(frzr_values, np.array([[0.0, 0.0, 0.0, 55.0, 0.0]], dtype=np.float32))
 
 
+def test_radar_ptype_ignores_nan_categorical_masks_during_argmax(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    component_data = {
+        "refc": np.array([[35.0]], dtype=np.float32),
+        "crain": np.array([[1.0]], dtype=np.float32),
+        "csnow": np.array([[np.nan]], dtype=np.float32),
+        "cicep": np.array([[0.0]], dtype=np.float32),
+        "cfrzr": np.array([[0.0]], dtype=np.float32),
+    }
+
+    def _fake_fetch_component(**kwargs):
+        return component_data[str(kwargs["var_key"])], crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_component", _fake_fetch_component)
+
+    indexed, _, _ = derive_module._derive_radar_ptype_combo(
+        model_id="hrrr",
+        var_key="radar_ptype",
+        product="sfc",
+        run_date=datetime(2026, 5, 26, 18),
+        fh=1,
+        var_spec_model=_radar_ptype_var_spec(),
+        var_capability=None,
+        model_plugin=object(),
+    )
+
+    assert float(indexed[0, 0]) == _expected_radar_ptype_index("rain", 35.0)
+
+
 def test_radar_ptype_bins_align_with_per_type_levels() -> None:
     # Each type is binned against its own level table; a reflectivity value
     # equal to a palette level must land exactly on that level's bin.
