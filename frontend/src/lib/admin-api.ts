@@ -157,6 +157,13 @@ export type StatusResult = {
   unreadable_artifact_count: number;
   incomplete_variable_count: number;
   incomplete_variables: string[];
+  accum_step_gap_variable_count?: number;
+  accum_step_gap_max_affected_pixel_percentage?: number;
+  accum_step_gap_samples?: Array<{
+    variable_id: string;
+    forecast_hour: number;
+    affected_pixel_percentage: number;
+  }>;
   stats_incomplete_alert_count?: number;
   stats_incomplete_units?: Array<{
     base_var: string;

@@ -47,6 +47,24 @@ def test_build_sidecar_writes_degraded_quality_flags() -> None:
     assert sidecar["quality_flags"] == ["slr_fallback_10to1", "apcp_cumulative_fallback"]
 
 
+def test_derive_quality_sidecar_metadata_includes_flag_details() -> None:
+    metadata = pipeline_module._derive_quality_sidecar_metadata(
+        {
+            "sidecar_metadata": {"existing": "value"},
+            "quality_flag_details": {
+                "accum_step_gap": {"affected_pixel_percentage": 12.5}
+            },
+        }
+    )
+
+    assert metadata == {
+        "existing": "value",
+        "quality_flag_details": {
+            "accum_step_gap": {"affected_pixel_percentage": 12.5}
+        },
+    }
+
+
 def test_build_sidecar_preserves_pressure_center_metadata() -> None:
     centers = [
         {

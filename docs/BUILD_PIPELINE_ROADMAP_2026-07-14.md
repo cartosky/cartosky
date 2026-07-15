@@ -229,14 +229,25 @@ where no listed dependency applies.
    ptype intensity paths + the Kuchera gate, so the only cumulative revision
    bump is `snowfall_kuchera_total_cumulative` — shared with item 8's bump
    in the same PR.
-6. **1.3.** Implement the decided cross-step validity propagation (validity
+~~6. **1.3.** Implement the decided cross-step validity propagation (validity
    note D2: OR-merged totals + mandatory `accum_step_gap` flags with
    affected-pixel percentage, persisted through the cumulative cache schema,
    exposed in admin telemetry; flags coverage extended to precip_total /
    10to1 / GFS ptype which record none today) and quality persistence,
    including the incremental-resume case so pre-change cached state cannot
    contaminate later frames. Revision bump: all five cumulative strategies
-   (the cache entry schema itself changes).
+   (the cache entry schema itself changes).~~ **— DONE 2026-07-15 (PR C,
+   local):** all five cumulative strategies retain OR-merged totals while
+   recording `accum_step_gap` plus affected-pixel percentage; flags/details
+   survive incremental cache resume; an internal boolean gap mask preserves
+   the exact affected-pixel union across resumed frames; disk/in-memory
+   entries missing the new quality schema recompute; and all five strategy
+   revisions are bumped. Published
+   sidecars carry the details, while `/admin/status` marks affected runs as
+   warnings with a dedicated Accum gaps count/filter and per-variable detail.
+   Regression coverage pins partial-step totals/never-valid NaN behavior,
+   resume persistence, legacy-cache rejection, sidecar metadata plumbing,
+   and status-API exposure.
 ~~7. **1.5 fix (confirmed exposed by the Wave 0 check, 2026-07-14).~~ —
    **DONE 2026-07-14, verifier-CONFIRMED:** unboosted rates stored in
    family/component planes (GFS family storage + ECMWF component access);

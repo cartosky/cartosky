@@ -986,6 +986,15 @@ def validate_grid_binary_frame(
 # ---------------------------------------------------------------------------
 
 
+def _derive_quality_sidecar_metadata(quality_meta: dict[str, Any]) -> dict[str, Any]:
+    raw_metadata = quality_meta.get("sidecar_metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    quality_flag_details = quality_meta.get("quality_flag_details")
+    if isinstance(quality_flag_details, dict) and quality_flag_details:
+        metadata["quality_flag_details"] = dict(quality_flag_details)
+    return metadata
+
+
 def build_sidecar_json(
     *,
     model: str,
@@ -1912,11 +1921,7 @@ def build_frame(
             ensemble_view=ensemble_view,
         )
 
-        sidecar_extra_metadata = quality_meta.get("sidecar_metadata") if isinstance(quality_meta, dict) else None
-        if isinstance(sidecar_extra_metadata, dict):
-            sidecar_extra_metadata = dict(sidecar_extra_metadata)
-        else:
-            sidecar_extra_metadata = {}
+        sidecar_extra_metadata = _derive_quality_sidecar_metadata(quality_meta)
         try:
             pressure_center_meta = _build_pressure_center_metadata_for_variable(
                 model=model,

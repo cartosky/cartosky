@@ -28,6 +28,15 @@ TELEMETRY_DB_PATH = Path(
 MRMS_RUNTIME_ARTIFACTS_PENDING_KEY = "runtime_artifacts_pending"
 RUNTIME_ARTIFACT_PENDING_GRACE_SECONDS = 300
 DEFAULT_STALLED_RUN_IDLE_MINUTES = 90
+CUMULATIVE_DERIVE_STRATEGIES = frozenset(
+    {
+        "precip_total_cumulative",
+        "snowfall_total_10to1_cumulative",
+        "snowfall_kuchera_total_cumulative",
+        "ptype_accumulation_cumulative",
+        "ptype_accumulation_ecmwf",
+    }
+)
 
 ALLOWED_PERF_EVENT_NAMES = {
     "viewer_first_frame",
@@ -1275,6 +1284,9 @@ def _scan_run_issue(
         "runtime_artifacts_pending": runtime_artifacts_pending,
         "stats_incomplete_alert_count": stats_incomplete_alert_count,
         "stats_incomplete_units": stats_incomplete_units if include_details else [],
+        "accum_step_gap_variable_count": 0,
+        "accum_step_gap_max_affected_pixel_percentage": 0.0,
+        "accum_step_gap_samples": [],
     }
 
     if manifest is None:
@@ -1306,6 +1318,9 @@ def _scan_run_issue(
     latest_forecast_hours: list[int] = []
     target_forecast_hours: list[int] = []
     variable_forecast_progress: list[dict[str, Any]] = []
+    accum_step_gap_variable_count = 0
+    accum_step_gap_max_affected_pixel_percentage = 0.0
+    accum_step_gap_samples: list[dict[str, Any]] = []
 
     for variable_id, entry in sorted(variables.items()):
         if not isinstance(entry, dict):
@@ -1339,10 +1354,57 @@ def _scan_run_issue(
         )
         latest_forecast_hour = max(frame_hours) if frame_hours else None
         target_forecast_hour = max(expected_hours) if expected_hours else None
+        variable_spec = None
+        if plugin is not None:
+            try:
+                variable_spec = plugin.get_var(plugin.normalize_var_id(public_variable_id))
+            except Exception:
+                variable_spec = None
+        scans_cumulative_quality = (
+            str(getattr(variable_spec, "derive", "")).strip()
+            in CUMULATIVE_DERIVE_STRATEGIES
+        )
         if latest_forecast_hour is not None:
             latest_forecast_hours.append(latest_forecast_hour)
         if target_forecast_hour is not None:
             target_forecast_hours.append(target_forecast_hour)
+        if latest_forecast_hour is not None and scans_cumulative_quality:
+            latest_sidecar_path = _sidecar_path(
+                data_root,
+                model_id,
+                run_id,
+                artifact_variable_id,
+                latest_forecast_hour,
+            )
+            latest_sidecar = _load_json_file(latest_sidecar_path)
+            latest_quality_flags = (
+                latest_sidecar.get("quality_flags", [])
+                if isinstance(latest_sidecar, dict)
+                else []
+            )
+            if isinstance(latest_quality_flags, list) and "accum_step_gap" in {
+                str(flag).strip() for flag in latest_quality_flags
+            }:
+                accum_step_gap_variable_count += 1
+                details = latest_sidecar.get("quality_flag_details", {})
+                gap_details = details.get("accum_step_gap", {}) if isinstance(details, dict) else {}
+                try:
+                    affected_percentage = float(gap_details.get("affected_pixel_percentage", 0.0))
+                except (TypeError, ValueError):
+                    affected_percentage = 0.0
+                affected_percentage = round(min(max(affected_percentage, 0.0), 100.0), 4)
+                accum_step_gap_max_affected_pixel_percentage = max(
+                    accum_step_gap_max_affected_pixel_percentage,
+                    affected_percentage,
+                )
+                if include_details:
+                    accum_step_gap_samples.append(
+                        {
+                            "variable_id": public_variable_id,
+                            "forecast_hour": latest_forecast_hour,
+                            "affected_pixel_percentage": affected_percentage,
+                        }
+                    )
         if include_details:
             variable_forecast_progress.append(
                 {
@@ -1643,6 +1705,15 @@ def _scan_run_issue(
         issue_type = "run_incomplete"
         summary = f"Run is incomplete at {available_frames}/{expected_frames} frames."
 
+    if accum_step_gap_variable_count > 0 and status != "error":
+        status = "warning"
+        issue_type = "accum_step_gap"
+        noun = "variable carries" if accum_step_gap_variable_count == 1 else "variables carry"
+        summary = (
+            f"{accum_step_gap_variable_count} cumulative {noun} partial-step gaps; "
+            f"maximum affected coverage is {accum_step_gap_max_affected_pixel_percentage:.4g}%."
+        )
+
     if stats_incomplete_alert_count > 0 and status != "error":
         status = "warning"
         issue_type = "stats_incomplete"
@@ -1682,6 +1753,12 @@ def _scan_run_issue(
         "incomplete_variables": incomplete_variables[:12] if include_details else [],
         "sample_paths": sample_paths if include_details else [],
         "runtime_artifacts_pending": runtime_artifacts_pending,
+        "accum_step_gap_variable_count": accum_step_gap_variable_count,
+        "accum_step_gap_max_affected_pixel_percentage": round(
+            accum_step_gap_max_affected_pixel_percentage,
+            4,
+        ),
+        "accum_step_gap_samples": accum_step_gap_samples[:12] if include_details else [],
     }
 
 

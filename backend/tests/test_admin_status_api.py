@@ -339,6 +339,74 @@ async def test_status_results_reports_ongoing_latest_run_and_artifact_failures(
     assert artifact_row["sample_paths"]
 
 
+async def test_status_results_surfaces_accumulation_step_gaps(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    real_datetime = admin_telemetry.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return real_datetime(2026, 4, 17, 19, 0, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+    monkeypatch.setattr(
+        main_module.time,
+        "time",
+        lambda: FrozenDateTime.now(admin_telemetry.timezone.utc).timestamp(),
+    )
+
+    _seed_run(
+        main_module.DATA_ROOT,
+        model_id="gfs",
+        run_id="20260417_18z",
+        variables={"precip_total": [0, 6]},
+        last_updated="2026-04-17T18:45:00Z",
+    )
+    sidecar_path = (
+        main_module.DATA_ROOT
+        / "published"
+        / "gfs"
+        / "20260417_18z"
+        / "precip_total"
+        / "fh006.json"
+    )
+    sidecar = json.loads(sidecar_path.read_text())
+    sidecar.update(
+        {
+            "quality": "degraded",
+            "quality_flags": ["accum_step_gap"],
+            "quality_flag_details": {
+                "accum_step_gap": {"affected_pixel_percentage": 12.5}
+            },
+        }
+    )
+    sidecar_path.write_text(json.dumps(sidecar))
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=24h&include_details=true",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    row = next(item for item in response.json()["results"] if item["model_id"] == "gfs")
+    assert row["status"] == "warning"
+    assert row["issue_type"] == "accum_step_gap"
+    assert row["accum_step_gap_variable_count"] == 1
+    assert row["accum_step_gap_max_affected_pixel_percentage"] == 12.5
+    assert row["accum_step_gap_samples"] == [
+        {
+            "variable_id": "precip_total",
+            "forecast_hour": 6,
+            "affected_pixel_percentage": 12.5,
+        }
+    ]
+
+
 async def test_status_results_treats_grid_runtime_artifacts_as_healthy_without_legacy_value_files(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

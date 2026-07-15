@@ -496,11 +496,11 @@ def _kuchera_select_profile_levels(levels_hpa: list[int], *, simplified: bool) -
 # cannot see code-only changes, and a stale prior-cumulative cache would
 # otherwise blend old- and new-semantics steps within a single run.
 CUMULATIVE_ALGORITHM_REVISIONS: dict[str, int] = {
-    "precip_total_cumulative": 2,
-    "snowfall_total_10to1_cumulative": 1,
-    "snowfall_kuchera_total_cumulative": 1,
-    "ptype_accumulation_cumulative": 2,
-    "ptype_accumulation_ecmwf": 1,
+    "precip_total_cumulative": 3,
+    "snowfall_total_10to1_cumulative": 2,
+    "snowfall_kuchera_total_cumulative": 2,
+    "ptype_accumulation_cumulative": 3,
+    "ptype_accumulation_ecmwf": 2,
 }
 
 
@@ -515,6 +515,91 @@ def _cumulative_step_validity(
     if is_mask:
         valid &= values_array <= 1.0
     return np.asarray(valid, dtype=bool)
+
+
+@dataclass
+class _CumulativeQualityState:
+    """Accumulate resumable quality flags for one cumulative output frame."""
+
+    quality_flags: list[str] = field(default_factory=list)
+    quality_flag_details: dict[str, dict[str, Any]] = field(default_factory=dict)
+    _ever_valid: np.ndarray | None = field(default=None, repr=False)
+    _ever_invalid: np.ndarray | None = field(default=None, repr=False)
+
+    def inherit(
+        self,
+        metadata: dict[str, Any] | None,
+        *,
+        base_valid: np.ndarray | None = None,
+    ) -> None:
+        if isinstance(metadata, dict):
+            inherited_flags = metadata.get("quality_flags", [])
+            if isinstance(inherited_flags, list):
+                self.quality_flags.extend(str(flag) for flag in inherited_flags if str(flag).strip())
+            inherited_details = metadata.get("quality_flag_details", {})
+            if isinstance(inherited_details, dict):
+                for flag, details in inherited_details.items():
+                    if isinstance(details, dict):
+                        self.quality_flag_details[str(flag)] = dict(details)
+        if base_valid is not None:
+            valid = np.asarray(base_valid, dtype=bool)
+            prior_gap_mask = (
+                metadata.get("accum_step_gap_mask")
+                if isinstance(metadata, dict)
+                else None
+            )
+            gap_mask = (
+                np.asarray(prior_gap_mask, dtype=bool)
+                if prior_gap_mask is not None
+                else np.zeros(valid.shape, dtype=bool)
+            )
+            if gap_mask.shape != valid.shape:
+                raise ValueError(
+                    f"cumulative gap-mask shape mismatch: {gap_mask.shape} != {valid.shape}"
+                )
+            self._ever_valid = valid.copy()
+            self._ever_invalid = (~valid) | gap_mask
+
+    def observe(self, step_valid: np.ndarray) -> None:
+        valid = np.asarray(step_valid, dtype=bool)
+        if self._ever_valid is None:
+            self._ever_valid = valid.copy()
+            self._ever_invalid = (~valid).copy()
+            return
+        if valid.shape != self._ever_valid.shape:
+            raise ValueError(
+                f"cumulative validity shape mismatch: {valid.shape} != {self._ever_valid.shape}"
+            )
+        self._ever_valid |= valid
+        assert self._ever_invalid is not None
+        self._ever_invalid |= ~valid
+
+    @property
+    def accum_step_gap_mask(self) -> np.ndarray | None:
+        if self._ever_valid is None or self._ever_invalid is None:
+            return None
+        return (self._ever_valid & self._ever_invalid).astype(bool, copy=False)
+
+    def finalize(self) -> None:
+        gap_mask = self.accum_step_gap_mask
+        if self._ever_valid is not None and gap_mask is not None:
+            defined_count = int(np.count_nonzero(self._ever_valid))
+            gap_count = int(np.count_nonzero(gap_mask))
+            if defined_count > 0 and gap_count > 0:
+                current_percentage = round((gap_count / defined_count) * 100.0, 4)
+                prior_details = self.quality_flag_details.get("accum_step_gap", {})
+                try:
+                    prior_percentage = float(prior_details.get("affected_pixel_percentage", 0.0))
+                except (TypeError, ValueError):
+                    prior_percentage = 0.0
+                self.quality_flag_details["accum_step_gap"] = {
+                    "affected_pixel_percentage": max(prior_percentage, current_percentage)
+                }
+                self.quality_flags.append("accum_step_gap")
+        self.quality_flags = [
+            flag for flag in dict.fromkeys(str(item).strip() for item in self.quality_flags)
+            if flag
+        ]
 
 
 def _cumulative_cache_grid_key(
@@ -635,6 +720,21 @@ def _unpack_kuchera_cumulative_cache_entry(
     return None
 
 
+def _cumulative_cache_has_quality_schema(
+    metadata: dict[str, Any],
+    *,
+    data_shape: tuple[int, ...],
+) -> bool:
+    if not isinstance(metadata.get("quality_flags"), list):
+        return False
+    if not isinstance(metadata.get("quality_flag_details"), dict):
+        return False
+    gap_mask = metadata.get("accum_step_gap_mask")
+    if gap_mask is None:
+        return False
+    return np.asarray(gap_mask).shape == data_shape
+
+
 def _kuchera_cache_has_full_run_coverage(metadata: dict[str, Any] | None) -> bool:
     if not isinstance(metadata, dict):
         return False
@@ -663,7 +763,15 @@ def _kuchera_load_prior_cumulative(
     if ctx is not None:
         cache = getattr(ctx, "kuchera_cumulative_cache", None)
         if isinstance(cache, dict) and cache_key in cache:
-            return _unpack_kuchera_cumulative_cache_entry(cache[cache_key])
+            unpacked = _unpack_kuchera_cumulative_cache_entry(cache[cache_key])
+            if unpacked is not None:
+                cached_data, _cached_crs, _cached_transform, cached_metadata = unpacked
+                if _cumulative_cache_has_quality_schema(
+                    cached_metadata,
+                    data_shape=cached_data.shape,
+                ):
+                    return unpacked
+            cache.pop(cache_key, None)
 
     data_root_raw = getattr(ctx, "data_root", None) if ctx is not None else None
     if data_root_raw is None:
@@ -702,7 +810,22 @@ def _kuchera_load_prior_cumulative(
             with np.load(candidate, allow_pickle=False) as cached_npz:
                 if str(cached_npz["grid_cache_key"].tolist()) != str(grid_cache_key):
                     continue
+                if (
+                    "quality_flags_json" not in cached_npz.files
+                    or "quality_flag_details_json" not in cached_npz.files
+                    or "accum_step_gap_mask" not in cached_npz.files
+                ):
+                    continue
+                loaded_quality_flags = json.loads(str(cached_npz["quality_flags_json"].tolist()))
+                loaded_quality_flag_details = json.loads(
+                    str(cached_npz["quality_flag_details_json"].tolist())
+                )
+                if not isinstance(loaded_quality_flags, list) or not isinstance(loaded_quality_flag_details, dict):
+                    continue
                 loaded_data = np.asarray(cached_npz["data"], dtype=np.float32)
+                loaded_gap_mask = np.asarray(cached_npz["accum_step_gap_mask"], dtype=bool)
+                if loaded_gap_mask.shape != loaded_data.shape:
+                    continue
                 loaded_transform = _affine_from_cache_values(cached_npz["transform"])
                 if loaded_transform is None:
                     continue
@@ -710,7 +833,17 @@ def _kuchera_load_prior_cumulative(
                 if not crs_wkt:
                     continue
                 loaded_crs = rasterio.crs.CRS.from_wkt(crs_wkt)
-                loaded_metadata = {}
+                loaded_metadata = {
+                    "quality_flags": [
+                        str(flag) for flag in loaded_quality_flags if str(flag).strip()
+                    ],
+                    "quality_flag_details": {
+                        str(flag): dict(details)
+                        for flag, details in loaded_quality_flag_details.items()
+                        if str(flag).strip() and isinstance(details, dict)
+                    },
+                    "accum_step_gap_mask": loaded_gap_mask,
+                }
                 if "coverage_start_fh" in cached_npz.files:
                     try:
                         loaded_metadata["coverage_start_fh"] = int(cached_npz["coverage_start_fh"].tolist())
@@ -741,16 +874,44 @@ def _kuchera_store_cumulative_cache(
     ctx: FetchContext | None,
     grid_cache_key: str,
     coverage_start_fh: int = 0,
+    quality_flags: list[str] | None = None,
+    quality_flag_details: dict[str, dict[str, Any]] | None = None,
+    accum_step_gap_mask: np.ndarray | None = None,
 ) -> None:
     run_id = _run_id_from_date(run_date)
     cache_key = (str(model_id), run_id, str(var_key), int(fh), str(grid_cache_key))
-    cache_metadata = {"coverage_start_fh": int(coverage_start_fh)}
+    normalized_quality_flags = [
+        flag for flag in dict.fromkeys(str(item).strip() for item in (quality_flags or []))
+        if flag
+    ]
+    normalized_quality_flag_details = {
+        str(flag): dict(details)
+        for flag, details in (quality_flag_details or {}).items()
+        if str(flag).strip() and isinstance(details, dict)
+    }
+    cache_data = np.asarray(data, dtype=np.float32)
+    normalized_gap_mask = (
+        np.zeros(cache_data.shape, dtype=bool)
+        if accum_step_gap_mask is None
+        else np.asarray(accum_step_gap_mask, dtype=bool)
+    )
+    if normalized_gap_mask.shape != cache_data.shape:
+        raise ValueError(
+            f"cumulative cache gap-mask shape mismatch: "
+            f"{normalized_gap_mask.shape} != {cache_data.shape}"
+        )
+    cache_metadata = {
+        "coverage_start_fh": int(coverage_start_fh),
+        "quality_flags": normalized_quality_flags,
+        "quality_flag_details": normalized_quality_flag_details,
+        "accum_step_gap_mask": normalized_gap_mask,
+    }
     if ctx is not None:
         cache = getattr(ctx, "kuchera_cumulative_cache", None)
         if not isinstance(cache, dict):
             cache = {}
             setattr(ctx, "kuchera_cumulative_cache", cache)
-        cache[cache_key] = (data.astype(np.float32, copy=False), crs, transform, cache_metadata)
+        cache[cache_key] = (cache_data, crs, transform, cache_metadata)
 
     data_root_raw = getattr(ctx, "data_root", None) if ctx is not None else None
     if data_root_raw is None:
@@ -777,11 +938,14 @@ def _kuchera_store_cumulative_cache(
         tmp_path = cache_path.with_name(f"{cache_path.stem}.tmp{cache_path.suffix}")
         np.savez_compressed(
             tmp_path,
-            data=np.asarray(data, dtype=np.float32),
+            data=cache_data,
             crs_wkt=crs.to_wkt(),
             transform=_affine_to_cache_values(transform),
             grid_cache_key=str(grid_cache_key),
             coverage_start_fh=np.int32(coverage_start_fh),
+            quality_flags_json=json.dumps(normalized_quality_flags, sort_keys=True),
+            quality_flag_details_json=json.dumps(normalized_quality_flag_details, sort_keys=True),
+            accum_step_gap_mask=normalized_gap_mask,
         )
         tmp_path.replace(cache_path)
     except Exception:
@@ -892,6 +1056,7 @@ def _record_derive_quality(
     var_key: str,
     fh: int,
     quality_flags: list[str],
+    quality_flag_details: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     if ctx is None:
         return
@@ -902,6 +1067,11 @@ def _record_derive_quality(
     payload = {
         "quality": "degraded" if deduped_flags else "full",
         "quality_flags": deduped_flags,
+        "quality_flag_details": {
+            str(flag): dict(details)
+            for flag, details in (quality_flag_details or {}).items()
+            if str(flag).strip() and isinstance(details, dict)
+        },
     }
     with ctx._lock:
         ctx.derive_quality[(str(var_key), int(fh))] = payload
@@ -4078,6 +4248,7 @@ def _cumulative_apcp_loop(
         rasterio.transform.Affine,
         int,
     ] | None = None,
+    quality_state: _CumulativeQualityState | None = None,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, bool]:
     """Shared cumulative APCP accumulation loop.
 
@@ -4155,6 +4326,8 @@ def _cumulative_apcp_loop(
         contribution, step_valid = process_step(
             step_fh, step_data, apcp_valid, step_crs, step_transform,
         )
+        if quality_state is not None:
+            quality_state.observe(step_valid)
 
         if cumulative is None:
             cumulative = contribution
@@ -5244,6 +5417,7 @@ def _derive_ptype_accumulation_ecmwf(
     start_index = 0
     reused_prev_cumulative = False
     base_fh: int | None = None
+    quality_state = _CumulativeQualityState()
     if len(step_fhs) >= 2:
         prev_fh = int(step_fhs[-2])
         prior = _kuchera_load_prior_cumulative(
@@ -5259,7 +5433,7 @@ def _derive_ptype_accumulation_ecmwf(
             if unpacked_prior is None:
                 prior = None
             else:
-                prior_data, prior_crs, prior_transform, _ = unpacked_prior
+                prior_data, prior_crs, prior_transform, prior_metadata = unpacked_prior
         if prior is not None:
             cumulative = prior_data.astype(np.float32, copy=False)
             valid_mask = np.isfinite(prior_data)
@@ -5268,6 +5442,10 @@ def _derive_ptype_accumulation_ecmwf(
             start_index = len(step_fhs) - 1
             reused_prev_cumulative = True
             base_fh = prev_fh
+            quality_state.inherit(
+                prior_metadata,
+                base_valid=np.isfinite(prior_data),
+            )
     subset_step_fhs = step_fhs[start_index:]
     for step_fh in subset_step_fhs:
         total_step, total_valid, step_crs, step_transform = _ptype_intensity_fetch_direct_cumulative_step(
@@ -5354,6 +5532,7 @@ def _derive_ptype_accumulation_ecmwf(
             & _cumulative_step_validity(step_values)
         )
         step_clean = np.where(step_valid, np.maximum(step_values, 0.0), 0.0).astype(np.float32, copy=False)
+        quality_state.observe(step_valid)
 
         if cumulative is None:
             cumulative = step_clean
@@ -5369,7 +5548,15 @@ def _derive_ptype_accumulation_ecmwf(
     if cumulative is None or valid_mask is None or src_crs is None or src_transform is None:
         raise ValueError(f"No cumulative ECMWF ptype source steps resolved for {model_id}/{var_key} fh{fh:03d}")
     result = np.where(valid_mask, cumulative, np.nan).astype(np.float32, copy=False)
-    _record_derive_quality(ctx, var_key=var_key, fh=fh, quality_flags=quality_flags)
+    quality_state.quality_flags.extend(quality_flags)
+    quality_state.finalize()
+    _record_derive_quality(
+        ctx,
+        var_key=var_key,
+        fh=fh,
+        quality_flags=quality_state.quality_flags,
+        quality_flag_details=quality_state.quality_flag_details,
+    )
     _log_fetch_context_memory(
         label="ptype_accumulation_ecmwf_after_loop",
         ctx=ctx,
@@ -5399,6 +5586,9 @@ def _derive_ptype_accumulation_ecmwf(
         ctx=ctx,
         grid_cache_key=cumulative_cache_grid_key,
         coverage_start_fh=0,
+        quality_flags=quality_state.quality_flags,
+        quality_flag_details=quality_state.quality_flag_details,
+        accum_step_gap_mask=quality_state.accum_step_gap_mask,
     )
     _log_fetch_context_memory(
         label="ptype_accumulation_ecmwf_exit",
@@ -5463,6 +5653,7 @@ def _derive_precip_total_cumulative(
         rasterio.transform.Affine,
         int,
     ] | None = None
+    quality_state = _CumulativeQualityState()
 
     if len(step_fhs) >= 2:
         prev_fh = int(step_fhs[-2])
@@ -5480,7 +5671,7 @@ def _derive_precip_total_cumulative(
             if unpacked_prior is None:
                 prior = None
             else:
-                prior_data, prior_crs, prior_transform, _ = unpacked_prior
+                prior_data, prior_crs, prior_transform, prior_metadata = unpacked_prior
         if prior is not None:
             active_step_fhs = [int(step_fhs[-1])]
             reused_prev_cumulative = True
@@ -5488,6 +5679,10 @@ def _derive_precip_total_cumulative(
             base_cumulative_kgm2 = prior_data.astype(np.float32, copy=False)
             base_crs = prior_crs
             base_transform = prior_transform
+            quality_state.inherit(
+                prior_metadata,
+                base_valid=np.isfinite(prior_data),
+            )
             if use_inventory_resolution:
                 first_step_expected_start_fh = prev_fh
                 initial_apcp_cumulative = (
@@ -5548,6 +5743,7 @@ def _derive_precip_total_cumulative(
             error_label=f"No cumulative APCP source steps resolved for {model_id}/{var_key} fh{fh:03d}",
             first_step_expected_start_fh=first_step_expected_start_fh,
             initial_apcp_cumulative=initial_apcp_cumulative,
+            quality_state=quality_state,
         )
     except ValueError as exc:
         if not (reused_prev_cumulative and _is_apcp_incremental_rebuild_retryable_error(exc)):
@@ -5566,6 +5762,7 @@ def _derive_precip_total_cumulative(
         base_transform = None
         first_step_expected_start_fh = None
         initial_apcp_cumulative = None
+        quality_state = _CumulativeQualityState()
         cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
             model_id=model_id,
             var_key=var_key,
@@ -5584,6 +5781,7 @@ def _derive_precip_total_cumulative(
             use_inventory_resolution=use_inventory_resolution,
             process_step=_process_step,
             error_label=f"No cumulative APCP source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+            quality_state=quality_state,
         )
 
     if base_cumulative_kgm2 is not None and base_crs is not None and base_transform is not None:
@@ -5601,6 +5799,7 @@ def _derive_precip_total_cumulative(
                     crs_match,
                     transform_match,
                 )
+                quality_state = _CumulativeQualityState()
                 cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
                     model_id=model_id,
                     var_key=var_key,
@@ -5619,6 +5818,7 @@ def _derive_precip_total_cumulative(
                     use_inventory_resolution=use_inventory_resolution,
                     process_step=_process_step,
                     error_label=f"No cumulative APCP source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+                    quality_state=quality_state,
                 )
                 active_step_fhs = list(step_fhs)
                 reused_prev_cumulative = False
@@ -5656,6 +5856,14 @@ def _derive_precip_total_cumulative(
         f"{base_fh:03d}" if base_fh is not None else "none",
         int((time.perf_counter() - frame_start) * 1000),
     )
+    quality_state.finalize()
+    _record_derive_quality(
+        ctx,
+        var_key=var_key,
+        fh=fh,
+        quality_flags=quality_state.quality_flags,
+        quality_flag_details=quality_state.quality_flag_details,
+    )
     _kuchera_store_cumulative_cache(
         model_id=model_id,
         run_date=run_date,
@@ -5666,6 +5874,9 @@ def _derive_precip_total_cumulative(
         transform=src_transform,
         ctx=ctx,
         grid_cache_key=cumulative_cache_grid_key,
+        quality_flags=quality_state.quality_flags,
+        quality_flag_details=quality_state.quality_flag_details,
+        accum_step_gap_mask=quality_state.accum_step_gap_mask,
     )
     return cumulative_inches.astype(np.float32, copy=False), src_crs, src_transform
 
@@ -5779,6 +5990,7 @@ def _derive_snowfall_total_10to1_cumulative(
         int,
     ] | None = None
     current_step_fetch_counts: dict[str, int] = {"apcp": 0, "csnow": 0}
+    quality_state = _CumulativeQualityState()
 
     logger.info("snow_ratio method=10to1 fh=%d", fh)
     logger.info(
@@ -5840,7 +6052,7 @@ def _derive_snowfall_total_10to1_cumulative(
                 prior_snowfall = None
                 prior_precip = None
             else:
-                prior_snowfall_data, prior_snowfall_crs, prior_snowfall_transform, _ = unpacked_prior_snowfall
+                prior_snowfall_data, prior_snowfall_crs, prior_snowfall_transform, prior_snowfall_metadata = unpacked_prior_snowfall
                 prior_precip_data, prior_precip_crs, prior_precip_transform, _ = unpacked_prior_precip
         if prior_snowfall is not None and prior_precip is not None:
             same_shape = prior_snowfall_data.shape == prior_precip_data.shape
@@ -5854,6 +6066,10 @@ def _derive_snowfall_total_10to1_cumulative(
                 base_cumulative_kgm2 = prior_snowfall_data.astype(np.float32, copy=False)
                 base_crs = prior_snowfall_crs
                 base_transform = prior_snowfall_transform
+                quality_state.inherit(
+                    prior_snowfall_metadata,
+                    base_valid=np.isfinite(prior_snowfall_data),
+                )
                 first_step_expected_start_fh = prev_fh
                 initial_apcp_cumulative = (
                     prior_precip_data.astype(np.float32, copy=False),
@@ -5980,6 +6196,7 @@ def _derive_snowfall_total_10to1_cumulative(
             error_label=f"No cumulative snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}",
             first_step_expected_start_fh=first_step_expected_start_fh,
             initial_apcp_cumulative=initial_apcp_cumulative,
+            quality_state=quality_state,
         )
     except ValueError as exc:
         if not (reused_prev_cumulative and _is_apcp_incremental_rebuild_retryable_error(exc)):
@@ -5999,6 +6216,7 @@ def _derive_snowfall_total_10to1_cumulative(
         first_step_expected_start_fh = None
         initial_apcp_cumulative = None
         current_step_fetch_counts = {"apcp": 0, "csnow": 0}
+        quality_state = _CumulativeQualityState()
         cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
             model_id=model_id,
             var_key=var_key,
@@ -6019,6 +6237,7 @@ def _derive_snowfall_total_10to1_cumulative(
             error_label=f"No cumulative snowfall source steps resolved for {model_id}/{var_key} fh{fh:03d}",
             first_step_expected_start_fh=None,
             initial_apcp_cumulative=None,
+            quality_state=quality_state,
         )
 
     if base_cumulative_kgm2 is not None and base_crs is not None and base_transform is not None:
@@ -6039,6 +6258,14 @@ def _derive_snowfall_total_10to1_cumulative(
 
     # 1 kg/m^2 == 1 mm LWE. Convert to inches liquid then apply fixed 10:1 SLR.
     cumulative_snow_inches = cumulative_kgm2 * 0.03937007874015748 * slr
+    quality_state.finalize()
+    _record_derive_quality(
+        ctx,
+        var_key=var_key,
+        fh=fh,
+        quality_flags=quality_state.quality_flags,
+        quality_flag_details=quality_state.quality_flag_details,
+    )
     _kuchera_store_cumulative_cache(
         model_id=model_id,
         run_date=run_date,
@@ -6049,6 +6276,9 @@ def _derive_snowfall_total_10to1_cumulative(
         transform=src_transform,
         ctx=ctx,
         grid_cache_key=cumulative_cache_grid_key,
+        quality_flags=quality_state.quality_flags,
+        quality_flag_details=quality_state.quality_flag_details,
+        accum_step_gap_mask=quality_state.accum_step_gap_mask,
     )
     logger.info(
         "snow10to1_incremental model=%s run=%s fh=%03d total_steps=%d computed_steps=%d reused_prev_cumulative=%s "
@@ -6300,6 +6530,7 @@ def _derive_snowfall_kuchera_total_cumulative(
     base_cumulative: np.ndarray | None = None
     base_crs: rasterio.crs.CRS | None = None
     base_transform: rasterio.transform.Affine | None = None
+    base_quality_metadata: dict[str, Any] = {}
     first_step_expected_start_fh: int | None = None
     initial_apcp_cumulative: tuple[
         np.ndarray,
@@ -6439,6 +6670,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             )
             if direct_prior_ok and (prior_seed is not None or not use_direct_cumulative_lwe):
                 base_cumulative, base_crs, base_transform = prior_data, prior_crs, prior_transform
+                base_quality_metadata = dict(prior_meta)
                 base_fh = prev_fh
                 start_index = len(step_fhs) - 1
                 reused_prev_cumulative = True
@@ -6469,6 +6701,7 @@ def _derive_snowfall_kuchera_total_cumulative(
                 base_fh = None
             else:
                 base_cumulative, base_crs, base_transform = prior_data, prior_crs, prior_transform
+                base_quality_metadata = dict(prior_meta)
                 base_fh = anchor_fh
                 reused_prev_cumulative = True
                 initial_apcp_cumulative = prior_seed
@@ -6492,6 +6725,7 @@ def _derive_snowfall_kuchera_total_cumulative(
                     base_cumulative = None
                     base_crs = None
                     base_transform = None
+                    base_quality_metadata = {}
                     base_fh = None
                     first_step_expected_start_fh = None
                     initial_apcp_cumulative = None
@@ -6519,6 +6753,7 @@ def _derive_snowfall_kuchera_total_cumulative(
                     reused_prev_cumulative = False
                     continue
                 base_cumulative, base_crs, base_transform = prior_data, prior_crs, prior_transform
+                base_quality_metadata = dict(prior_meta)
                 base_fh = anchor_fh
                 reused_prev_cumulative = True
                 initial_apcp_cumulative = prior_seed
@@ -6613,6 +6848,12 @@ def _derive_snowfall_kuchera_total_cumulative(
         requires_full_history_rebuild = False
         rebuild_trigger_step_fh: int | None = None
         steps_processed = 0
+        quality_state = _CumulativeQualityState()
+        if base_cumulative is not None:
+            quality_state.inherit(
+                base_quality_metadata,
+                base_valid=np.isfinite(base_cumulative),
+            )
 
         for local_step_index, step_fh in enumerate(subset_step_fhs):
             try:
@@ -6910,6 +7151,7 @@ def _derive_snowfall_kuchera_total_cumulative(
 
             contribution = (step_apcp_for_snow * step_slr).astype(np.float32, copy=False)
             step_valid = apcp_valid & np.isfinite(step_slr)
+            quality_state.observe(step_valid)
 
             if subset_cumulative is None:
                 subset_cumulative = contribution
@@ -6948,6 +7190,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             base_cumulative = None
             base_crs = None
             base_transform = None
+            base_quality_metadata = {}
             base_fh = None
             reused_prev_cumulative = False
             first_step_expected_start_fh = None
@@ -6976,6 +7219,7 @@ def _derive_snowfall_kuchera_total_cumulative(
                     base_cumulative = None
                     base_crs = None
                     base_transform = None
+                    base_quality_metadata = {}
                     base_fh = None
                     reused_prev_cumulative = False
                     continue
@@ -7061,11 +7305,14 @@ def _derive_snowfall_kuchera_total_cumulative(
         quality_flags.append("apcp_cumulative_fallback")
     if ptype_gate_fallback_used:
         quality_flags.append("ptype_gate_fallback")
+    quality_state.quality_flags.extend(quality_flags)
+    quality_state.finalize()
     _record_derive_quality(
         ctx,
         var_key=var_key,
         fh=fh,
-        quality_flags=quality_flags,
+        quality_flags=quality_state.quality_flags,
+        quality_flag_details=quality_state.quality_flag_details,
     )
     logger.info(
         "snow_ratio method=kuchera fh=%d levels=%s fallback=%s",
@@ -7094,6 +7341,9 @@ def _derive_snowfall_kuchera_total_cumulative(
         transform=src_transform,
         ctx=ctx,
         grid_cache_key=cumulative_cache_grid_key,
+        quality_flags=quality_state.quality_flags,
+        quality_flag_details=quality_state.quality_flag_details,
+        accum_step_gap_mask=quality_state.accum_step_gap_mask,
     )
     _log_fetch_context_memory(
         label="kuchera_exit",
@@ -7220,6 +7470,7 @@ def _derive_ptype_accumulation_cumulative(
         rasterio.transform.Affine,
         int,
     ] | None = None
+    quality_state = _CumulativeQualityState()
 
     if len(step_fhs) >= 2:
         prev_fh = int(step_fhs[-2])
@@ -7242,7 +7493,7 @@ def _derive_ptype_accumulation_cumulative(
             scale_divisor=0.03937007874015748,
         )
         if prior_ptype is not None and prior_precip is not None:
-            prior_ptype_data, prior_ptype_crs, prior_ptype_transform, _ = prior_ptype
+            prior_ptype_data, prior_ptype_crs, prior_ptype_transform, prior_ptype_metadata = prior_ptype
             prior_precip_data, prior_precip_crs, prior_precip_transform, _ = prior_precip
             same_shape = prior_ptype_data.shape == prior_precip_data.shape
             same_crs = prior_ptype_crs == prior_precip_crs
@@ -7254,6 +7505,10 @@ def _derive_ptype_accumulation_cumulative(
                 base_cumulative_kgm2 = prior_ptype_data.astype(np.float32, copy=False)
                 base_crs = prior_ptype_crs
                 base_transform = prior_ptype_transform
+                quality_state.inherit(
+                    prior_ptype_metadata,
+                    base_valid=np.isfinite(prior_ptype_data),
+                )
                 first_step_expected_start_fh = prev_fh
                 initial_apcp_cumulative = (
                     prior_precip_data.astype(np.float32, copy=False),
@@ -7371,6 +7626,7 @@ def _derive_ptype_accumulation_cumulative(
             error_label=f"No cumulative ptype accumulation source steps resolved for {model_id}/{var_key} fh{fh:03d}",
             first_step_expected_start_fh=first_step_expected_start_fh,
             initial_apcp_cumulative=initial_apcp_cumulative,
+            quality_state=quality_state,
         )
     except ValueError as exc:
         if not (reused_prev_cumulative and _is_apcp_incremental_rebuild_retryable_error(exc)):
@@ -7387,6 +7643,7 @@ def _derive_ptype_accumulation_cumulative(
         base_cumulative_kgm2 = None
         base_crs = None
         base_transform = None
+        quality_state = _CumulativeQualityState()
         cumulative_kgm2, src_crs, src_transform, _ = _cumulative_apcp_loop(
             model_id=model_id,
             var_key=var_key,
@@ -7405,6 +7662,7 @@ def _derive_ptype_accumulation_cumulative(
             use_inventory_resolution=use_inventory_resolution,
             process_step=_process_step,
             error_label=f"No cumulative ptype accumulation source steps resolved for {model_id}/{var_key} fh{fh:03d}",
+            quality_state=quality_state,
         )
 
     if base_cumulative_kgm2 is not None and base_crs is not None and base_transform is not None:
@@ -7423,6 +7681,14 @@ def _derive_ptype_accumulation_cumulative(
         cumulative_kgm2 = (base_clean + current_clean).astype(np.float32, copy=False)
         cumulative_kgm2 = np.where(base_valid | current_valid, cumulative_kgm2, np.nan).astype(np.float32, copy=False)
 
+    quality_state.finalize()
+    _record_derive_quality(
+        ctx,
+        var_key=var_key,
+        fh=fh,
+        quality_flags=quality_state.quality_flags,
+        quality_flag_details=quality_state.quality_flag_details,
+    )
     _kuchera_store_cumulative_cache(
         model_id=model_id,
         run_date=run_date,
@@ -7433,6 +7699,9 @@ def _derive_ptype_accumulation_cumulative(
         transform=src_transform,
         ctx=ctx,
         grid_cache_key=cumulative_cache_grid_key,
+        quality_flags=quality_state.quality_flags,
+        quality_flag_details=quality_state.quality_flag_details,
+        accum_step_gap_mask=quality_state.accum_step_gap_mask,
     )
     logger.info(
         "%s incremental model=%s run=%s fh=%03d total_steps=%d computed_steps=%d reused_prev_cumulative=%s "
