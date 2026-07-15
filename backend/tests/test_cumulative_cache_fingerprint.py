@@ -98,17 +98,20 @@ def test_revision_bump_invalidates_cumulative_cache(
 ) -> None:
     """Bumping the explicit algorithm revision must invalidate prior caches."""
     hints = {"min_step_lwe_kgm2": "0.01"}
-    key_r1 = _grid_key("precip_total_cumulative", hints)
-    _store(tmp_path, grid_cache_key=key_r1)
-    assert _load(tmp_path, grid_cache_key=key_r1) is not None
+    current_revision = derive_module.CUMULATIVE_ALGORITHM_REVISIONS["precip_total_cumulative"]
+    key_current = _grid_key("precip_total_cumulative", hints)
+    _store(tmp_path, grid_cache_key=key_current)
+    assert _load(tmp_path, grid_cache_key=key_current) is not None
 
     monkeypatch.setitem(
-        derive_module.CUMULATIVE_ALGORITHM_REVISIONS, "precip_total_cumulative", 2
+        derive_module.CUMULATIVE_ALGORITHM_REVISIONS,
+        "precip_total_cumulative",
+        current_revision + 1,
     )
-    key_r2 = _grid_key("precip_total_cumulative", hints)
-    assert key_r2 != key_r1
-    assert ":r=2:" in key_r2
-    assert _load(tmp_path, grid_cache_key=key_r2) is None
+    key_bumped = _grid_key("precip_total_cumulative", hints)
+    assert key_bumped != key_current
+    assert f":r={current_revision + 1}:" in key_bumped
+    assert _load(tmp_path, grid_cache_key=key_bumped) is None
 
 
 def test_fingerprint_is_insertion_order_stable() -> None:
@@ -156,10 +159,24 @@ def test_unknown_strategy_id_raises_key_error() -> None:
         _grid_key("not_a_registered_strategy", {})
 
 
+def test_cumulative_algorithm_revisions_are_pinned() -> None:
+    """Semantic changes must deliberately update the affected revision only."""
+    assert derive_module.CUMULATIVE_ALGORITHM_REVISIONS == {
+        "precip_total_cumulative": 2,
+        "snowfall_total_10to1_cumulative": 1,
+        "snowfall_kuchera_total_cumulative": 1,
+        "ptype_accumulation_cumulative": 2,
+        "ptype_accumulation_ecmwf": 1,
+    }
+
+
 def test_key_format_shape() -> None:
     """Pin the documented key format: {base}:s={id}:r={rev}:h={12 hex}."""
+    revision = derive_module.CUMULATIVE_ALGORITHM_REVISIONS["precip_total_cumulative"]
     key = _grid_key("precip_total_cumulative", {"a": "1"})
-    assert key.startswith("warped:hrrr:conus:3000.0m:bilinear:s=precip_total_cumulative:r=1:h=")
+    assert key.startswith(
+        f"warped:hrrr:conus:3000.0m:bilinear:s=precip_total_cumulative:r={revision}:h="
+    )
     hints_hash = key.rsplit(":h=", 1)[1]
     assert len(hints_hash) == 12
     int(hints_hash, 16)  # valid hex
@@ -171,7 +188,7 @@ def test_key_format_shape() -> None:
         strategy_id="precip_total_cumulative",
         hints=None,
     )
-    assert native.startswith("native:s=precip_total_cumulative:r=1:h=")
+    assert native.startswith(f"native:s=precip_total_cumulative:r={revision}:h=")
 
 
 # ---------------------------------------------------------------------------
@@ -240,15 +257,18 @@ def test_apcp_seed_key_invalidated_by_precip_total_revision_bump(
     """Bumping precip_total_cumulative's revision changes the seed key, so a
     stale precip_total seed is correctly ignored."""
     plugin = _FakePlugin(precip_hints=_PRECIP_TOTAL_HINTS)
-    key_r1 = _seed_key(plugin)
-    assert ":s=precip_total_cumulative:r=1:" in key_r1
+    current_revision = derive_module.CUMULATIVE_ALGORITHM_REVISIONS["precip_total_cumulative"]
+    key_current = _seed_key(plugin)
+    assert f":s=precip_total_cumulative:r={current_revision}:" in key_current
 
     monkeypatch.setitem(
-        derive_module.CUMULATIVE_ALGORITHM_REVISIONS, "precip_total_cumulative", 2
+        derive_module.CUMULATIVE_ALGORITHM_REVISIONS,
+        "precip_total_cumulative",
+        current_revision + 1,
     )
-    key_r2 = _seed_key(plugin)
-    assert key_r2 != key_r1
-    assert ":s=precip_total_cumulative:r=2:" in key_r2
+    key_bumped = _seed_key(plugin)
+    assert key_bumped != key_current
+    assert f":s=precip_total_cumulative:r={current_revision + 1}:" in key_bumped
 
 
 def test_apcp_seed_key_none_when_precip_total_unresolvable() -> None:

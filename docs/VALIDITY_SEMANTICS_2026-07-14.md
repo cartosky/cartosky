@@ -112,11 +112,16 @@ ice), which is the defensible statistical meaning; unconditional 0.5
 binarization is only correct for deterministic 0/1 masks, which pass through
 the fractional mean unchanged anyway.
 
-**Visible data change:** GEFS-mean ice accumulation goes from ~0 to real
-values. Ship with before/after frames + release note (tmp850_anom °C
-discipline), and a cumulative algorithm revision bump (D5). Note the default
-`ptype_mask_threshold="0.5"` hint must be *removed from the code default*,
-not from var specs — check which specs configure it explicitly and intend it.
+**Scope correction (Codex review 2026-07-15, verified against catalogs):**
+NO live behavior change. The only current `ptype_accumulation_cumulative`
+product is GFS `ice_total`, which configures `ptype_mask_threshold: "0.5"`
+explicitly; the ECMWF strategy has no binarization site; GEFS carries no
+ice/ptype-accumulation product. The audit's "GEFS-mean ice collapses to ~0"
+consequence was hypothetical — this decision hardens the default for future
+fractional (ensemble-mean) products, and the original before/after
+release-note requirement is dropped (revision bump per D5 still applies:
+`ptype_accumulation_cumulative` only). The default must be *removed from
+the code default*, not from var specs — GFS ice_total's explicit hint stays.
 
 ## D4 — Frame-level semantics: NaN vs degraded
 

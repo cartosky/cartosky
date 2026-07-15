@@ -16,19 +16,17 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services.builder import derive as derive_module
 
 
-def _ice_total_var_spec() -> SimpleNamespace:
-    return SimpleNamespace(
-        selectors=SimpleNamespace(
-            hints={
-                "apcp_component": "apcp_step",
-                "ptype_component": "cfrzr",
-                "step_hours": "3",
-                "ptype_interval_sample_mode": "three_point",
-                "ptype_mask_threshold": "0.5",
-                "min_step_lwe_kgm2": "0.01",
-            }
-        )
-    )
+def _ice_total_var_spec(*, threshold: str | None = "0.5") -> SimpleNamespace:
+    hints = {
+        "apcp_component": "apcp_step",
+        "ptype_component": "cfrzr",
+        "step_hours": "3",
+        "ptype_interval_sample_mode": "three_point",
+        "min_step_lwe_kgm2": "0.01",
+    }
+    if threshold is not None:
+        hints["ptype_mask_threshold"] = threshold
+    return SimpleNamespace(selectors=SimpleNamespace(hints=hints))
 
 
 def test_gfs_ice_total_uses_freezing_rain_mask_not_icetk(monkeypatch) -> None:
@@ -77,4 +75,45 @@ def test_gfs_ice_total_uses_freezing_rain_mask_not_icetk(monkeypatch) -> None:
     assert out_transform == transform
     assert "icetk" not in fetched_components
     expected = np.array([[0.39370078, 0.0, 0.78740156]], dtype=np.float32)
+    np.testing.assert_allclose(values, expected, rtol=1e-5, atol=1e-5)
+
+
+def test_ptype_accumulation_keeps_fractional_masks_without_threshold(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    step_apcp = {
+        3: np.array([[10.0, 10.0, 10.0]], dtype=np.float32),
+        6: np.array([[10.0, 10.0, 10.0]], dtype=np.float32),
+    }
+    cfrzr_samples = {
+        0: np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+        3: np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+        6: np.array([[1.0, 0.0, 1.0]], dtype=np.float32),
+    }
+
+    def _fake_resolve_apcp_step_data(**kwargs):
+        data = step_apcp[int(kwargs["step_fh"])]
+        return data, np.isfinite(data), crs, transform, "exact_step"
+
+    def _fake_fetch_step_component(**kwargs):
+        assert str(kwargs["var_key"]) == "cfrzr"
+        return cfrzr_samples[int(kwargs["step_fh"])], crs, transform
+
+    monkeypatch.setattr(derive_module, "_resolve_apcp_step_data", _fake_resolve_apcp_step_data)
+    monkeypatch.setattr(derive_module, "_fetch_step_component", _fake_fetch_step_component)
+
+    values, _, _ = derive_module._derive_ptype_accumulation_cumulative(
+        model_id="gfs",
+        var_key="ice_total",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 7, 15, 0, 0),
+        fh=6,
+        var_spec_model=_ice_total_var_spec(threshold=None),
+        var_capability=None,
+        model_plugin=object(),
+    )
+
+    # Step masks are [0, 0, 0.5] and [0.5, 0, 1.0], so the two
+    # 10 kg/m2 precipitation steps accumulate to [5, 0, 15] kg/m2.
+    expected = np.array([[0.19685039, 0.0, 0.5905512]], dtype=np.float32)
     np.testing.assert_allclose(values, expected, rtol=1e-5, atol=1e-5)

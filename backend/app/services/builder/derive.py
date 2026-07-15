@@ -496,12 +496,25 @@ def _kuchera_select_profile_levels(levels_hpa: list[int], *, simplified: bool) -
 # cannot see code-only changes, and a stale prior-cumulative cache would
 # otherwise blend old- and new-semantics steps within a single run.
 CUMULATIVE_ALGORITHM_REVISIONS: dict[str, int] = {
-    "precip_total_cumulative": 1,
+    "precip_total_cumulative": 2,
     "snowfall_total_10to1_cumulative": 1,
     "snowfall_kuchera_total_cumulative": 1,
-    "ptype_accumulation_cumulative": 1,
+    "ptype_accumulation_cumulative": 2,
     "ptype_accumulation_ecmwf": 1,
 }
+
+
+def _cumulative_step_validity(
+    values: np.ndarray,
+    *,
+    is_mask: bool = False,
+) -> np.ndarray:
+    """Return the shared per-pixel validity contract for cumulative inputs."""
+    values_array = np.asarray(values)
+    valid = np.isfinite(values_array) & (values_array >= 0.0)
+    if is_mask:
+        valid &= values_array <= 1.0
+    return np.asarray(valid, dtype=bool)
 
 
 def _cumulative_cache_grid_key(
@@ -2027,7 +2040,7 @@ def _ptype_intensity_fetch_direct_cumulative_step(
         ctx=ctx,
     )
     current_values = np.asarray(current_data, dtype=np.float32)
-    current_valid = np.isfinite(current_values) & (current_values >= 0.0)
+    current_valid = _cumulative_step_validity(current_values)
     current_clean = np.where(current_valid, current_values, 0.0).astype(np.float32, copy=False)
 
     if prev_fh is None:
@@ -2057,7 +2070,7 @@ def _ptype_intensity_fetch_direct_cumulative_step(
             raise ValueError(
                 f"ptype_intensity cumulative grid mismatch for {model_id}/{component_var_key} fh{fh:03d}"
             )
-        previous_valid = np.isfinite(previous_values) & (previous_values >= 0.0)
+        previous_valid = _cumulative_step_validity(previous_values)
         previous_clean = np.where(previous_valid, previous_values, 0.0).astype(np.float32, copy=False)
         step_clean = np.clip(current_clean - previous_clean, 0.0, None).astype(np.float32, copy=False)
         step_valid = current_valid & previous_valid
@@ -3478,7 +3491,7 @@ def _seed_overlap_prior_bucket_window(
     if window is None or int(window[0]) != int(start_fh) or int(window[1]) != int(through_fh):
         return None
 
-    step_valid = np.isfinite(step_data) & (step_data >= 0.0)
+    step_valid = _cumulative_step_validity(step_data)
     step_clean = np.where(step_valid, step_data, 0.0).astype(np.float32, copy=False)
 
     cum_diff_state.bucket_start_fh = int(start_fh)
@@ -3810,7 +3823,7 @@ def _resolve_apcp_step_data(
 
     # 4. Classify mode and apply cumulative differencing.
     assert apcp_step is not None  # guaranteed set by steps 1/2/3 above
-    apcp_valid_raw = np.isfinite(apcp_step) & (apcp_step >= 0.0)
+    apcp_valid_raw = _cumulative_step_validity(apcp_step)
     apcp_cum_clean = np.where(apcp_valid_raw, apcp_step, 0.0).astype(np.float32, copy=False)
 
     apcp_inventory_line = str((apcp_meta or {}).get("inventory_line", "")).strip()
@@ -5300,7 +5313,7 @@ def _derive_ptype_accumulation_ecmwf(
             )
             snow_step = np.zeros(total_step.shape, dtype=np.float32)
             snow_step[~np.isfinite(total_step)] = np.nan
-            snow_valid = np.isfinite(total_step)
+            snow_valid = _cumulative_step_validity(total_step)
             quality_flags.append("snow_component_missing")
 
         deep_cold, surface_cold, warm_nose, missing_phase_components = _ptype_intensity_ecmwf_phase_signals(
@@ -5335,7 +5348,11 @@ def _derive_ptype_accumulation_ecmwf(
         if step_values is None:
             step_values = np.zeros(total_step.shape, dtype=np.float32)
             step_values[~np.isfinite(total_step)] = np.nan
-        step_valid = np.asarray(total_valid, dtype=bool) & np.asarray(snow_valid, dtype=bool) & np.isfinite(step_values)
+        step_valid = (
+            np.asarray(total_valid, dtype=bool)
+            & np.asarray(snow_valid, dtype=bool)
+            & _cumulative_step_validity(step_values)
+        )
         step_clean = np.where(step_valid, np.maximum(step_values, 0.0), 0.0).astype(np.float32, copy=False)
 
         if cumulative is None:
@@ -5504,13 +5521,10 @@ def _derive_precip_total_cumulative(
         step_transform: rasterio.transform.Affine,
     ) -> tuple[np.ndarray, np.ndarray]:
         del step_fh, step_crs, step_transform
-        step_clean = np.where(
-            np.isfinite(step_data), np.maximum(step_data, 0.0), 0.0,
-        ).astype(np.float32)
-        if apcp_valid_hint is None:
-            step_valid = np.isfinite(step_data)
-        else:
-            step_valid = np.asarray(apcp_valid_hint, dtype=bool)
+        step_valid = _cumulative_step_validity(step_data)
+        if apcp_valid_hint is not None:
+            step_valid &= np.asarray(apcp_valid_hint, dtype=bool)
+        step_clean = np.where(step_valid, step_data, 0.0).astype(np.float32)
         return step_clean, step_valid
 
     try:
@@ -5878,10 +5892,9 @@ def _derive_snowfall_total_10to1_cumulative(
     ) -> tuple[np.ndarray, np.ndarray]:
         if int(step_fh) == int(fh):
             current_step_fetch_counts["apcp"] = int(current_step_fetch_counts.get("apcp", 0)) + 1
-        if apcp_valid_hint is None:
-            apcp_valid = np.isfinite(step_data) & (step_data >= 0.0)
-        else:
-            apcp_valid = np.asarray(apcp_valid_hint, dtype=bool)
+        apcp_valid = _cumulative_step_validity(step_data)
+        if apcp_valid_hint is not None:
+            apcp_valid &= np.asarray(apcp_valid_hint, dtype=bool)
         step_apcp_clean = np.where(apcp_valid, step_data, 0.0).astype(np.float32, copy=False)
         if min_step_lwe > 0.0:
             step_apcp_clean = np.where(
@@ -5914,7 +5927,7 @@ def _derive_snowfall_total_10to1_cumulative(
                     f"Snowfall mask shape mismatch for {model_id}/{var_key} at fh{sample_fh:03d}: "
                     f"{snow_mask.shape} != {step_apcp_clean.shape}"
                 )
-            snow_valid = np.isfinite(snow_mask) & (snow_mask >= 0.0) & (snow_mask <= 1.0)
+            snow_valid = _cumulative_step_validity(snow_mask, is_mask=True)
             sample_masks.append(
                 np.where(snow_valid, snow_mask, np.nan).astype(np.float32, copy=False)
             )
@@ -7113,13 +7126,16 @@ def _derive_ptype_accumulation_cumulative(
     apcp_component = str(hints.get("apcp_component", "apcp_step"))
     ptype_component = str(hints.get("ptype_component", "cfrzr"))
     sample_mode = str(hints.get("ptype_interval_sample_mode", "auto")).strip().lower() or "auto"
-    threshold_raw = hints.get("ptype_mask_threshold", "0.5")
+    threshold_raw = hints.get("ptype_mask_threshold")
     min_step_lwe_raw = hints.get("min_step_lwe_kgm2", "0.01")
 
-    try:
-        ptype_threshold = min(max(float(threshold_raw), 0.0), 1.0)
-    except (TypeError, ValueError):
-        ptype_threshold = 0.5
+    ptype_threshold: float | None = None
+    if threshold_raw is not None:
+        try:
+            parsed_threshold = float(threshold_raw)
+        except (TypeError, ValueError):
+            parsed_threshold = 0.5
+        ptype_threshold = min(max(parsed_threshold, 0.0), 1.0)
     try:
         min_step_lwe = max(float(min_step_lwe_raw), 0.0)
     except (TypeError, ValueError):
@@ -7274,10 +7290,9 @@ def _derive_ptype_accumulation_cumulative(
         step_crs: rasterio.crs.CRS,
         step_transform: rasterio.transform.Affine,
     ) -> tuple[np.ndarray, np.ndarray]:
-        if apcp_valid_hint is None:
-            apcp_valid = np.isfinite(step_data) & (step_data >= 0.0)
-        else:
-            apcp_valid = np.asarray(apcp_valid_hint, dtype=bool)
+        apcp_valid = _cumulative_step_validity(step_data)
+        if apcp_valid_hint is not None:
+            apcp_valid &= np.asarray(apcp_valid_hint, dtype=bool)
         step_apcp_clean = np.where(apcp_valid, step_data, 0.0).astype(np.float32, copy=False)
         if min_step_lwe > 0.0:
             step_apcp_clean = np.where(step_apcp_clean >= min_step_lwe, step_apcp_clean, 0.0).astype(np.float32, copy=False)
@@ -7305,7 +7320,7 @@ def _derive_ptype_accumulation_cumulative(
                     f"Ptype mask shape mismatch for {model_id}/{var_key} component={ptype_component} "
                     f"at fh{sample_fh:03d}: {ptype_mask.shape} != {step_apcp_clean.shape}"
                 )
-            ptype_valid = np.isfinite(ptype_mask) & (ptype_mask >= 0.0) & (ptype_mask <= 1.0)
+            ptype_valid = _cumulative_step_validity(ptype_mask, is_mask=True)
             sample_masks.append(np.where(ptype_valid, ptype_mask, np.nan).astype(np.float32, copy=False))
 
         if sample_masks:
@@ -7319,11 +7334,13 @@ def _derive_ptype_accumulation_cumulative(
                 out=interval_mask,
                 where=sample_valid_counts > 0,
             )
-            interval_mask = np.where(
-                interval_mask >= np.float32(ptype_threshold),
-                np.float32(1.0),
-                np.float32(0.0),
-            ).astype(np.float32, copy=False)
+            interval_mask = np.clip(interval_mask, 0.0, 1.0).astype(np.float32, copy=False)
+            if ptype_threshold is not None:
+                interval_mask = np.where(
+                    interval_mask >= np.float32(ptype_threshold),
+                    np.float32(1.0),
+                    np.float32(0.0),
+                ).astype(np.float32, copy=False)
             ptype_valid = sample_valid_counts > 0
         else:
             interval_mask = np.zeros(step_apcp_clean.shape, dtype=np.float32)

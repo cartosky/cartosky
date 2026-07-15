@@ -196,27 +196,47 @@ where no listed dependency applies.
    revision in the same PR.** Deploy note: all existing cumulative caches
    miss once post-deploy (one-time recompute per in-flight run); scheduler
    restarts required as usual.
-2. **1.8 → 4.8.** NaN-safe radar-ptype argmax (`nan_to_num` guard, mirroring
-   the intensity paths); one-line `len(colors) == len(levels)-1` validation on
-   discrete colormap specs.
-3. **1.9.** Standardize per-step validity (`isfinite & >= 0` via a shared
-   helper) per the Wave 0 validity note.
-4. **1.7.** Binarize ptype-accumulation masks only when `snow_mask_threshold`
-   is explicitly configured; otherwise keep the fractional mean (mirror
-   snowfall). Bump the cumulative algorithm revision. **Visible data change:**
-   GEFS-mean ice accumulation goes from ~0 to real values — produce
-   before/after frames and a release note stating the newly visible ice is the
-   corrected result (same discipline as the tmp850_anom °C switch).
+~~2. 1.8 → 4.8.~~ **— DONE 2026-07-14 (Codex, PR #38, reviewed +
+   verifier-CONFIRMED).** NaN-safe radar-ptype argmax (`nan_to_num` guard,
+   mirroring the intensity paths — also fixed a second NaN bug in the
+   freezing-rain transition path); discrete colormap validation accepts BOTH
+   live conventions (N-color lower-bound tables and N-1 boundary tables —
+   the audit's N-1-only rule would have broken nine working specs) and
+   rejects everything else.
+~~3. **1.9.** Standardize per-step validity (`isfinite & >= 0` via a shared
+   helper) per the Wave 0 validity note.~~ **— DONE 2026-07-15 (PR A, local).**
+   Negative scalar steps are now invalid rather than clamped to valid zero;
+   mask validity uses the same helper with the upper bound enforced. Revision
+   bump: `precip_total_cumulative` only (the sole strategy whose validity
+   behavior changes — the others already enforced this).
+~~4. **1.7.** Binarize ptype-accumulation masks only when the threshold hint
+   (`ptype_mask_threshold`) is explicitly configured; otherwise keep the
+   fractional mean (mirror snowfall).~~ **— DONE 2026-07-15 (PR A, local).**
+   Revision bump:
+   `ptype_accumulation_cumulative` only (the ECMWF strategy has no
+   binarization site). **Scope correction (Codex review, 2026-07-15,
+   verified):** there is NO live behavior change — the only current
+   `ptype_accumulation_cumulative` product is GFS `ice_total`, which pins
+   `ptype_mask_threshold: "0.5"` explicitly (gfs.py), and GEFS has no
+   ice/ptype-accumulation product at all. The audit's "GEFS-mean ice goes
+   from ~0 to real values" consequence was hypothetical; the before/after
+   release-note requirement is dropped. This item hardens the default for
+   future fractional (ensemble-mean) products; adding GEFS ice would be a
+   separately scoped feature.
 5. **1.6.** Replace the `nanmax > 1.5` percent-vs-fraction heuristic with
-   explicit `probability_units` metadata on the component spec. Bump affected
-   strategy revisions (feeds the Kuchera gate's csnow normalization).
+   explicit `probability_units` metadata on the component spec (feeds the
+   Kuchera gate's csnow normalization). Consumers are the non-persistent
+   ptype intensity paths + the Kuchera gate, so the only cumulative revision
+   bump is `snowfall_kuchera_total_cumulative` — shared with item 8's bump
+   in the same PR.
 6. **1.3.** Implement the decided cross-step validity propagation (validity
    note D2: OR-merged totals + mandatory `accum_step_gap` flags with
    affected-pixel percentage, persisted through the cumulative cache schema,
    exposed in admin telemetry; flags coverage extended to precip_total /
    10to1 / GFS ptype which record none today) and quality persistence,
    including the incremental-resume case so pre-change cached state cannot
-   contaminate later frames. Bump affected strategy revisions.
+   contaminate later frames. Revision bump: all five cumulative strategies
+   (the cache entry schema itself changes).
 ~~7. **1.5 fix (confirmed exposed by the Wave 0 check, 2026-07-14).~~ —
    **DONE 2026-07-14, verifier-CONFIRMED:** unboosted rates stored in
    family/component planes (GFS family storage + ECMWF component access);
@@ -235,6 +255,17 @@ where no listed dependency applies.
    publishes with the new `ptype_gate_partial_coverage` flag; bump the
    Kuchera strategy revision in the same PR (requires item 1); invert the
    1.2 fail-open test assertions intentionally. Scope: GFS/HRRR/NAM.
+   **Ordering: land AFTER item 6** — the partial-coverage flag needs item
+   6's flag persistence through cumulative-cache resume, or later frames
+   reuse the degraded contribution while losing its warning (the 1.2 known
+   limitation applied to a brand-new flag).
+
+**PR grouping for items 3-8 (agreed with Codex review, 2026-07-15):**
+three PRs, each internal fix RED-tested as its own commit, merged in order
+**PR A (items 3+4) → PR C (item 6) → PR B (items 5+8)**. C precedes B so
+flag persistence exists before item 8 introduces a new flag. Revision-bump
+scopes: A → precip_total_cumulative (item 3) + ptype_accumulation_cumulative
+(item 4); C → all five; B → snowfall_kuchera_total_cumulative only.
 
 ## Wave 2 — Member and artifact integrity
 
