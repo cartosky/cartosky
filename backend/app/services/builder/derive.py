@@ -8,6 +8,9 @@ Builds derived fields directly from model component VarSpecs:
 from __future__ import annotations
 
 import threading
+import hashlib
+import json
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -487,21 +490,79 @@ def _kuchera_select_profile_levels(levels_hpa: list[int], *, simplified: bool) -
     return selected
 
 
+# Explicit algorithm revisions for the cumulative strategies. Bump the
+# strategy's revision in the SAME PR as any change to its accumulation
+# semantics (validity rules, mask handling, gate behavior) — hints alone
+# cannot see code-only changes, and a stale prior-cumulative cache would
+# otherwise blend old- and new-semantics steps within a single run.
+CUMULATIVE_ALGORITHM_REVISIONS: dict[str, int] = {
+    "precip_total_cumulative": 1,
+    "snowfall_total_10to1_cumulative": 1,
+    "snowfall_kuchera_total_cumulative": 1,
+    "ptype_accumulation_cumulative": 1,
+    "ptype_accumulation_ecmwf": 1,
+}
+
+
 def _cumulative_cache_grid_key(
     *,
     use_warped: bool,
     target_grid_id: str,
     resampling: str,
-    cache_version: str | None = None,
+    strategy_id: str,
+    hints: Mapping[str, Any] | None,
 ) -> str:
     if use_warped:
         base_key = f"warped:{str(target_grid_id).strip()}:{str(resampling).strip()}"
     else:
         base_key = "native"
-    resolved_cache_version = str(cache_version or "").strip()
-    if resolved_cache_version:
-        return f"{base_key}:v={resolved_cache_version}"
-    return base_key
+    # KeyError on an unregistered strategy is DESIRED: a new cumulative strategy
+    # that forgot to register a revision must fail loud, not silently share a
+    # cache namespace with an unrelated strategy.
+    revision = CUMULATIVE_ALGORITHM_REVISIONS[strategy_id]
+    hints_payload = json.dumps(hints or {}, sort_keys=True, default=str)
+    hints_hash = hashlib.sha256(hints_payload.encode("utf-8")).hexdigest()[:12]
+    return f"{base_key}:s={strategy_id}:r={revision}:h={hints_hash}"
+
+
+def _precip_seed_cache_key(
+    *,
+    model_plugin: Any,
+    precip_var_id: str,
+    use_warped: bool,
+    target_grid_id: str,
+    resampling: str,
+) -> str | None:
+    """Cumulative-cache key under which ``precip_total_cumulative`` WRITES the
+    precip seed entry for ``precip_var_id``.
+
+    A precip cumulative seed (``precip_total`` on most models, or the ``__mean``
+    variant on ensembles) is written by the ``precip_total_cumulative`` strategy
+    under the precip var's OWN identity (that strategy id + the precip var's
+    var-spec hints). A downstream strategy that consumes the seed (Kuchera apcp
+    baseline, 10:1 snowfall precip baseline, GFS ptype precip baseline) must
+    read it with the WRITER's identity — not its own — so the seed correctly
+    misses when the precip var's semantics change (revision bump or hint change)
+    while sharing the unchanged grid-identity base.
+
+    Returns ``None`` (→ seed miss, fall back to recompute / no reuse) if the
+    precip var's spec cannot be resolved for this model. Never raises.
+    """
+    try:
+        normalized_key = model_plugin.normalize_var_id(precip_var_id)
+        spec = model_plugin.get_var(normalized_key)
+    except Exception:
+        return None
+    if spec is None:
+        return None
+    precip_hints = getattr(getattr(spec, "selectors", None), "hints", None)
+    return _cumulative_cache_grid_key(
+        use_warped=use_warped,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
+        strategy_id="precip_total_cumulative",
+        hints=precip_hints if precip_hints is not None else {},
+    )
 
 
 def _kuchera_cumulative_cache_file_path(
@@ -5144,12 +5205,12 @@ def _derive_ptype_accumulation_ecmwf(
         derive_component_resampling,
         model_id,
     )
-    cache_version = str(hints.get("cumulative_cache_version", "")).strip() or None
     cumulative_cache_grid_key = _cumulative_cache_grid_key(
         use_warped=use_warped,
         target_grid_id=target_grid_id,
         resampling=resampling,
-        cache_version=cache_version,
+        strategy_id="ptype_accumulation_ecmwf",
+        hints=hints,
     )
 
     logger.info(
@@ -5366,6 +5427,8 @@ def _derive_precip_total_cumulative(
         use_warped=use_warped,
         target_grid_id=target_grid_id,
         resampling=resampling,
+        strategy_id="precip_total_cumulative",
+        hints=hints,
     )
 
     active_step_fhs = list(step_fhs)
@@ -5646,7 +5709,6 @@ def _derive_snowfall_total_10to1_cumulative(
         str(model_id).strip().lower() in {"gfs", "nam"}
         and str(apcp_component).strip() == "apcp_step"
     )
-    cache_version = str(hints.get("cumulative_cache_version", "")).strip() or None
     cadence_sample_fhs: set[int] | None = None
     snow_inches_scale = 0.03937007874015748 * slr
 
@@ -5718,7 +5780,22 @@ def _derive_snowfall_total_10to1_cumulative(
         use_warped=use_warped,
         target_grid_id=target_grid_id,
         resampling=resampling,
-        cache_version=cache_version,
+        strategy_id="snowfall_total_10to1_cumulative",
+        hints=hints,
+    )
+    # The precip baseline is written by the precip_total_cumulative strategy
+    # under the precip var's OWN identity, so read it under the writer's key —
+    # not this snowfall strategy's. If the precip var's spec is unresolvable the
+    # helper returns None and we fall back to this strategy's own key: in prod
+    # that read misses (the seed was written under the precip var's key) → no
+    # reuse, the same outcome as skipping. precip_cumulative_component is
+    # hint-configurable (precip_total, or the __mean variant on ensembles).
+    precip_seed_cache_key = _precip_seed_cache_key(
+        model_plugin=model_plugin,
+        precip_var_id=precip_cumulative_component,
+        use_warped=use_warped,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
     )
 
     if len(step_fhs) >= 2:
@@ -5738,7 +5815,7 @@ def _derive_snowfall_total_10to1_cumulative(
             var_key=precip_cumulative_component,
             fh=prev_fh,
             ctx=ctx,
-            grid_cache_key=cumulative_cache_grid_key,
+            grid_cache_key=precip_seed_cache_key or cumulative_cache_grid_key,
             scale_divisor=0.03937007874015748,
         )
         if prior_snowfall is not None and prior_precip is not None:
@@ -6141,12 +6218,25 @@ def _derive_snowfall_kuchera_total_cumulative(
     use_warped, target_region, target_grid_id, resampling = _resolve_warped_state(
         derive_component_target_grid, derive_component_resampling, model_id,
     )
-    cache_version = str(hints.get("cumulative_cache_version", "")).strip() or None
     cumulative_cache_grid_key = _cumulative_cache_grid_key(
         use_warped=use_warped,
         target_grid_id=target_grid_id,
         resampling=resampling,
-        cache_version=cache_version,
+        strategy_id="snowfall_kuchera_total_cumulative",
+        hints=hints,
+    )
+    # The precip_total apcp seed is written by the precip_total_cumulative
+    # strategy under precip_total's OWN identity, so read it under the writer's
+    # key — not Kuchera's. If precip_total's spec is unresolvable the helper
+    # returns None and we fall back to Kuchera's own key: in prod that read
+    # misses (the seed was written under precip_total's key) → recompute, which
+    # is the same no-reuse outcome as skipping. Never raises.
+    apcp_seed_cache_key = _precip_seed_cache_key(
+        model_plugin=model_plugin,
+        precip_var_id="precip_total",
+        use_warped=use_warped,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
     )
 
     resolved_profile_product = str(profile_product or product)
@@ -6238,7 +6328,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             var_key="precip_total",
             fh=int(seed_fh),
             ctx=ctx,
-            grid_cache_key=cumulative_cache_grid_key,
+            grid_cache_key=apcp_seed_cache_key or cumulative_cache_grid_key,
         )
         if prior_precip is None:
             return None
@@ -7038,7 +7128,6 @@ def _derive_ptype_accumulation_cumulative(
         str(model_id).strip().lower() in {"gfs", "nam"}
         and str(apcp_component).strip() == "apcp_step"
     )
-    cache_version = str(hints.get("cumulative_cache_version", "")).strip() or None
     step_fhs = _resolve_cumulative_step_fhs(hints=hints, fh=fh, run_date=run_date, default_step_hours=6)
     _require_cumulative_steps_end_at_fh(step_fhs, fh=fh, model_id=model_id, var_key=var_key)
     cadence_sample_fhs: set[int] | None = None
@@ -7083,7 +7172,21 @@ def _derive_ptype_accumulation_cumulative(
         use_warped=use_warped,
         target_grid_id=target_grid_id,
         resampling=resampling,
-        cache_version=cache_version,
+        strategy_id="ptype_accumulation_cumulative",
+        hints=hints,
+    )
+    # The precip baseline is written by the precip_total_cumulative strategy
+    # under precip_total's OWN identity, so read it under the writer's key —
+    # not this ptype strategy's. If precip_total's spec is unresolvable the
+    # helper returns None and we fall back to this strategy's own key: in prod
+    # that read misses (the seed was written under precip_total's key) → no
+    # reuse, the same outcome as skipping. Never raises.
+    precip_seed_cache_key = _precip_seed_cache_key(
+        model_plugin=model_plugin,
+        precip_var_id="precip_total",
+        use_warped=use_warped,
+        target_grid_id=target_grid_id,
+        resampling=resampling,
     )
 
     active_step_fhs = list(step_fhs)
@@ -7118,7 +7221,7 @@ def _derive_ptype_accumulation_cumulative(
             var_key="precip_total",
             fh=prev_fh,
             ctx=ctx,
-            grid_cache_key=cumulative_cache_grid_key,
+            grid_cache_key=precip_seed_cache_key or cumulative_cache_grid_key,
             scale_divisor=0.03937007874015748,
         )
         if prior_ptype is not None and prior_precip is not None:
