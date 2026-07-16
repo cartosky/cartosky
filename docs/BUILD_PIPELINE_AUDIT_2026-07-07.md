@@ -82,6 +82,15 @@ Fix: keep the boost strictly inside index binning; store unboosted rates in fami
 
 ### 1.6 MED — Percent-vs-fraction probability detection is a data-dependent heuristic
 
+**STATUS: FIXED 2026-07-15 (Wave 1 PR B).** `_normalize_ptype_probability`
+now requires explicit `probability_units=percent|fraction`; the GFS, HRRR,
+and NAM categorical ptype component specs declare `fraction`, and both the
+ptype-intensity family path and Kuchera csnow gate resolve the component
+metadata before normalization. Sparse percent coverage (including a 1.2%
+maximum) and invalid-unit rejection are regression-tested. The same change
+ships with the decided Kuchera fail-closed gate behavior and its Kuchera-only
+cumulative revision bump.
+
 `_normalize_ptype_probability` (`derive.py:1601-1608`): `scale = 100 if nanmax > 1.5 else 1`. A percent-encoded field whose domain max is ≤ 1.5 (light/sparse event, warped subregion) is treated as fractional — 1.2% becomes probability 1.0 → frozen fraction 1.0 in drizzle areas → one-frame snow flash in animations. Also frame-to-frame inconsistency when the max hovers around 1.5.
 
 Fix: carry units metadata from the component spec (`probability_units=percent|fraction`) instead of inferring from data.

@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from rasterio.crs import CRS
 from rasterio.transform import Affine
 
@@ -40,7 +41,7 @@ class _Plugin:
             selectors=SimpleNamespace(
                 search=search,
                 filter_by_keys={},
-                hints={},
+                hints={"probability_units": "fraction"} if str(var_key) == "csnow" else {},
             )
         )
 
@@ -85,15 +86,60 @@ def _kuchera_var_spec_with_overrides(**overrides) -> SimpleNamespace:
     return SimpleNamespace(selectors=SimpleNamespace(hints=hints))
 
 
-def test_ptype_scaling_detects_0_to_1_and_0_to_100() -> None:
+def test_ptype_scaling_uses_explicit_fraction_and_percent_units() -> None:
     frac_data = np.array([[0.0, 0.25], [0.5, 1.0]], dtype=np.float32)
     pct_data = np.array([[0.0, 25.0], [50.0, 100.0]], dtype=np.float32)
+    sparse_pct_data = np.array([[0.0, 0.4], [0.8, 1.2]], dtype=np.float32)
 
-    frac_norm = derive_module._normalize_ptype_probability(frac_data)
-    pct_norm = derive_module._normalize_ptype_probability(pct_data)
+    frac_norm = derive_module._normalize_ptype_probability(
+        frac_data,
+        probability_units="fraction",
+    )
+    pct_norm = derive_module._normalize_ptype_probability(
+        pct_data,
+        probability_units="percent",
+    )
+    sparse_pct_norm = derive_module._normalize_ptype_probability(
+        sparse_pct_data,
+        probability_units="percent",
+    )
 
     np.testing.assert_allclose(frac_norm, frac_data, rtol=1e-6, atol=1e-6)
     np.testing.assert_allclose(pct_norm, frac_data, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        sparse_pct_norm,
+        sparse_pct_data / np.float32(100.0),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+
+
+def test_ptype_scaling_rejects_unknown_probability_units() -> None:
+    with pytest.raises(ValueError, match="probability_units"):
+        derive_module._normalize_ptype_probability(
+            np.array([[0.5]], dtype=np.float32),
+            probability_units="auto",
+        )
+
+
+@pytest.mark.parametrize(
+    ("model_module", "component_ids"),
+    [
+        ("app.models.gfs", ("crain", "csnow", "cicep", "cfrzr")),
+        ("app.models.hrrr", ("crain", "csnow", "cicep", "cfrzr")),
+        ("app.models.nam", ("crain", "csnow", "cicep", "cfrzr")),
+    ],
+)
+def test_deterministic_ptype_components_declare_probability_units(
+    model_module: str,
+    component_ids: tuple[str, ...],
+) -> None:
+    module = __import__(model_module, fromlist=["*"])
+    vars_by_id = getattr(module, model_module.rsplit(".", 1)[-1].upper() + "_VARS")
+
+    for component_id in component_ids:
+        hints = vars_by_id[component_id].selectors.hints
+        assert hints["probability_units"] == "fraction"
 
 
 def test_apcp_frozen_is_never_greater_than_apcp_step() -> None:
@@ -316,7 +362,7 @@ def test_kuchera_ptype_gate_interval_averages_frozen_fraction(monkeypatch) -> No
     np.testing.assert_allclose(data, expected.astype(np.float32, copy=False), rtol=1e-6, atol=1e-6)
 
 
-def test_kuchera_ptype_gate_fallback_records_quality_flag(monkeypatch, tmp_path) -> None:
+def test_kuchera_ptype_gate_zero_valid_samples_rejects_frame_transiently(monkeypatch, tmp_path) -> None:
     crs = CRS.from_epsg(4326)
     transform = Affine.identity()
     apcp = np.array([[2.0, 1.0], [0.5, 3.0]], dtype=np.float32)
@@ -359,25 +405,221 @@ def test_kuchera_ptype_gate_fallback_records_quality_flag(monkeypatch, tmp_path)
 
     ctx = derive_module.FetchContext()
     ctx.data_root = str(tmp_path)
+    with pytest.raises(
+        derive_module.HerbieTransientUnavailableError,
+        match="zero valid csnow samples",
+    ):
+        derive_module._derive_snowfall_kuchera_total_cumulative(
+            model_id="hrrr",
+            var_key="snowfall_kuchera_total",
+            product="sfc",
+            run_date=datetime(2026, 3, 5, 17, 0),
+            fh=1,
+            var_spec_model=_kuchera_var_spec(),
+            var_capability=None,
+            model_plugin=_Plugin(),
+            ctx=ctx,
+        )
+
+    assert ("snowfall_kuchera_total", 1) not in ctx.derive_quality
+
+
+def test_kuchera_ptype_gate_partial_interval_coverage_records_persisted_flag(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    apcp = np.full((2, 2), 2.0, dtype=np.float32)
+    temp_850 = np.full((2, 2), -10.0, dtype=np.float32)
+    ones = np.ones((2, 2), dtype=np.float32)
+    exact_apcp_pattern = ":APCP:surface:0-1 hour acc fcst:"
+
+    def _fake_fetch_variable(
+        *,
+        model_id,
+        product,
+        search_pattern,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        return_meta=False,
+    ):
+        del model_id, product, run_date, herbie_kwargs
+        pattern = str(search_pattern)
+        if pattern == exact_apcp_pattern or pattern == f"{exact_apcp_pattern}$":
+            meta = {"inventory_line": exact_apcp_pattern, "search_pattern": pattern}
+            return (apcp, crs, transform, meta) if return_meta else (apcp, crs, transform)
+        if pattern == ":TMP:850 mb:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (temp_850, crs, transform, meta) if return_meta else (temp_850, crs, transform)
+        if pattern == ":CSNOW:surface:":
+            if int(fh) == 0:
+                raise RuntimeError("simulated first csnow sample failure")
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (ones, crs, transform, meta) if return_meta else (ones, crs, transform)
+        raise AssertionError(f"unexpected search pattern: {pattern}")
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(
+        derive_module,
+        "_kuchera_inventory_lines",
+        lambda *, model_id, product, run_date, fh, search_pattern: [exact_apcp_pattern],
+    )
+    monkeypatch.setattr(
+        derive_module,
+        "_resolve_cumulative_step_fhs",
+        lambda *, hints, fh, run_date=None, default_step_hours=6: [1],
+    )
+
+    ctx = derive_module.FetchContext()
+    ctx.data_root = str(tmp_path)
     data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
         model_id="hrrr",
         var_key="snowfall_kuchera_total",
         product="sfc",
         run_date=datetime(2026, 3, 5, 17, 0),
         fh=1,
-        var_spec_model=_kuchera_var_spec(),
+        var_spec_model=_kuchera_var_spec_with_overrides(
+            kuchera_ptype_interval_sample_mode="three_point",
+        ),
         var_capability=None,
         model_plugin=_Plugin(),
         ctx=ctx,
     )
 
-    # Fail-open data behavior is unchanged: the gate falls back to all-ones and
-    # every step's precip counts as snow — but the frame must now carry the flag
-    # instead of shipping as quality=full.
     assert np.all(data > 0.0)
     quality = ctx.derive_quality[("snowfall_kuchera_total", 1)]
     assert quality["quality"] == "degraded"
-    assert "ptype_gate_fallback" in quality["quality_flags"]
+    assert "ptype_gate_partial_coverage" in quality["quality_flags"]
+    assert "ptype_gate_fallback" not in quality["quality_flags"]
+    cache_entries = [
+        entry
+        for key, entry in ctx.kuchera_cumulative_cache.items()
+        if key[2] == "snowfall_kuchera_total" and key[3] == 1
+    ]
+    assert len(cache_entries) == 1
+    assert "ptype_gate_partial_coverage" in cache_entries[0][3]["quality_flags"]
+
+
+def test_kuchera_ptype_gate_spatial_gaps_preserve_dry_pixels_and_recover(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    temp_850 = np.full((1, 3), -10.0, dtype=np.float32)
+    apcp_by_fh = {
+        1: np.array([[2.0, 0.0, 0.0]], dtype=np.float32),
+        2: np.array([[1.0, 0.0, 0.0]], dtype=np.float32),
+    }
+    csnow_by_fh = {
+        # Pixel 0 is wet without a ptype value, pixel 1 is dry without one,
+        # and pixel 2 keeps the sample usable at the frame level.
+        1: np.array([[np.nan, np.nan, 1.0]], dtype=np.float32),
+        2: np.ones((1, 3), dtype=np.float32),
+    }
+
+    def _apcp_pattern(step_fh: int) -> str:
+        return f":APCP:surface:{step_fh - 1}-{step_fh} hour acc fcst:"
+
+    def _fake_fetch_variable(
+        *,
+        model_id,
+        product,
+        search_pattern,
+        run_date,
+        fh,
+        herbie_kwargs=None,
+        return_meta=False,
+    ):
+        del model_id, product, run_date, herbie_kwargs
+        pattern = str(search_pattern)
+        sample_fh = int(fh)
+        if pattern.rstrip("$") == _apcp_pattern(sample_fh):
+            meta = {"inventory_line": _apcp_pattern(sample_fh), "search_pattern": pattern}
+            data = apcp_by_fh[sample_fh]
+            return (data, crs, transform, meta) if return_meta else (data, crs, transform)
+        if pattern == ":TMP:850 mb:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            return (temp_850, crs, transform, meta) if return_meta else (temp_850, crs, transform)
+        if pattern == ":CSNOW:surface:":
+            meta = {"inventory_line": "", "search_pattern": pattern}
+            data = csnow_by_fh[sample_fh]
+            return (data, crs, transform, meta) if return_meta else (data, crs, transform)
+        raise AssertionError(f"unexpected search pattern: {pattern}")
+
+    monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
+    monkeypatch.setattr(
+        derive_module,
+        "_kuchera_inventory_lines",
+        lambda *, model_id, product, run_date, fh, search_pattern: [_apcp_pattern(int(fh))],
+    )
+    monkeypatch.setattr(
+        derive_module,
+        "_resolve_cumulative_step_fhs",
+        lambda *, hints, fh, run_date=None, default_step_hours=6: list(range(1, int(fh) + 1)),
+    )
+
+    run_date = datetime(2026, 3, 5, 17, 0)
+    var_spec = _kuchera_var_spec_with_overrides(
+        kuchera_ptype_interval_sample_mode="end",
+    )
+    resume_ctx = derive_module.FetchContext()
+    resume_ctx.data_root = str(tmp_path / "resume")
+    first_data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="hrrr",
+        var_key="snowfall_kuchera_total",
+        product="sfc",
+        run_date=run_date,
+        fh=1,
+        var_spec_model=var_spec,
+        var_capability=None,
+        model_plugin=_Plugin(),
+        ctx=resume_ctx,
+    )
+
+    assert np.isnan(first_data[0, 0])
+    assert first_data[0, 1] == pytest.approx(0.0)
+    assert first_data[0, 2] == pytest.approx(0.0)
+
+    resumed_data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="hrrr",
+        var_key="snowfall_kuchera_total",
+        product="sfc",
+        run_date=run_date,
+        fh=2,
+        var_spec_model=var_spec,
+        var_capability=None,
+        model_plugin=_Plugin(),
+        ctx=resume_ctx,
+    )
+
+    fresh_ctx = derive_module.FetchContext()
+    fresh_ctx.data_root = str(tmp_path / "fresh")
+    fresh_data, _, _ = derive_module._derive_snowfall_kuchera_total_cumulative(
+        model_id="hrrr",
+        var_key="snowfall_kuchera_total",
+        product="sfc",
+        run_date=run_date,
+        fh=2,
+        var_spec_model=var_spec,
+        var_capability=None,
+        model_plugin=_Plugin(),
+        ctx=fresh_ctx,
+    )
+
+    ratio = derive_module._compute_kuchera_slr(
+        levels_hpa=[850],
+        temp_stack_c=[temp_850],
+    )
+    expected = np.array(
+        [[ratio[0, 0] * np.float32(0.03937007874015748), 0.0, 0.0]],
+        dtype=np.float32,
+    )
+    np.testing.assert_allclose(resumed_data, expected, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(fresh_data, expected, rtol=1e-6, atol=1e-6)
+    assert "accum_step_gap" in resume_ctx.derive_quality[("snowfall_kuchera_total", 2)]["quality_flags"]
 
 
 def test_kuchera_ptype_gate_filters_interval_samples_to_step_cadence(monkeypatch) -> None:

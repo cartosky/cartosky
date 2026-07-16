@@ -498,7 +498,7 @@ def _kuchera_select_profile_levels(levels_hpa: list[int], *, simplified: bool) -
 CUMULATIVE_ALGORITHM_REVISIONS: dict[str, int] = {
     "precip_total_cumulative": 3,
     "snowfall_total_10to1_cumulative": 2,
-    "snowfall_kuchera_total_cumulative": 2,
+    "snowfall_kuchera_total_cumulative": 3,
     "ptype_accumulation_cumulative": 3,
     "ptype_accumulation_ecmwf": 2,
 }
@@ -1845,14 +1845,39 @@ def _kuchera_select_apcp_window_from_inventory(
     return overlap
 
 
-def _normalize_ptype_probability(data: np.ndarray) -> np.ndarray:
+def _normalize_ptype_probability(
+    data: np.ndarray,
+    *,
+    probability_units: str,
+) -> np.ndarray:
     values = np.asarray(data, dtype=np.float32)
-    finite = np.isfinite(values)
-    max_val = float(np.nanmax(values[finite])) if np.any(finite) else 0.0
-    scale = 100.0 if max_val > 1.5 else 1.0
+    normalized_units = str(probability_units).strip().lower()
+    if normalized_units == "fraction":
+        scale = 1.0
+    elif normalized_units == "percent":
+        scale = 100.0
+    else:
+        raise ValueError(
+            f"Unsupported probability_units={probability_units!r}; "
+            "expected 'fraction' or 'percent'"
+        )
     normalized = values / np.float32(scale)
     normalized = np.clip(normalized, 0.0, 1.0).astype(np.float32, copy=False)
     return normalized
+
+
+def _ptype_probability_units_for_component(model_plugin: Any, var_key: str) -> str:
+    normalized_key = model_plugin.normalize_var_id(var_key)
+    component_spec = model_plugin.get_var(normalized_key)
+    selectors = getattr(component_spec, "selectors", None)
+    hints = getattr(selectors, "hints", {}) if selectors is not None else {}
+    units = str(hints.get("probability_units") or "").strip().lower() if isinstance(hints, dict) else ""
+    if units not in {"fraction", "percent"}:
+        raise ValueError(
+            f"Missing or invalid probability_units metadata for "
+            f"{getattr(model_plugin, 'id', '?')}/{normalized_key}: {units!r}"
+        )
+    return units
 
 
 def _ptype_intensity_temp_signal(temp_c: np.ndarray | None, *, cold_at_c: float, warm_at_c: float) -> tuple[np.ndarray, np.ndarray]:
@@ -2591,6 +2616,7 @@ def _ptype_intensity_family_rates(
     snow: np.ndarray,
     sleet: np.ndarray,
     frzr: np.ndarray,
+    probability_units: Mapping[str, str],
     cold_profile: np.ndarray | None = None,
     warm_profile: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -2613,10 +2639,22 @@ def _ptype_intensity_family_rates(
         np.nan,
     ).astype(np.float32)
 
-    rain_prob = _normalize_ptype_probability(rain)
-    snow_prob = _normalize_ptype_probability(snow)
-    sleet_prob = _normalize_ptype_probability(sleet)
-    frzr_prob = _normalize_ptype_probability(frzr)
+    rain_prob = _normalize_ptype_probability(
+        rain,
+        probability_units=probability_units["rain"],
+    )
+    snow_prob = _normalize_ptype_probability(
+        snow,
+        probability_units=probability_units["snow"],
+    )
+    sleet_prob = _normalize_ptype_probability(
+        sleet,
+        probability_units=probability_units["sleet"],
+    )
+    frzr_prob = _normalize_ptype_probability(
+        frzr,
+        probability_units=probability_units["frzr"],
+    )
     ice_prob = np.maximum(sleet_prob, frzr_prob).astype(np.float32, copy=False)
 
     # --- Priority-based family assignment (ice > snow > rain) ---------------
@@ -2902,6 +2940,12 @@ def _derive_ptype_intensity_gfs_family(
         snow=snow,
         sleet=sleet,
         frzr=frzr,
+        probability_units={
+            "rain": _ptype_probability_units_for_component(model_plugin, rain_id),
+            "snow": _ptype_probability_units_for_component(model_plugin, snow_id),
+            "sleet": _ptype_probability_units_for_component(model_plugin, sleet_id),
+            "frzr": _ptype_probability_units_for_component(model_plugin, frzr_id),
+        },
         cold_profile=cold_profile,
         warm_profile=warm_profile,
     )
@@ -2929,8 +2973,13 @@ def _derive_ptype_intensity_gfs_family(
 def _apply_kuchera_ptype_gate(apcp_step: np.ndarray, frozen_frac: np.ndarray) -> np.ndarray:
     if apcp_step.shape != frozen_frac.shape:
         raise ValueError(f"kuchera ptype gate shape mismatch: {apcp_step.shape} != {frozen_frac.shape}")
+    apcp = np.asarray(apcp_step, dtype=np.float32)
     frozen = np.clip(np.asarray(frozen_frac, dtype=np.float32), 0.0, 1.0).astype(np.float32, copy=False)
-    return (np.asarray(apcp_step, dtype=np.float32) * frozen).astype(np.float32, copy=False)
+    gated = (apcp * frozen).astype(np.float32, copy=False)
+    # A missing ptype value cannot change an exactly dry contribution. Keep
+    # those pixels valid zeroes while wet pixels without ptype remain NaN and
+    # are excluded by the cumulative step-validity mask.
+    return np.where(np.isfinite(apcp) & (apcp == 0.0), 0.0, gated).astype(np.float32, copy=False)
 
 
 def _log_kuchera_ptype_gate_warning_once(*, model_id: str, var_key: str, step_fh: int, reason: str) -> None:
@@ -2943,7 +2992,7 @@ def _log_kuchera_ptype_gate_warning_once(*, model_id: str, var_key: str, step_fh
             should_log = True
     if should_log:
         logger.warning(
-            "kuchera_ptype_gate fallback=ones model=%s var=%s step_fh=%03d reason=%s",
+            "kuchera_ptype_gate unavailable model=%s var=%s step_fh=%03d reason=%s",
             model_id,
             var_key,
             int(step_fh),
@@ -2972,6 +3021,10 @@ def _kuchera_frozen_fraction_for_step(
     resolved_sample_fhs = list(sample_fhs or [int(step_fh)])
     sample_frozen_fracs: list[np.ndarray] = []
     sample_errors: list[str] = []
+    csnow_probability_units = _ptype_probability_units_for_component(
+        model_plugin,
+        "csnow",
+    )
 
     for sample_fh in resolved_sample_fhs:
         fetched: dict[str, np.ndarray] = {}
@@ -3007,7 +3060,13 @@ def _kuchera_frozen_fraction_for_step(
         if sample_failed:
             continue
 
-        csnow_prob = _normalize_ptype_probability(fetched["csnow"])
+        csnow_prob = _normalize_ptype_probability(
+            fetched["csnow"],
+            probability_units=csnow_probability_units,
+        )
+        if not np.any(np.isfinite(csnow_prob)):
+            sample_errors.append(f"fh{int(sample_fh):03d}:no_finite_csnow_pixels")
+            continue
         sample_frozen_fracs.append(csnow_prob.astype(np.float32, copy=False))
 
     if not sample_frozen_fracs:
@@ -3018,10 +3077,15 @@ def _kuchera_frozen_fraction_for_step(
             step_fh=step_fh,
             reason=reason,
         )
-        return np.ones(expected_shape, dtype=np.float32), True, fetch_count
+        raise HerbieTransientUnavailableError(
+            f"Kuchera ptype gate has zero valid csnow samples for "
+            f"{model_id}/{var_key} fh{int(step_fh):03d}: {reason}"
+        )
+
+    partial_coverage = len(sample_frozen_fracs) < len(resolved_sample_fhs)
 
     if len(sample_frozen_fracs) == 1:
-        return sample_frozen_fracs[0], False, fetch_count
+        return sample_frozen_fracs[0], partial_coverage, fetch_count
 
     sample_stack = np.stack(sample_frozen_fracs, axis=0).astype(np.float32, copy=False)
     sample_valid_counts = np.sum(np.isfinite(sample_stack), axis=0).astype(np.int32, copy=False)
@@ -3034,7 +3098,7 @@ def _kuchera_frozen_fraction_for_step(
         where=sample_valid_counts > 0,
     )
     frozen_frac = np.clip(frozen_frac, 0.0, 1.0).astype(np.float32, copy=False)
-    return frozen_frac, False, fetch_count
+    return frozen_frac, partial_coverage, fetch_count
 
 
 @overload
@@ -6515,7 +6579,7 @@ def _derive_snowfall_kuchera_total_cumulative(
         "ratio_clamp_max_count": 0.0,
     }
     apcp_cumulative_fallback_used = False
-    ptype_gate_fallback_used = False
+    ptype_gate_partial_coverage_used = False
     current_step_fetch_counts: dict[str, int] = {"apcp": 0, "profile_temp": 0, "ptype": 0}
     surface_temp_cap_stats: dict[str, float] = {
         "applied_count": 0.0,
@@ -6915,7 +6979,7 @@ def _derive_snowfall_kuchera_total_cumulative(
             step_apcp_for_snow = step_apcp_clean
             if use_ptype_gate:
                 _ptype_step_len, ptype_sample_fhs = ptype_interval_plan.get(int(step_fh), (0, [int(step_fh)]))
-                frozen_frac, ptype_step_fallback_used, ptype_fetch_count = _kuchera_frozen_fraction_for_step(
+                frozen_frac, ptype_step_partial_coverage, ptype_fetch_count = _kuchera_frozen_fraction_for_step(
                     model_id=model_id,
                     var_key=var_key,
                     product=str(ptype_product),
@@ -6930,7 +6994,10 @@ def _derive_snowfall_kuchera_total_cumulative(
                     ctx=ctx,
                     expected_shape=step_apcp_clean.shape,
                 )
-                ptype_gate_fallback_used = ptype_gate_fallback_used or bool(ptype_step_fallback_used)
+                ptype_gate_partial_coverage_used = (
+                    ptype_gate_partial_coverage_used
+                    or bool(ptype_step_partial_coverage)
+                )
                 if int(step_fh) == int(fh):
                     current_step_fetch_counts["ptype"] = current_step_fetch_counts.get("ptype", 0) + int(ptype_fetch_count)
                 step_apcp_for_snow = _apply_kuchera_ptype_gate(step_apcp_clean, frozen_frac)
@@ -7150,7 +7217,8 @@ def _derive_snowfall_kuchera_total_cumulative(
                     kuchera_maxt_stats["max_t_count"] += float(max_t_values.size)
 
             contribution = (step_apcp_for_snow * step_slr).astype(np.float32, copy=False)
-            step_valid = apcp_valid & np.isfinite(step_slr)
+            step_valid = apcp_valid & np.isfinite(step_apcp_for_snow) & np.isfinite(step_slr)
+            contribution = np.where(step_valid, contribution, 0.0).astype(np.float32, copy=False)
             quality_state.observe(step_valid)
 
             if subset_cumulative is None:
@@ -7303,8 +7371,8 @@ def _derive_snowfall_kuchera_total_cumulative(
         quality_flags.append("slr_fallback_10to1")
     if apcp_cumulative_fallback_used:
         quality_flags.append("apcp_cumulative_fallback")
-    if ptype_gate_fallback_used:
-        quality_flags.append("ptype_gate_fallback")
+    if ptype_gate_partial_coverage_used:
+        quality_flags.append("ptype_gate_partial_coverage")
     quality_state.quality_flags.extend(quality_flags)
     quality_state.finalize()
     _record_derive_quality(

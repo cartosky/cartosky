@@ -164,7 +164,7 @@ def test_cumulative_algorithm_revisions_are_pinned() -> None:
     assert derive_module.CUMULATIVE_ALGORITHM_REVISIONS == {
         "precip_total_cumulative": 3,
         "snowfall_total_10to1_cumulative": 2,
-        "snowfall_kuchera_total_cumulative": 2,
+        "snowfall_kuchera_total_cumulative": 3,
         "ptype_accumulation_cumulative": 3,
         "ptype_accumulation_ecmwf": 2,
     }

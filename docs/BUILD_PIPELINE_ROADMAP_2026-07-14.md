@@ -144,10 +144,9 @@ where no listed dependency applies.
      NAM (`kuchera_use_ptype_gate` catalogs).
    - **Tests:** all-samples-missing → transient rejection; scheduler retry
      eligibility; partial-coverage flagging; clean-path parity; prior-revision
-     caches rejected. **Trap set on purpose (still armed):** the 1.2 tests
-     deliberately pin fail-open (`test_kuchera_ptype_gate_fallback_records_quality_flag`
-     asserts `data > 0` under fallback) — invert/replace them intentionally
-     in the same PR.
+     caches rejected. **Trap disarmed by PR B on 2026-07-15:** the former 1.2
+     fail-open regression was intentionally replaced with transient-rejection
+     assertions, and partial coverage now has its own persisted-flag test.
    → Implementation moved to Wave 1 item 8.
 9. **Prob threshold equality semantics (stats audit S4).** Product decision:
    `prob_gt` uses strict `>` and `prob_lt` strict `<` (deliberate per the
@@ -227,12 +226,16 @@ where no listed dependency applies.
    release-note requirement is dropped. This item hardens the default for
    future fractional (ensemble-mean) products; adding GEFS ice would be a
    separately scoped feature.
-5. **1.6.** Replace the `nanmax > 1.5` percent-vs-fraction heuristic with
+~~5. **1.6.** Replace the `nanmax > 1.5` percent-vs-fraction heuristic with
    explicit `probability_units` metadata on the component spec (feeds the
    Kuchera gate's csnow normalization). Consumers are the non-persistent
    ptype intensity paths + the Kuchera gate, so the only cumulative revision
    bump is `snowfall_kuchera_total_cumulative` — shared with item 8's bump
-   in the same PR.
+   in the same PR.~~ **— DONE 2026-07-15 (PR B, local):** normalization now
+   requires explicit `fraction` or `percent` units; GFS, HRRR, and NAM
+   categorical ptype components declare `fraction`; and a sparse percent
+   regression proves values such as 1.2% remain 0.012 instead of clipping to
+   1.0. Unknown or missing unit metadata fails loudly.
 ~~6. **1.3.** Implement the decided cross-step validity propagation (validity
    note D2: OR-merged totals + mandatory `accum_step_gap` flags with
    affected-pixel percentage, persisted through the cumulative cache schema,
@@ -263,7 +266,7 @@ where no listed dependency applies.
    artifact — accumulations use categorical masks + precip, the family cache
    is per-frame, and no cumulative cache stores these planes. Already-written
    frames keep 2× values until aged out (tmp850_anom precedent).
-8. **Kuchera gate transient-fail (decided Wave 0 #8).** Implement per the
+~~8. **Kuchera gate transient-fail (decided Wave 0 #8).** Implement per the
    decision recorded there: zero-valid-csnow-sample steps raise
    `HerbieTransientUnavailableError` (frame rejected via build_frame's
    transient path, retried later; good frames preserved); partial coverage
@@ -273,7 +276,15 @@ where no listed dependency applies.
    **Ordering: land AFTER item 6** — the partial-coverage flag needs item
    6's flag persistence through cumulative-cache resume, or later frames
    reuse the degraded contribution while losing its warning (the 1.2 known
-   limitation applied to a brand-new flag).
+   limitation applied to a brand-new flag).~~ **— DONE 2026-07-15 (PR B,
+   local):** zero usable interval samples now reject transiently instead of
+   falling back to all ones; available samples still average when coverage is
+   partial and emit `ptype_gate_partial_coverage`, which is persisted in the
+   cumulative cache. The Kuchera algorithm revision is bumped once for the
+   combined items 5+8 semantic change. Spatial csnow gaps keep dry pixels at
+   valid zero, invalidate only precipitating pixels without a gate value, and
+   recover on later valid steps identically across full rebuild and cache
+   resume.
 
 **PR grouping for items 3-8 (agreed with Codex review, 2026-07-15):**
 three PRs, each internal fix RED-tested as its own commit, merged in order

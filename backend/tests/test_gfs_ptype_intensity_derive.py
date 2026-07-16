@@ -14,6 +14,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.builder import derive as derive_module
+from app.models.gfs import GFS_MODEL
 
 
 def _ptype_var_spec(component: str | None = None) -> SimpleNamespace:
@@ -82,7 +83,7 @@ def test_ptype_intensity_component_weights_preserve_winter_signal(monkeypatch) -
         fh=6,
         var_spec_model=_ptype_var_spec("rain"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     snow_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -92,7 +93,7 @@ def test_ptype_intensity_component_weights_preserve_winter_signal(monkeypatch) -
         fh=6,
         var_spec_model=_ptype_var_spec("snow"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     ice_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -102,7 +103,7 @@ def test_ptype_intensity_component_weights_preserve_winter_signal(monkeypatch) -
         fh=6,
         var_spec_model=_ptype_var_spec("ice"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     assert out_crs == crs
@@ -160,7 +161,7 @@ def test_ptype_intensity_family_cache_reuses_primary_derivation_for_components(m
         fh=6,
         var_spec_model=_ptype_var_spec(),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
         ctx=fetch_ctx,
     )
     rain_values, _, _ = derive_module._derive_ptype_intensity_component(
@@ -171,7 +172,7 @@ def test_ptype_intensity_family_cache_reuses_primary_derivation_for_components(m
         fh=6,
         var_spec_model=_ptype_var_spec("rain"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
         ctx=fetch_ctx,
     )
     snow_values, _, _ = derive_module._derive_ptype_intensity_component(
@@ -182,7 +183,7 @@ def test_ptype_intensity_family_cache_reuses_primary_derivation_for_components(m
         fh=6,
         var_spec_model=_ptype_var_spec("snow"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
         ctx=fetch_ctx,
     )
     ice_values, _, _ = derive_module._derive_ptype_intensity_component(
@@ -193,7 +194,7 @@ def test_ptype_intensity_family_cache_reuses_primary_derivation_for_components(m
         fh=6,
         var_spec_model=_ptype_var_spec("ice"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
         ctx=fetch_ctx,
     )
 
@@ -248,7 +249,7 @@ def test_ptype_intensity_uses_warped_component_fetches_when_requested(monkeypatc
         fh=0,
         var_spec_model=_ptype_var_spec(),
         var_capability=None,
-        model_plugin=SimpleNamespace(),
+        model_plugin=GFS_MODEL,
         ctx=derive_module.FetchContext(),
         derive_component_target_grid={"region": "na", "id": "climatology:era5:na:25000.0m"},
         derive_component_resampling="nearest",
@@ -294,7 +295,7 @@ def test_ptype_intensity_visible_index_prefers_weighted_winter_family(monkeypatc
         fh=6,
         var_spec_model=_ptype_var_spec(),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     assert out_crs == crs
@@ -342,7 +343,7 @@ def test_ptype_intensity_thermal_profile_can_promote_snow_without_csnow(monkeypa
         fh=6,
         var_spec_model=_ptype_var_spec("snow"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     rain_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -352,7 +353,7 @@ def test_ptype_intensity_thermal_profile_can_promote_snow_without_csnow(monkeypa
         fh=6,
         var_spec_model=_ptype_var_spec("rain"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
         model_id="gfs",
@@ -362,7 +363,7 @@ def test_ptype_intensity_thermal_profile_can_promote_snow_without_csnow(monkeypa
         fh=6,
         var_spec_model=_ptype_var_spec(),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     expected_total_rate = np.float32(10.0 * 0.03937007874015748)
@@ -405,7 +406,7 @@ def test_ptype_intensity_snow_component_is_unboosted(monkeypatch) -> None:
         fh=6,
         var_spec_model=_ptype_var_spec("snow"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     # The stored snow component plane is the raw liquid-equivalent rate with NO
@@ -447,7 +448,7 @@ def test_ptype_intensity_preserves_prate_coverage_when_ptype_masks_are_empty(mon
         fh=6,
         var_spec_model=_ptype_var_spec(),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     rain_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -457,7 +458,7 @@ def test_ptype_intensity_preserves_prate_coverage_when_ptype_masks_are_empty(mon
         fh=6,
         var_spec_model=_ptype_var_spec("rain"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     snow_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -467,7 +468,7 @@ def test_ptype_intensity_preserves_prate_coverage_when_ptype_masks_are_empty(mon
         fh=6,
         var_spec_model=_ptype_var_spec("snow"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     assert np.isfinite(indexed[0, 0])
@@ -511,7 +512,7 @@ def test_ptype_intensity_cold_precip_prefers_snow_with_weak_snow_mask(monkeypatc
         fh=6,
         var_spec_model=_ptype_var_spec(),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     snow_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -521,7 +522,7 @@ def test_ptype_intensity_cold_precip_prefers_snow_with_weak_snow_mask(monkeypatc
         fh=6,
         var_spec_model=_ptype_var_spec("snow"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     rain_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -531,7 +532,7 @@ def test_ptype_intensity_cold_precip_prefers_snow_with_weak_snow_mask(monkeypatc
         fh=6,
         var_spec_model=_ptype_var_spec("rain"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     expected_total_rate = np.float32(10.0 * 0.03937007874015748)
@@ -575,7 +576,7 @@ def test_ptype_intensity_midlevel_cold_can_override_rain_mask(monkeypatch) -> No
         fh=6,
         var_spec_model=_ptype_var_spec(),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     snow_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -585,7 +586,7 @@ def test_ptype_intensity_midlevel_cold_can_override_rain_mask(monkeypatch) -> No
         fh=6,
         var_spec_model=_ptype_var_spec("snow"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     rain_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -595,7 +596,7 @@ def test_ptype_intensity_midlevel_cold_can_override_rain_mask(monkeypatch) -> No
         fh=6,
         var_spec_model=_ptype_var_spec("rain"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     # Model says rain (crain=1, csnow=0) — we trust it even with cold 850mb
@@ -636,7 +637,7 @@ def test_ptype_intensity_prefers_shared_apcp_step_intensity_over_prate(monkeypat
         fh=6,
         var_spec_model=_ptype_var_spec("snow"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
         model_id="gfs",
@@ -646,7 +647,7 @@ def test_ptype_intensity_prefers_shared_apcp_step_intensity_over_prate(monkeypat
         fh=6,
         var_spec_model=_ptype_var_spec(),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     expected_step_rate = np.float32(5.0 * 0.03937007874015748)
@@ -691,7 +692,7 @@ def test_ptype_intensity_moderate_cold_with_full_rain_mask_prefers_snow(monkeypa
         fh=6,
         var_spec_model=_ptype_var_spec(),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     snow_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -701,7 +702,7 @@ def test_ptype_intensity_moderate_cold_with_full_rain_mask_prefers_snow(monkeypa
         fh=6,
         var_spec_model=_ptype_var_spec("snow"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     rain_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -711,7 +712,7 @@ def test_ptype_intensity_moderate_cold_with_full_rain_mask_prefers_snow(monkeypa
         fh=6,
         var_spec_model=_ptype_var_spec("rain"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     # Snow must win — indexed should fall in the snow palette range (16-25)
@@ -755,7 +756,7 @@ def test_ptype_intensity_gfs_overlap_crain1_csnow1_selects_snow(monkeypatch) -> 
         fh=6,
         var_spec_model=_ptype_var_spec(),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     snow_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -765,7 +766,7 @@ def test_ptype_intensity_gfs_overlap_crain1_csnow1_selects_snow(monkeypatch) -> 
         fh=6,
         var_spec_model=_ptype_var_spec("snow"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     rain_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -775,7 +776,7 @@ def test_ptype_intensity_gfs_overlap_crain1_csnow1_selects_snow(monkeypatch) -> 
         fh=6,
         var_spec_model=_ptype_var_spec("rain"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     # Both pixels: csnow=1 has priority over crain=1
@@ -820,7 +821,7 @@ def test_ptype_intensity_warm_rain_only_stays_rain(monkeypatch) -> None:
         fh=6,
         var_spec_model=_ptype_var_spec(),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     # Rain palette range: 0-15
@@ -863,7 +864,7 @@ def test_ptype_intensity_thermal_fallback_when_all_masks_zero(monkeypatch) -> No
         fh=6,
         var_spec_model=_ptype_var_spec("snow"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     rain_values, _, _ = derive_module._derive_ptype_intensity_component(
         model_id="gfs",
@@ -873,7 +874,7 @@ def test_ptype_intensity_thermal_fallback_when_all_masks_zero(monkeypatch) -> No
         fh=6,
         var_spec_model=_ptype_var_spec("rain"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     # Pixel 0: cold temps → thermal fallback → snow
@@ -933,7 +934,7 @@ def test_ptype_intensity_snow_plane_unboosted_but_binning_stays_boosted(monkeypa
         fh=6,
         var_spec_model=_ptype_var_spec("snow"),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
     indexed, _, _ = derive_module._derive_ptype_intensity_gfs(
         model_id="gfs",
@@ -943,7 +944,7 @@ def test_ptype_intensity_snow_plane_unboosted_but_binning_stays_boosted(monkeypa
         fh=6,
         var_spec_model=_ptype_var_spec(),
         var_capability=None,
-        model_plugin=object(),
+        model_plugin=GFS_MODEL,
     )
 
     # (a) stored plane == raw snow rate (0.6 in/hr), NO display boost baked in.

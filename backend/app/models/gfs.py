@@ -830,6 +830,7 @@ GFS_VARS: dict[str, VarSpec] = {
             hints={
                 "upstream_var": "crain",
                 "short_name": "crain",
+                "probability_units": "fraction",
             },
         ),
     ),
@@ -845,6 +846,7 @@ GFS_VARS: dict[str, VarSpec] = {
             hints={
                 "upstream_var": "csnow",
                 "short_name": "csnow",
+                "probability_units": "fraction",
             },
         ),
     ),
@@ -860,6 +862,7 @@ GFS_VARS: dict[str, VarSpec] = {
             hints={
                 "upstream_var": "cicep",
                 "short_name": "cicep",
+                "probability_units": "fraction",
             },
         ),
     ),
@@ -875,6 +878,7 @@ GFS_VARS: dict[str, VarSpec] = {
             hints={
                 "upstream_var": "cfrzr",
                 "short_name": "cfrzr",
+                "probability_units": "fraction",
             },
         ),
     ),
