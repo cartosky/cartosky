@@ -59,7 +59,7 @@
 
   /* Reusable viewer mobile surface shared by the controls sheet and modals. */
   .viewer-mobile-surface {
-    background-color: rgba(4, 16, 30, 0.82);
+    background-color: rgba(4, 16, 30, 0.93);
     border: 1px solid rgba(26, 58, 92, 0.6);
     box-shadow:
       0 8px 40px rgba(0, 0, 0, 0.55),
@@ -71,7 +71,7 @@
 
   /* Higher-contrast glass for persistent bottom controls over map imagery. */
   .viewer-mobile-control-surface {
-    background-color: rgba(4, 16, 30, 0.88);
+    background-color: rgba(4, 16, 30, 0.93);
     border: 1px solid rgba(26, 58, 92, 0.6);
     box-shadow:
       0 8px 40px rgba(0, 0, 0, 0.55),
