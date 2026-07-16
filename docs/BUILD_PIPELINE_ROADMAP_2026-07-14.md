@@ -304,19 +304,24 @@ scopes: A → precip_total_cumulative (item 3) + ptype_accumulation_cumulative
    currently an AttributeError swallowed on every call.~~ **— DONE 2026-07-16
    (PR A, local):** the stable sort now uses `pd.to_numeric`; a string-member
    regression distinguishes numeric `1, 2, 10` order from raw/lexical order.
-3. **4.10 `<u2` bullet.** `_decode_member_frame` decodes with the configured
+~~3. **4.10 `<u2` bullet.** `_decode_member_frame` decodes with the configured
    packing dtype instead of hardcoded `<u2`. (Stats audit S2 note: on a
    non-u16-packed stats var this raises every pass while the size gate —
    which uses the configured dtype — passes, creating exactly the poison
-   stats unit of item 6 below.)
+   stats unit of item 6 below.)~~ **— DONE 2026-07-16 (PR B, local):** the
+   decoder now branches from packing metadata and a uint8 artifact round-trip
+   regression pins the non-u16 path.
 4. **4.9.** Failure cleanup deletes only the failed fh's contour geojson, not
    the variable's whole shared contours directory.
-5. **Stats sidecar in the resume check (stats audit S1).** The stats-unit
+~~5. **Stats sidecar in the resume check (stats audit S1).** The stats-unit
    resume check (`member_frame_is_complete`) validates only bin+meta; the
    `fh{NNN}.json` sidecar is written after them, so a crash in that window
    resumes the frame as complete with `valid_time` permanently missing.
    Include sidecar existence in the resume check (or write the sidecar
-   first). Regression test: bin+meta present, sidecar absent → unit recomputes.
+   first). Regression test: bin+meta present, sidecar absent → unit recomputes.~~
+   **— DONE 2026-07-16 (PR B, local):** a stats-only completeness helper now
+   governs pending, resume, and promotion; missing sidecars recompute while
+   member-roster completeness remains bin+meta-only.
 6. **Stats-unit error-streak visibility + health-file retention (stats audit
    S2 + S8).** (a) `ensemble_stats_health` tracks only roster-incomplete
    units — persistent `error`/`gate_failed` units retry every cycle forever

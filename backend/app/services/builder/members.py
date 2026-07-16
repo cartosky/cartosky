@@ -79,6 +79,7 @@ from rasterio.transform import Affine
 from ...models.base import ensemble_member_descriptors, ensemble_member_ids
 from ..colormaps import get_color_map_spec
 from ..grid import (
+    GRID_DTYPE_UINT8,
     _decode_values,
     _packing_config,
     expected_grid_frame_size_bytes,
@@ -1148,7 +1149,8 @@ def _decode_member_frame(
     frame_path = grid_frame_path_for_run_root(run_root, var_id, fh, dtype=packing_dtype)
     meta_path = grid_frame_meta_path_for_run_root(run_root, var_id, fh)
     meta = json.loads(meta_path.read_text())
-    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
+    encoded_dtype = np.uint8 if packing_dtype == GRID_DTYPE_UINT8 else "<u2"
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype=encoded_dtype).reshape(
         int(meta["height"]), int(meta["width"]))
     return _decode_values(encoded, model=model, var=var_id), meta
 

@@ -35,6 +35,13 @@ Known findings NOT re-reported: 4.10 `<u2` hardcode in `_decode_member_frame`
 
 ### S1 MED — Sidecar not covered by the resume completeness check
 
+**STATUS: FIXED 2026-07-16 (Wave 2 PR B, local).** Stats outputs now use a
+stats-specific completeness helper requiring bin, grid meta, and the atomic
+`fh{NNN}.json` sidecar. Pending, per-unit resume, and promotion checks all use
+that contract; member roster inputs deliberately retain their bin+meta-only
+contract. Regressions cover recomputation after a missing sidecar and both
+staging/published promotion states.
+
 `stats.py:293-296` resumes a product when `member_frame_is_complete` passes,
 which validates only `.bin` + `.l*.meta.json` (`members.py:183-200`). The
 per-frame sidecar `fh{NNN}.json` is written *after* the grid frames
@@ -60,6 +67,10 @@ configured dtype) but raise every pass in `_decode_member_frame`'s hardcoded
 `<u2` reshape (`members.py:1151`, known 4.10). Fix shape: count error/gate
 streaks in `ensemble_stats_health` alongside incomplete rosters; add a
 cap/backoff when Wave 3's 3.8 failure-classification work lands.
+
+**2026-07-16 note:** Wave 2 PR B removed the concrete hardcoded-`<u2` trigger;
+the general invisible forever-retry behavior remains open for Wave 2 item 6
+and Wave 3 item 8.
 
 ### S3 MED — No input invalidation
 

@@ -203,10 +203,22 @@ def _iter_expected_stats_frames(
                 yield var_id, fh
 
 
+def _stats_frame_is_complete(
+    run_root: Path,
+    model_id: str,
+    var_id: str,
+    fh: int,
+) -> bool:
+    """Stats outputs require bin, grid meta, and the atomic frame sidecar."""
+    if not member_frame_is_complete(run_root, model_id, var_id, fh):
+        return False
+    return (run_root / var_id / f"fh{int(fh):03d}.json").is_file()
+
+
 def stats_pass_pending(*, plugin: Any, model_id: str, run_id: str, data_root: Path) -> bool:
     staging_run_root = data_root / "staging" / model_id / run_id
     for var_id, fh in _iter_expected_stats_frames(plugin, model_id, run_id, data_root=data_root):
-        if not member_frame_is_complete(staging_run_root, model_id, var_id, fh):
+        if not _stats_frame_is_complete(staging_run_root, model_id, var_id, fh):
             return True
 
     # A stable partial roster needs health-only passes even when all currently
@@ -239,9 +251,9 @@ def stats_promote_pending(*, plugin: Any, model_id: str, run_id: str, data_root:
     staging_run_root = data_root / "staging" / model_id / run_id
     published_run_root = data_root / "published" / model_id / run_id
     for var_id, fh in _iter_expected_stats_frames(plugin, model_id, run_id, data_root=data_root):
-        if member_frame_is_complete(
+        if _stats_frame_is_complete(
             staging_run_root, model_id, var_id, fh,
-        ) and not member_frame_is_complete(published_run_root, model_id, var_id, fh):
+        ) and not _stats_frame_is_complete(published_run_root, model_id, var_id, fh):
             return True
     return False
 
@@ -292,7 +304,7 @@ def _process_stats_unit(
     product_ids = list(ctx.products.items())
     missing = [
         (key, var_id) for key, var_id in product_ids
-        if not member_frame_is_complete(staging_run_root, plan.model_id, var_id, fh)
+        if not _stats_frame_is_complete(staging_run_root, plan.model_id, var_id, fh)
     ]
     for _ in range(len(product_ids) - len(missing)):
         record(STATUS_RESUMED)

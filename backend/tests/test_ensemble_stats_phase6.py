@@ -350,6 +350,131 @@ def test_stats_pass_end_to_end_manual_tally(tmp_path, stats_roster_plugin) -> No
     )
 
 
+def test_stats_pass_recomputes_frame_when_sidecar_is_missing(
+    tmp_path,
+    stats_roster_plugin,
+) -> None:
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        for fh in (6, 12):
+            _publish_member_precip(tmp_path, run_id, member, fh, 0.8)
+
+    first = stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+    assert first.counts == {stats_mod.STATUS_WRITTEN: 4}
+
+    staging = tmp_path / "staging" / "gefs" / run_id
+    sidecar = staging / "precip_total__p50" / "fh006.json"
+    frame = staging / "precip_total__p50" / "grid" / "fh006.l0.u16.bin"
+    meta = staging / "precip_total__p50" / "grid" / "fh006.l0.meta.json"
+    assert frame.is_file() and meta.is_file() and sidecar.is_file()
+    sidecar.unlink()
+
+    assert stats_mod.stats_pass_pending(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+    )
+    second = stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+
+    assert second.counts == {
+        stats_mod.STATUS_RESUMED: 3,
+        stats_mod.STATUS_WRITTEN: 1,
+    }
+    assert sidecar.is_file()
+    assert not stats_mod.stats_pass_pending(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+    )
+
+
+def test_stats_promote_pending_requires_complete_sidecars(
+    tmp_path,
+    stats_roster_plugin,
+) -> None:
+    import shutil
+
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        for fh in (6, 12):
+            _publish_member_precip(tmp_path, run_id, member, fh, 0.8)
+
+    first = stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+    assert first.counts == {stats_mod.STATUS_WRITTEN: 4}
+
+    staging = tmp_path / "staging" / "gefs" / run_id
+    sidecars = [
+        staging / var_id / f"fh{fh:03d}.json"
+        for var_id in ("precip_total__p50", "precip_total__prob_gt_0p5")
+        for fh in (6, 12)
+    ]
+    for sidecar in sidecars:
+        sidecar.unlink()
+
+    assert not stats_mod.stats_promote_pending(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+    )
+
+    repaired = stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+    assert repaired.counts == {stats_mod.STATUS_WRITTEN: 4}
+    assert stats_mod.stats_promote_pending(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+    )
+
+    published = tmp_path / "published" / "gefs" / run_id
+    shutil.copytree(staging, published, dirs_exist_ok=True)
+    assert not stats_mod.stats_promote_pending(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+    )
+
+    (published / "precip_total__p50" / "fh006.json").unlink()
+    assert stats_mod.stats_promote_pending(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+    )
+
+
 def test_stats_pass_completeness_gate_skips_partial_rosters(
     tmp_path, stats_roster_plugin,
 ) -> None:

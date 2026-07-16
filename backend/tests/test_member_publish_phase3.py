@@ -867,6 +867,48 @@ def test_member_frame_is_complete_checks_size(tmp_path, transform, values) -> No
     assert not members.member_frame_is_complete(tmp_path, "gefs", "tmp2m__m01", 0)
 
 
+def test_decode_member_frame_uses_configured_uint8_dtype(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    packing = dict(_PACKING_BY_MODEL_VAR[("gefs", "tmp2m__mean")])
+    packing.update({"dtype": "uint8", "nodata": 255})
+    monkeypatch.setitem(
+        _PACKING_BY_MODEL_VAR,
+        ("gefs", "tmp2m__mean"),
+        packing,
+    )
+    values = np.array(
+        [[-99.9, -90.0], [-80.0, np.nan]],
+        dtype=np.float32,
+    )
+    frame_transform = from_bounds(*BOUNDS, 2, 2)
+    write_slim_grid_frame_for_run_root(
+        run_root=tmp_path,
+        model="gefs",
+        var="tmp2m__m01",
+        fh=0,
+        values=values,
+        transform=frame_transform,
+        projection="EPSG:4326",
+    )
+    assert (
+        tmp_path / "tmp2m__m01" / "grid" / "fh000.l0.u8.bin"
+    ).is_file()
+
+    decoded, meta = members._decode_member_frame(
+        tmp_path,
+        "gefs",
+        "tmp2m__m01",
+        0,
+    )
+
+    assert meta["width"] == 2 and meta["height"] == 2
+    np.testing.assert_allclose(decoded[:, :1], values[:, :1], atol=0.051)
+    assert decoded[0, 1] == pytest.approx(-90.0, abs=0.051)
+    assert np.isnan(decoded[1, 1])
+
+
 def test_member_fetch_workers_env(monkeypatch) -> None:
     monkeypatch.delenv(members.ENV_MEMBER_FETCH_WORKERS, raising=False)
     assert members.member_fetch_workers() == 2
