@@ -147,7 +147,7 @@ function regionPayload() {
       conus: {
         label: 'CONUS',
         bbox: [-125, 24, -66, 50],
-        defaultCenter: [39.83, -98.58],
+        defaultCenter: [-98.58, 39.83],
         defaultZoom: 4,
         minZoom: 2,
         maxZoom: 9,
@@ -904,6 +904,79 @@ test.describe('Grid-only smoke', () => {
     expect(Math.abs(
       (logoBox!.y + logoBox!.height / 2) - (headerBox!.y + headerBox!.height / 2),
     )).toBeLessThanOrEqual(1);
+  });
+
+  test('mobile touch controls keep 44px targets without horizontal overflow', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
+    await stubViewerGridRoutes(page);
+    await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
+    await expect(page.getByRole('button', { name: 'Open controls' })).toBeVisible();
+
+    const viewerTargets = [
+      page.getByRole('button', { name: 'Share' }),
+      page.getByRole('link', { name: 'Compare' }),
+      page.getByRole('button', { name: 'Send feedback' }),
+      page.getByRole('button', { name: 'Open controls' }),
+      page.getByRole('button', { name: 'Play animation' }),
+      page.getByRole('button', { name: 'Animation speed 1×' }),
+    ];
+    for (const target of viewerTargets) {
+      const box = await target.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.width).toBeGreaterThanOrEqual(44);
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+    }
+
+    await page.getByRole('button', { name: 'Open controls' }).click();
+    for (const target of [
+      page.getByRole('button', { name: 'Selection' }),
+      page.getByRole('button', { name: 'Display' }),
+      page.getByRole('button', { name: 'Close controls' }),
+    ]) {
+      const box = await target.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+    }
+    const modelTrigger = page.getByRole('button', { name: 'HRRR', exact: true });
+    await expect(modelTrigger).toBeVisible();
+    expect((await modelTrigger.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await modelTrigger.click();
+
+    const modelDialog = page.getByRole('dialog', { name: 'Model picker' });
+    const modelCategory = modelDialog.getByRole('button', { name: 'Models 1' });
+    const modelOption = modelDialog.getByRole('button', { name: 'HRRR', exact: true });
+    const favoriteOption = modelDialog.getByRole('button', { name: 'Favorite HRRR' });
+    for (const target of [modelCategory, modelOption, favoriteOption]) {
+      const box = await target.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+
+  test('mobile compare controls keep 44px targets on one overflow-free row', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
+    await stubViewerGridRoutes(page);
+    await page.goto('/compare?lm=hrrr&lv=tmp2m&lr=latest&rm=hrrr&rv=dp2m&rr=latest&fh=0&lat=39.83&lon=-98.58&z=4');
+
+    const targets = [
+      page.getByRole('radio', { name: 'Side by side' }),
+      page.getByRole('radio', { name: 'Difference' }),
+      page.getByRole('link', { name: 'Open current view in Viewer' }),
+      page.getByRole('button', { name: 'Share to TWF' }),
+      page.getByRole('button', { name: 'Comparison settings' }),
+      page.getByRole('button', { name: 'Play or pause comparison playback' }),
+    ];
+    for (const target of targets) {
+      await expect(target).toBeVisible();
+      const box = await target.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+    }
+
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
 
   test('compare grid mount avoids maximum update depth warnings', async ({ page }) => {

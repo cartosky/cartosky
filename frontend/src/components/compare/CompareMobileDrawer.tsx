@@ -501,7 +501,7 @@ function DrawerShell({
         aria-label="Comparison settings"
       >
         <div
-          className="flex touch-none select-none justify-center pt-3 pb-1 active:opacity-70"
+          className="flex min-h-11 touch-none select-none items-center justify-center active:opacity-70"
           onTouchStart={handleDragStart}
           onTouchEnd={handleDragEnd}
           onClick={handleHandleClick}
@@ -522,7 +522,7 @@ function DrawerShell({
                 type="button"
                 onClick={() => onTabChange(tab.id)}
                 className={cn(
-                  "relative pb-2.5 pr-5 text-sm font-semibold transition-colors duration-150",
+                  "relative flex min-h-11 items-center pr-5 text-sm font-semibold transition-colors duration-150",
                   activeTab === tab.id ? "text-white" : "text-white/40 hover:text-white/65",
                 )}
               >
@@ -537,7 +537,7 @@ function DrawerShell({
           <button
             type="button"
             onClick={onClose}
-            className="mb-2 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:text-white"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:text-white"
             aria-label="Close comparison settings"
           >
             <X className="h-4 w-4" />

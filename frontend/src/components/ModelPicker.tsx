@@ -318,7 +318,7 @@ export function ModelPicker({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search models…"
-          className="min-w-0 flex-1 bg-transparent text-[12px] font-medium text-white outline-none placeholder:text-white/34"
+          className={cn("min-w-0 flex-1 bg-transparent text-[12px] font-medium text-white outline-none placeholder:text-white/34", inlinePanel && "min-h-11")}
         />
         {query ? (
           <button
@@ -327,7 +327,7 @@ export function ModelPicker({
               setQuery("");
               searchInputRef.current?.focus({ preventScroll: true });
             }}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-white/42 transition-colors hover:bg-white/[0.07] hover:text-white/78"
+            className={cn("inline-flex items-center justify-center rounded-md text-white/42 transition-colors hover:bg-white/[0.07] hover:text-white/78", inlinePanel ? "h-11 w-11" : "h-6 w-6")}
             aria-label="Clear model search"
           >
             <X className="h-3.5 w-3.5" />
@@ -345,7 +345,8 @@ export function ModelPicker({
                 type="button"
                 onClick={() => setActiveCategory(category.id)}
                 className={cn(
-                  "flex h-8 w-full items-center justify-between gap-2 rounded-lg border-l-2 px-2 text-left text-[11px] font-semibold transition-colors",
+                  "flex w-full items-center justify-between gap-2 rounded-lg border-l-2 px-2 text-left text-[11px] font-semibold transition-colors",
+                  inlinePanel ? "h-11" : "h-8",
                   active
                     ? "border-l-[#185FA5] bg-cyan-300/[0.10] text-cyan-50"
                     : "border-l-transparent text-white/62 hover:bg-white/[0.055] hover:text-white/86"
@@ -377,7 +378,8 @@ export function ModelPicker({
                 key={option.value}
                 data-model-index={index}
                 className={cn(
-                  "group flex h-8 items-center gap-1.5 rounded-lg px-1.5 transition-colors",
+                  "group flex items-center gap-1.5 rounded-lg px-1.5 transition-colors",
+                  inlinePanel ? "h-11" : "h-8",
                   selected
                     ? "bg-[#185FA5]/20 text-cyan-100"
                     : highlighted
@@ -392,7 +394,8 @@ export function ModelPicker({
                     toggleFavorite(option.value);
                   }}
                   className={cn(
-                    "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
+                    "inline-flex shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
+                    inlinePanel ? "h-11 w-11" : "h-6 w-6",
                     favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-50 hover:text-white/55"
                   )}
                   aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
@@ -407,6 +410,7 @@ export function ModelPicker({
                   title={lockedReason ?? undefined}
                   className={cn(
                     "flex min-w-0 flex-1 items-center gap-2 text-left",
+                    inlinePanel ? "h-full" : "",
                     locked ? "cursor-pointer text-white/56" : ""
                   )}
                 >
@@ -444,7 +448,8 @@ export function ModelPicker({
         aria-haspopup="dialog"
         aria-expanded={open}
         className={cn(
-          "inline-flex h-8 w-auto items-center justify-between gap-2 rounded-xl border border-white/[0.09] bg-white/[0.05] px-3 text-[12px] font-medium text-white/82 shadow-none transition-all duration-150 hover:border-white/18 hover:bg-white/[0.09] hover:text-white focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
+          "inline-flex w-auto items-center justify-between gap-2 rounded-xl border border-white/[0.09] bg-white/[0.05] px-3 text-[12px] font-medium text-white/82 shadow-none transition-all duration-150 hover:border-white/18 hover:bg-white/[0.09] hover:text-white focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
+          inlinePanel ? "h-11" : "h-8",
           minWidth,
           open ? "border-cyan-300/25 bg-cyan-300/[0.08] text-cyan-100" : ""
         )}

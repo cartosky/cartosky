@@ -56,7 +56,7 @@ export function CompareScrubber({
           <button
             type="button"
             disabled
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/12 bg-white/[0.06] text-white/38 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] disabled:cursor-not-allowed"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/12 bg-white/[0.06] text-white/38 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] disabled:cursor-not-allowed sm:h-9 sm:w-9"
             aria-label="Play or pause comparison playback"
           >
             <Play className="h-[17px] w-[17px] translate-x-[1px]" />

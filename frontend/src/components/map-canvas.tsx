@@ -36,6 +36,7 @@ import {
 import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridContourLayerConfig, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
 import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 import type { SampleTooltipState } from "@/lib/use-sample-tooltip";
+import { cn } from "@/lib/utils";
 
 const IS_HIDPI = typeof window !== "undefined" && window.devicePixelRatio > 1;
 // Headless render mode (?screenshot=1): drives the capture hook registration
@@ -3812,7 +3813,7 @@ export function MapCanvas({
             <div className="glass pointer-events-auto overflow-hidden rounded-xl">
               <button
                 type="button"
-                className="flex h-[34px] w-[34px] items-center justify-center text-lg font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className={cn("flex items-center justify-center text-lg font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", isDesktopLayout ? "h-[34px] w-[34px]" : "h-11 w-11")}
                 onClick={handleZoomIn}
                 aria-label="Zoom in"
                 title="Zoom in"
@@ -3821,7 +3822,7 @@ export function MapCanvas({
               </button>
               <button
                 type="button"
-                className="flex h-[34px] w-[34px] items-center justify-center border-t border-[#1a3a5c]/60 text-xl font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className={cn("flex items-center justify-center border-t border-[#1a3a5c]/60 text-xl font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", isDesktopLayout ? "h-[34px] w-[34px]" : "h-11 w-11")}
                 onClick={handleZoomOut}
                 aria-label="Zoom out"
                 title="Zoom out"
@@ -3834,7 +3835,11 @@ export function MapCanvas({
             <div className="glass pointer-events-auto overflow-hidden rounded-xl">
               <button
                 type="button"
-                className={`flex h-[34px] w-[34px] items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${legendButtonActive ? "bg-white/[0.12] text-white" : "text-white/60 hover:bg-white/[0.07] hover:text-white/90"}`}
+                className={cn(
+                  "flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                  isDesktopLayout ? "h-[34px] w-[34px]" : "h-11 w-11",
+                  legendButtonActive ? "bg-white/[0.12] text-white" : "text-white/60 hover:bg-white/[0.07] hover:text-white/90",
+                )}
                 onClick={onLegendButtonClick}
                 aria-label="Toggle legend"
                 title="Legend"

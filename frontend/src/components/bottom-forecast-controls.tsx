@@ -591,7 +591,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                     onClick={onShare}
                     aria-label="Share"
                     data-tour-target="share-button"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
                   >
                     <Share2 className="h-3.5 w-3.5" />
                   </button>
@@ -600,7 +600,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                   <Link
                     to={compareHref}
                     aria-label="Compare"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
                   >
                     <GitCompareArrows className="h-3.5 w-3.5" />
                   </Link>
@@ -611,7 +611,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                     onClick={onFeedback}
                     aria-label="Send feedback"
                     data-tour-target="feedback-button"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
                   >
                     <MessageSquareText className="h-3.5 w-3.5" />
                   </button>
@@ -622,7 +622,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                     onClick={() => onOpenControls(true)}
                     aria-label="Open controls"
                     data-tour-target="mobile-controls-button"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
                   >
                     <Settings className="h-3.5 w-3.5" />
                   </button>
@@ -648,7 +648,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                     aria-label={isPlaying ? "Pause animation" : "Play animation"}
                     className={cn(
                       "flex shrink-0 items-center justify-center border transition-all duration-150 disabled:opacity-50 disabled:hover:scale-100",
-                      isTabletTouchLayout ? "h-9 w-9 rounded-lg" : "h-10 w-10 rounded-xl",
+                      "h-11 w-11 rounded-xl",
                       isPlaying
                         ? "bg-cyan-300/[0.12] text-cyan-200 border-cyan-300/30"
                         : "bg-white/[0.05] text-white/80 border-white/10 hover:bg-white/[0.09] hover:text-white"
@@ -662,7 +662,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                 </TooltipContent>
               </Tooltip>
 
-              <SpeedButton animationDelayMs={animationDelayMs} onSpeedChange={onSpeedChange} />
+              <SpeedButton animationDelayMs={animationDelayMs} onSpeedChange={onSpeedChange} touch />
 
               {staticSnapshotLabel ? (
                 <div className="min-w-0 flex-1">

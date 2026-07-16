@@ -423,17 +423,17 @@ function CompareMobileToolbar({
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <Link
             to={viewerHref}
-            className="flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.09] bg-white/[0.05] px-3 text-[11px] font-medium text-white/60 transition-all hover:border-white/18 hover:bg-white/[0.09] hover:text-white"
+            className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.09] bg-white/[0.05] text-white/60 transition-all hover:border-white/18 hover:bg-white/[0.09] hover:text-white"
             aria-label="Open current view in Viewer"
             title="Open in Viewer"
           >
             <ArrowLeft className="h-3 w-3 shrink-0" />
-            <span>Viewer</span>
+            <span className="sr-only">Viewer</span>
           </Link>
           <button
             type="button"
             onClick={onShare}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.09] bg-white/[0.05] text-white/50 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
+            className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.09] bg-white/[0.05] text-white/50 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
             aria-label="Share to TWF"
             title="Share to TWF"
           >
@@ -442,7 +442,7 @@ function CompareMobileToolbar({
           <button
             type="button"
             onClick={onOpenDrawer}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.09] bg-white/[0.05] text-white/50 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
+            className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.09] bg-white/[0.05] text-white/50 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
             aria-label="Comparison settings"
             title="Comparison settings"
           >
@@ -457,7 +457,7 @@ function CompareMobileToolbar({
           <button
             type="button"
             onClick={onDismissNotice}
-            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-cyan-100/50 transition-colors hover:bg-white/[0.08] hover:text-cyan-50"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-cyan-100/50 transition-colors hover:bg-white/[0.08] hover:text-cyan-50"
             aria-label="Dismiss notice"
           >
             <X className="h-3.5 w-3.5" />

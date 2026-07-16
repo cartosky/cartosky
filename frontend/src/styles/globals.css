@@ -500,7 +500,7 @@
     scroll-behavior: smooth;
   }
 
-  .forecast-scroll {
+.forecast-scroll {
     scrollbar-width: thin;
     scrollbar-color: rgba(103, 232, 249, 0.18) transparent;
   }
@@ -574,6 +574,17 @@
     background: rgba(255, 255, 255, 0.3);
     background-clip: content-box;
   }
+}
+
+.forecast-tab-rail {
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  scroll-padding-inline: 1rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.forecast-tab-rail::-webkit-scrollbar {
+  display: none;
 }
 
 @layer base {

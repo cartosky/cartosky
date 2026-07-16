@@ -140,7 +140,7 @@ const NWS_ENRICHED_PAYLOAD = {
 };
 
 test.describe("Forecast current tab", () => {
-  test("lands on Current and moves current conditions out of Hourly", async ({ page }) => {
+  test("lands on Today and moves current conditions out of Hourly", async ({ page }) => {
     await page.route("**/api/v4/forecast-page/core**", async (route) => {
       await route.fulfill({ json: FORECAST_PAYLOAD });
     });
@@ -163,8 +163,8 @@ test.describe("Forecast current tab", () => {
     await page.goto("/forecast?lat=43.55&lon=-96.73&name=Sioux%20Falls%2C%20SD");
 
     const tabs = page.locator("[data-forecast-tab]");
-    await expect(tabs.first()).toHaveText("Current");
-    await expect(page.getByRole("button", { name: "Current" })).toHaveAttribute("aria-selected", "true");
+    await expect(tabs.first()).toHaveText("Today");
+    await expect(page.getByRole("tab", { name: "Today" })).toHaveAttribute("aria-selected", "true");
 
     await expect(page.getByRole("heading", { name: "Current Conditions" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Live Radar" })).toBeVisible();
@@ -179,8 +179,8 @@ test.describe("Forecast current tab", () => {
     await expect(page.getByText("9:08 PM")).toBeVisible();
     await expect(page.getByText("15h 22m")).toBeVisible();
     await expect(page.getByText("42")).toBeVisible();
-    await expect(page.getByText("PM2.5")).toBeVisible();
-    await expect(page.getByText("11.2 μg/m³")).toBeVisible();
+    await expect(page.getByText("Good", { exact: true })).toBeVisible();
+    await expect(page.getByText("Air quality is considered satisfactory, and air pollution poses little or no risk.")).toBeVisible();
     const pollenCard = page.locator("section").filter({ has: page.getByRole("heading", { name: "Pollen" }) });
     await expect(pollenCard.getByText("4", { exact: true })).toBeVisible();
     await expect(pollenCard.getByText("Tree Pollen", { exact: true })).toBeVisible();
@@ -189,12 +189,76 @@ test.describe("Forecast current tab", () => {
     await expect(pollenCard.getByText("Moderate", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Heat Advisory", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Hourly" }).click();
+    await page.getByRole("tab", { name: "Hourly" }).click();
 
-    await expect(page.getByRole("button", { name: "Hourly" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "Hourly" })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("heading", { name: "Current Conditions" })).toBeHidden();
     await expect(page.getByRole("heading", { name: "Live Radar" })).toBeHidden();
     await expect(page.getByText("Temperature · Next 24 Hours")).toBeVisible();
+  });
+
+  test("mobile forecast tab rail hides native chrome and keeps the active tab visible", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.route("**/api/v4/forecast-page/core**", async (route) => {
+      await route.fulfill({ json: FORECAST_PAYLOAD });
+    });
+    await page.route("**/api/v4/forecast-page?**", async (route) => {
+      await route.fulfill({ json: FORECAST_PAYLOAD });
+    });
+    await page.route("**/api/v4/capabilities", async (route) => {
+      await route.fulfill({ json: { supported_models: [], model_catalog: {}, availability: {} } });
+    });
+    await page.route("**/api/regions", async (route) => {
+      await route.fulfill({ json: { regions: {} } });
+    });
+    await page.route("**/api/v4/forecast/meteogram", async (route) => {
+      await route.fulfill({ status: 204, body: "" });
+    });
+    await page.route("**/api/v4/mrms/latest/reflectivity/**", async (route) => {
+      await route.fulfill({ status: 404, body: "" });
+    });
+
+    await page.goto("/forecast?lat=43.55&lon=-96.73&name=Sioux%20Falls%2C%20SD");
+
+    for (const target of [
+      page.getByRole("button", { name: "Search for another location" }),
+      page.getByRole("button", { name: "Save favorite" }),
+      page.getByRole("button", { name: "Refresh forecast" }),
+    ]) {
+      const box = await target.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+    }
+
+    const rail = page.getByRole("tablist", { name: "Forecast sections" });
+    await expect(rail).toBeVisible();
+    await expect(page.locator('[data-forecast-tab-fade="right"]')).toBeVisible();
+
+    const today = rail.getByRole("tab", { name: "Today" });
+    const hourly = rail.getByRole("tab", { name: "Hourly" });
+    await expect(today).toHaveAttribute("tabindex", "0");
+    await expect(hourly).toHaveAttribute("tabindex", "-1");
+    await expect(today).toHaveAttribute("aria-controls", "forecast-panel");
+    await today.press("ArrowRight");
+    await expect(hourly).toHaveAttribute("aria-selected", "true");
+    await expect(hourly).toHaveAttribute("tabindex", "0");
+    await expect(page.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "forecast-tab-hourly");
+
+    const tabHeights = await rail.getByRole("tab").evaluateAll((tabs) => (
+      tabs.map((tab) => Math.round(tab.getBoundingClientRect().height))
+    ));
+    expect(tabHeights.every((height) => height >= 44)).toBe(true);
+    await expect.poll(() => rail.evaluate((element) => getComputedStyle(element).scrollbarWidth)).toBe("none");
+
+    const discussion = rail.getByRole("tab", { name: "Discussion" });
+    await discussion.evaluate((element) => (element as HTMLButtonElement).click());
+    await expect(discussion).toHaveAttribute("aria-selected", "true");
+    await expect.poll(() => discussion.evaluate((element) => {
+      const tabRect = element.getBoundingClientRect();
+      const railRect = element.parentElement!.getBoundingClientRect();
+      return tabRect.left >= railRect.left - 1 && tabRect.right <= railRect.right + 1;
+    })).toBe(true);
+    await expect(page.locator('[data-forecast-tab-fade="left"]')).toBeVisible();
   });
 
   test("retries transient NWS-unavailable enrichment when a hidden tab becomes visible", async ({ page }) => {

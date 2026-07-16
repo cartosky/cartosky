@@ -711,7 +711,7 @@ function RegionUtilitySelect({
       aria-label={inlinePanel ? "Region picker" : undefined}
     >
       <div className="shrink-0 border-b border-white/8 px-3 py-3">
-        <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 transition-colors focus-within:border-cyan-300/30 focus-within:bg-white/[0.06]">
+        <label className={cn("flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 transition-colors focus-within:border-cyan-300/30 focus-within:bg-white/[0.06]", inlinePanel && "min-h-11")}>
           <Search className="h-3.5 w-3.5 flex-none text-white/45" />
           <input
             ref={searchInputRef}
@@ -740,7 +740,7 @@ function RegionUtilitySelect({
                 resetSearch();
                 searchInputRef.current?.focus();
               }}
-              className="flex h-5 w-5 flex-none items-center justify-center rounded-full text-white/34 transition hover:bg-white/8 hover:text-white/68"
+              className={cn("flex flex-none items-center justify-center rounded-full text-white/34 transition hover:bg-white/8 hover:text-white/68", inlinePanel ? "h-11 w-11" : "h-5 w-5")}
               aria-label="Clear location search"
             >
               <X className="h-3.5 w-3.5" />
@@ -762,11 +762,11 @@ function RegionUtilitySelect({
                 </div>
                 <div className="mb-2 space-y-0.5">
                   {favorites.map((location) => (
-                    <div key={location.id} className="group flex items-center gap-1 rounded-md hover:bg-cyan-300/14">
+                    <div key={location.id} className={cn("group flex items-center gap-1 rounded-md hover:bg-cyan-300/14", inlinePanel && "min-h-11")}>
                       <button
                         type="button"
                         onClick={() => handleLocationResultSelect(location)}
-                        className="min-w-0 flex-1 rounded-md py-1.5 pl-3 pr-1 text-left text-xs font-medium text-white/86 outline-none transition-colors group-hover:text-cyan-50"
+                        className={cn("min-w-0 flex-1 rounded-md py-1.5 pl-3 pr-1 text-left text-xs font-medium text-white/86 outline-none transition-colors group-hover:text-cyan-50", inlinePanel && "min-h-11")}
                       >
                         <span className="block truncate">{location.display_name}</span>
                         {secondaryLocationLabel(location) ? (
@@ -778,7 +778,7 @@ function RegionUtilitySelect({
                       <button
                         type="button"
                         onClick={() => handleFavoriteToggle(location)}
-                        className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-amber-300 transition hover:bg-white/10"
+                        className={cn("mr-1 flex shrink-0 items-center justify-center rounded-md text-amber-300 transition hover:bg-white/10", inlinePanel ? "h-11 w-11" : "h-7 w-7")}
                         title="Remove favorite"
                         aria-label={`Remove ${location.display_name} from favorites`}
                       >
@@ -791,12 +791,12 @@ function RegionUtilitySelect({
             ) : null}
 
             {currentLocation && !currentLocationIsFavorite ? (
-              <div className="mb-2 rounded-lg border border-cyan-300/12 bg-cyan-300/[0.06] px-2 py-1.5">
+              <div className={cn("mb-2 rounded-lg border border-cyan-300/12 bg-cyan-300/[0.06] px-2 py-1.5", inlinePanel && "min-h-11")}>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => handleLocationResultSelect(currentLocation)}
-                    className="min-w-0 flex-1 text-left"
+                    className={cn("min-w-0 flex-1 text-left", inlinePanel && "min-h-11")}
                   >
                     <span className="block truncate text-xs font-medium text-white/88">{currentLocation.display_name}</span>
                     <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/55">Selected location</span>
@@ -804,7 +804,7 @@ function RegionUtilitySelect({
                   <button
                     type="button"
                     onClick={() => handleFavoriteToggle(currentLocation)}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white/50 transition hover:bg-white/10 hover:text-amber-300"
+                    className={cn("flex shrink-0 items-center justify-center rounded-md text-white/50 transition hover:bg-white/10 hover:text-amber-300", inlinePanel ? "h-11 w-11" : "h-7 w-7")}
                     title="Save favorite"
                     aria-label={`Save ${currentLocation.display_name} as favorite`}
                   >
@@ -831,6 +831,7 @@ function RegionUtilitySelect({
                     }}
                     className={cn(
                       "relative flex w-full items-center rounded-md py-1.5 pl-8 pr-2 text-left text-xs font-medium text-white/86 outline-none transition-colors hover:bg-cyan-300/15 hover:text-cyan-50",
+                      inlinePanel && "min-h-11",
                       selected && "bg-cyan-300/14 text-cyan-50"
                     )}
                   >
@@ -864,12 +865,12 @@ function RegionUtilitySelect({
                 return (
                   <div
                     key={`${result.display_name}-${result.latitude}-${result.longitude}`}
-                    className="group flex items-center gap-1 rounded-lg transition-colors hover:bg-cyan-300/14 hover:text-cyan-50"
+                    className={cn("group flex items-center gap-1 rounded-lg transition-colors hover:bg-cyan-300/14 hover:text-cyan-50", inlinePanel && "min-h-11")}
                   >
                     <button
                       type="button"
                       onClick={() => handleLocationResultSelect(result)}
-                      className="min-w-0 flex-1 rounded-lg px-3 py-2 text-left"
+                      className={cn("min-w-0 flex-1 rounded-lg px-3 py-2 text-left", inlinePanel && "min-h-11")}
                     >
                       <span className="block truncate text-sm font-medium text-white/92 transition-colors group-hover:text-cyan-50">
                         {result.display_name}
@@ -884,7 +885,8 @@ function RegionUtilitySelect({
                       type="button"
                       onClick={() => handleFavoriteToggle(result)}
                       className={cn(
-                        "mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition hover:bg-white/10",
+                        "mr-1 flex shrink-0 items-center justify-center rounded-md transition hover:bg-white/10",
+                        inlinePanel ? "h-11 w-11" : "h-8 w-8",
                         favorited ? "text-amber-300" : "text-white/40 hover:text-amber-300"
                       )}
                       title={favorited ? "Remove favorite" : "Save favorite"}
@@ -910,7 +912,7 @@ function RegionUtilitySelect({
         <button
           type="button"
           onClick={handleUseMyLocation}
-          className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors hover:bg-cyan-300/12"
+          className={cn("flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors hover:bg-cyan-300/12", inlinePanel && "min-h-11")}
         >
           <span className="flex items-center gap-2 text-sm font-medium text-white/88">
             <MapPin className="h-3.5 w-3.5 text-cyan-200/85" />
@@ -948,7 +950,7 @@ function RegionUtilitySelect({
         }}
         className={cn(
           variant === "field"
-            ? "flex h-9 w-full items-center justify-between rounded-lg border border-white/10 bg-white/[0.045] px-3 text-left text-sm font-medium text-white/88 transition hover:border-cyan-300/22 hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-50"
+            ? cn("flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/[0.045] px-3 text-left text-sm font-medium text-white/88 transition hover:border-cyan-300/22 hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-50", inlinePanel ? "h-11" : "h-9")
             : DESKTOP_ICON_BUTTON_CLASSNAME,
           open && (variant === "field" ? "border-cyan-300/28 bg-cyan-300/[0.08] text-cyan-50" : DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME)
         )}
@@ -1746,7 +1748,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             {/* Drag handle — phone only, tap to toggle peek/full */}
             {isPhoneLayout ? (
               <div
-                className="flex touch-none select-none justify-center pt-3 pb-1 active:opacity-70"
+                className="flex min-h-11 touch-none select-none items-center justify-center active:opacity-70"
                 onTouchStart={handleDragStart}
                 onTouchEnd={handleDragEnd}
                 onClick={handleHandleClick}
@@ -1767,7 +1769,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
                   type="button"
                   onClick={() => setActiveTab("selection")}
                   className={cn(
-                    "relative pb-2.5 pr-5 text-sm font-semibold transition-colors duration-150",
+                    "relative flex min-h-11 items-center pr-5 text-sm font-semibold transition-colors duration-150",
                     activeTab === "selection" ? "text-white" : "text-white/40 hover:text-white/65"
                   )}
                 >
@@ -1781,7 +1783,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
                   onClick={() => setActiveTab("display")}
                   data-tour-target="mobile-display-tab"
                   className={cn(
-                    "relative pb-2.5 pr-5 text-sm font-semibold transition-colors duration-150",
+                    "relative flex min-h-11 items-center pr-5 text-sm font-semibold transition-colors duration-150",
                     activeTab === "display" ? "text-white" : "text-white/40 hover:text-white/65"
                   )}
                 >
@@ -1795,7 +1797,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
               <button
                 type="button"
                 onClick={closeSheet}
-                className="mb-2 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:text-white"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:text-white"
                 aria-label="Close controls"
               >
                 <X className="h-4 w-4" />

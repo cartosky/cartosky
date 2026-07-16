@@ -1859,6 +1859,7 @@ export default function Forecast() {
     const tabParam = searchParams.get("tab");
     return isTabId(tabParam) ? tabParam : "current";
   });
+  const [tabRailOverflow, setTabRailOverflow] = useState({ left: false, right: false });
   const [favoriteLimitMessage, setFavoriteLimitMessage] = useState<string | null>(null);
   const {
     favorites,
@@ -1879,6 +1880,39 @@ export default function Forecast() {
   const pendingNwsRetryRef = useRef<PendingNwsEnrichmentRetry | null>(null);
   const favoriteLimitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialRestorePendingRef = useRef(initialRestorePending);
+  const tabRailRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const rail = tabRailRef.current;
+    if (!rail) return;
+
+    const updateOverflow = () => {
+      const maxScrollLeft = Math.max(0, rail.scrollWidth - rail.clientWidth);
+      setTabRailOverflow({
+        left: rail.scrollLeft > 1,
+        right: rail.scrollLeft < maxScrollLeft - 1,
+      });
+    };
+
+    updateOverflow();
+    const observer = new ResizeObserver(updateOverflow);
+    observer.observe(rail);
+    window.addEventListener("resize", updateOverflow);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateOverflow);
+    };
+  }, [forecast]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const rail = tabRailRef.current;
+      const active = rail?.querySelector<HTMLElement>(`[data-forecast-tab="${activeTab}"]`);
+      if (!rail || !active) return;
+      active.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, forecast]);
 
   useEffect(() => {
     captureProductAnalyticsEvent("forecast_page_viewed", {
@@ -2447,16 +2481,17 @@ export default function Forecast() {
 
         {/* Top Bar */}
         <div>
-          <div className="mx-auto max-w-6xl px-5 md:px-8 py-3 flex items-center gap-3 border-b-[0.5px] border-white/[0.08]">
+          <div className="mx-auto flex max-w-6xl items-center gap-1 border-b-[0.5px] border-white/[0.08] px-5 py-2 md:gap-3 md:px-8 md:py-3">
             <button
               type="button"
               onClick={clearSearch}
-              className="flex-none flex items-center gap-1 text-[12px] text-white/35 transition hover:text-white/60"
+              aria-label="Search for another location"
+              className="flex h-11 w-11 flex-none items-center justify-center gap-1 rounded-xl text-[12px] text-white/35 transition hover:bg-white/[0.06] hover:text-white/60 sm:h-auto sm:w-auto sm:justify-start sm:rounded-none"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
-              Search
+              <span className="sr-only sm:not-sr-only">Search</span>
             </button>
-            <div className="flex-1 min-w-0 flex items-baseline gap-2 overflow-hidden">
+            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden sm:gap-2">
               <h1 className="text-[15px] font-medium text-white truncate">{f.location.display_name}</h1>
               <button
                 type="button"
@@ -2464,7 +2499,7 @@ export default function Forecast() {
                 title={currentIsFavorite ? "Remove favorite" : "Save favorite"}
                 aria-label={currentIsFavorite ? "Remove favorite" : "Save favorite"}
                 aria-pressed={currentIsFavorite}
-                className={`flex-none text-white/35 transition duration-200 hover:text-amber-200 focus:outline-none focus-visible:text-amber-200 ${currentIsFavorite ? "scale-105 text-amber-300" : ""}`}
+                className={`flex h-11 w-11 flex-none items-center justify-center rounded-xl text-white/35 transition duration-200 hover:bg-white/[0.06] hover:text-amber-200 focus:outline-none focus-visible:text-amber-200 sm:h-auto sm:w-auto sm:rounded-none sm:hover:bg-transparent ${currentIsFavorite ? "scale-105 text-amber-300" : ""}`}
               >
                 <Star className="h-3.5 w-3.5 transition-all duration-200" fill={currentIsFavorite ? "currentColor" : "none"} />
               </button>
@@ -2475,14 +2510,15 @@ export default function Forecast() {
                 <span className="hidden sm:inline text-[12px] text-white/35 whitespace-nowrap">{stationMeta}</span>
               )}
             </div>
-            <div className="flex-none flex items-center gap-2">
-              <span className={`text-[12px] ${freshChip.color}`}>{freshnessLabel}</span>
+            <div className="flex flex-none items-center gap-1 sm:gap-2">
+              <span className={`hidden text-[12px] min-[370px]:inline ${freshChip.color}`}>{freshnessLabel}</span>
               <button
                 type="button"
                 onClick={() => void loadByCoords(f.location.latitude, f.location.longitude, f.location.display_name, { country_code: f.location.country_code ?? undefined })}
                 disabled={isLoading}
                 title="Refresh forecast"
-                className="text-white/30 transition hover:text-white/60 disabled:opacity-30"
+                aria-label="Refresh forecast"
+                className="flex h-11 w-11 items-center justify-center rounded-xl text-white/30 transition hover:bg-white/[0.06] hover:text-white/60 disabled:opacity-30 sm:h-auto sm:w-auto sm:rounded-none sm:hover:bg-transparent"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
               </button>
@@ -2498,16 +2534,51 @@ export default function Forecast() {
 
         {/* Tab Bar */}
         <div>
-          <div className="mx-auto max-w-6xl px-5 md:px-8 border-b-[0.5px] border-white/[0.08]">
-            <div className="flex overflow-x-auto -mb-px">
+          <div className="relative mx-auto max-w-6xl border-b-[0.5px] border-white/[0.08] px-5 md:px-8">
+            <div
+              ref={tabRailRef}
+              role="tablist"
+              aria-label="Forecast sections"
+              onScroll={(event) => {
+                const rail = event.currentTarget;
+                const maxScrollLeft = Math.max(0, rail.scrollWidth - rail.clientWidth);
+                setTabRailOverflow({
+                  left: rail.scrollLeft > 1,
+                  right: rail.scrollLeft < maxScrollLeft - 1,
+                });
+              }}
+              className="forecast-tab-rail -mb-px flex snap-x snap-mandatory overflow-x-auto"
+            >
               {TABS.map(tab => (
                 <button
                   key={tab.id}
                   type="button"
+                  id={`forecast-tab-${tab.id}`}
                   data-forecast-tab={tab.id}
+                  role="tab"
                   aria-selected={activeTab === tab.id}
+                  aria-controls="forecast-panel"
+                  tabIndex={activeTab === tab.id ? 0 : -1}
                   onClick={() => handleSelectTab(tab.id)}
-                  className={`flex-none px-4 py-3 text-[13px] whitespace-nowrap border-b-2 transition-colors ${
+                  onKeyDown={(event) => {
+                    const currentIndex = TABS.findIndex((item) => item.id === tab.id);
+                    let nextIndex: number | null = null;
+                    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % TABS.length;
+                    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + TABS.length) % TABS.length;
+                    if (event.key === "Home") nextIndex = 0;
+                    if (event.key === "End") nextIndex = TABS.length - 1;
+                    if (nextIndex === null) return;
+
+                    event.preventDefault();
+                    const nextTab = TABS[nextIndex]!;
+                    handleSelectTab(nextTab.id);
+                    window.requestAnimationFrame(() => {
+                      tabRailRef.current
+                        ?.querySelector<HTMLElement>(`[data-forecast-tab="${nextTab.id}"]`)
+                        ?.focus();
+                    });
+                  }}
+                  className={`min-h-11 flex-none snap-start whitespace-nowrap border-b-2 px-4 py-3 text-[13px] transition-colors ${
                     activeTab === tab.id
                       ? "border-white text-white font-medium"
                       : "border-transparent text-white/45 hover:text-white/65"
@@ -2517,11 +2588,30 @@ export default function Forecast() {
                 </button>
               ))}
             </div>
+            {tabRailOverflow.left ? (
+              <div
+                data-forecast-tab-fade="left"
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 left-5 z-10 w-8 bg-gradient-to-r from-[#04101e] to-transparent md:left-8"
+              />
+            ) : null}
+            {tabRailOverflow.right ? (
+              <div
+                data-forecast-tab-fade="right"
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 right-5 z-10 w-8 bg-gradient-to-l from-[#04101e] to-transparent md:right-8"
+              />
+            ) : null}
           </div>
         </div>
 
         {/* Tab Content */}
-        <div className="mx-auto max-w-6xl px-5 md:px-8 py-6 pb-12">
+        <div
+          id="forecast-panel"
+          role="tabpanel"
+          aria-labelledby={`forecast-tab-${activeTab}`}
+          className="mx-auto max-w-6xl px-5 py-6 pb-12 md:px-8"
+        >
           {activeTab === "current"    && <CurrentTab forecast={f} checkingAlerts={f.source_status?.nws === "pending"} />}
           {activeTab === "hourly"     && <HourlyTab hourly={f.hourly} />}
           {activeTab === "7day"       && <SevenDayTab daily={f.daily} textForecast={f.official_text_forecast} />}
