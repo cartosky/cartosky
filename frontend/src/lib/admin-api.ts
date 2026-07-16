@@ -169,6 +169,7 @@ export type StatusResult = {
     base_var: string;
     forecast_hour: number;
     missing_members: string[];
+    failure_statuses?: string[];
     consecutive_passes: number;
     first_seen_at: number;
     last_seen_at: number;
@@ -184,6 +185,20 @@ export type StatusResult = {
     read_error?: string;
   }>;
 };
+
+export function formatStatsIncompleteUnitCause(unit: {
+  missing_members?: string[];
+  failure_statuses?: string[];
+}): string {
+  const statuses = new Set(unit.failure_statuses ?? []);
+  if (statuses.has("error")) return "Processing error";
+  if (statuses.has("gate_failed")) return "Pre-encode sanity gate failed";
+  if (statuses.size > 0) return `Failed: ${Array.from(statuses).sort().join(", ")}`;
+  const missingMembers = (unit.missing_members ?? []).filter(Boolean);
+  return missingMembers.length > 0
+    ? `Missing ${missingMembers.join(", ")}`
+    : "Incomplete member roster";
+}
 
 export type Frames404Sample = {
   ts_iso: string;

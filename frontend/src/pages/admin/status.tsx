@@ -6,6 +6,7 @@ import {
   fetchAdminAuthStatus,
   fetchAdminStatusRunDetail,
   fetchAdminStatusResults,
+  formatStatsIncompleteUnitCause,
   type Frames404Summary,
   type StatusResult,
   type TwfStatus,
@@ -65,7 +66,7 @@ function issueLabel(issueType: string): string {
   if (issueType === "run_ongoing") return "Run ongoing";
   if (issueType === "run_incomplete") return "Run incomplete";
   if (issueType === "accum_step_gap") return "Accumulation step gap";
-  if (issueType === "stats_incomplete") return "Stats roster incomplete";
+  if (issueType === "stats_incomplete") return "Stats processing incomplete";
   if (issueType === "stale_run") return "Stale latest run";
   if (issueType === "bundle_unavailable") return "Bundle unavailable";
   if (issueType === "bundle_stalled") return "Bundle stalled";
@@ -760,7 +761,7 @@ export default function AdminStatusPage() {
 
               {(selected.stats_incomplete_units ?? []).length > 0 ? (
                 <div className="border-t border-amber-400/18 pt-5">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-100/72">Persistent stats roster gaps</div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-100/72">Persistent stats issues</div>
                   <div className="mt-3 space-y-3">
                     {(selected.stats_incomplete_units ?? []).map((unit) => (
                       <div key={`${unit.base_var}-${unit.forecast_hour}`} className="rounded-xl border border-amber-400/15 bg-amber-500/[0.06] px-4 py-3 text-sm">
@@ -768,7 +769,7 @@ export default function AdminStatusPage() {
                           {unit.base_var} · {formatForecastHour(unit.forecast_hour)} · {unit.consecutive_passes} passes
                         </div>
                         <div className="mt-1 text-amber-100/68">
-                          Missing {unit.missing_members.length > 0 ? unit.missing_members.join(", ") : "member roster data"}
+                          {formatStatsIncompleteUnitCause(unit)}
                         </div>
                         <div className="mt-1 text-xs text-white/44">
                           First seen {formatTimestamp(unit.first_seen_at)} · last seen {formatTimestamp(unit.last_seen_at)}

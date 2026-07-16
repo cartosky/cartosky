@@ -1601,6 +1601,37 @@ def _enforce_manifest_retention(root: Path, keep_runs: int) -> None:
             logger.warning("Failed removing old run manifest: %s", old_manifest)
 
 
+def _enforce_ensemble_stats_health_retention(
+    health_root: Path,
+    published_root: Path,
+) -> None:
+    """Remove stats-health files whose published run has been retained out."""
+    if not health_root.is_dir() or not published_root.is_dir():
+        return
+
+    kept_run_ids = {
+        child.name
+        for child in published_root.iterdir()
+        if child.is_dir()
+        and not child.name.startswith(".")
+        and _parse_run_id_datetime(child.name) is not None
+    }
+    for child in health_root.iterdir():
+        if (
+            not child.is_file()
+            or child.name.startswith(".")
+            or child.suffix != ".json"
+            or _parse_run_id_datetime(child.stem) is None
+            or child.stem in kept_run_ids
+        ):
+            continue
+        logger.info("Removing orphaned ensemble stats health file: %s", child)
+        try:
+            child.unlink()
+        except OSError:
+            logger.warning("Failed removing ensemble stats health file: %s", child)
+
+
 def _scheduler_product_category(plugin: Any | None) -> str:
     capabilities = getattr(plugin, "capabilities", None)
     if capabilities is None:
@@ -2573,9 +2604,15 @@ def _process_run(
             built_ok_at_last_publish = available
 
     effective_keep_runs = _resolved_keep_runs_for_scheduler_plugin(plugin, keep_runs)
-    _enforce_run_retention(data_root / "staging" / model_id, effective_keep_runs)
-    _enforce_run_retention(data_root / "published" / model_id, effective_keep_runs)
+    staging_model_root = data_root / "staging" / model_id
+    published_model_root = data_root / "published" / model_id
+    _enforce_run_retention(staging_model_root, effective_keep_runs)
+    _enforce_run_retention(published_model_root, effective_keep_runs)
     _enforce_manifest_retention(data_root / "manifests" / model_id, effective_keep_runs)
+    _enforce_ensemble_stats_health_retention(
+        data_root / "status" / "ensemble_stats" / model_id,
+        published_model_root,
+    )
     herbie_save_dir_raw = _env_value(ENV_HERBIE_SAVE_DIR).strip()
     if herbie_save_dir_raw:
         herbie_model_id = model_id

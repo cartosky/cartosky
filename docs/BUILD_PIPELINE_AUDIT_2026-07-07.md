@@ -371,6 +371,12 @@ member 1.
 
 ### 4.9 MED — Failure cleanup deletes the variable's whole shared contours dir
 
+**STATUS: FIXED 2026-07-16 (Wave 2 PR C, local).** Contour construction now
+returns the exact `fh{NNN}_{key}.geojson` path to `build_frame`, so validation
+or downstream failures remove only that forecast hour. A regression invokes
+the real cleanup helper and verifies another forecast hour in the shared
+contours directory survives.
+
 `build_frame` binds the contours *directory* into `contour_geojson_path` (`pipeline.py:391`), and `_cleanup_artifacts` (`pipeline.py:2198-2212`) deletes directories recursively — a failure after contour generation deletes all previously built fhs' contour geojsons for that var in staging. Mitigated by published copies surviving, but a staging/published divergence trap. Fix (S): return/clean only the per-fh geojson path.
 
 ### 4.10 LOW — additional items

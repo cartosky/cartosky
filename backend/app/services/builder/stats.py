@@ -269,6 +269,7 @@ class StatsPassSummary:
     rss_peak_mb: float = 0.0
     preempted: bool = False
     incomplete_units: list[dict[str, Any]] = field(default_factory=list)
+    failed_units: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
@@ -298,6 +299,7 @@ def _process_stats_unit(
     staging_run_root: Path,
     record: Callable[[str], None],
     record_incomplete: Callable[[str, int, list[str]], None],
+    record_failure: Callable[[str, int, str], None],
 ) -> None:
     from .stats_math import prob_exceedance, prob_non_exceedance, sorted_nanpercentile
 
@@ -375,6 +377,7 @@ def _process_stats_unit(
                     plan.model_id, var_id, fh,
                 )
                 record(STATUS_GATE_FAILED)
+                record_failure(ctx.base_var, fh, STATUS_GATE_FAILED)
                 continue
             write_grid_frames_for_run_root(
                 run_root=staging_run_root,
@@ -413,6 +416,7 @@ def _process_stats_unit(
         logger.exception(
             "Stats unit failed: %s/%s/fh%03d", plan.model_id, ctx.base_var, fh,
         )
+        record_failure(ctx.base_var, fh, STATUS_ERROR)
         for key, _var_id in missing:
             record(STATUS_ERROR)
 
@@ -462,6 +466,24 @@ def run_stats_pass(
             }
         )
 
+    def _record_failure(base_var: str, forecast_hour: int, status: str) -> None:
+        key = (str(base_var), int(forecast_hour))
+        for unit in summary.failed_units:
+            if (unit["base_var"], unit["forecast_hour"]) != key:
+                continue
+            statuses = unit["failure_statuses"]
+            if status not in statuses:
+                statuses.append(status)
+                statuses.sort()
+            return
+        summary.failed_units.append(
+            {
+                "base_var": key[0],
+                "forecast_hour": key[1],
+                "failure_statuses": [str(status)],
+            }
+        )
+
     for base_var, ctx in plan.contexts.items():
         for fh in plan.fhs_by_var[base_var]:
             if stop():
@@ -477,6 +499,7 @@ def run_stats_pass(
                 staging_run_root=staging_run_root,
                 record=_record,
                 record_incomplete=_record_incomplete,
+                record_failure=_record_failure,
             )
             wrote = summary.counts.get(STATUS_WRITTEN, 0) - before.get(STATUS_WRITTEN, 0)
             if wrote > 0:
@@ -492,7 +515,7 @@ def run_stats_pass(
             data_root=data_root,
             model_id=model_id,
             run_id=run_id,
-            incomplete_units=summary.incomplete_units,
+            incomplete_units=[*summary.incomplete_units, *summary.failed_units],
             pass_complete=not summary.preempted,
         )
     except Exception:
@@ -510,13 +533,14 @@ def run_stats_pass(
     ]
     if alerting_units:
         logger.warning(
-            "Persistent incomplete ensemble stats rosters: run=%s model=%s units=%s",
+            "Persistent incomplete ensemble stats units: run=%s model=%s units=%s",
             run_id,
             model_id,
             ",".join(
                 f"{unit.get('base_var')}/fh{int(unit.get('forecast_hour') or 0):03d}"
                 f"/passes={int(unit.get('consecutive_passes') or 0)}"
                 f"/missing={'+'.join(str(item) for item in unit.get('missing_members', []))}"
+                f"/failures={'+'.join(str(item) for item in unit.get('failure_statuses', []))}"
                 for unit in alerting_units
             ),
         )

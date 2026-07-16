@@ -574,6 +574,111 @@ def test_stats_pass_persists_and_clears_repeated_incomplete_roster_alert(
     assert not health_path.exists()
 
 
+def test_stats_pass_persists_processing_error_streak(
+    tmp_path, stats_roster_plugin,
+) -> None:
+    """A fully present roster that cannot be processed must alert through
+    the same durable stats-health channel as a partial roster."""
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        _publish_member_precip(tmp_path, run_id, member, 6, 0.8)
+
+    broken_meta_path = (
+        tmp_path / "published" / "gefs" / run_id
+        / "precip_total__m01" / "grid" / "fh006.l0.meta.json"
+    )
+    broken_meta = json.loads(broken_meta_path.read_text())
+    valid_transform = broken_meta["transform"]
+    broken_meta["transform"] = [1.0, 0.0]
+    broken_meta_path.write_text(json.dumps(broken_meta))
+
+    health_path = (
+        tmp_path / "status" / "ensemble_stats" / "gefs" / f"{run_id}.json"
+    )
+    for expected_passes in (1, 2, 3):
+        summary = stats_mod.run_stats_pass(
+            plugin=stats_roster_plugin,
+            model_id="gefs",
+            run_id=run_id,
+            data_root=tmp_path,
+            region="na",
+        )
+        assert summary.failed_units == [
+            {
+                "base_var": "precip_total",
+                "forecast_hour": 6,
+                "failure_statuses": [stats_mod.STATUS_ERROR],
+            }
+        ]
+        payload = json.loads(health_path.read_text())
+        assert payload["units"] == [
+            {
+                "alerting": expected_passes >= 3,
+                "base_var": "precip_total",
+                "consecutive_passes": expected_passes,
+                "failure_statuses": [stats_mod.STATUS_ERROR],
+                "first_seen_at": payload["units"][0]["first_seen_at"],
+                "forecast_hour": 6,
+                "last_seen_at": payload["units"][0]["last_seen_at"],
+                "missing_members": [],
+            }
+        ]
+
+    broken_meta["transform"] = valid_transform
+    broken_meta_path.write_text(json.dumps(broken_meta))
+    recovered = stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+    assert recovered.complete
+    assert not health_path.exists()
+
+
+def test_stats_pass_persists_gate_failure_streak(
+    tmp_path, stats_roster_plugin, monkeypatch,
+) -> None:
+    """A persistent pre-encode rejection is visible instead of retrying
+    forever with no health signal."""
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        _publish_member_precip(tmp_path, run_id, member, 6, 0.8)
+    monkeypatch.setattr(
+        stats_mod, "check_pre_encode_value_sanity", lambda *_args, **_kwargs: False,
+    )
+
+    for _ in range(3):
+        summary = stats_mod.run_stats_pass(
+            plugin=stats_roster_plugin,
+            model_id="gefs",
+            run_id=run_id,
+            data_root=tmp_path,
+            region="na",
+        )
+        assert summary.failed_units == [
+            {
+                "base_var": "precip_total",
+                "forecast_hour": 6,
+                "failure_statuses": [stats_mod.STATUS_GATE_FAILED],
+            }
+        ]
+
+    health_path = (
+        tmp_path / "status" / "ensemble_stats" / "gefs" / f"{run_id}.json"
+    )
+    unit = json.loads(health_path.read_text())["units"][0]
+    assert unit["failure_statuses"] == [stats_mod.STATUS_GATE_FAILED]
+    assert unit["missing_members"] == []
+    assert unit["consecutive_passes"] == 3
+    assert unit["alerting"] is True
+
+
 def test_stats_pass_does_not_alert_for_future_hour_with_zero_member_frames(
     tmp_path, stats_roster_plugin,
 ) -> None:

@@ -21,7 +21,11 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services.builder.fetch import fetch_variable
 from app.services.builder import fetch as fetch_module
 from app.services.builder import derive as derive_module
-from app.services.builder.pipeline import _build_contour_metadata_for_variable, build_frame
+from app.services.builder.pipeline import (
+    _build_contour_metadata_for_variable,
+    _cleanup_artifacts,
+    build_frame,
+)
 from app.services.builder.derive import FetchContext
 from app.models.aifs import AIFS_MODEL
 from app.models.eps import EPS_MODEL
@@ -625,7 +629,11 @@ def test_build_contour_metadata_uses_underlying_herbie_model_for_eps_anomaly(
     var_spec = EPS_MODEL.get_var("hgt500_anom")
     assert var_spec is not None
 
-    contours_meta, contour_dir = _build_contour_metadata_for_variable(
+    prior_contour = tmp_path / "contours" / "fh006_height_500mb.geojson"
+    prior_contour.parent.mkdir(parents=True)
+    prior_contour.write_text('{"type":"FeatureCollection","features":[]}')
+
+    contours_meta, contour_path = _build_contour_metadata_for_variable(
         model="eps",
         run_date=datetime(2026, 4, 24, 6, 0),
         fh=0,
@@ -645,7 +653,12 @@ def test_build_contour_metadata_uses_underlying_herbie_model_for_eps_anomaly(
     assert captured["search_pattern"] == ":gh:500:"
     assert captured["fetch_aggregation"] == "ecmwf_direct_mean_or_pf_mean"
     assert isinstance(contours_meta, dict)
-    assert contour_dir is not None
+    assert contour_path == tmp_path / "contours" / "fh000_height_500mb.geojson"
+
+    _cleanup_artifacts(contour_path)
+
+    assert not contour_path.exists()
+    assert prior_contour.is_file()
 
 
 def test_build_contour_metadata_reuses_cached_warped_eps_anomaly_component(

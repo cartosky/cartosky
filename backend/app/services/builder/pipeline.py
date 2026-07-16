@@ -388,7 +388,7 @@ def _build_contour_metadata_for_variable(
             "label": contour_label,
         }
     }
-    return metadata, contours_dir
+    return metadata, contour_path
 
 
 def _center_kind_from_contour_key(contour_key: str) -> str | None:

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-ENSEMBLE_STATS_HEALTH_CONTRACT_VERSION = "1.0"
+ENSEMBLE_STATS_HEALTH_CONTRACT_VERSION = "1.1"
 ENSEMBLE_STATS_ALERT_AFTER_PASSES = 3
 
 
@@ -70,7 +70,7 @@ def update_ensemble_stats_health(
     pass_complete: bool,
     now_ts: int | None = None,
 ) -> dict[str, Any] | None:
-    """Persist consecutive incomplete-roster observations for one stats run.
+    """Persist consecutive incomplete-unit observations for one stats run.
 
     A complete stats pass clears units it no longer observes. A preempted pass
     leaves prior state unchanged because it did not evaluate the full plan.
@@ -100,10 +100,18 @@ def update_ensemble_stats_health(
                 if str(member).strip()
             }
         )
+        failure_statuses = sorted(
+            {
+                str(status)
+                for status in observed.get("failure_statuses", [])
+                if str(status).strip()
+            }
+        )
         next_units[key] = {
             "base_var": key[0],
             "forecast_hour": key[1],
             "missing_members": missing_members,
+            "failure_statuses": failure_statuses,
             "consecutive_passes": consecutive_passes,
             "first_seen_at": int(prior.get("first_seen_at") or observed_at),
             "last_seen_at": observed_at,

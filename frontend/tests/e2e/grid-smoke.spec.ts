@@ -19,6 +19,29 @@ test('mobile viewer and comparison controls share an opaque glass surface', asyn
   expect(compareControls).toContain('viewer-mobile-control-surface');
 });
 
+test('formats persistent stats health causes for the admin dashboard', async ({ page }) => {
+  await page.goto('/src/lib/admin-api.ts');
+  const formatted = await page.evaluate(async () => {
+    const modulePath = '/src/lib/admin-api.ts';
+    const adminApi = await import(/* @vite-ignore */ modulePath);
+    const formatCause = adminApi.formatStatsIncompleteUnitCause;
+    if (typeof formatCause !== 'function') return null;
+    return [
+      formatCause({ failure_statuses: ['error'] }),
+      formatCause({ failure_statuses: ['gate_failed'] }),
+      formatCause({ missing_members: ['m17', 'm22'] }),
+      formatCause({}),
+    ];
+  });
+
+  expect(formatted).toEqual([
+    'Processing error',
+    'Pre-encode sanity gate failed',
+    'Missing m17, m22',
+    'Incomplete member roster',
+  ]);
+});
+
 function nearestFrame(frames: number[], current: number): number {
   if (frames.length === 0) return 0;
   if (frames.includes(current)) return current;

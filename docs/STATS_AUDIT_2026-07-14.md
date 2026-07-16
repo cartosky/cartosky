@@ -55,6 +55,14 @@ so bin truncation self-heals — the gap is cross-file only.
 
 ### S2 MED — Poison stats unit: forever-retry, invisible to alerting
 
+**STATUS: VISIBILITY FIXED 2026-07-16 (Wave 2 PR C, local); retry policy still
+open in Wave 3 item 8.** `error` and `gate_failed` units now persist alongside
+roster gaps in the per-run stats-health contract and become alerting after the
+same consecutive-pass threshold. The health record carries
+`failure_statuses`, the admin status detail renders the concrete cause, and a
+successful recovery clears the streak. This intentionally does not add the
+cap/backoff or transient/deterministic classification assigned to Wave 3.
+
 `STATUS_ERROR`/`STATUS_GATE_FAILED` units (`stats.py:360-366, 400-405`) never
 write frames, so the unit stays pending and re-runs on every scheduler cycle —
 re-decoding the full 50-member roster each time — with no retry cap, backoff,
@@ -128,6 +136,11 @@ percentiles and sort in place (~173 MB more; `np.sort` copy at
 3.11-family cleanup; pure perf, no semantics.
 
 ### S8 MED — Health-file leak for wedged runs
+
+**STATUS: FIXED 2026-07-16 (Wave 2 PR C, local).** Builder retention now
+prunes `status/ensemble_stats/{model}/{run}.json` against the run directories
+that actually remain in `published/{model}`. This removes sparse orphan files
+too; merely retaining the newest N health files would not have done so.
 
 Retention prunes only `staging/`, `published/`, `manifests/`
 (`scheduler.py:2576-2578`); nothing prunes `status/ensemble_stats/`. The only

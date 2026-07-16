@@ -311,8 +311,11 @@ scopes: A → precip_total_cumulative (item 3) + ptype_accumulation_cumulative
    stats unit of item 6 below.)~~ **— DONE 2026-07-16 (PR B, local):** the
    decoder now branches from packing metadata and a uint8 artifact round-trip
    regression pins the non-u16 path.
-4. **4.9.** Failure cleanup deletes only the failed fh's contour geojson, not
-   the variable's whole shared contours directory.
+~~4. **4.9.** Failure cleanup deletes only the failed fh's contour geojson, not
+   the variable's whole shared contours directory.~~ **— DONE 2026-07-16
+   (PR C, local):** contour generation now returns the per-fh GeoJSON path to
+   the failure cleanup path; a regression proves cleanup preserves a sibling
+   forecast hour in the shared directory.
 ~~5. **Stats sidecar in the resume check (stats audit S1).** The stats-unit
    resume check (`member_frame_is_complete`) validates only bin+meta; the
    `fh{NNN}.json` sidecar is written after them, so a crash in that window
@@ -322,13 +325,18 @@ scopes: A → precip_total_cumulative (item 3) + ptype_accumulation_cumulative
    **— DONE 2026-07-16 (PR B, local):** a stats-only completeness helper now
    governs pending, resume, and promotion; missing sidecars recompute while
    member-roster completeness remains bin+meta-only.
-6. **Stats-unit error-streak visibility + health-file retention (stats audit
+~~6. **Stats-unit error-streak visibility + health-file retention (stats audit
    S2 + S8).** (a) `ensemble_stats_health` tracks only roster-incomplete
    units — persistent `error`/`gate_failed` units retry every cycle forever
    (re-decoding the full roster) and never alert; count those streaks in the
    health JSON too (cap/backoff itself belongs with Wave 3's 3.8). (b) Run
    retention never prunes `status/ensemble_stats/{model}/`; wedged runs
-   strand one health file each, unbounded — prune it against kept runs.
+   strand one health file each, unbounded — prune it against kept runs.~~
+   **— DONE 2026-07-16 (PR C, local):** processing errors and pre-encode gate
+   failures now advance the same durable per-unit alert streak, including a
+   typed failure cause surfaced in the admin status detail. Recovery clears
+   the streak. Retention removes health JSONs whose run no longer exists in
+   the retained published tree. Retry cap/backoff remains Wave 3 item 8.
 
 ## Wave 3 — Fetch reliability
 
