@@ -2580,7 +2580,7 @@ export default function Forecast() {
                   }}
                   className={`min-h-11 flex-none snap-start whitespace-nowrap border-b-2 px-4 py-3 text-[13px] transition-colors ${
                     activeTab === tab.id
-                      ? "border-white text-white font-medium"
+                      ? "border-cyan-300 text-white font-medium"
                       : "border-transparent text-white/45 hover:text-white/65"
                   }`}
                 >

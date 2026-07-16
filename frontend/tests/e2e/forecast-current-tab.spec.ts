@@ -242,6 +242,7 @@ test.describe("Forecast current tab", () => {
     await today.press("ArrowRight");
     await expect(hourly).toHaveAttribute("aria-selected", "true");
     await expect(hourly).toHaveAttribute("tabindex", "0");
+    await expect.poll(() => hourly.evaluate((element) => getComputedStyle(element).borderBottomColor)).toBe("rgb(103, 232, 249)");
     await expect(page.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "forecast-tab-hourly");
 
     const tabHeights = await rail.getByRole("tab").evaluateAll((tabs) => (
