@@ -812,22 +812,6 @@ def test_fetch_variable_reuses_cached_eps_full_grib(monkeypatch, tmp_path: Path)
             assert search_pattern == pattern
             return str(tmp_path / "subset.grib2")
 
-    class _FakeResponse:
-        def __init__(self, payload: bytes) -> None:
-            self._payload = payload
-            self.status_code = 200
-            self.headers = {"Content-Length": str(len(payload))}
-
-        def raise_for_status(self) -> None:
-            return None
-
-        def iter_content(self, chunk_size: int = 1024 * 1024):
-            del chunk_size
-            yield self._payload
-
-        def close(self) -> None:
-            return None
-
     class _FakeDataset:
         crs = rasterio.crs.CRS.from_epsg(4326)
         transform = rasterio.transform.Affine.identity()
@@ -851,11 +835,36 @@ def test_fetch_variable_reuses_cached_eps_full_grib(monkeypatch, tmp_path: Path)
         assert Path(path).read_bytes() == expected_subset
         return _FakeDataset()
 
-    def _fake_requests_get(url: str, stream: bool = False, timeout: int = 90):
-        assert stream is True
-        assert timeout == 90
-        request_calls.append(url)
-        return _FakeResponse(full_payload)
+    class _FakeFullGribResponse:
+        status_code = 200
+        headers = {"Content-Length": str(len(full_payload))}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            del exc_type, exc, tb
+            return False
+
+        def raise_for_status(self) -> None:
+            return None
+
+        async def aiter_bytes(self, chunk_size: int):
+            del chunk_size
+            yield full_payload
+
+    class _FakeFullGribClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            del exc_type, exc, tb
+            return False
+
+        def stream(self, method: str, url: str):
+            assert method == "GET"
+            request_calls.append(url)
+            return _FakeFullGribResponse()
 
     fake_herbie_core = ModuleType("herbie.core")
     fake_herbie_core.Herbie = _FakeHerbieFullCache
@@ -869,10 +878,14 @@ def test_fetch_variable_reuses_cached_eps_full_grib(monkeypatch, tmp_path: Path)
     monkeypatch.setenv("TWF_EPS_FULL_FILE_CACHE_ROOT", str(tmp_path / "full-cache"))
 
     with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
-        monkeypatch.setattr(fetch_module.requests, "get", _fake_requests_get)
+        monkeypatch.setattr(
+            fetch_module,
+            "_full_grib_http_client",
+            lambda **_kwargs: _FakeFullGribClient(),
+        )
         monkeypatch.setattr(fetch_module.rasterio, "open", _fake_rasterio_open)
 
-        for _ in range(2):
+        for call_index in range(2):
             data, crs, transform = fetch_variable(
                 model_id="ifs",
                 product="enfo",
@@ -884,6 +897,11 @@ def test_fetch_variable_reuses_cached_eps_full_grib(monkeypatch, tmp_path: Path)
             assert np.allclose(data, np.array([[1.0]], dtype=np.float32))
             assert crs.to_epsg() == 4326
             assert transform == rasterio.transform.Affine.identity()
+            if call_index == 0:
+                # This test isolates full-file-cache reuse.  Standard fetches
+                # now correctly reuse their derived subset before reaching the
+                # full-file fallback, so remove that subset between calls.
+                (tmp_path / "subset.grib2").unlink()
 
     assert request_calls == ["https://example.invalid/2026041900-000h-enfo-ef.grib2"]
     metrics = fetch_module.get_herbie_runtime_metrics_for_tests()

@@ -20,6 +20,7 @@ Usage
 
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from collections import OrderedDict
@@ -38,6 +39,7 @@ from typing import Any, Literal, overload
 from urllib.parse import urlsplit, urlunsplit
 
 import numpy as np
+import httpx
 import rasterio
 import rasterio.crs
 import rasterio.errors
@@ -100,6 +102,10 @@ ENV_EPS_FULL_FILE_CACHE_TTL_SECONDS = (
     "CARTOSKY_EPS_FULL_FILE_CACHE_TTL_SECONDS",
     "TWF_EPS_FULL_FILE_CACHE_TTL_SECONDS",
 )
+ENV_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS = (
+    "CARTOSKY_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS",
+    "TWF_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS",
+)
 ENV_GRIB_DISK_CACHE_LOCK = (
     "CARTOSKY_GRIB_DISK_CACHE_LOCK",
     "CARTOSKY_V3_GRIB_DISK_CACHE_LOCK",
@@ -120,6 +126,8 @@ DEFAULT_RANGE_FETCH_WORKERS = 8
 DEFAULT_EPS_FULL_FILE_CACHE_MAX_BYTES = 200 * 1024 * 1024 * 1024
 DEFAULT_EPS_FULL_FILE_CACHE_TTL_SECONDS = 2 * 60 * 60
 DEFAULT_EPS_FULL_FILE_CACHE_CLEANUP_INTERVAL_SECONDS = 60.0
+DEFAULT_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS = 30 * 60.0
+DEFAULT_FULL_GRIB_READ_TIMEOUT_SECONDS = 90.0
 _GRIB_DISK_CACHE_LOCK_WAITS = 0
 _EPS_FULL_FILE_CACHE_CLEANUP_LOCK = threading.Lock()
 _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS = 0.0
@@ -467,6 +475,14 @@ def _float_from_env(name: str | tuple[str, ...], default: float, *, minimum: flo
     return max(minimum, parsed)
 
 
+def _full_grib_download_deadline_seconds() -> float:
+    return _float_from_env(
+        ENV_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS,
+        DEFAULT_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS,
+        minimum=1.0,
+    )
+
+
 def _int_from_env(name: str | tuple[str, ...], default: int, *, minimum: int = 1) -> int:
     raw = _env_value(name)
     if not raw:
@@ -696,6 +712,9 @@ def _eps_full_file_cache_path(*, source_url: str, run_date: datetime, fh: int) -
     return root / _run_id_from_date(run_date) / f"fh{int(fh):03d}" / f"{_url_hash(source_url)}-{file_name}"
 
 
+_CACHE_TEMP_SUFFIXES = (".part", ".full")
+
+
 def _iter_cache_files(root: Path) -> list[tuple[Path, int, float]]:
     files: list[tuple[Path, int, float]] = []
     try:
@@ -706,13 +725,46 @@ def _iter_cache_files(root: Path) -> list[tuple[Path, int, float]]:
 
     for path in root.rglob("*"):
         try:
-            if not path.is_file() or path.name.endswith(".lock") or path.name.endswith(".part"):
+            if not path.is_file() or path.name.endswith(".lock") or path.name.endswith(_CACHE_TEMP_SUFFIXES):
                 continue
             stat = path.stat()
         except OSError:
             continue
         files.append((path, int(stat.st_size), float(stat.st_mtime)))
     return files
+
+
+def _reap_stale_cache_temp_files(root: Path, *, now_wall: float) -> None:
+    # Temp files (.part downloads, .full fallbacks) are normally removed by
+    # their creator's finally-block; only a hard crash (SIGKILL, OOM, power
+    # loss) orphans them.  Age-based deletion only — a temp younger than 2x
+    # the download deadline may belong to an in-flight download and must
+    # never be reaped, and temps are exempt from size-pressure eviction.
+    stale_after_seconds = 2.0 * _full_grib_download_deadline_seconds()
+    try:
+        if not root.exists():
+            return
+    except OSError:
+        return
+
+    # Materialize before deleting: reaping can empty (and remove) a directory
+    # that a live rglob generator still intends to scan.
+    stale_paths: list[Path] = []
+    for path in root.rglob("*"):
+        try:
+            if not path.is_file() or not path.name.endswith(_CACHE_TEMP_SUFFIXES):
+                continue
+            modified_at = float(path.stat().st_mtime)
+        except OSError:
+            continue
+        if (now_wall - modified_at) <= stale_after_seconds:
+            continue
+        stale_paths.append(path)
+
+    for path in stale_paths:
+        if _remove_file_quietly(path):
+            _metric_increment("eps_full_file_cache_temp_reaped")
+            _remove_empty_parent_dirs(path, stop_at=root)
 
 
 def _remove_file_quietly(path: Path) -> bool:
@@ -746,6 +798,8 @@ def _cleanup_eps_full_file_cache(*, keep_paths: set[Path] | None = None, force: 
         if not force and (now_wall - _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS) < DEFAULT_EPS_FULL_FILE_CACHE_CLEANUP_INTERVAL_SECONDS:
             return
         _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS = now_wall
+
+        _reap_stale_cache_temp_files(root, now_wall=now_wall)
 
         files = _iter_cache_files(root)
         if not files:
@@ -781,38 +835,91 @@ def _cleanup_eps_full_file_cache(*, keep_paths: set[Path] | None = None, force: 
                 _remove_empty_parent_dirs(path, stop_at=root)
 
 
-def _download_full_grib_to_path(*, source_url: str, out_path: Path) -> Path:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = out_path.with_suffix(f"{out_path.suffix}.part")
-    response = requests.get(source_url, stream=True, timeout=90)
-    try:
-        response.raise_for_status()
-        if response.status_code != 200:
-            # raise_for_status passes 3xx; an unfollowable redirect (e.g. NOMADS
-            # anti-abuse block) would otherwise be saved as the "full file".
-            raise RuntimeError(
-                f"Full GRIB download returned status {response.status_code}: {source_url}"
-            )
-        expected_size = _parse_float_tag(response.headers.get("Content-Length"))
-        with open(tmp_path, "wb") as dst:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if not chunk:
-                    continue
-                dst.write(chunk)
-    finally:
-        response.close()
+def _full_grib_http_client(*, timeout_seconds: float) -> httpx.AsyncClient:
+    operation_timeout = max(0.001, min(DEFAULT_FULL_GRIB_READ_TIMEOUT_SECONDS, timeout_seconds))
+    return httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=httpx.Timeout(operation_timeout),
+    )
 
-    file_ok, file_size = _subset_file_status(tmp_path)
-    if not file_ok:
-        _remove_file_quietly(tmp_path)
-        raise RuntimeError(f"EPS full GRIB download produced no file bytes: {source_url}")
-    if expected_size is not None and int(expected_size) > 0 and int(file_size) != int(expected_size):
-        _remove_file_quietly(tmp_path)
-        raise RuntimeError(
-            f"EPS full GRIB download size mismatch for {source_url}: got {file_size}, expected {int(expected_size)}"
+
+async def _download_full_grib_to_path_async(*, source_url: str, out_path: Path) -> Path:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline_seconds = _full_grib_download_deadline_seconds()
+    started_at = time.monotonic()
+    tmp_path: Path | None = None
+
+    def _deadline_error() -> TimeoutError:
+        return TimeoutError(
+            f"Full GRIB download exceeded wall-clock deadline "
+            f"({deadline_seconds:.1f}s): {source_url}"
         )
-    tmp_path.replace(out_path)
-    return out_path
+
+    def _raise_if_deadline_exceeded() -> None:
+        if time.monotonic() - started_at >= deadline_seconds:
+            raise _deadline_error()
+
+    try:
+        async with asyncio.timeout(deadline_seconds):
+            async with _full_grib_http_client(timeout_seconds=deadline_seconds) as client:
+                async with client.stream("GET", source_url) as response:
+                    response.raise_for_status()
+                    if response.status_code != 200:
+                        # raise_for_status passes 3xx; an unfollowable redirect
+                        # body must not be saved as the full GRIB.
+                        raise RuntimeError(
+                            f"Full GRIB download returned status {response.status_code}: {source_url}"
+                        )
+                    expected_size = _parse_float_tag(response.headers.get("Content-Length"))
+                    with tempfile.NamedTemporaryFile(
+                        mode="wb",
+                        prefix=f".{out_path.name}.",
+                        suffix=".part",
+                        dir=out_path.parent,
+                        delete=False,
+                    ) as dst:
+                        tmp_path = Path(dst.name)
+                        async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
+                            _raise_if_deadline_exceeded()
+                            if not chunk:
+                                continue
+                            dst.write(chunk)
+                            _raise_if_deadline_exceeded()
+
+            _raise_if_deadline_exceeded()
+            file_ok, file_size = _subset_file_status(tmp_path)
+            if not file_ok:
+                raise RuntimeError(f"EPS full GRIB download produced no file bytes: {source_url}")
+            if expected_size is not None and int(expected_size) > 0 and int(file_size) != int(expected_size):
+                raise RuntimeError(
+                    f"EPS full GRIB download size mismatch for {source_url}: got {file_size}, expected {int(expected_size)}"
+                )
+            tmp_path.replace(out_path)
+            return out_path
+    except TimeoutError as exc:
+        if str(exc).startswith("Full GRIB download exceeded wall-clock deadline"):
+            raise
+        raise _deadline_error() from exc
+    except asyncio.CancelledError as exc:
+        if time.monotonic() - started_at >= deadline_seconds:
+            raise _deadline_error() from exc
+        raise
+    finally:
+        if tmp_path is not None:
+            _remove_file_quietly(tmp_path)
+
+
+def _download_full_grib_to_path(*, source_url: str, out_path: Path) -> Path:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            _download_full_grib_to_path_async(
+                source_url=source_url,
+                out_path=out_path,
+            )
+        )
+    raise RuntimeError("Full GRIB download cannot run inside an active asyncio event loop")
 
 
 def _maybe_get_eps_full_grib_path(
@@ -832,7 +939,16 @@ def _maybe_get_eps_full_grib_path(
 
     cache_path = _eps_full_file_cache_path(source_url=source_url, run_date=run_date, fh=fh)
     try:
-        with _path_download_lock(cache_path):
+        with _path_download_lock(
+            cache_path,
+            timeout_seconds=(
+                _full_grib_download_deadline_seconds()
+                + max(
+                    DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS,
+                    DEFAULT_GRIB_DISK_LOCK_POLL_SECONDS,
+                )
+            ),
+        ):
             cached_ok, cached_size = _subset_file_status(cache_path)
             if cached_ok:
                 cache_path.touch()
@@ -2903,7 +3019,7 @@ def _subset_file_status(path: Path) -> tuple[bool, int]:
 
 
 @contextmanager
-def _path_download_lock(path: Path):
+def _path_download_lock(path: Path, *, timeout_seconds: float | None = None):
     if not _grib_disk_cache_lock_enabled():
         yield
         return
@@ -2919,7 +3035,12 @@ def _path_download_lock(path: Path):
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(lock_path, "a+")
     waited = False
-    deadline = time.monotonic() + DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS
+    wait_seconds = (
+        DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS
+        if timeout_seconds is None
+        else max(DEFAULT_GRIB_DISK_LOCK_POLL_SECONDS, float(timeout_seconds))
+    )
+    deadline = time.monotonic() + wait_seconds
     try:
         while True:
             try:
@@ -3311,7 +3432,14 @@ def _fetch_subset_bytes_from_full_source(
     source_path = source_url
     try:
         if source_url.startswith(("http://", "https://")):
-            temp_full_path = out_path.with_suffix(f"{out_path.suffix}.full")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                prefix=f".{out_path.name}.",
+                suffix=".full",
+                dir=out_path.parent,
+                delete=False,
+            ) as temp_full:
+                temp_full_path = Path(temp_full.name)
             downloaded_path = _download_full_grib_to_path(source_url=source_url, out_path=temp_full_path)
             source_path = str(downloaded_path)
 
@@ -3788,8 +3916,6 @@ def fetch_variable(
     ]
     retries = _retry_count()
     sleep_s = _retry_sleep_seconds()
-    lock_enabled = _grib_disk_cache_lock_enabled()
-
     last_exc: Exception | None = None
     saw_missing_index = False
     saw_missing_subset_file = False
@@ -3927,11 +4053,9 @@ def fetch_variable(
                     fh=fh,
                     search_pattern=search_pattern,
                 )
-                subset_hint: Path | None = None
-                if lock_enabled:
-                    subset_hint = subset_target
+                subset_hint = subset_target
 
-                if lock_enabled and subset_hint is not None:
+                if subset_hint is not None:
                     with _subset_download_lock(subset_hint):
                         cached_ok, cached_size = _subset_file_status(subset_hint)
                         if cached_ok:
@@ -4068,125 +4192,6 @@ def fetch_variable(
                         )
                         selected_meta = attempt_meta
                         break
-                else:
-                    try:
-                        if _prefer_inventory_byte_range:
-                            subset_path = _download_subset_with_inventory_byte_range(
-                                H,
-                                search_pattern=search_pattern,
-                                out_path=subset_target,
-                                model_id=model_id,
-                                run_date=run_date,
-                                product=product,
-                                fh=fh,
-                                priority=priority,
-                                bundle_fetch_cache=bundle_fetch_cache,
-                                force_inventory_refresh=True,
-                            )
-                            if subset_path is None:
-                                raise RuntimeError("inventory byte-range unavailable")
-                        else:
-                            subset_path = H.download(search_pattern, errors="raise", overwrite=True)
-                    except Exception as herbie_exc:
-                        if _is_no_space_error(herbie_exc):
-                            raise
-                        logger.warning(
-                            "Herbie subset download failed; trying direct byte-range fallback (%s fh%03d %s; priority=%s; attempt=%d/%d): %s",
-                            model_id,
-                            fh,
-                            search_pattern,
-                            priority,
-                            attempt_idx,
-                            attempts_for_priority,
-                            herbie_exc,
-                        )
-                        subset_path = _download_subset_with_inventory_byte_range(
-                            H,
-                            search_pattern=search_pattern,
-                            out_path=subset_target,
-                            model_id=model_id,
-                            run_date=run_date,
-                            product=product,
-                            fh=fh,
-                            priority=priority,
-                            bundle_fetch_cache=bundle_fetch_cache,
-                            force_inventory_refresh=True,
-                        )
-                        if subset_path is None:
-                            raise herbie_exc
-                    if subset_path is None:
-                        saw_missing_subset_file = True
-                        if precheck_pattern_missing:
-                            _note_pattern_missing_failure(priority)
-                        logger.warning(
-                            "Herbie subset unavailable: download returned None (%s fh%03d %s; priority=%s; attempt=%d/%d)",
-                            model_id,
-                            fh,
-                            search_pattern,
-                            priority,
-                            attempt_idx,
-                            attempts_for_priority,
-                        )
-                        if sleep_s > 0 and attempt_idx < attempts_for_priority:
-                            time.sleep(sleep_s)
-                        continue
-                    subset_candidate = Path(subset_path)
-                    subset_ok, subset_size = _subset_file_status(subset_candidate)
-
-                    if not subset_ok:
-                        saw_missing_subset_file = True
-                        logger.warning(
-                            "Herbie subset file missing/empty after download (%s fh%03d %s; priority=%s; attempt=%d/%d): %s (size=%d)",
-                            model_id,
-                            fh,
-                            search_pattern,
-                            priority,
-                            attempt_idx,
-                            attempts_for_priority,
-                            subset_candidate,
-                            subset_size,
-                        )
-                        manual_subset = _manual_subset_download_with_corrected_range(
-                            H,
-                            search_pattern=search_pattern,
-                            out_path=subset_candidate,
-                            model_id=model_id,
-                            run_date=run_date,
-                            product=product,
-                            fh=fh,
-                            priority=priority,
-                            bundle_fetch_cache=bundle_fetch_cache,
-                        )
-                        if manual_subset is not None:
-                            grib_path = manual_subset
-                            grib_priority = priority
-                            selected_meta = attempt_meta
-                            break
-                        if precheck_pattern_missing:
-                            _note_pattern_missing_failure(priority)
-                        try:
-                            if subset_candidate.exists():
-                                subset_candidate.unlink()
-                        except OSError:
-                            pass
-                        if sleep_s > 0 and attempt_idx < attempts_for_priority:
-                            time.sleep(sleep_s)
-                        continue
-
-                    grib_path = subset_candidate
-                    grib_priority = priority
-                    logger.info(
-                        "Downloaded GRIB: %s (%s fh%03d %s; priority=%s; attempt=%d/%d)",
-                        grib_path.name,
-                        model_id,
-                        fh,
-                        search_pattern,
-                        priority,
-                        attempt_idx,
-                        attempts_for_priority,
-                    )
-                    selected_meta = attempt_meta
-                    break
             except Exception as exc:
                 last_exc = exc
                 if precheck_pattern_missing:

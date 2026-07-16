@@ -1231,6 +1231,112 @@ def test_grib_not_found_falls_back_to_manual_byte_range_refresh(
     assert subset_path.read_bytes() == b"grib"
 
 
+def test_fetch_variable_reuses_cached_subset_when_disk_lock_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pattern = ":TMP:2 m above ground:"
+    cached_subset = tmp_path / "cached-valid.grib2"
+    cached_subset.write_bytes(b"grib")
+
+    class _FakeHerbie:
+        download_calls = 0
+
+        def __init__(self, date: datetime, **kwargs):
+            del date, kwargs
+            self.idx = "https://aws.example/gfs.idx"
+            self.grib = "https://aws.example/gfs.grib2"
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([
+                {"search_this": pattern, "start_byte": 0, "end_byte": 99}
+            ])
+
+        def get_localFilePath(self, search_pattern: str) -> str:
+            assert search_pattern == pattern
+            return str(cached_subset)
+
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False):
+            del search_pattern, errors, overwrite
+            type(self).download_calls += 1
+            raise AssertionError("valid cached subset must be reused")
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    _install_fake_rasterio_open(monkeypatch)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "aws")
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "1")
+    monkeypatch.setenv("TWF_HERBIE_RETRY_SLEEP_SECONDS", "0")
+    for env_name in fetch_module.ENV_GRIB_DISK_CACHE_LOCK:
+        monkeypatch.delenv(env_name, raising=False)
+
+    data, crs, transform = fetch_module.fetch_variable(
+        model_id="gfs",
+        product="pgrb2.0p25",
+        search_pattern=pattern,
+        run_date=datetime(2026, 7, 16, 0, 0),
+        fh=6,
+    )
+
+    assert np.allclose(data, np.array([[1.0]], dtype=np.float32))
+    assert crs == "EPSG:4326"
+    assert transform == fetch_module.rasterio.transform.Affine.identity()
+    assert _FakeHerbie.download_calls == 0
+
+
+def test_fetch_variable_uses_non_overwriting_download_without_disk_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pattern = ":TMP:2 m above ground:"
+    subset_path = tmp_path / "new-subset.grib2"
+    overwrite_values: list[bool] = []
+
+    class _FakeHerbie:
+        def __init__(self, date: datetime, **kwargs):
+            del date, kwargs
+            self.idx = "https://aws.example/gfs.idx"
+            self.grib = "https://aws.example/gfs.grib2"
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([
+                {"search_this": pattern, "start_byte": 0, "end_byte": 99}
+            ])
+
+        def get_localFilePath(self, search_pattern: str) -> str:
+            assert search_pattern == pattern
+            return str(subset_path)
+
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False):
+            del errors
+            assert search_pattern == pattern
+            overwrite_values.append(overwrite)
+            subset_path.write_bytes(b"grib")
+            return str(subset_path)
+
+    _install_fake_herbie(monkeypatch, _FakeHerbie)
+    _install_fake_rasterio_open(monkeypatch)
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_PRIORITY", "aws")
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "1")
+    monkeypatch.setenv("TWF_HERBIE_RETRY_SLEEP_SECONDS", "0")
+    for env_name in fetch_module.ENV_GRIB_DISK_CACHE_LOCK:
+        monkeypatch.delenv(env_name, raising=False)
+
+    data, _crs, _transform = fetch_module.fetch_variable(
+        model_id="gfs",
+        product="pgrb2.0p25",
+        search_pattern=pattern,
+        run_date=datetime(2026, 7, 16, 0, 0),
+        fh=6,
+    )
+
+    assert np.allclose(data, np.array([[1.0]], dtype=np.float32))
+    assert overwrite_values == [False]
+
+
 @pytest.mark.parametrize(
     "open_error_message",
     [

@@ -213,7 +213,14 @@ Fix (M): retry the range request 2–3× with short backoff before the full-file
 
 Fix (S, one line): assert `status_code == 206` (or `len(payload) == expected_size`); raise `_InvalidGribSubsetError` otherwise.
 
-### 3.4 MED — Subset reuse disabled by default; identical subsets re-downloaded
+~~### 3.4 MED — Subset reuse disabled by default; identical subsets re-downloaded~~
+
+**STATUS: FIXED 2026-07-16 (Wave 3 PR A, local).** `fetch_variable` now uses
+one cache-first subset path regardless of whether the cross-process disk lock
+is enabled: a valid existing subset is reused, and a miss calls Herbie with
+`overwrite=False`. Regressions pin both unlocked behaviors. The existing EPS
+full-file-cache test now removes its derived subset between calls so it
+continues to exercise that lower fallback cache independently.
 
 With the disk lock env off (default, `fetch.py:2816`), cached-GRIB reuse exists only in the locked branch (`fetch.py:3866-3884`); the default branch calls `H.download(..., overwrite=True)` (`fetch.py:4021`). Identical subsets are fetched multiple times per run (UGRD/VGRD shared across wspd/barbs, accumulation loops, invalid-subset retries). `BundleFetchCache` covers only the byte-range paths.
 
@@ -349,7 +356,21 @@ Fix (M): reuse `_is_*_error` classification + negative cache; extract one shared
 
 **Related fix landed nearby, not the same bug:** `_inventory_row_byte_range` grew a `_length`-based fallback this week (`636c3573`/`37fb767b`, "fix: ... end byte ... eccodes-style inventories") that fixes a *different* off-by-one — ECMWF's eccodes-style rows report an exclusive `end_byte` (offset+length), which was being treated as inclusive and over-reading one byte past EOF on a file's last message, tripping this audit's own 3.3 strict-payload-size fix. That fallback only rescues rows carrying `_offset`/`_length` (eccodes-style, i.e. ECMWF). The wgrib2-style records this finding describes never populate a `_length` key (only `start_byte`/`search_this`/`inventory_line`/`line`), so they still can't be rescued — this finding remains open and distinct from the fixed one.
 
-### 4.6 MED — `.part` download path is deterministic and unlocked by default
+~~### 4.6 MED — `.part` download path is deterministic and unlocked by default~~
+
+**STATUS: FIXED 2026-07-16 (Wave 3 PR A, local).** Full-GRIB downloads now
+stream into a unique `NamedTemporaryFile` beside the destination, validate
+size, and atomically replace only after success; every failure removes only
+its own temp and preserves any completed destination. A configurable
+`CARTOSKY_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS` /
+`TWF_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS` wall-clock deadline defaults to 30
+minutes, covers connection/header acquisition and body streaming through a
+cancellable async request, and also sizes the full-file-cache lock wait (plus
+lock grace), while ordinary subset locks retain their short timeout. Each
+non-cached full-source fallback owns a unique `.full` file until its caller
+finishes reading it, removing the downstream shared-file deletion race.
+Concurrency, interrupted stream, blocked header/body, deadline, fallback
+consumption, and lock-wait regressions were each demonstrated RED pre-fix.
 
 `_download_full_grib_to_path` (`fetch.py:749`): `out_path.with_suffix(".part")`; the guarding `_path_download_lock` is a no-op with the lock env off (default). Concurrent writers interleave into the same `.part`; the size check (`fetch.py:772`) misses equal-size interleavings. Also unbounded total download time. Fix (S): unique temp name + atomic `replace`; wall-clock deadline. When the lock IS enabled, the 8 s lock timeout (constant `fetch.py:109`, used at `2855`) is far shorter than a multi-GB download held under it — spurious `TimeoutError`s for waiters.
 

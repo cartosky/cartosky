@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import os
 import sys
 import threading
 import time
@@ -32,6 +34,53 @@ class _FakeResponse:
 
     def close(self) -> None:
         return None
+
+
+class _FakeFullGribResponseContext:
+    def __init__(self, response) -> None:
+        self._response = response
+        self.status_code = response.status_code
+        self.headers = response.headers
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        del exc_type, exc, tb
+        self._response.close()
+        return False
+
+    def raise_for_status(self) -> None:
+        self._response.raise_for_status()
+
+    async def aiter_bytes(self, chunk_size: int):
+        yield_from = self._response.iter_content(chunk_size=chunk_size)
+        for chunk in yield_from:
+            yield chunk
+
+
+class _FakeFullGribClient:
+    def __init__(self, response_factory) -> None:
+        self._response_factory = response_factory
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        del exc_type, exc, tb
+        return False
+
+    def stream(self, method: str, url: str):
+        del method, url
+        return _FakeFullGribResponseContext(self._response_factory())
+
+
+def _install_full_grib_response(monkeypatch: pytest.MonkeyPatch, response_factory) -> None:
+    monkeypatch.setattr(
+        fetch_module,
+        "_full_grib_http_client",
+        lambda **_kwargs: _FakeFullGribClient(response_factory),
+    )
 
 
 def _install_fake_herbie(monkeypatch: pytest.MonkeyPatch, herbie_cls: type) -> None:
@@ -486,11 +535,10 @@ def test_download_full_grib_to_path_rejects_non_200_status(
             del chunk_size
             yield self.content
 
-    def _fake_get(url: str, *, stream: bool = False, timeout: int = 0, **kwargs):
-        del url, stream, timeout, kwargs
-        return _FakeStreamResponse(b"<html>blocked</html>", status_code=302)
-
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_full_grib_response(
+        monkeypatch,
+        lambda: _FakeStreamResponse(b"<html>blocked</html>", status_code=302),
+    )
 
     with pytest.raises(RuntimeError, match="status 302"):
         fetch_module._download_full_grib_to_path(
@@ -498,6 +546,370 @@ def test_download_full_grib_to_path_rejects_non_200_status(
             out_path=tmp_path / "full.grib2",
         )
     assert not (tmp_path / "full.grib2").exists()
+
+
+def test_download_full_grib_uses_unique_temp_files_for_concurrent_callers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    payload = b"GRIB" + (b"A" * 64)
+    barrier = threading.Barrier(2)
+    observed_part_names: set[str] = set()
+
+    class _ConcurrentStreamResponse:
+        status_code = 200
+        headers = {"Content-Length": str(len(payload))}
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int):
+            del chunk_size
+            barrier.wait(timeout=2.0)
+            observed_part_names.update(
+                path.name for path in tmp_path.iterdir()
+                if path.name.endswith(".part")
+            )
+            yield payload
+
+        def close(self) -> None:
+            return None
+
+    _install_full_grib_response(monkeypatch, _ConcurrentStreamResponse)
+    out_path = tmp_path / "full.grib2"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda _index: fetch_module._download_full_grib_to_path(
+                    source_url="https://example.invalid/full.grib2",
+                    out_path=out_path,
+                ),
+                range(2),
+            )
+        )
+
+    assert results == [out_path, out_path]
+    assert len(observed_part_names) == 2
+    assert out_path.read_bytes() == payload
+    assert not [path for path in tmp_path.iterdir() if path.name.endswith(".part")]
+
+
+def test_download_full_grib_failure_preserves_destination_and_removes_temp(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    out_path = tmp_path / "full.grib2"
+    out_path.write_bytes(b"previous-complete-file")
+
+    class _FailingStreamResponse:
+        status_code = 200
+        headers = {"Content-Length": "100"}
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int):
+            del chunk_size
+            yield b"GRIB-partial"
+            raise OSError("stream interrupted")
+
+        def close(self) -> None:
+            return None
+
+    _install_full_grib_response(monkeypatch, _FailingStreamResponse)
+
+    with pytest.raises(OSError, match="stream interrupted"):
+        fetch_module._download_full_grib_to_path(
+            source_url="https://example.invalid/full.grib2",
+            out_path=out_path,
+        )
+
+    assert out_path.read_bytes() == b"previous-complete-file"
+    assert not [path for path in tmp_path.iterdir() if path.name.endswith(".part")]
+
+
+def test_download_full_grib_enforces_wall_clock_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    out_path = tmp_path / "full.grib2"
+    out_path.write_bytes(b"previous-complete-file")
+    clock = {"value": -0.6}
+
+    def _monotonic() -> float:
+        clock["value"] += 0.6
+        return clock["value"]
+
+    class _SlowStreamResponse:
+        status_code = 200
+        headers = {"Content-Length": "4"}
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int):
+            del chunk_size
+            yield b"GRIB"
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setenv("TWF_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS", "1")
+    monkeypatch.setattr(fetch_module.time, "monotonic", _monotonic)
+    _install_full_grib_response(monkeypatch, _SlowStreamResponse)
+
+    with pytest.raises(TimeoutError, match="wall-clock deadline"):
+        fetch_module._download_full_grib_to_path(
+            source_url="https://example.invalid/full.grib2",
+            out_path=out_path,
+        )
+
+    assert out_path.read_bytes() == b"previous-complete-file"
+    assert not [path for path in tmp_path.iterdir() if path.name.endswith(".part")]
+
+
+def test_download_full_grib_deadline_aborts_a_blocked_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stream_cancelled = threading.Event()
+
+    class _BlockedStreamContext:
+        status_code = 200
+        headers = {"Content-Length": "4"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            del exc_type, exc, tb
+            return False
+
+        def raise_for_status(self) -> None:
+            return None
+
+        async def aiter_bytes(self, chunk_size: int):
+            del chunk_size
+            try:
+                await asyncio.sleep(0.4)
+            except asyncio.CancelledError:
+                stream_cancelled.set()
+                raise
+            raise AssertionError("deadline did not cancel the blocked stream")
+            yield b""  # pragma: no cover - keeps this an async generator
+
+    class _BlockedStreamClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            del exc_type, exc, tb
+            return False
+
+        def stream(self, method: str, url: str):
+            del method, url
+            return _BlockedStreamContext()
+
+    monkeypatch.setattr(
+        fetch_module,
+        "_full_grib_download_deadline_seconds",
+        lambda: 0.05,
+    )
+    monkeypatch.setattr(
+        fetch_module,
+        "_full_grib_http_client",
+        lambda **_kwargs: _BlockedStreamClient(),
+    )
+
+    with pytest.raises(TimeoutError, match="wall-clock deadline"):
+        fetch_module._download_full_grib_to_path(
+            source_url="https://example.invalid/full.grib2",
+            out_path=tmp_path / "full.grib2",
+        )
+
+    assert stream_cancelled.is_set()
+    assert not [path for path in tmp_path.iterdir() if path.name.endswith(".part")]
+
+
+def test_download_full_grib_deadline_cancels_response_header_wait(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _SlowStreamContext:
+        async def __aenter__(self):
+            await asyncio.sleep(0.4)
+            raise AssertionError("header acquisition was not cancelled")
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            del exc_type, exc, tb
+            return False
+
+    class _SlowAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            del exc_type, exc, tb
+            return False
+
+        def stream(self, method: str, url: str):
+            del method, url
+            return _SlowStreamContext()
+
+    monkeypatch.setattr(
+        fetch_module,
+        "_full_grib_download_deadline_seconds",
+        lambda: 0.05,
+    )
+    monkeypatch.setattr(
+        fetch_module,
+        "_full_grib_http_client",
+        lambda **_kwargs: _SlowAsyncClient(),
+    )
+
+    started_at = time.monotonic()
+    with pytest.raises(TimeoutError, match="wall-clock deadline"):
+        fetch_module._download_full_grib_to_path(
+            source_url="https://example.invalid/full.grib2",
+            out_path=tmp_path / "full.grib2",
+        )
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 0.2
+
+
+def test_full_source_fallback_uses_a_unique_consumable_file_per_caller(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    payload = b"GRIB0123456789"
+    barrier = threading.Barrier(2)
+    observed_full_paths: set[Path] = set()
+
+    def _fake_download(*, source_url: str, out_path: Path) -> Path:
+        del source_url
+        observed_full_paths.add(out_path)
+        barrier.wait(timeout=2.0)
+        out_path.write_bytes(payload)
+        return out_path
+
+    monkeypatch.setattr(fetch_module, "_download_full_grib_to_path", _fake_download)
+    subset_out = tmp_path / "subset.grib2"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda _index: fetch_module._fetch_subset_bytes_from_full_source(
+                    "https://example.invalid/full.grib2",
+                    out_path=subset_out,
+                    start_byte=0,
+                    end_byte=3,
+                ),
+                range(2),
+            )
+        )
+
+    assert results == [b"GRIB", b"GRIB"]
+    assert len(observed_full_paths) == 2
+    assert not [path for path in tmp_path.iterdir() if path.name.endswith(".full")]
+
+
+def test_eps_full_file_cache_lock_wait_covers_download_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_url = "https://example.invalid/eps.grib2"
+    run_date = datetime(2026, 7, 16, 0, 0)
+    download_started = threading.Event()
+    download_calls = {"count": 0}
+
+    def _slow_download(*, source_url: str, out_path: Path) -> Path:
+        del source_url
+        download_calls["count"] += 1
+        download_started.set()
+        # Stay inside the critical section beyond both the short test timeout
+        # and its 100 ms polling interval.  Otherwise the waiter can
+        # acquire on its first retry without observing that its deadline
+        # expired.
+        time.sleep(0.25)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"GRIB-complete")
+        return out_path
+
+    monkeypatch.setenv("TWF_EPS_FULL_FILE_CACHE_ENABLE", "1")
+    monkeypatch.setenv("TWF_EPS_FULL_FILE_CACHE_ROOT", str(tmp_path / "cache"))
+    monkeypatch.setenv("TWF_V3_GRIB_DISK_CACHE_LOCK", "1")
+    monkeypatch.setenv("TWF_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS", "1")
+    monkeypatch.setattr(fetch_module, "DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(fetch_module, "_download_full_grib_to_path", _slow_download)
+    monkeypatch.setattr(fetch_module, "_cleanup_eps_full_file_cache", lambda **_kwargs: None)
+    herbie = SimpleNamespace(grib=source_url)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(
+            fetch_module._maybe_get_eps_full_grib_path,
+            herbie,
+            model_id="ifs",
+            product="enfo",
+            run_date=run_date,
+            fh=6,
+            priority="azure",
+        )
+        assert download_started.wait(timeout=1.0)
+        second = pool.submit(
+            fetch_module._maybe_get_eps_full_grib_path,
+            herbie,
+            model_id="ifs",
+            product="enfo",
+            run_date=run_date,
+            fh=6,
+            priority="azure",
+        )
+        results = [first.result(), second.result()]
+
+    assert results[0] is not None
+    assert results[1] == results[0]
+    assert download_calls["count"] == 1
+
+
+def test_eps_full_file_cache_cleanup_reaps_stale_temp_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache_root = tmp_path / "cache"
+    monkeypatch.setenv("TWF_EPS_FULL_FILE_CACHE_ROOT", str(cache_root))
+    run_dir = cache_root / "2026071600" / "fh006"
+    run_dir.mkdir(parents=True)
+
+    fresh_part = run_dir / ".eps.grib2.fresh123.part"
+    stale_part = run_dir / ".eps.grib2.stale456.part"
+    stale_full = run_dir / ".subset.grib2.stale789.full"
+    regular_file = run_dir / "aaaa1111-eps.grib2"
+    # A crash during the only fetch for a run+fh leaves the temp as the sole
+    # entry in its directory — reaping must survive emptying that directory.
+    orphan_dir = cache_root / "2026071600" / "fh012"
+    orphan_dir.mkdir(parents=True)
+    lone_stale_part = orphan_dir / ".eps.grib2.lone000.part"
+    for path in (fresh_part, stale_part, stale_full, regular_file, lone_stale_part):
+        path.write_bytes(b"GRIB")
+
+    # Temp files are never visible to TTL expiry or size-based eviction.
+    listed = {path for path, _size, _mtime in fetch_module._iter_cache_files(cache_root)}
+    assert listed == {regular_file}
+
+    stale_mtime = time.time() - (3.0 * fetch_module._full_grib_download_deadline_seconds())
+    for path in (stale_part, stale_full, lone_stale_part):
+        os.utime(path, (stale_mtime, stale_mtime))
+
+    fetch_module._cleanup_eps_full_file_cache(force=True)
+
+    assert fresh_part.exists()
+    assert regular_file.exists()
+    assert not stale_part.exists()
+    assert not stale_full.exists()
+    assert not lone_stale_part.exists()
+    assert not orphan_dir.exists()
 
 
 def test_pattern_negative_cache_records_and_expires() -> None:

@@ -343,15 +343,26 @@ scopes: A → precip_total_cumulative (item 3) + ptype_accumulation_cumulative
 1. **4.5.** wgrib2-style idx: emit an open-ended `Range: bytes={start}-` for
    the file's final record (removes a deterministic full-file-fallback
    trigger).
-2. **4.6.** Unique temp names + atomic `replace` for full-GRIB downloads;
-   wall-clock deadline; fix the 8 s lock-timeout-vs-multi-GB-download mismatch.
+~~2. **4.6.** Unique temp names + atomic `replace` for full-GRIB downloads;
+   wall-clock deadline; fix the 8 s lock-timeout-vs-multi-GB-download mismatch.~~
+   **— DONE 2026-07-16 (PR A, local):** full downloads stream to unique
+   same-directory `.part` files, validate before atomic replacement, clean up
+   failures without disturbing an existing destination, and enforce a
+   configurable 30-minute wall-clock deadline across connection, headers, and
+   body streaming via a cancellable async request. Ephemeral full-source
+   fallbacks also own unique `.full` files through read-and-cleanup. Full-file
+   cache waiters now use the transfer deadline plus lock grace instead of the
+   subset lock's 8-second timeout.
 3. **3.10.** Deadlines on Herbie-internal calls; cap the inventory follower
    wait at 60–90 s independent of cache TTL.
 4. **3.2.** Retry a failed range request 2–3× with backoff before the
    full-file fallback; cap fallback by Content-Length; route it through the
    EPS full-file cache when enabled.
-5. **3.4.** Decouple cached-subset reuse from the disk-lock flag
-   (`_subset_file_status` check + `overwrite=False` in both branches).
+~~5. **3.4.** Decouple cached-subset reuse from the disk-lock flag
+   (`_subset_file_status` check + `overwrite=False` in both branches).~~
+   **— DONE 2026-07-16 (PR A, local):** locked and unlocked fetches now share
+   the same cache-first path and always ask Herbie for a non-overwriting
+   download on cache miss.
 6. **4.4 retry/cache work.** Shared `_is_*_error` classification across the
    four retry-loop copies; run-aware negative cache so the doomed direct-mean
    attempt is skipped while a run is incomplete (re-probe after the frontier
