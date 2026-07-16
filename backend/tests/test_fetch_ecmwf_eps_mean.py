@@ -91,6 +91,72 @@ def test_fetch_variable_aggregates_ecmwf_eps_pf_members() -> None:
     assert meta["member_count"] == 2
 
 
+def test_fetch_variable_sorts_eps_pf_inventory_by_numeric_member(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class _UnsortedMemberHerbie(_FakeHerbie):
+        def __init__(self, *_args, **kwargs) -> None:
+            super().__init__(*_args, **kwargs)
+            self.grib = "https://example.invalid/numeric-member-sort.grib2"
+            self.idx = "https://example.invalid/numeric-member-sort.index"
+
+        def get_localFilePath(self, search_pattern: str) -> str:
+            del search_pattern
+            return str(tmp_path / "numeric-member-sort.grib2")
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame(
+                [
+                    {"search_this": ":2t:sfc:10:g:0001:od:pf:enfo", "type": "pf", "number": "10", "start_byte": 10, "end_byte": 19},
+                    {"search_this": ":2t:sfc:2:g:0001:od:pf:enfo", "type": "pf", "number": "2", "start_byte": 20, "end_byte": 29},
+                    {"search_this": ":2t:sfc:1:g:0001:od:pf:enfo", "type": "pf", "number": "1", "start_byte": 30, "end_byte": 39},
+                ]
+            )
+
+    fake_herbie_core = ModuleType("herbie.core")
+    fake_herbie_core.Herbie = _UnsortedMemberHerbie
+    seen_member_orders: list[list[str]] = []
+
+    def _fake_download_subset(_herbie, **kwargs):
+        inventory = kwargs["inventory"]
+        seen_member_orders.append([str(value) for value in inventory["number"]])
+        return kwargs["out_path"]
+
+    def _fake_aggregate_subset(_path):
+        data = np.array([[3.0]], dtype=np.float32)
+        crs = rasterio.crs.CRS.from_epsg(4326)
+        transform = rasterio.transform.from_origin(-101.0, 46.0, 1.0, 1.0)
+        return data, crs, transform, 3
+
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setattr(fetch_module, "_retry_sleep_seconds", lambda: 0.0)
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
+        with patch(
+            "app.services.builder.fetch._download_subset_with_inventory_rows",
+            side_effect=_fake_download_subset,
+        ), patch(
+            "app.services.builder.fetch._aggregate_grib_subset_mean",
+            side_effect=_fake_aggregate_subset,
+        ):
+            _data, _crs, _transform, meta = fetch_variable(
+                model_id="ifs",
+                product="enfo",
+                search_pattern=":2t:",
+                run_date=datetime(2026, 7, 16, 0, 0),
+                fh=0,
+                herbie_kwargs={
+                    "_cartosky_fetch_aggregation": "ecmwf_pf_mean",
+                    "priority": ["azure"],
+                },
+                return_meta=True,
+            )
+
+    assert seen_member_orders == [["1", "2", "10"]]
+    assert meta["inventory_line"] == ":2t:sfc:1:g:0001:od:pf:enfo"
+
+
 def test_fetch_variable_uses_raw_json_index_fallback_for_eps_pf_mean() -> None:
     fake_herbie_core = ModuleType("herbie.core")
     fake_herbie_core.Herbie = _FakeHerbieBrokenIndex

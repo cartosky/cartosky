@@ -312,6 +312,13 @@ Net: kept **HIGH**. The reviewer's factual point (schedules currently align, no 
 
 ### 4.2 MED — pf band→member mapping guards don't pin the actual invariant
 
+**STATUS: FIXED 2026-07-16 (Wave 2 PR A, local).** The member mapping remains
+derived from unique byte ranges sorted by `(start, end)`, and a direct
+regression now exercises `_download_subset_with_inventory_rows` against a
+shuffled inventory with a duplicate range. The test proves the emitted subset
+is deduplicated and byte-ordered, pinning the fetch-writer contract that makes
+the index-derived band labels safe.
+
 `members.py:771-800` (`_pf_band_member_numbers`, called from `_resolve_pf_subset` at `803-941`, call site `895`; re-verified 2026-07-09, guard logic byte-for-byte unchanged): the index-derived mapping is correct only if `_download_subset_with_inventory_rows` (fetch.py) writes unique byte ranges sorted by (start,end) AND GDAL exposes bands in file order. The count/uniqueness validations would still pass if a future fetch.py change reorders writes — silently relabeling all 50 EPS members. Fix (S–M): cross-check each band's perturbation number from GRIB band metadata (`GRIB_PDS_TEMPLATE_NUMBERS`/`GRIB_IDS`) against the derived number, or pin fetch.py's sort contract with a test.
 
 ~~### 4.3 MED — EPS pf-mean can silently average fewer than 50 members~~
@@ -347,6 +354,12 @@ Fix (M): reuse `_is_*_error` classification + negative cache; extract one shared
 `_download_full_grib_to_path` (`fetch.py:749`): `out_path.with_suffix(".part")`; the guarding `_path_download_lock` is a no-op with the lock env off (default). Concurrent writers interleave into the same `.part`; the size check (`fetch.py:772`) misses equal-size interleavings. Also unbounded total download time. Fix (S): unique temp name + atomic `replace`; wall-clock deadline. When the lock IS enabled, the 8 s lock timeout (constant `fetch.py:109`, used at `2855`) is far shorter than a multi-GB download held under it — spurious `TimeoutError`s for waiters.
 
 ### 4.7 MED — `np.to_numeric` doesn't exist; pf member sorting is dead code
+
+**STATUS: FIXED 2026-07-16 (Wave 2 PR A, local).** The PF inventory path now
+uses `pd.to_numeric` before its stable member-number sort. A regression with
+string member ids ordered `10, 2, 1` verifies the subset writer receives
+numeric order `1, 2, 10` and that the first inventory-line provenance follows
+member 1.
 
 `fetch.py:2140`: raises `AttributeError` on every call, swallowed at `fetch.py:2142`. Members aggregate in raw inventory order — harmless for a mean, but if this block is copied into the Phase-3/4 member/percentile pipeline (where order matters) it silently misorders members. Fix (S): `pd.to_numeric`.
 

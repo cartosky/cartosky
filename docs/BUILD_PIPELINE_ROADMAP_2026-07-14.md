@@ -295,11 +295,15 @@ scopes: A → precip_total_cumulative (item 3) + ptype_accumulation_cumulative
 
 ## Wave 2 — Member and artifact integrity
 
-1. **4.2.** Pin the pf band→member mapping invariant: cross-check each band's
+~~1. **4.2.** Pin the pf band→member mapping invariant: cross-check each band's
    perturbation number from GRIB band metadata against the index-derived
-   number, and/or pin fetch.py's byte-range write-sort contract with a test.
-2. **4.7.** Replace the dead `np.to_numeric` member sort (`pd.to_numeric`) —
-   currently an AttributeError swallowed on every call.
+   number, and/or pin fetch.py's byte-range write-sort contract with a test.~~
+   **— DONE 2026-07-16 (PR A, local):** a direct local-source regression pins
+   sorted, deduplicated range writes against shuffled inventory input.
+~~2. **4.7.** Replace the dead `np.to_numeric` member sort (`pd.to_numeric`) —
+   currently an AttributeError swallowed on every call.~~ **— DONE 2026-07-16
+   (PR A, local):** the stable sort now uses `pd.to_numeric`; a string-member
+   regression distinguishes numeric `1, 2, 10` order from raw/lexical order.
 3. **4.10 `<u2` bullet.** `_decode_member_frame` decodes with the configured
    packing dtype instead of hardcoded `<u2`. (Stats audit S2 note: on a
    non-u16-packed stats var this raises every pass while the size gate —

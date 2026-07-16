@@ -2173,8 +2173,10 @@ def _fetch_ecmwf_pf_mean_variable(
 
                 if "number" in pf_inventory.columns:
                     try:
+                        import pandas as pd
+
                         pf_inventory = pf_inventory.assign(
-                            _cartosky_member_number=np.to_numeric(pf_inventory["number"], errors="coerce")
+                            _cartosky_member_number=pd.to_numeric(pf_inventory["number"], errors="coerce")
                         ).sort_values("_cartosky_member_number", kind="stable")
                     except Exception:
                         pass

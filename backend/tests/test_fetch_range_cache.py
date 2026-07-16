@@ -66,6 +66,40 @@ def _install_fake_rasterio_open(monkeypatch: pytest.MonkeyPatch, value: float = 
     monkeypatch.setattr(fetch_module.rasterio, "open", lambda _path: _FakeDataset())
 
 
+def test_subset_writer_orders_and_deduplicates_inventory_ranges(tmp_path: Path) -> None:
+    records = [
+        b"GRIB" + (b"A" * 16),
+        b"GRIB" + (b"B" * 16),
+        b"GRIB" + (b"C" * 16),
+    ]
+    source_path = tmp_path / "source.grib2"
+    source_path.write_bytes(b"".join(records))
+    inventory = pd.DataFrame(
+        [
+            {"start_byte": 40, "end_byte": 59},
+            {"start_byte": 0, "end_byte": 19},
+            {"start_byte": 20, "end_byte": 39},
+            {"start_byte": 0, "end_byte": 19},
+        ]
+    )
+    out_path = tmp_path / "subset.grib2"
+
+    written = fetch_module._download_subset_with_inventory_rows(
+        SimpleNamespace(grib=str(source_path)),
+        inventory=inventory,
+        out_path=out_path,
+        model_id="ifs",
+        product="enfo",
+        run_date=datetime(2026, 7, 16, 0, 0),
+        fh=6,
+        priority="local",
+        bundle_fetch_cache=None,
+    )
+
+    assert written == out_path
+    assert out_path.read_bytes() == b"".join(records)
+
+
 def test_fetch_range_cache_hit_store_and_single_http_call(monkeypatch: pytest.MonkeyPatch) -> None:
     fetch_module.reset_herbie_runtime_caches_for_tests()
     cache = fetch_module.BundleFetchCache(max_entries=8, max_bytes=4096, max_cacheable_bytes=1024)
