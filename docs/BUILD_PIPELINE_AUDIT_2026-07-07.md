@@ -199,7 +199,19 @@ Fix (S): include `fh` in the cache key (idx presence is not monotonic for models
 
 Fix (M): allow 2+ in-flight fhs per target for non-derived vars (readiness cache needs a lock or per-fh keys — see 2.6), or split FetchContext per fh for non-cumulative vars. The round-barrier specifically needs its own fix independent of per-target fh depth: let each target's thread resubmit its own next fh as soon as *it* finishes, instead of waiting for `pool.__exit__` to release the whole round (e.g. a rolling/streaming submission model instead of one-`ThreadPoolExecutor`-per-round). **Instrument first** (see 3.6).
 
-### 3.2 HIGH — Single range-request failure escalates to a full multi-GB GRIB download, then thrown away
+~~### 3.2 HIGH — Single range-request failure escalates to a full multi-GB GRIB download, then thrown away~~
+
+**STATUS: FIXED 2026-07-16 (Wave 3 PR B, local).** `_fetch_range_bytes` now
+makes three total attempts by default, with exponential 0.25/0.5-second
+backoff, before allowing the caller to escalate. Typed upstream 3xx refusals
+and active anti-abuse cooldowns remain non-retryable and never trigger a full
+GET. An exhausted EPS `enfo` fallback is routed through the reusable full-file
+cache when that cache is enabled; if the cache-owned transfer fails, the code
+does not repeat it as a disposable download. Other disposable full-file
+fallbacks have a configurable 1 GiB cap, rejected from `Content-Length` before
+body consumption and enforced again while streaming. Retry-success,
+retry-exhaustion, no-retry refusal, size-cap, and EPS-cache-routing regressions
+were each demonstrated RED pre-fix.
 
 `_download_subset_with_inventory_byte_range` fallback (`fetch.py:3481-3499`) → `_fetch_subset_bytes_from_full_source` (`fetch.py:3236-3256`) → full download (`fetch.py:747-778`, 90 s per-chunk timeout, no total deadline). There is **no per-range retry** (`fetch.py:3297-3377`), so one transient 500 on a ~2 MB range triggers a full-file download (GFS pgrb2 ~500 MB, EPS enfo multi-GB) to extract one message — and `finally` deletes the temp file with no reuse for the next variable in the same frame, which repeats the download. No size guard; can hold a build slot for the duration.
 
@@ -350,7 +362,17 @@ Live logs show `hgt500__mean`'s direct-mean attempt failing on every observed fo
 
 Fix (M): reuse `_is_*_error` classification + negative cache; extract one shared priority-walk helper. **Higher-value fixes now confirmed by real data:** (1) skip the direct-mean attempt while the run is still incomplete — track a per-run negative-cache flag once the first `idx_empty` is observed for the terminal file, and only re-probe once, e.g. after the run's build frontier passes some late fh threshold — removing up to 6 doomed attempts per frame for the entire live/incremental phase; (2) once the terminal file *is* confirmed available, cache its parsed inventory once per run instead of re-fetching per fh; (3) extend `t@850` (`tmp850__mean`, `tmp850_anom__mean`) onto the same `ecmwf_direct_mean_or_pf_mean` path now that (1) makes the attempt cheap to skip when premature. Separately, since PF-mean remains unavoidable for the other ~10 EPS mean variables regardless, the highest-leverage fix for those is still making PF-mean itself cheaper: connection pooling (3.11) and confirming/raising the parallel range-fetch worker count for the ~50-member download.
 
-### 4.5 MED — wgrib2-style idx: last message in a file is unfetchable via byte ranges
+~~### 4.5 MED — wgrib2-style idx: last message in a file is unfetchable via byte ranges~~
+
+**STATUS: FIXED 2026-07-16 (Wave 3 PR B, local).** A missing final
+`end_byte` is now represented as an open-ended range instead of an invalid
+row. The optional endpoint is preserved through inventory-row and primary-row
+resolution, range cache keys, single- and multi-row remote fetches, validation,
+and local-source reads. HTTP requests emit `Range: bytes={start}-`; a 200 that
+ignored that request remains rejected because its exact expected slice length
+cannot be proven. The regression parses a real wgrib2-shaped two-line index,
+selects its last record, and pins both primary-range resolution and the emitted
+header; it was demonstrated RED pre-fix.
 
 **Re-verified 2026-07-09, still open** (line numbers updated; a related-but-distinct bug nearby was fixed). `fetch.py:1424-1425`: the last record gets no `end_byte` (the wgrib2 idx-text parser's final `pending_record` append is never followed by the `setdefault("end_byte", ...)` that only fires inside the loop when a *next* record's start becomes known). `_inventory_row_byte_range` (`fetch.py:1765-1818`) returns `None` for it and the row is silently skipped. A variable that is the final GRIB message deterministically fails byte-range → escalates to the 3.2 full-file path or hard failure. Fix (S): emit open-ended `Range: bytes={start}-`.
 

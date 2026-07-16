@@ -340,9 +340,13 @@ scopes: A → precip_total_cumulative (item 3) + ptype_accumulation_cumulative
 
 ## Wave 3 — Fetch reliability
 
-1. **4.5.** wgrib2-style idx: emit an open-ended `Range: bytes={start}-` for
+~~1. **4.5.** wgrib2-style idx: emit an open-ended `Range: bytes={start}-` for
    the file's final record (removes a deterministic full-file-fallback
-   trigger).
+   trigger).~~ **— DONE 2026-07-16 (PR B, local):** missing final-record
+   endpoints now remain valid as open-ended ranges through inventory parsing,
+   single-record and multi-record fetches, cache keys, validation, and local
+   fallback reads. Remote requests emit `Range: bytes={start}-` and still
+   reject an origin that ignores the range.
 ~~2. **4.6.** Unique temp names + atomic `replace` for full-GRIB downloads;
    wall-clock deadline; fix the 8 s lock-timeout-vs-multi-GB-download mismatch.~~
    **— DONE 2026-07-16 (PR A, local):** full downloads stream to unique
@@ -355,9 +359,15 @@ scopes: A → precip_total_cumulative (item 3) + ptype_accumulation_cumulative
    subset lock's 8-second timeout.
 3. **3.10.** Deadlines on Herbie-internal calls; cap the inventory follower
    wait at 60–90 s independent of cache TTL.
-4. **3.2.** Retry a failed range request 2–3× with backoff before the
+~~4. **3.2.** Retry a failed range request 2–3× with backoff before the
    full-file fallback; cap fallback by Content-Length; route it through the
-   EPS full-file cache when enabled.
+   EPS full-file cache when enabled.~~ **— DONE 2026-07-16 (PR B, local):**
+   range fetches use three total attempts by default with 0.25/0.5-second
+   exponential backoff; upstream 3xx refusals and the existing throttle
+   cooldown remain immediate/non-retryable. After exhaustion, EPS `enfo`
+   fallbacks use the reusable full-file cache when enabled; disposable
+   fallbacks are capped at 1 GiB from `Content-Length` and enforced again
+   while streaming when the header is absent or wrong.
 ~~5. **3.4.** Decouple cached-subset reuse from the disk-lock flag
    (`_subset_file_status` check + `overwrite=False` in both branches).~~
    **— DONE 2026-07-16 (PR A, local):** locked and unlocked fetches now share

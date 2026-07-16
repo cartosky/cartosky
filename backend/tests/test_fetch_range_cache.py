@@ -149,6 +149,411 @@ def test_subset_writer_orders_and_deduplicates_inventory_ranges(tmp_path: Path) 
     assert out_path.read_bytes() == b"".join(records)
 
 
+def test_wgrib2_final_record_uses_an_open_ended_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    idx_text = "\n".join(
+        [
+            "1:0:d=2026071600:TMP:2 m above ground:anl:",
+            "2:100:d=2026071600:UGRD:10 m above ground:anl:",
+        ]
+    )
+    monkeypatch.setattr(fetch_module, "_fetch_inventory_index_text", lambda _ref: idx_text)
+    inventory = fetch_module._inventory_index_dataframe_from_wgrib2_lines(
+        "https://example.invalid/model.idx"
+    )
+
+    assert inventory is not None
+    assert fetch_module._inventory_row_byte_range(inventory.iloc[-1]) == (100, None)
+
+    class _FakeHerbie:
+        grib = "https://example.invalid/model.grib2"
+        idx = "https://example.invalid/model.idx"
+
+    monkeypatch.setattr(
+        fetch_module,
+        "_inventory_search",
+        lambda *_args, **_kwargs: fetch_module._InventorySearchResult(
+            inventory=inventory.iloc[[-1]],
+            reason="ok",
+        ),
+    )
+    assert fetch_module._inventory_primary_byte_range(
+        _FakeHerbie(),
+        search_pattern=":UGRD:10 m above ground:",
+        model_id="gfs",
+        run_date=datetime(2026, 7, 16, 0, 0),
+        product="pgrb2.0p25",
+        fh=0,
+        priority="nomads",
+    ) == ("https://example.invalid/model.grib2", 100, None)
+
+    payload = b"GRIB" + (b"Z" * 28)
+    observed_ranges: list[str] = []
+
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
+        del url, timeout, stream
+        observed_ranges.append(headers["Range"])
+        return _FakeResponse(payload, status_code=206)
+
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    assert fetch_module._network_fetch_range_bytes(
+        "https://example.invalid/model.grib2",
+        start_byte=100,
+        end_byte=None,
+    ) == payload
+    assert observed_ranges == ["bytes=100-"]
+
+
+def test_open_ended_range_reuses_bundle_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = b"GRIB" + (b"K" * 28)
+    calls = {"count": 0}
+    cache = fetch_module.BundleFetchCache(
+        max_entries=4,
+        max_bytes=4096,
+        max_cacheable_bytes=1024,
+    )
+
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
+        del url, timeout, stream
+        assert headers["Range"] == "bytes=100-"
+        calls["count"] += 1
+        return _FakeResponse(payload, status_code=206)
+
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    kwargs = dict(
+        source="nomads",
+        source_url="https://example.invalid/model.grib2",
+        model_id="gfs",
+        run_date=datetime(2026, 7, 16, 0, 0),
+        fh=6,
+        start_byte=100,
+        end_byte=None,
+        bundle_fetch_cache=cache,
+        require_grib_payload=True,
+    )
+
+    assert fetch_module._fetch_range_bytes(**kwargs) == payload
+    assert fetch_module._fetch_range_bytes(**kwargs) == payload
+    assert calls["count"] == 1
+
+
+def test_local_multirow_subset_reads_open_ended_final_record(tmp_path: Path) -> None:
+    first = b"GRIB" + (b"A" * 16)
+    final = b"GRIB" + (b"B" * 16)
+    source_path = tmp_path / "source.grib2"
+    source_path.write_bytes(first + final)
+    inventory = pd.DataFrame(
+        [
+            {"start_byte": 0, "end_byte": len(first) - 1},
+            {"start_byte": len(first)},
+        ]
+    )
+    out_path = tmp_path / "subset.grib2"
+
+    result = fetch_module._download_subset_with_inventory_rows(
+        SimpleNamespace(grib=str(source_path)),
+        inventory=inventory,
+        out_path=out_path,
+        model_id="gfs",
+        product="pgrb2.0p25",
+        run_date=datetime(2026, 7, 16, 0, 0),
+        fh=6,
+        priority="local",
+        bundle_fetch_cache=None,
+    )
+
+    assert result == out_path
+    assert out_path.read_bytes() == first + final
+
+
+def test_fetch_range_retries_transient_failure_before_returning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = {"count": 0}
+    payload = b"GRIB" + (b"R" * 28)
+
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
+        del url, headers, timeout, stream
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise OSError("temporary range failure")
+        return _FakeResponse(payload)
+
+    monkeypatch.setenv("TWF_HERBIE_RANGE_RETRIES", "3")
+    monkeypatch.setenv("TWF_HERBIE_RANGE_RETRY_BACKOFF_SECONDS", "0")
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+
+    result = fetch_module._fetch_range_bytes(
+        source="nomads",
+        source_url="https://example.invalid/model.grib2",
+        model_id="gfs",
+        run_date=datetime(2026, 7, 16, 0, 0),
+        fh=6,
+        start_byte=0,
+        end_byte=31,
+        bundle_fetch_cache=None,
+        require_grib_payload=True,
+    )
+
+    assert result == payload
+    assert attempts["count"] == 2
+
+
+def test_fetch_range_does_not_retry_upstream_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = {"count": 0}
+
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
+        del url, headers, timeout, stream
+        attempts["count"] += 1
+        # Same declared length as the requested slice: redirects must still
+        # be typed refusals rather than accepted as exact-length HTTP 200s.
+        return _FakeResponse(b"x" * 32, status_code=302)
+
+    monkeypatch.setenv("TWF_HERBIE_RANGE_RETRIES", "3")
+    monkeypatch.setenv("TWF_HERBIE_RANGE_RETRY_BACKOFF_SECONDS", "0")
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+
+    with pytest.raises(fetch_module._RangeRequestNotHonoredError):
+        fetch_module._fetch_range_bytes(
+            source="nomads",
+            source_url="https://example.invalid/model.grib2",
+            model_id="gfs",
+            run_date=datetime(2026, 7, 16, 0, 0),
+            fh=6,
+            start_byte=0,
+            end_byte=31,
+            bundle_fetch_cache=None,
+        )
+
+    assert attempts["count"] == 1
+
+
+def test_range_retries_exhaust_before_full_file_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    range_attempts = {"count": 0}
+    fallback_calls = {"count": 0}
+    payload = b"GRIB" + (b"F" * 28)
+
+    class _FakeHerbie:
+        idx = "https://example.invalid/model.idx"
+        grib = "https://example.invalid/model.grib2"
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([
+                {"search_this": ":TMP:2 m above ground:", "start_byte": 4, "end_byte": 35}
+            ])
+
+    def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
+        del url, headers, timeout, stream
+        range_attempts["count"] += 1
+        raise OSError("range unavailable")
+
+    def _fake_full_fallback(*_args, **_kwargs) -> bytes:
+        fallback_calls["count"] += 1
+        return payload
+
+    monkeypatch.setenv("TWF_HERBIE_RANGE_RETRIES", "3")
+    monkeypatch.setenv("TWF_HERBIE_RANGE_RETRY_BACKOFF_SECONDS", "0")
+    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    monkeypatch.setattr(fetch_module, "_fetch_subset_bytes_from_full_source", _fake_full_fallback)
+
+    out_path = tmp_path / "subset.grib2"
+    result = fetch_module._download_subset_with_inventory_byte_range(
+        _FakeHerbie(),
+        search_pattern=":TMP:2 m above ground:",
+        out_path=out_path,
+        model_id="gfs",
+        run_date=datetime(2026, 7, 16, 0, 0),
+        product="pgrb2.0p25",
+        fh=6,
+        priority="nomads",
+        bundle_fetch_cache=None,
+    )
+
+    assert result == out_path
+    assert range_attempts["count"] == 3
+    assert fallback_calls["count"] == 1
+
+
+def test_full_file_fallback_rejects_declared_size_over_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    body_started = {"value": False}
+
+    class _OversizedResponse:
+        status_code = 200
+        headers = {"Content-Length": "100"}
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int):
+            del chunk_size
+            body_started["value"] = True
+            yield b"GRIB" + (b"X" * 96)
+
+        def close(self) -> None:
+            return None
+
+    _install_full_grib_response(monkeypatch, _OversizedResponse)
+
+    with pytest.raises(RuntimeError, match="exceeds.*cap"):
+        fetch_module._fetch_subset_bytes_from_full_source(
+            "https://example.invalid/model.grib2",
+            out_path=tmp_path / "subset.grib2",
+            start_byte=0,
+            end_byte=31,
+            max_bytes=64,
+        )
+
+    assert body_started["value"] is False
+    assert not list(tmp_path.iterdir())
+
+
+def test_full_file_fallback_enforces_cap_without_content_length(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _ChunkedOversizedResponse:
+        status_code = 200
+        headers: dict[str, str] = {}
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int):
+            del chunk_size
+            yield b"GRIB" + (b"X" * 36)
+            yield b"Y" * 40
+
+        def close(self) -> None:
+            return None
+
+    _install_full_grib_response(monkeypatch, _ChunkedOversizedResponse)
+
+    with pytest.raises(RuntimeError, match="streamed size exceeds.*cap"):
+        fetch_module._fetch_subset_bytes_from_full_source(
+            "https://example.invalid/model.grib2",
+            out_path=tmp_path / "subset.grib2",
+            start_byte=0,
+            end_byte=31,
+            max_bytes=64,
+        )
+
+    assert not list(tmp_path.iterdir())
+
+
+def test_range_failure_routes_fallback_through_eps_full_file_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    payload = b"GRIB" + (b"C" * 28)
+    full_path = tmp_path / "cached-full.grib2"
+    full_path.write_bytes(b"JUNK" + payload + b"TAIL")
+    range_calls = {"count": 0}
+    cache_calls = {"count": 0}
+
+    class _FakeHerbie:
+        idx = "https://example.invalid/eps.index"
+        grib = "https://example.invalid/eps.grib2"
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([
+                {"search_this": ":TMP:2 m above ground:", "start_byte": 4, "end_byte": 35}
+            ])
+
+    def _failed_range(**_kwargs) -> bytes:
+        range_calls["count"] += 1
+        raise OSError("range retries exhausted")
+
+    def _cached_full(*_args, **_kwargs) -> Path:
+        cache_calls["count"] += 1
+        return full_path
+
+    monkeypatch.setattr(fetch_module, "_fetch_range_bytes", _failed_range)
+    monkeypatch.setattr(fetch_module, "_maybe_get_eps_full_grib_path", _cached_full)
+    monkeypatch.setattr(fetch_module, "_eps_full_file_cache_enabled", lambda **_kwargs: True)
+
+    out_path = tmp_path / "subset.grib2"
+    result = fetch_module._download_subset_with_inventory_byte_range(
+        _FakeHerbie(),
+        search_pattern=":TMP:2 m above ground:",
+        out_path=out_path,
+        model_id="ifs",
+        run_date=datetime(2026, 7, 16, 0, 0),
+        product="enfo",
+        fh=6,
+        priority="azure",
+        bundle_fetch_cache=None,
+    )
+
+    assert result == out_path
+    assert out_path.read_bytes() == payload
+    assert range_calls["count"] == 1
+    assert cache_calls["count"] == 1
+
+
+def test_eps_cache_failure_does_not_bypass_to_disposable_full_download(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache_calls = {"count": 0}
+
+    class _FakeHerbie:
+        idx = "https://example.invalid/eps.index"
+        grib = "https://example.invalid/eps.grib2"
+
+        @property
+        def index_as_dataframe(self):
+            return pd.DataFrame([
+                {"search_this": ":TMP:2 m above ground:", "start_byte": 4, "end_byte": 35}
+            ])
+
+    def _cache_failed(*_args, **_kwargs):
+        cache_calls["count"] += 1
+        return None
+
+    def _range_failed(**_kwargs) -> bytes:
+        raise OSError("range retries exhausted")
+
+    def _forbid_disposable(*_args, **_kwargs) -> bytes:
+        raise AssertionError("must not bypass a failed reusable cache transfer")
+
+    monkeypatch.setattr(fetch_module, "_fetch_range_bytes", _range_failed)
+    monkeypatch.setattr(fetch_module, "_eps_full_file_cache_enabled", lambda **_kwargs: True)
+    monkeypatch.setattr(fetch_module, "_maybe_get_eps_full_grib_path", _cache_failed)
+    monkeypatch.setattr(
+        fetch_module,
+        "_fetch_subset_bytes_from_full_source",
+        _forbid_disposable,
+    )
+
+    result = fetch_module._download_subset_with_inventory_byte_range(
+        _FakeHerbie(),
+        search_pattern=":TMP:2 m above ground:",
+        out_path=tmp_path / "subset.grib2",
+        model_id="ifs",
+        run_date=datetime(2026, 7, 16, 0, 0),
+        product="enfo",
+        fh=6,
+        priority="azure",
+        bundle_fetch_cache=None,
+    )
+
+    assert result is None
+    assert cache_calls["count"] == 1
+
+
 def test_fetch_range_cache_hit_store_and_single_http_call(monkeypatch: pytest.MonkeyPatch) -> None:
     fetch_module.reset_herbie_runtime_caches_for_tests()
     cache = fetch_module.BundleFetchCache(max_entries=8, max_bytes=4096, max_cacheable_bytes=1024)
@@ -204,8 +609,14 @@ def test_download_subset_with_inventory_byte_range_falls_back_to_full_file_when_
     def _fake_fetch_range_bytes(**kwargs):
         raise RuntimeError("range blocked")
 
-    def _fake_download_full_grib_to_path(*, source_url: str, out_path: Path) -> Path:
+    def _fake_download_full_grib_to_path(
+        *,
+        source_url: str,
+        out_path: Path,
+        max_bytes: int | None = None,
+    ) -> Path:
         assert source_url == "https://nomads.example/aigfs.grib2"
+        assert max_bytes == fetch_module.DEFAULT_FULL_GRIB_FALLBACK_MAX_BYTES
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(full_bytes)
         return out_path
@@ -338,10 +749,12 @@ def test_fetch_range_cache_failure_does_not_poison_cache(monkeypatch: pytest.Mon
     def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
         del url, headers, timeout
         calls["count"] += 1
-        if calls["count"] == 1:
+        if calls["count"] <= 3:
             raise RuntimeError("temporary network failure")
         return _FakeResponse(b"ABCD")
 
+    monkeypatch.setenv("TWF_HERBIE_RANGE_RETRIES", "3")
+    monkeypatch.setenv("TWF_HERBIE_RANGE_RETRY_BACKOFF_SECONDS", "0")
     monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
 
     kwargs = dict(
@@ -359,7 +772,7 @@ def test_fetch_range_cache_failure_does_not_poison_cache(monkeypatch: pytest.Mon
     second = fetch_module._fetch_range_bytes(**kwargs)
 
     assert second == b"ABCD"
-    assert calls["count"] == 2
+    assert calls["count"] == 4
     metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
     assert metrics["counters"].get("fetch_cache_store", 0) == 1
 
@@ -787,8 +1200,14 @@ def test_full_source_fallback_uses_a_unique_consumable_file_per_caller(
     barrier = threading.Barrier(2)
     observed_full_paths: set[Path] = set()
 
-    def _fake_download(*, source_url: str, out_path: Path) -> Path:
+    def _fake_download(
+        *,
+        source_url: str,
+        out_path: Path,
+        max_bytes: int | None = None,
+    ) -> Path:
         del source_url
+        assert max_bytes is None
         observed_full_paths.add(out_path)
         barrier.wait(timeout=2.0)
         out_path.write_bytes(payload)
@@ -982,10 +1401,12 @@ def test_fetch_range_cache_invalid_grib_payload_does_not_poison_cache(monkeypatc
     def _fake_get(url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
         del url, headers, timeout
         calls["count"] += 1
-        if calls["count"] == 1:
+        if calls["count"] <= 3:
             return _FakeResponse(b"<Error>not ready</Error>".ljust(32, b" "))
         return _FakeResponse(b"GRIB" + (b"\0" * 28))
 
+    monkeypatch.setenv("TWF_HERBIE_RANGE_RETRIES", "3")
+    monkeypatch.setenv("TWF_HERBIE_RANGE_RETRY_BACKOFF_SECONDS", "0")
     monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
 
     kwargs = dict(
@@ -1004,9 +1425,9 @@ def test_fetch_range_cache_invalid_grib_payload_does_not_poison_cache(monkeypatc
     second = fetch_module._fetch_range_bytes(**kwargs)
 
     assert second.startswith(b"GRIB")
-    assert calls["count"] == 2
+    assert calls["count"] == 4
     metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
-    assert metrics["counters"].get("invalid_grib_range_payload", 0) == 1
+    assert metrics["counters"].get("invalid_grib_range_payload", 0) == 3
     assert metrics["counters"].get("fetch_cache_store", 0) == 1
 
 
