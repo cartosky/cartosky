@@ -512,6 +512,327 @@ def test_fetch_variable_uses_direct_ecmwf_eps_mean_before_pf_members(tmp_path: P
     assert calls == {"download": 1, "aggregate": 0, "read": 1}
 
 
+def test_direct_mean_missing_terminal_inventory_is_cached_until_late_frontier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _MissingStatisticsHerbie:
+        init_calls = 0
+
+        def __init__(self, *_args, **kwargs) -> None:
+            type(self).init_calls += 1
+            self.priority = kwargs.get("priority")
+            self.fxx = int(kwargs.get("fxx"))
+            self.grib = f"https://example.invalid/run-{self.fxx}h-enfo-ef.grib2"
+            self.idx = f"https://example.invalid/run-{self.fxx}h-enfo-ef.index"
+
+    fake_herbie_core = ModuleType("herbie.core")
+    fake_herbie_core.Herbie = _MissingStatisticsHerbie
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "2")
+    monkeypatch.setenv("TWF_HERBIE_RETRY_SLEEP_SECONDS", "0")
+    monkeypatch.setattr(
+        fetch_module,
+        "_inventory_search",
+        lambda *_args, **_kwargs: fetch_module._InventorySearchResult(
+            inventory=None,
+            reason="idx_empty",
+        ),
+    )
+    pf_calls: list[int] = []
+
+    def _fake_pf_mean(**kwargs):
+        pf_calls.append(int(kwargs["fh"]))
+        return ("pf", int(kwargs["fh"]))
+
+    monkeypatch.setattr(fetch_module, "_fetch_ecmwf_pf_mean_variable", _fake_pf_mean)
+
+    kwargs = {
+        "model_id": "ifs",
+        "product": "enfo",
+        "search_pattern": ":gh:500:",
+        "run_date": datetime(2026, 4, 19, 0, 0),
+        "herbie_kwargs": {"priority": ["azure"]},
+        "bundle_fetch_cache": None,
+        "return_meta": False,
+        "fallback_to_pf_mean": True,
+    }
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
+        first = fetch_module._fetch_ecmwf_direct_mean_variable(fh=6, **kwargs)
+        second = fetch_module._fetch_ecmwf_direct_mean_variable(fh=12, **kwargs)
+
+    assert first == ("pf", 6)
+    assert second == ("pf", 12)
+    assert pf_calls == [6, 12]
+    assert _MissingStatisticsHerbie.init_calls == 1
+    metrics = fetch_module.get_herbie_runtime_metrics_for_tests()
+    assert metrics["counters"].get("eps_direct_mean_negative_cache_store", 0) == 1
+    assert metrics["counters"].get("eps_direct_mean_negative_cache_hit", 0) == 1
+
+
+def test_direct_mean_exhausts_source_priorities_before_run_negative_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    valid_inventory = pd.DataFrame(
+        [
+            {
+                "search_this": ":gh:500:pl:em:enfo",
+                "type": "em",
+                "step": 6,
+                "start_byte": 0,
+                "end_byte": 9,
+            }
+        ]
+    )
+
+    class _MirrorHerbie:
+        priorities: list[str] = []
+
+        def __init__(self, *_args, **kwargs) -> None:
+            self.priority = str(kwargs.get("priority"))
+            type(self).priorities.append(self.priority)
+            self.fxx = int(kwargs.get("fxx"))
+            self.grib = f"https://example.invalid/{self.priority}-{self.fxx}h-enfo-ef.grib2"
+            self.idx = f"https://example.invalid/{self.priority}-{self.fxx}h-enfo-ef.index"
+
+        def get_localFilePath(self, _search_pattern: str) -> str:
+            return str(tmp_path / f"mirror-{self.priority}.grib2")
+
+    fake_herbie_core = ModuleType("herbie.core")
+    fake_herbie_core.Herbie = _MirrorHerbie
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "2")
+    monkeypatch.setenv("TWF_HERBIE_RETRY_SLEEP_SECONDS", "0")
+
+    def _fake_inventory_search(herbie, **_kwargs):
+        if herbie.priority == "azure":
+            return fetch_module._InventorySearchResult(inventory=None, reason="idx_empty")
+        return fetch_module._InventorySearchResult(inventory=valid_inventory, reason="ok")
+
+    monkeypatch.setattr(fetch_module, "_inventory_search", _fake_inventory_search)
+    monkeypatch.setattr(
+        fetch_module,
+        "_download_subset_with_inventory_rows",
+        lambda _herbie, **kwargs: kwargs["out_path"],
+    )
+    direct_result = (
+        np.array([[1.0]], dtype=np.float32),
+        rasterio.crs.CRS.from_epsg(4326),
+        rasterio.transform.from_origin(-101.0, 46.0, 1.0, 1.0),
+    )
+    monkeypatch.setattr(fetch_module, "_read_grib_raster", lambda _path: direct_result)
+    monkeypatch.setattr(
+        fetch_module,
+        "_fetch_ecmwf_pf_mean_variable",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("AWS direct mean should win")),
+    )
+
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
+        result = fetch_module._fetch_ecmwf_direct_mean_variable(
+            model_id="ifs",
+            product="enfo",
+            search_pattern=":gh:500:",
+            run_date=datetime(2026, 4, 19, 0, 0),
+            fh=6,
+            herbie_kwargs={"priority": ["azure", "aws", "ecmwf"]},
+            bundle_fetch_cache=None,
+            return_meta=False,
+            fallback_to_pf_mean=True,
+        )
+
+    assert np.array_equal(result[0], direct_result[0])
+    assert _MirrorHerbie.priorities == ["azure", "aws"]
+    assert not fetch_module._EPS_DIRECT_MEAN_NEGATIVE_CACHE
+
+
+def test_direct_mean_negative_cache_reprobes_at_late_frontier(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    inventory = pd.DataFrame(
+        [
+            {
+                "search_this": ":gh:500:pl:em:enfo",
+                "type": "em",
+                "step": 216,
+                "start_byte": 0,
+                "end_byte": 9,
+            }
+        ]
+    )
+
+    class _LateStatisticsHerbie:
+        init_calls = 0
+
+        def __init__(self, *_args, **kwargs) -> None:
+            type(self).init_calls += 1
+            self.priority = kwargs.get("priority")
+            self.fxx = int(kwargs.get("fxx"))
+            self.grib = f"https://example.invalid/run-{self.fxx}h-enfo-ef.grib2"
+            self.idx = f"https://example.invalid/run-{self.fxx}h-enfo-ef.index"
+
+        def get_localFilePath(self, _search_pattern: str) -> str:
+            return str(tmp_path / f"late-{self.fxx}.grib2")
+
+    fake_herbie_core = ModuleType("herbie.core")
+    fake_herbie_core.Herbie = _LateStatisticsHerbie
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "1")
+    search_calls = {"count": 0}
+
+    def _fake_inventory_search(*_args, **_kwargs):
+        search_calls["count"] += 1
+        if search_calls["count"] == 1:
+            return fetch_module._InventorySearchResult(inventory=None, reason="idx_empty")
+        return fetch_module._InventorySearchResult(inventory=inventory, reason="ok")
+
+    monkeypatch.setattr(fetch_module, "_inventory_search", _fake_inventory_search)
+    monkeypatch.setattr(
+        fetch_module,
+        "_fetch_ecmwf_pf_mean_variable",
+        lambda **kwargs: ("pf", int(kwargs["fh"])),
+    )
+    monkeypatch.setattr(
+        fetch_module,
+        "_download_subset_with_inventory_rows",
+        lambda _herbie, **kwargs: kwargs["out_path"],
+    )
+    direct_result = (
+        np.array([[1.0]], dtype=np.float32),
+        rasterio.crs.CRS.from_epsg(4326),
+        rasterio.transform.from_origin(-101.0, 46.0, 1.0, 1.0),
+    )
+    monkeypatch.setattr(fetch_module, "_read_grib_raster", lambda _path: direct_result)
+
+    kwargs = {
+        "model_id": "ifs",
+        "product": "enfo",
+        "search_pattern": ":gh:500:",
+        "run_date": datetime(2026, 4, 19, 0, 0),
+        "herbie_kwargs": {"priority": ["azure"]},
+        "bundle_fetch_cache": None,
+        "return_meta": False,
+        "fallback_to_pf_mean": True,
+    }
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
+        assert fetch_module._fetch_ecmwf_direct_mean_variable(fh=6, **kwargs) == ("pf", 6)
+        assert fetch_module._fetch_ecmwf_direct_mean_variable(fh=12, **kwargs) == ("pf", 12)
+        result = fetch_module._fetch_ecmwf_direct_mean_variable(fh=216, **kwargs)
+
+    assert np.array_equal(result[0], direct_result[0])
+    assert _LateStatisticsHerbie.init_calls == 2
+    assert search_calls["count"] == 2
+
+
+def test_direct_mean_deterministic_inventory_miss_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _WrongFieldHerbie:
+        init_calls = 0
+
+        def __init__(self, *_args, **kwargs) -> None:
+            type(self).init_calls += 1
+            self.priority = kwargs.get("priority")
+            self.fxx = int(kwargs.get("fxx"))
+            self.grib = "https://example.invalid/run-enfo-ef.grib2"
+            self.idx = "https://example.invalid/run-enfo-ef.index"
+
+    fake_herbie_core = ModuleType("herbie.core")
+    fake_herbie_core.Herbie = _WrongFieldHerbie
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_SUBSET_RETRIES", "3")
+    monkeypatch.setenv("TWF_HERBIE_RETRY_SLEEP_SECONDS", "0")
+    monkeypatch.setattr(
+        fetch_module,
+        "_inventory_search",
+        lambda *_args, **_kwargs: fetch_module._InventorySearchResult(
+            inventory=pd.DataFrame(),
+            reason="pattern_missing",
+        ),
+    )
+    monkeypatch.setattr(fetch_module, "_fetch_ecmwf_pf_mean_variable", lambda **_kwargs: "pf")
+
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
+        result = fetch_module._fetch_ecmwf_direct_mean_variable(
+            model_id="ifs",
+            product="enfo",
+            search_pattern=":gh:500:",
+            run_date=datetime(2026, 4, 19, 0, 0),
+            fh=216,
+            herbie_kwargs={"priority": ["azure"]},
+            bundle_fetch_cache=None,
+            return_meta=False,
+            fallback_to_pf_mean=True,
+        )
+
+    assert result == "pf"
+    assert _WrongFieldHerbie.init_calls == 1
+
+
+def test_direct_mean_terminal_inventory_is_reused_for_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    inventory = pd.DataFrame(
+        [
+            {"search_this": ":gh:500:pl:em:enfo", "type": "em", "step": 216, "start_byte": 0, "end_byte": 9},
+            {"search_this": ":gh:500:pl:em:enfo", "type": "em", "step": 222, "start_byte": 10, "end_byte": 19},
+        ]
+    )
+
+    class _StatisticsHerbie:
+        index_calls = 0
+
+        def __init__(self, *_args, **kwargs) -> None:
+            self.priority = kwargs.get("priority")
+            self.fxx = int(kwargs.get("fxx"))
+            self.grib = f"https://example.invalid/run-{self.fxx}h-enfo-ef.grib2"
+            self.idx = f"https://example.invalid/run-{self.fxx}h-enfo-ef.index"
+
+        @property
+        def index_as_dataframe(self):
+            type(self).index_calls += 1
+            return inventory
+
+        def get_localFilePath(self, _search_pattern: str) -> str:
+            return str(tmp_path / f"statistics-{self.fxx}.grib2")
+
+    fake_herbie_core = ModuleType("herbie.core")
+    fake_herbie_core.Herbie = _StatisticsHerbie
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(fetch_module.time, "monotonic", lambda: float(clock["now"]))
+    monkeypatch.setattr(
+        fetch_module,
+        "_download_subset_with_inventory_rows",
+        lambda _herbie, **kwargs: kwargs["out_path"],
+    )
+    direct_result = (
+        np.array([[1.0]], dtype=np.float32),
+        rasterio.crs.CRS.from_epsg(4326),
+        rasterio.transform.from_origin(-101.0, 46.0, 1.0, 1.0),
+    )
+    monkeypatch.setattr(fetch_module, "_read_grib_raster", lambda _path: direct_result)
+
+    kwargs = {
+        "model_id": "ifs",
+        "product": "enfo",
+        "search_pattern": ":gh:500:",
+        "run_date": datetime(2026, 4, 19, 0, 0),
+        "herbie_kwargs": {"priority": ["azure"]},
+        "bundle_fetch_cache": None,
+        "return_meta": False,
+    }
+    with patch.dict(sys.modules, {"herbie.core": fake_herbie_core}):
+        first = fetch_module._fetch_ecmwf_direct_mean_variable(fh=216, **kwargs)
+        clock["now"] += 601.0
+        second = fetch_module._fetch_ecmwf_direct_mean_variable(fh=222, **kwargs)
+
+    assert np.array_equal(first[0], direct_result[0])
+    assert np.array_equal(second[0], direct_result[0])
+    assert _StatisticsHerbie.index_calls == 1
+
+
 def test_fetch_variable_rebuilds_unreadable_cached_eps_pf_subset(tmp_path: Path) -> None:
     fake_herbie_core = ModuleType("herbie.core")
 

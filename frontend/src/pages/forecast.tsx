@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { makeForecastLocationId, useForecastLocations, type ForecastLocation } from "@/hooks/useForecastLocations";
+import { HexSignalRing } from "@/components/HexSignalRing";
 import { RadarPreviewCard } from "@/components/forecast/RadarPreviewCard";
 import { ModelsTabContent } from "@/components/model-guidance/ModelsTabContent";
 import { EnsemblesTabContent } from "@/components/model-guidance/EnsemblesTabContent";
@@ -2676,7 +2677,7 @@ export default function Forecast() {
           spellCheck={false}
         />
         {isSearching ? (
-          <div className="h-3 w-3 flex-none animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
+          <HexSignalRing size="xs" className="h-3 w-3 flex-none" />
         ) : query ? (
           <button type="button" onClick={clearSearch} className="flex-none rounded-full p-0.5 text-white/30 transition hover:text-white/60">
             <X className="h-3.5 w-3.5" />

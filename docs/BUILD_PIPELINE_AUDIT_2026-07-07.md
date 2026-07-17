@@ -268,7 +268,20 @@ Fix (M): persist per-(run, var, fh) failure counts across `_process_run` calls w
 
 Fix (M): incremental promote — frame files are immutable once written, so additive in-place hardlinking is safe, avoiding the full-tree copytree on every snapshot. (The rename-swap half of the original fix suggestion is done via 2.1.)
 
-### 3.10 MED — Herbie-internal network calls have no timeout control
+~~### 3.10 MED — Herbie-internal network calls have no timeout control~~
+
+**STATUS: FIXED 2026-07-16 (Wave 3 PR C, local).** Every remaining blocking
+Herbie surface is deadline-wrapped: construction, `index_as_dataframe`, and
+the residual `H.download` path. The configurable default is 90 seconds and a
+timeout releases the caller/build slot while recording both aggregate and
+operation-specific metrics. The inventory in-flight follower now has a
+separate configurable 90-second wait and timeout metric; its wait no longer
+tracks the 600-second inventory cache TTL. Because Herbie's synchronous calls
+cannot be cancelled safely, an expired call finishes only in a daemon worker,
+so it cannot retain the build slot or hold process shutdown open. The residual
+download path uses a shallow-cloned Herbie object and a unique attempt
+directory, atomically promoting only completed subsets; a timed-out late writer
+is therefore isolated from the canonical cache path and direct fallback.
 
 `Herbie(...)` construction, `H.index_as_dataframe` (`fetch.py:1497`), `H.download` (`fetch.py:3903/4021`) use Herbie's internal requests with no timeout wrapper; the inventory in-flight follower wait is bounded by `max(5.0, inventory_cache_ttl)` = **600 s default** (`fetch.py:1486`). A hung remote read blocks a build slot up to 10 minutes. This file's own requests calls are covered (45/90 s) — the gap is exclusively the Herbie surface.
 
@@ -346,7 +359,23 @@ the index-derived band labels safe.
 
 `fetch.py:1965-1966`: an empty local-read payload is `continue`d; `_aggregate_grib_subset_mean` counts whatever bands exist; `meta["member_count"]` is recorded (`fetch.py:2213`) but never validated against the expected pf count (EPS = 50). A partial subset yields a plausible but wrong mean. Fix (S): compare `member_count` to `len(pf_inventory)`, raise on mismatch. (Band subsetting itself is correct — only pf rows' ranges are fetched; the 51-band cost is aggregation read, not over-download.)
 
-### 4.4 MED (upgraded evidence) — EPS mean fetchers have a fourth, divergent copy of the retry loop; only one variable even tries the cheap path, and it's failing every hour in the live/incremental phase
+~~### 4.4 MED (upgraded evidence) — EPS mean fetchers have a fourth, divergent copy of the retry loop; only one variable even tries the cheap path, and it's failing every hour in the live/incremental phase~~
+
+**STATUS: RETRY/CACHE SCOPE FIXED 2026-07-16 (Wave 3 PR C, local).** A shared
+typed failure classifier now drives the inventory, readiness, ordinary fetch,
+PF-mean, and direct-mean priority loops. Known deterministic inventory misses
+stop without spending the retry budget, while transient and unknown
+third-party failures preserve bounded retry behavior. A terminal EPS
+statistics `idx_missing`/`idx_empty` result skips redundant retries for its
+mirror, while the run-wide result is cached only after all configured
+priorities miss. Early direct mean probes are then suppressed until 24 hours before the 240/360 h terminal
+frontier, then until the terminal fh, with five-minute probes after a terminal
+miss. Successful terminal inventories are retained whole in a bounded per-run
+cache, so later fh/field lookups filter the already-parsed frame instead of
+re-fetching after the generic 10-minute cache expires. The separate
+`tmp850__mean`/`tmp850_anom__mean` direct-product reroute remains deliberately
+open behind the parity gate in the roadmap; this fix does not change served
+data sources.
 
 `_fetch_ecmwf_pf_mean_variable` (`fetch.py:2080-2083`) and `_fetch_ecmwf_direct_mean_variable` (`fetch.py:2288-2291`): bare `except Exception` → sleep → retry, no transient/permanent classification, no idx negative-cache, no jitter; `direct_mean_or_pf_mean` (`fetch.py:2293-2311`) then repeats the whole budget in pf-mean. This is the 4th copy of the priority/retry walk (alongside `fetch_variable`, `inventory_lines_for_pattern`, `product_hour_has_any_idx`), each with different semantics — the drift is the incident-generator.
 

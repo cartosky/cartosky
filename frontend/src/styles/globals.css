@@ -742,3 +742,79 @@
     }
   }
 }
+
+/* Hex signal ring loader — geometry, colors, and dash values per
+   docs/LOADER_REDESIGN_IMPLEMENTATION_PLAN.md §3 (viewBox 0 0 322 343, perimeter ≈ 1057). */
+.hex-signal-ghost {
+  fill: none;
+  stroke: rgba(165, 243, 252, 0.16); /* cyan-200 @ 16% */
+  stroke-width: 14;
+}
+
+.hex-signal-comet {
+  fill: none;
+  stroke: #a5f3fc; /* cyan-200 — matches the previous spinner's border-t-cyan-200 */
+  stroke-width: 18;
+  stroke-linecap: round;
+  stroke-dasharray: 110 950;
+  filter: drop-shadow(0 0 14px rgba(103, 232, 249, 0.42));
+  animation: hex-chase 2s linear infinite;
+}
+
+@keyframes hex-chase {
+  to {
+    stroke-dashoffset: -1060;
+  }
+}
+
+/* Small hex-ring variants (loader plan Phase 4): thicker relative strokes and
+   a brighter ghost for legibility; the glow is sub-pixel at these sizes so it
+   is dropped. xs lengthens the comet to ~35% of the perimeter so it still
+   reads as motion at 12px (370 + 690 = 1060, matching the hex-chase offset). */
+.hex-signal-ring--sm .hex-signal-ghost {
+  stroke: rgba(165, 243, 252, 0.28);
+  stroke-width: 24;
+}
+
+.hex-signal-ring--sm .hex-signal-comet {
+  stroke-width: 30;
+  filter: none;
+}
+
+.hex-signal-ring--xs .hex-signal-ghost {
+  stroke: rgba(165, 243, 252, 0.28);
+  stroke-width: 40;
+}
+
+.hex-signal-ring--xs .hex-signal-comet {
+  stroke-width: 48;
+  stroke-dasharray: 370 690;
+  filter: none;
+}
+
+/* Non-blocking top progress bar under the viewer header — spec per
+   docs/LOADER_REDESIGN_IMPLEMENTATION_PLAN.md §5. */
+.viewer-top-progress {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 20;
+  height: 3px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.viewer-top-progress-fill {
+  position: absolute;
+  inset-block: 0;
+  left: -40%;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, #a5f3fc, transparent);
+  animation: viewer-top-progress-slide 1.3s ease-in-out infinite;
+}
+
+@keyframes viewer-top-progress-slide {
+  to {
+    left: 100%;
+  }
+}

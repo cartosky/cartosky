@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, Clipboard, ClipboardCheck, Download, Loader2 } from "lucide-react";
+import { Check, Clipboard, ClipboardCheck, Download } from "lucide-react";
+
+import { HexSignalRing } from "@/components/HexSignalRing";
 
 import { exportCardImage } from "@/lib/export-card-image";
 
@@ -160,7 +162,7 @@ export function ChartContainer({
 
       {isLoading ? (
         <div className="flex h-[320px] w-full items-center justify-center rounded-lg bg-white/[0.02]">
-          <Loader2 className="h-6 w-6 animate-spin text-cyan-200/80" />
+          <HexSignalRing size="sm" />
         </div>
       ) : error ? (
         <div className="flex h-[320px] w-full flex-col items-center justify-center gap-3 rounded-lg bg-white/[0.02] text-center">

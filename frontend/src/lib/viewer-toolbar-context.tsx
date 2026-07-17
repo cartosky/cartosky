@@ -34,6 +34,9 @@ export type ViewerToolbarProps = {
   onProductChange?: (key: string) => void;
   productAvailability?: Record<string, boolean>;
   disabled?: boolean;
+  // Non-blocking top progress bar: a model/variable/run/region switch has a
+  // manifest fetch in flight (never true during cold boot — see App.tsx).
+  isFrameSwitching?: boolean;
   // Run metadata
   runDisplayLabel?: string;
   latestAvailableRunLabel?: string | null;

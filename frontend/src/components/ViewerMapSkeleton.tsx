@@ -1,3 +1,5 @@
+import { HexSignalRing } from "@/components/HexSignalRing";
+
 export function ViewerMapSkeleton() {
   return (
     <div
@@ -20,11 +22,7 @@ export function ViewerMapSkeleton() {
 
       <div className="relative flex flex-1 items-center justify-center">
         <div className="glass-overlay flex min-w-36 flex-col items-center gap-3 rounded-2xl px-5 py-4 shadow-[0_22px_64px_rgba(0,0,0,0.36)]">
-          <div className="relative h-11 w-11">
-            <div className="absolute inset-0 rounded-full border border-cyan-200/18" />
-            <div className="absolute inset-1 rounded-full border-2 border-white/10 border-t-cyan-200 animate-spin" />
-            <div className="absolute inset-[0.95rem] rounded-full bg-cyan-200/80 shadow-[0_0_22px_rgba(103,232,249,0.42)]" />
-          </div>
+          <HexSignalRing />
           <div className="max-w-[13rem] text-center text-xs font-medium text-white/76">
             Loading viewer
           </div>

@@ -357,8 +357,17 @@ scopes: A → precip_total_cumulative (item 3) + ptype_accumulation_cumulative
    fallbacks also own unique `.full` files through read-and-cleanup. Full-file
    cache waiters now use the transfer deadline plus lock grace instead of the
    subset lock's 8-second timeout.
-3. **3.10.** Deadlines on Herbie-internal calls; cap the inventory follower
-   wait at 60–90 s independent of cache TTL.
+~~3. **3.10.** Deadlines on Herbie-internal calls; cap the inventory follower
+   wait at 60–90 s independent of cache TTL.~~ **— DONE 2026-07-16 (PR C,
+   local):** Herbie construction, `index_as_dataframe`, and the residual
+   `H.download` path now run behind a configurable 90-second caller-visible
+   deadline. A timed-out call cannot retain the build slot; timeout counters
+   identify the affected operation. Residual `H.download` work runs on a
+   shallow-cloned Herbie object in a unique attempt directory and promotes
+   atomically only after completion, so an uncancellable late writer cannot
+   race the canonical subset or its byte-range fallback. Inventory followers use their own
+   configurable 90-second wait instead of inheriting the 600-second inventory
+   cache TTL, and record a distinct follower-timeout metric.
 ~~4. **3.2.** Retry a failed range request 2–3× with backoff before the
    full-file fallback; cap fallback by Content-Length; route it through the
    EPS full-file cache when enabled.~~ **— DONE 2026-07-16 (PR B, local):**
@@ -373,11 +382,22 @@ scopes: A → precip_total_cumulative (item 3) + ptype_accumulation_cumulative
    **— DONE 2026-07-16 (PR A, local):** locked and unlocked fetches now share
    the same cache-first path and always ask Herbie for a non-overwriting
    download on cache miss.
-6. **4.4 retry/cache work.** Shared `_is_*_error` classification across the
+~~6. **4.4 retry/cache work.** Shared `_is_*_error` classification across the
    four retry-loop copies; run-aware negative cache so the doomed direct-mean
    attempt is skipped while a run is incomplete (re-probe after the frontier
    passes a late-fh threshold); cache the terminal statistics file's parsed
-   inventory once per run.
+   inventory once per run.~~ **— DONE 2026-07-16 (PR C, local):** all Herbie
+   priority walks now consume one typed failure classifier, with known
+   deterministic misses stopping immediately and unknown/transient failures
+   retaining bounded retries. A missing terminal EPS statistics index skips
+   redundant retries for that mirror, but the run-wide negative entry is only
+   stored after every configured priority misses. It suppresses further
+   direct-mean probes for that run until 24 h before its
+   terminal frontier, then until the terminal fh; terminal-fh misses re-probe
+   at a five-minute interval. Once published, the full parsed statistics
+   inventory is retained in a bounded per-run cache and filtered locally for
+   later fhs. The `tmp850__mean` routing change is intentionally not included;
+   it remains behind the parity gate below.
 7. **3.11 high-value bullets.** Module-level pooled `requests.Session` sized
    ≥ range workers (measured: ~125 ms/request × ~50 ranges per EPS mean
    variable per fh); stream pf range payloads to disk with a bounded window

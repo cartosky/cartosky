@@ -9,6 +9,7 @@ import { useAuth } from "@clerk/react";
 import { CheckCircle2, Copy, Download, ExternalLink, Film, Link2, Loader2, Play, RefreshCw, Share2, X } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { HexSignalRing } from "@/components/HexSignalRing";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { clerkJwtTemplate } from "@/lib/admin-api";
 import { SERVER_SCREENSHOT_ENABLED } from "@/lib/config";
@@ -815,11 +816,7 @@ export function ShareModal({
                           aria-label="Generating screenshot"
                           className="glass-overlay flex min-w-36 flex-col items-center gap-3 rounded-2xl px-5 py-4 shadow-[0_22px_64px_rgba(0,0,0,0.26)]"
                         >
-                          <div className="relative h-11 w-11">
-                            <div className="absolute inset-0 rounded-full border border-cyan-200/18" />
-                            <div className="absolute inset-1 animate-spin rounded-full border-2 border-white/10 border-t-cyan-200" />
-                            <div className="absolute inset-[0.95rem] rounded-full bg-cyan-200/80 shadow-[0_0_22px_rgba(103,232,249,0.42)]" />
-                          </div>
+                          <HexSignalRing />
                           <div className="text-center text-xs font-medium text-white/76">
                             Generating screenshot
                           </div>
@@ -1010,7 +1007,7 @@ export function ShareModal({
                 </>
               ) : gif.status === "capturing" || gif.status === "encoding" ? (
                 <div className="flex aspect-[16/9] max-h-[220px] w-full flex-col items-center justify-center gap-3 rounded-2xl border border-[rgba(255,255,255,0.08)] bg-gradient-to-br from-[#0d1e35] to-[#0a1628] px-6 text-center">
-                  <Loader2 className="h-6 w-6 animate-spin text-cyan-200" />
+                  <HexSignalRing size="sm" />
                   {gif.status === "capturing" ? (
                     <>
                       <div className="text-sm font-semibold text-white/90">

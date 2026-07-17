@@ -24,10 +24,12 @@ import {
   ZoomIn,
 } from "lucide-react";
 
+import { HexSignalRing } from "@/components/HexSignalRing";
 import { MapLegend } from "@/components/map-legend";
 import { ModelPicker } from "@/components/ModelPicker";
 import { StatisticPicker } from "@/components/StatisticPicker";
 import { VariablePicker } from "@/components/VariablePicker";
+import { ViewerTopProgressBar } from "@/components/ViewerTopProgressBar";
 import {
   Select,
   SelectContent,
@@ -848,7 +850,7 @@ function RegionUtilitySelect({
             <div className="space-y-0.5">
             {isSearching && results.length === 0 ? (
               <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/58">
-                <div className="h-3 w-3 animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
+                <HexSignalRing size="xs" />
                 Searching…
               </div>
             ) : query.trim().length < 2 ? (
@@ -919,7 +921,7 @@ function RegionUtilitySelect({
             Use my location
           </span>
           {isLocating ? (
-            <div className="h-3 w-3 animate-spin rounded-full border border-cyan-300/25 border-t-cyan-300" />
+            <HexSignalRing size="xs" />
           ) : null}
         </button>
       </div>
@@ -1884,6 +1886,7 @@ export default function ViewerSiteHeader() {
         {isViewerDesktop ? <ViewerNavDesktop onFeedback={openFeedback} /> : null}
         {isViewerMobile ? <ViewerNavMobile onFeedback={openFeedback} /> : null}
       </div>
+      <ViewerTopProgressBar visible={Boolean(toolbar?.isFrameSwitching)} />
     </header>
   );
 }

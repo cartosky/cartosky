@@ -51,6 +51,12 @@ def _install_fake_rasterio_open(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fetch_module.rasterio, "open", lambda _path: _FakeDataset())
 
 
+def _fake_herbie_download_path(*, save_dir: str | Path | None, fallback: Path) -> Path:
+    path = Path(save_dir) / fallback.name if save_dir is not None else fallback
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def test_inventory_cache_cap_uses_recent_hits(monkeypatch: pytest.MonkeyPatch) -> None:
     fetch_module.reset_herbie_runtime_caches_for_tests()
     monkeypatch.setenv("TWF_HERBIE_INVENTORY_CACHE_MAX_ENTRIES", "2")
@@ -284,11 +290,17 @@ def test_prs_idx_missing_switches_to_nomads(monkeypatch: pytest.MonkeyPatch, tmp
                 raise AssertionError("aws idx dataframe should not be requested when idx is missing")
             return pd.DataFrame([{"search_this": pattern, "start_byte": 0, "end_byte": 100}])
 
-        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True):
+        def get_localFilePath(self, _search_pattern: str) -> str:
+            return str(tmp_path / f"{self.priority}.grib2")
+
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True, save_dir=None):
             del errors, overwrite
             assert search_pattern == pattern
             type(self).download_priorities.append(str(self.priority))
-            out_path = tmp_path / f"{self.priority}.grib2"
+            out_path = _fake_herbie_download_path(
+                save_dir=save_dir,
+                fallback=tmp_path / f"{self.priority}.grib2",
+            )
             out_path.write_bytes(b"grib")
             return str(out_path)
 
@@ -340,11 +352,17 @@ def test_prs_idx_missing_pattern_switches_to_nomads(monkeypatch: pytest.MonkeyPa
                 return pd.DataFrame([{"search_this": ":RH:850 mb:", "start_byte": 0, "end_byte": 100}])
             return pd.DataFrame([{"search_this": requested_pattern, "start_byte": 0, "end_byte": 100}])
 
-        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True):
+        def get_localFilePath(self, _search_pattern: str) -> str:
+            return str(tmp_path / f"{self.priority}.grib2")
+
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True, save_dir=None):
             del errors, overwrite
             assert search_pattern == requested_pattern
             type(self).download_priorities.append(str(self.priority))
-            out_path = tmp_path / f"{self.priority}.grib2"
+            out_path = _fake_herbie_download_path(
+                save_dir=save_dir,
+                fallback=tmp_path / f"{self.priority}.grib2",
+            )
             out_path.write_bytes(b"grib")
             return str(out_path)
 
@@ -390,11 +408,17 @@ def test_prs_empty_idx_switches_to_nomads(monkeypatch: pytest.MonkeyPatch, tmp_p
                 return pd.DataFrame(columns=["search_this", "start_byte", "end_byte"])
             return pd.DataFrame([{"search_this": pattern, "start_byte": 0, "end_byte": 100}])
 
-        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True):
+        def get_localFilePath(self, _search_pattern: str) -> str:
+            return str(tmp_path / f"{self.priority}.grib2")
+
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True, save_dir=None):
             del errors, overwrite
             assert search_pattern == pattern
             type(self).download_priorities.append(str(self.priority))
-            out_path = tmp_path / f"{self.priority}.grib2"
+            out_path = _fake_herbie_download_path(
+                save_dir=save_dir,
+                fallback=tmp_path / f"{self.priority}.grib2",
+            )
             out_path.write_bytes(b"grib")
             return str(out_path)
 
@@ -438,11 +462,17 @@ def test_prs_idx_match_uses_prs_without_switch(monkeypatch: pytest.MonkeyPatch, 
         def index_as_dataframe(self):
             return pd.DataFrame([{"search_this": pattern, "start_byte": 0, "end_byte": 100}])
 
-        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True):
+        def get_localFilePath(self, _search_pattern: str) -> str:
+            return str(tmp_path / f"{self.priority}.grib2")
+
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True, save_dir=None):
             del errors, overwrite
             assert search_pattern == pattern
             type(self).download_priorities.append(str(self.priority))
-            out_path = tmp_path / f"{self.priority}.grib2"
+            out_path = _fake_herbie_download_path(
+                save_dir=save_dir,
+                fallback=tmp_path / f"{self.priority}.grib2",
+            )
             out_path.write_bytes(b"grib")
             return str(out_path)
 
@@ -493,11 +523,17 @@ def test_prs_idx_lag_does_not_retry_or_fan_out(monkeypatch: pytest.MonkeyPatch, 
                 raise RuntimeError("404 idx not found")
             return pd.DataFrame([{"search_this": pattern, "start_byte": 0, "end_byte": 100}])
 
-        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True):
+        def get_localFilePath(self, _search_pattern: str) -> str:
+            return str(tmp_path / f"{self.priority}.grib2")
+
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True, save_dir=None):
             del errors, overwrite
             assert search_pattern == pattern
             type(self).download_priorities.append(str(self.priority))
-            out_path = tmp_path / f"{self.priority}.grib2"
+            out_path = _fake_herbie_download_path(
+                save_dir=save_dir,
+                fallback=tmp_path / f"{self.priority}.grib2",
+            )
             out_path.write_bytes(b"grib")
             return str(out_path)
 
@@ -690,8 +726,11 @@ def test_precheck_empty_idx_fails_open_to_herbie_download(
             return str(tmp_path / "aigfs-herbie-download.grib2")
 
         def download(self, search_pattern: str, **kwargs):
-            del search_pattern, kwargs
-            out_path = tmp_path / "aigfs-herbie-download.grib2"
+            del search_pattern
+            out_path = _fake_herbie_download_path(
+                save_dir=kwargs.get("save_dir"),
+                fallback=tmp_path / "aigfs-herbie-download.grib2",
+            )
             out_path.write_bytes(b"GRIB" + (b"\0" * 28))
             return out_path
 
@@ -1174,8 +1213,8 @@ def test_grib_not_found_falls_back_to_manual_byte_range_refresh(
             assert search_pattern == pattern
             return str(subset_path)
 
-        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True):
-            del errors, overwrite
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = True, save_dir=None):
+            del errors, overwrite, save_dir
             assert search_pattern == pattern
             type(self).download_calls += 1
             raise RuntimeError("grib2 file not found")
@@ -1257,7 +1296,7 @@ def test_fetch_variable_reuses_cached_subset_when_disk_lock_is_disabled(
             assert search_pattern == pattern
             return str(cached_subset)
 
-        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False):
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False, save_dir=None):
             del search_pattern, errors, overwrite
             type(self).download_calls += 1
             raise AssertionError("valid cached subset must be reused")
@@ -1309,12 +1348,13 @@ def test_fetch_variable_uses_non_overwriting_download_without_disk_lock(
             assert search_pattern == pattern
             return str(subset_path)
 
-        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False):
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False, save_dir=None):
             del errors
             assert search_pattern == pattern
             overwrite_values.append(overwrite)
-            subset_path.write_bytes(b"grib")
-            return str(subset_path)
+            out_path = _fake_herbie_download_path(save_dir=save_dir, fallback=subset_path)
+            out_path.write_bytes(b"grib")
+            return str(out_path)
 
     _install_fake_herbie(monkeypatch, _FakeHerbie)
     _install_fake_rasterio_open(monkeypatch)
@@ -1369,12 +1409,13 @@ def test_invalid_cached_subset_is_deleted_and_refetched(
             assert search_pattern == pattern
             return str(cached_subset)
 
-        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False):
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False, save_dir=None):
             del errors, overwrite
             assert search_pattern == pattern
             type(self).download_calls += 1
-            cached_subset.write_bytes(b"grib")
-            return str(cached_subset)
+            out_path = _fake_herbie_download_path(save_dir=save_dir, fallback=cached_subset)
+            out_path.write_bytes(b"grib")
+            return str(out_path)
 
     class _FakeDataset:
         crs = "EPSG:4326"
@@ -1464,16 +1505,20 @@ def test_invalid_subset_falls_through_to_next_priority(monkeypatch: pytest.Monke
                 return str(nomads_subset)
             raise AssertionError(f"unexpected priority: {self.priority}")
 
-        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False):
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False, save_dir=None):
             del errors, overwrite
             assert search_pattern == pattern
             download_calls.append(self.priority)
+            out_path = _fake_herbie_download_path(
+                save_dir=save_dir,
+                fallback=aws_subset if self.priority == "aws" else nomads_subset,
+            )
             if self.priority == "aws":
-                aws_subset.write_bytes(b"not-grib")
-                return str(aws_subset)
+                out_path.write_bytes(b"not-grib")
+                return str(out_path)
             if self.priority == "nomads":
-                nomads_subset.write_bytes(b"grib")
-                return str(nomads_subset)
+                out_path.write_bytes(b"grib")
+                return str(out_path)
             raise AssertionError(f"unexpected priority: {self.priority}")
 
     class _FakeDataset:
@@ -1549,15 +1594,16 @@ def test_invalid_subset_retries_same_single_priority(monkeypatch: pytest.MonkeyP
             assert search_pattern == pattern
             return str(subset_path)
 
-        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False):
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False, save_dir=None):
             del errors, overwrite
             assert search_pattern == pattern
             download_calls.append(self.priority)
+            out_path = _fake_herbie_download_path(save_dir=save_dir, fallback=subset_path)
             if len(download_calls) == 1:
-                subset_path.write_bytes(b"not-grib")
+                out_path.write_bytes(b"not-grib")
             else:
-                subset_path.write_bytes(b"grib")
-            return str(subset_path)
+                out_path.write_bytes(b"grib")
+            return str(out_path)
 
     class _FakeDataset:
         crs = "EPSG:4326"
@@ -1636,12 +1682,13 @@ def test_invalid_subset_refresh_uses_inventory_byte_range(monkeypatch: pytest.Mo
             assert search_pattern == pattern
             return str(subset_path)
 
-        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False):
+        def download(self, search_pattern: str, errors: str = "raise", overwrite: bool = False, save_dir=None):
             del errors, overwrite
             assert search_pattern == pattern
             download_calls["herbie"] += 1
-            subset_path.write_bytes(b"not-grib")
-            return str(subset_path)
+            out_path = _fake_herbie_download_path(save_dir=save_dir, fallback=subset_path)
+            out_path.write_bytes(b"not-grib")
+            return str(out_path)
 
     class _FakeDataset:
         crs = "EPSG:4326"

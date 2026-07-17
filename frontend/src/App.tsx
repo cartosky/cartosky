@@ -591,6 +591,12 @@ export default function App() {
   }, [variableSwitchState, variable]);
   const [bootstrapHydrated, setBootstrapHydrated] = useState(false);
   const [firstWeatherFramePainted, setFirstWeatherFramePainted] = useState(false);
+  // In-flight count of manifest fetches for model/variable/run/region switches
+  // (a count, not a boolean, so overlapping fetches can't clear each other's
+  // flag). Drives the top progress bar; gated on firstWeatherFramePainted so
+  // it never shows during cold boot — the hex ring owns that phase.
+  const [frameSwitchCount, setFrameSwitchCount] = useState(0);
+  const isFrameSwitching = frameSwitchCount > 0 && firstWeatherFramePainted;
   const selectionEpochRef = useRef(selectionEpoch);
   const selectionKeyRef = useRef("");
   const [loadedFramesKey, setLoadedFramesKey] = useState("");
@@ -3425,6 +3431,7 @@ export default function App() {
     // leaving runs=[] with no retry and the viewer stuck on "Loading viewer".
     async function loadRunsAndVars() {
       setError(null);
+      setFrameSwitchCount((count) => count + 1);
       try {
         const shouldFetchRuns = runsLoadedForModelRef.current !== model;
         const runDataPromise = shouldFetchRuns
@@ -3512,6 +3519,8 @@ export default function App() {
         if (controller.signal.aborted) return;
         setRunManifest(null);
         setError(err instanceof Error ? err.message : "Failed to load run manifest");
+      } finally {
+        setFrameSwitchCount((count) => count - 1);
       }
     }
 
@@ -3637,7 +3646,12 @@ export default function App() {
         if (!framesRunKey) {
           return;
         }
-        const rows = await fetchFrames(model, framesRunKey, requestVariable, region, requestEnsembleView, { signal: controller.signal });
+        // Variable-only and region switches re-run this effect (via
+        // selectionKey) without touching the manifest effect above, so the
+        // top progress bar must track this fetch too.
+        setFrameSwitchCount((count) => count + 1);
+        const rows = await fetchFrames(model, framesRunKey, requestVariable, region, requestEnsembleView, { signal: controller.signal })
+          .finally(() => setFrameSwitchCount((count) => count - 1));
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         setVariableSwitchState((current) => {
           if (!current || current.toVariable !== variable) {
@@ -3922,12 +3936,13 @@ export default function App() {
             const gridRunKey = gridOnlySelection && run === "latest"
               ? (retainedGridLatestRunId ?? manifestRunKey)
               : resolvedRunForRequests;
+            setFrameSwitchCount((count) => count + 1);
             const [manifestData, nextGridManifest] = await Promise.all([
               fetchManifest(model, manifestRunKey, region, ensembleView, { signal: tickController.signal }),
               (prefersGridSubstrate && selectionSupportsGrid)
                 ? fetchGridManifest(model, gridRunKey, requestVariable, region, requestEnsembleView, { signal: tickController.signal })
                 : Promise.resolve(null),
-            ]);
+            ]).finally(() => setFrameSwitchCount((count) => count - 1));
             if (cancelled || tickController?.signal.aborted) {
               return;
             }
@@ -5804,6 +5819,7 @@ export default function App() {
     onProductChange: handleProductChange,
     productAvailability,
     disabled: loading || models.length === 0,
+    isFrameSwitching,
     runDisplayLabel: selectedRunLabel,
     latestAvailableRunLabel,
     hasNewerRunAvailable,
@@ -5855,7 +5871,7 @@ export default function App() {
     variable, handleVariableChange, regions, models, runOptions, variables,
     allVariableCatalog, supportedVariableIds,
     ensembleProducts, product, handleProductChange, productAvailability,
-    loading, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
+    loading, isFrameSwitching, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
     pointLabelsEnabled, nwsWarningsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
     legendPopoverOpen, displayPanelOpen, compareHref, handleOpenShareModal, viewerLayoutMode, legend,

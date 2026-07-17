@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { Loader2 } from "lucide-react";
+
+import { HexSignalRing } from "@/components/HexSignalRing";
 
 import { MapCanvas, type BasemapMode } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
@@ -200,7 +201,7 @@ function CompareDiffPanelComponent({
 
       {showBlockingLoader ? (
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#04101e]/35 backdrop-blur-[1px]">
-          <Loader2 className="h-6 w-6 animate-spin text-cyan-200/80" />
+          <HexSignalRing size="sm" />
         </div>
       ) : null}
     </div>

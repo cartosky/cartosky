@@ -21,6 +21,7 @@ Usage
 from __future__ import annotations
 
 import asyncio
+import copy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from collections import OrderedDict
@@ -29,6 +30,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import threading
 import time
 import tempfile
@@ -68,6 +70,14 @@ ENV_HERBIE_INVENTORY_CACHE_TTL = (
 ENV_HERBIE_INVENTORY_CACHE_MAX_ENTRIES = (
     "CARTOSKY_HERBIE_INVENTORY_CACHE_MAX_ENTRIES",
     "TWF_HERBIE_INVENTORY_CACHE_MAX_ENTRIES",
+)
+ENV_HERBIE_INTERNAL_CALL_DEADLINE = (
+    "CARTOSKY_HERBIE_INTERNAL_CALL_DEADLINE_SECONDS",
+    "TWF_HERBIE_INTERNAL_CALL_DEADLINE_SECONDS",
+)
+ENV_HERBIE_INVENTORY_FOLLOWER_WAIT = (
+    "CARTOSKY_HERBIE_INVENTORY_FOLLOWER_WAIT_SECONDS",
+    "TWF_HERBIE_INVENTORY_FOLLOWER_WAIT_SECONDS",
 )
 ENV_HERBIE_IDX_NEGATIVE_CACHE_MAX_ENTRIES = (
     "CARTOSKY_HERBIE_IDX_NEGATIVE_CACHE_MAX_ENTRIES",
@@ -120,6 +130,14 @@ ENV_FULL_GRIB_FALLBACK_MAX_BYTES = (
     "CARTOSKY_FULL_GRIB_FALLBACK_MAX_BYTES",
     "TWF_FULL_GRIB_FALLBACK_MAX_BYTES",
 )
+ENV_EPS_DIRECT_MEAN_LATE_PROBE_LEAD_HOURS = (
+    "CARTOSKY_EPS_DIRECT_MEAN_LATE_PROBE_LEAD_HOURS",
+    "TWF_EPS_DIRECT_MEAN_LATE_PROBE_LEAD_HOURS",
+)
+ENV_EPS_DIRECT_MEAN_TERMINAL_RETRY_SECONDS = (
+    "CARTOSKY_EPS_DIRECT_MEAN_TERMINAL_RETRY_SECONDS",
+    "TWF_EPS_DIRECT_MEAN_TERMINAL_RETRY_SECONDS",
+)
 ENV_GRIB_DISK_CACHE_LOCK = (
     "CARTOSKY_GRIB_DISK_CACHE_LOCK",
     "CARTOSKY_V3_GRIB_DISK_CACHE_LOCK",
@@ -132,6 +150,8 @@ DEFAULT_IDX_NEGATIVE_INITIAL_TTL_SECONDS = 20.0
 DEFAULT_IDX_NEGATIVE_MAX_TTL_SECONDS = 90.0
 DEFAULT_INVENTORY_CACHE_TTL_SECONDS = 600.0
 DEFAULT_INVENTORY_CACHE_MAX_ENTRIES = 2048
+DEFAULT_HERBIE_INTERNAL_CALL_DEADLINE_SECONDS = 90.0
+DEFAULT_HERBIE_INVENTORY_FOLLOWER_WAIT_SECONDS = 90.0
 DEFAULT_IDX_NEGATIVE_CACHE_MAX_ENTRIES = 8192
 DEFAULT_FETCH_CACHE_MAX_ENTRIES = 256
 DEFAULT_FETCH_CACHE_MAX_BYTES = 64 * 1024 * 1024
@@ -145,6 +165,9 @@ DEFAULT_EPS_FULL_FILE_CACHE_CLEANUP_INTERVAL_SECONDS = 60.0
 DEFAULT_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS = 30 * 60.0
 DEFAULT_FULL_GRIB_READ_TIMEOUT_SECONDS = 90.0
 DEFAULT_FULL_GRIB_FALLBACK_MAX_BYTES = 1024 * 1024 * 1024
+DEFAULT_EPS_DIRECT_MEAN_LATE_PROBE_LEAD_HOURS = 24
+DEFAULT_EPS_DIRECT_MEAN_TERMINAL_RETRY_SECONDS = 300.0
+DEFAULT_EPS_RUN_CACHE_MAX_ENTRIES = 64
 _GRIB_DISK_CACHE_LOCK_WAITS = 0
 _EPS_FULL_FILE_CACHE_CLEANUP_LOCK = threading.Lock()
 _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS = 0.0
@@ -184,6 +207,18 @@ _INVENTORY_SEARCH_COLUMNS = (
 
 class HerbieTransientUnavailableError(RuntimeError):
     """Raised when all Herbie attempts fail due to transient source/index availability."""
+
+
+class HerbieCallTimeoutError(TimeoutError):
+    """Raised when a blocking Herbie-internal call exceeds its wall-clock deadline."""
+
+
+class _HerbieInventoryUnavailableError(RuntimeError):
+    """Typed inventory failure used by the shared Herbie retry classifier."""
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        super().__init__(message)
+        self.reason = str(reason)
 
 
 class _InvalidGribSubsetError(RuntimeError):
@@ -232,6 +267,20 @@ class _InventorySearchResult:
     inventory: Any | None
     reason: str
     idx_key: str = ""
+
+
+@dataclass(frozen=True)
+class _HerbieFailureClassification:
+    kind: str
+    retryable: bool
+
+
+@dataclass
+class _EpsDirectMeanNegativeEntry:
+    next_probe_fh: int
+    retry_after: float
+    reason: str
+    updated_at: float
 
 
 @dataclass
@@ -383,6 +432,10 @@ _INVENTORY_CACHE: dict[str, _InventoryCacheEntry] = {}
 _INVENTORY_CACHE_LOCK = threading.Lock()
 _INVENTORY_INFLIGHT: dict[str, threading.Event] = {}
 
+_EPS_DIRECT_MEAN_CACHE_LOCK = threading.Lock()
+_EPS_DIRECT_MEAN_NEGATIVE_CACHE: OrderedDict[tuple[str, str, str, int], _EpsDirectMeanNegativeEntry] = OrderedDict()
+_EPS_STATISTICS_INVENTORY_CACHE: OrderedDict[tuple[str, str, str, int, str], Any] = OrderedDict()
+
 _FETCH_RUNTIME_COUNTERS: dict[str, int] = {}
 _FETCH_RUNTIME_TIMERS_MS: dict[str, _TimerAggregate] = {}
 _FETCH_RUNTIME_METRICS_LOCK = threading.Lock()
@@ -500,6 +553,38 @@ def _full_grib_download_deadline_seconds() -> float:
     return _float_from_env(
         ENV_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS,
         DEFAULT_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS,
+        minimum=1.0,
+    )
+
+
+def _herbie_internal_call_deadline_seconds() -> float:
+    return _float_from_env(
+        ENV_HERBIE_INTERNAL_CALL_DEADLINE,
+        DEFAULT_HERBIE_INTERNAL_CALL_DEADLINE_SECONDS,
+        minimum=0.01,
+    )
+
+
+def _inventory_follower_wait_seconds() -> float:
+    return _float_from_env(
+        ENV_HERBIE_INVENTORY_FOLLOWER_WAIT,
+        DEFAULT_HERBIE_INVENTORY_FOLLOWER_WAIT_SECONDS,
+        minimum=0.01,
+    )
+
+
+def _eps_direct_mean_late_probe_lead_hours() -> int:
+    return _int_from_env(
+        ENV_EPS_DIRECT_MEAN_LATE_PROBE_LEAD_HOURS,
+        DEFAULT_EPS_DIRECT_MEAN_LATE_PROBE_LEAD_HOURS,
+        minimum=1,
+    )
+
+
+def _eps_direct_mean_terminal_retry_seconds() -> float:
+    return _float_from_env(
+        ENV_EPS_DIRECT_MEAN_TERMINAL_RETRY_SECONDS,
+        DEFAULT_EPS_DIRECT_MEAN_TERMINAL_RETRY_SECONDS,
         minimum=1.0,
     )
 
@@ -651,6 +736,138 @@ def get_herbie_runtime_metrics_for_tests() -> dict[str, Any]:
             for key, value in _FETCH_RUNTIME_TIMERS_MS.items()
         }
     return {"counters": counters, "timers_ms": timers}
+
+
+def _run_herbie_call_with_deadline(
+    callback: Any,
+    *,
+    operation: str,
+) -> Any:
+    """Run an uncancellable Herbie call without letting it pin the caller.
+
+    Herbie does not expose request timeouts for all of its internal network
+    paths. A daemon worker keeps the build slot bounded even if an upstream
+    call never returns; the worker may finish later, but cannot hold process
+    shutdown open.
+    """
+    deadline_seconds = _herbie_internal_call_deadline_seconds()
+    completed = threading.Event()
+    state: dict[str, Any] = {}
+    operation_token = re.sub(r"[^a-z0-9]+", "_", str(operation).strip().lower()).strip("_") or "unknown"
+
+    def _worker() -> None:
+        try:
+            state["result"] = callback()
+        except BaseException as exc:  # preserve the Herbie exception for the caller
+            state["error"] = exc
+        finally:
+            completed.set()
+
+    started_at = time.monotonic()
+    worker = threading.Thread(
+        target=_worker,
+        name=f"herbie-{operation_token}-deadline",
+        daemon=True,
+    )
+    worker.start()
+    if not completed.wait(timeout=deadline_seconds):
+        _metric_increment("herbie_call_timeout")
+        _metric_increment(f"herbie_{operation_token}_timeout")
+        _metric_observe_ms("herbie_call_ms", (time.monotonic() - started_at) * 1000.0)
+        logger.warning(
+            "Herbie internal call deadline exceeded operation=%s deadline_seconds=%.2f",
+            operation_token,
+            deadline_seconds,
+        )
+        raise HerbieCallTimeoutError(
+            f"Herbie {operation_token} exceeded {deadline_seconds:.2f}s deadline"
+        )
+
+    _metric_observe_ms("herbie_call_ms", (time.monotonic() - started_at) * 1000.0)
+    error = state.get("error")
+    if error is not None:
+        raise error
+    return state.get("result")
+
+
+def _construct_herbie(herbie_type: Any, herbie_date: datetime, run_kwargs: dict[str, Any]) -> Any:
+    return _run_herbie_call_with_deadline(
+        lambda: herbie_type(herbie_date, **run_kwargs),
+        operation="construct",
+    )
+
+
+def _download_herbie_subset_isolated(
+    H: Any,
+    *,
+    search_pattern: str,
+    subset_hint: Path,
+) -> Path:
+    """Run residual ``H.download`` away from the canonical cache path.
+
+    A synchronous Herbie call cannot be cancelled after its deadline. The
+    isolated clone and attempt directory ensure a late writer can only touch
+    disposable files while the caller safely proceeds to its byte-range
+    fallback.
+    """
+    subset_hint.parent.mkdir(parents=True, exist_ok=True)
+    # Herbie mutates save_dir/source fields during download. A shallow clone
+    # isolates those assignments without paying for another network-backed
+    # constructor or racing the original object used by the byte-range fallback.
+    download_herbie = copy.copy(H)
+    attempt_root = Path(
+        tempfile.mkdtemp(
+            prefix=f".{subset_hint.name}.herbie-",
+            dir=str(subset_hint.parent),
+        )
+    )
+    state_lock = threading.Lock()
+    state = {"abandoned": False, "done": False}
+
+    def _download_attempt() -> Any:
+        try:
+            return download_herbie.download(
+                search_pattern,
+                errors="raise",
+                overwrite=False,
+                save_dir=attempt_root,
+            )
+        finally:
+            with state_lock:
+                state["done"] = True
+                cleanup = state["abandoned"]
+            if cleanup:
+                shutil.rmtree(attempt_root, ignore_errors=True)
+
+    try:
+        subset_path = _run_herbie_call_with_deadline(
+            _download_attempt,
+            operation="download",
+        )
+    except HerbieCallTimeoutError:
+        with state_lock:
+            state["abandoned"] = True
+            cleanup = state["done"]
+        if cleanup:
+            shutil.rmtree(attempt_root, ignore_errors=True)
+        raise
+    except Exception:
+        shutil.rmtree(attempt_root, ignore_errors=True)
+        raise
+
+    try:
+        candidate = Path(subset_path)
+        if not candidate.is_relative_to(attempt_root):
+            raise RuntimeError(
+                f"Herbie isolated download escaped attempt directory: {candidate}"
+            )
+        candidate_ok, _candidate_size = _subset_file_status(candidate)
+        if not candidate_ok:
+            raise RuntimeError(f"Herbie isolated download returned an empty subset: {candidate}")
+        candidate.replace(subset_hint)
+        return subset_hint
+    finally:
+        shutil.rmtree(attempt_root, ignore_errors=True)
 
 
 def _run_id_from_date(run_date: datetime) -> str:
@@ -1711,7 +1928,14 @@ def _inventory_index_dataframe(
             inflight_event = existing
 
     if not downloader:
-        inflight_event.wait(timeout=max(5.0, _inventory_cache_ttl_seconds()))
+        follower_finished = inflight_event.wait(timeout=_inventory_follower_wait_seconds())
+        if not follower_finished:
+            _metric_increment("idx_cache_follower_timeout")
+            logger.warning(
+                "Herbie inventory follower wait timed out wait_seconds=%.2f idx_key_hash=%s",
+                _inventory_follower_wait_seconds(),
+                hashlib.sha1(idx_key.encode("utf-8")).hexdigest()[:12],
+            )
         reused = _inventory_cache_get(idx_key)
         if reused is not None:
             _metric_increment("idx_cache_hit")
@@ -1722,7 +1946,10 @@ def _inventory_index_dataframe(
     fetch_start = time.monotonic()
     try:
         try:
-            dataframe = H.index_as_dataframe
+            dataframe = _run_herbie_call_with_deadline(
+                lambda: H.index_as_dataframe,
+                operation="index_as_dataframe",
+            )
             # Herbie's eccodes-style (ECMWF) inventories set end_byte to
             # offset + length — one past the message's last byte — while
             # wgrib2-style inventories are inclusive. Normalize to inclusive,
@@ -2333,12 +2560,13 @@ def _fetch_ecmwf_pf_mean_variable(
     sleep_s = _retry_sleep_seconds()
     last_exc: Exception | None = None
 
+    stop_priorities = False
     for priority in priority_list:
         for attempt_idx in range(1, retries + 1):
             try:
                 run_kwargs = _quiet_herbie_kwargs(kwargs)
                 run_kwargs["priority"] = priority
-                H = Herbie(herbie_date, **run_kwargs)
+                H = _construct_herbie(Herbie, herbie_date, run_kwargs)
                 inv_result = _inventory_search(
                     H,
                     search_pattern=search_pattern,
@@ -2350,8 +2578,11 @@ def _fetch_ecmwf_pf_mean_variable(
                 )
                 inventory = inv_result.inventory
                 if inv_result.reason != "ok" or inventory is None or len(inventory) == 0:
-                    raise RuntimeError(
-                        f"ECMWF EPS pf-mean inventory unavailable for {model_id} fh{fh:03d} pattern={search_pattern!r}: {inv_result.reason}"
+                    reason = inv_result.reason if inv_result.reason != "ok" else "no_inventory"
+                    raise _HerbieInventoryUnavailableError(
+                        f"ECMWF EPS pf-mean inventory unavailable for {model_id} "
+                        f"fh{fh:03d} pattern={search_pattern!r}: {reason}",
+                        reason=reason,
                     )
 
                 if "type" in inventory.columns:
@@ -2361,8 +2592,10 @@ def _fetch_ecmwf_pf_mean_variable(
                     pf_inventory = inventory
 
                 if len(pf_inventory) == 0:
-                    raise RuntimeError(
-                        f"ECMWF EPS pf-mean inventory contained no perturbed members for {model_id} fh{fh:03d} pattern={search_pattern!r}"
+                    raise _HerbieInventoryUnavailableError(
+                        f"ECMWF EPS pf-mean inventory contained no perturbed members for "
+                        f"{model_id} fh{fh:03d} pattern={search_pattern!r}",
+                        reason="pattern_missing",
                     )
 
                 if "number" in pf_inventory.columns:
@@ -2451,7 +2684,7 @@ def _fetch_ecmwf_pf_mean_variable(
                             subset_path.unlink()
                         except OSError:
                             pass
-                        raise RuntimeError(
+                        raise _InvalidGribSubsetError(
                             f"ECMWF EPS pf-mean subset covered {int(member_count)} of "
                             f"{expected_member_count} perturbed members for {model_id} "
                             f"fh{fh:03d} pattern={search_pattern!r}"
@@ -2471,8 +2704,14 @@ def _fetch_ecmwf_pf_mean_variable(
                 return data, crs, transform
             except Exception as exc:
                 last_exc = exc
+                failure = _classify_herbie_failure(exc)
+                if not failure.retryable:
+                    stop_priorities = True
+                    break
                 if sleep_s > 0 and attempt_idx < retries:
                     time.sleep(sleep_s)
+        if stop_priorities:
+            break
 
     if last_exc is not None:
         raise RuntimeError(
@@ -2558,6 +2797,149 @@ def _filter_inventory_step(inventory: Any, *, fh: int) -> Any:
         return inventory.iloc[0:0]
 
 
+def _eps_direct_mean_run_key(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    statistics_fh: int,
+) -> tuple[str, str, str, int]:
+    return (
+        str(model_id).strip().lower(),
+        _run_id_from_date(run_date),
+        str(product).strip().lower(),
+        int(statistics_fh),
+    )
+
+
+def _eps_direct_mean_negative_reason(
+    *,
+    cache_key: tuple[str, str, str, int],
+    fh: int,
+) -> str | None:
+    now = time.monotonic()
+    with _EPS_DIRECT_MEAN_CACHE_LOCK:
+        entry = _EPS_DIRECT_MEAN_NEGATIVE_CACHE.get(cache_key)
+        if entry is None:
+            return None
+        if int(fh) < int(entry.next_probe_fh) or now < float(entry.retry_after):
+            entry.updated_at = now
+            _EPS_DIRECT_MEAN_NEGATIVE_CACHE.move_to_end(cache_key)
+            reason = entry.reason
+        else:
+            _EPS_DIRECT_MEAN_NEGATIVE_CACHE.pop(cache_key, None)
+            reason = None
+    if reason is not None:
+        _metric_increment("eps_direct_mean_negative_cache_hit")
+    else:
+        _metric_increment("eps_direct_mean_negative_cache_reprobe")
+    return reason
+
+
+def _record_eps_direct_mean_terminal_miss(
+    *,
+    cache_key: tuple[str, str, str, int],
+    fh: int,
+    statistics_fh: int,
+    reason: str,
+) -> None:
+    now = time.monotonic()
+    late_probe_fh = max(
+        0,
+        int(statistics_fh) - _eps_direct_mean_late_probe_lead_hours(),
+    )
+    if int(fh) < late_probe_fh:
+        next_probe_fh = late_probe_fh
+        retry_after = 0.0
+    elif int(fh) < int(statistics_fh):
+        next_probe_fh = int(statistics_fh)
+        retry_after = 0.0
+    else:
+        next_probe_fh = int(statistics_fh)
+        retry_after = now + _eps_direct_mean_terminal_retry_seconds()
+
+    with _EPS_DIRECT_MEAN_CACHE_LOCK:
+        _EPS_DIRECT_MEAN_NEGATIVE_CACHE[cache_key] = _EpsDirectMeanNegativeEntry(
+            next_probe_fh=next_probe_fh,
+            retry_after=retry_after,
+            reason=str(reason),
+            updated_at=now,
+        )
+        _EPS_DIRECT_MEAN_NEGATIVE_CACHE.move_to_end(cache_key)
+        while len(_EPS_DIRECT_MEAN_NEGATIVE_CACHE) > DEFAULT_EPS_RUN_CACHE_MAX_ENTRIES:
+            _EPS_DIRECT_MEAN_NEGATIVE_CACHE.popitem(last=False)
+    _metric_increment("eps_direct_mean_negative_cache_store")
+
+
+def _eps_statistics_inventory_cache_key(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    statistics_fh: int,
+    priority: str,
+) -> tuple[str, str, str, int, str]:
+    return (
+        str(model_id).strip().lower(),
+        _run_id_from_date(run_date),
+        str(product).strip().lower(),
+        int(statistics_fh),
+        _priority_normalized(priority),
+    )
+
+
+def _search_eps_statistics_inventory(
+    H: Any,
+    *,
+    search_pattern: str,
+    priority: str,
+    model_id: str,
+    run_date: datetime,
+    product: str,
+    fh: int,
+    statistics_fh: int,
+) -> _InventorySearchResult:
+    cache_key = _eps_statistics_inventory_cache_key(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        statistics_fh=statistics_fh,
+        priority=priority,
+    )
+    with _EPS_DIRECT_MEAN_CACHE_LOCK:
+        full_inventory = _EPS_STATISTICS_INVENTORY_CACHE.get(cache_key)
+        if full_inventory is not None:
+            _EPS_STATISTICS_INVENTORY_CACHE.move_to_end(cache_key)
+    if full_inventory is not None:
+        _metric_increment("eps_statistics_inventory_cache_hit")
+        filtered = _inventory_filter(full_inventory, search_pattern)
+        try:
+            reason = "ok" if filtered is not None and len(filtered) > 0 else "pattern_missing"
+        except Exception:
+            reason = "idx_unparseable"
+        return _InventorySearchResult(inventory=filtered, reason=reason)
+
+    inv_result = _inventory_search(
+        H,
+        search_pattern=search_pattern,
+        priority=priority,
+        model_id=model_id,
+        run_date=run_date,
+        product=product,
+        fh=fh,
+    )
+    if inv_result.reason == "ok" and inv_result.idx_key:
+        full_inventory = _inventory_cache_get(inv_result.idx_key)
+        if full_inventory is not None:
+            with _EPS_DIRECT_MEAN_CACHE_LOCK:
+                _EPS_STATISTICS_INVENTORY_CACHE[cache_key] = full_inventory
+                _EPS_STATISTICS_INVENTORY_CACHE.move_to_end(cache_key)
+                while len(_EPS_STATISTICS_INVENTORY_CACHE) > DEFAULT_EPS_RUN_CACHE_MAX_ENTRIES:
+                    _EPS_STATISTICS_INVENTORY_CACHE.popitem(last=False)
+            _metric_increment("eps_statistics_inventory_cache_store")
+    return inv_result
+
+
 def _fetch_ecmwf_direct_mean_variable(
     *,
     model_id: str,
@@ -2585,21 +2967,58 @@ def _fetch_ecmwf_direct_mean_variable(
     retries = _retry_count()
     sleep_s = _retry_sleep_seconds()
     last_exc: Exception | None = None
+    direct_fh = _ecmwf_eps_statistics_file_fh(fh)
+    run_cache_key = _eps_direct_mean_run_key(
+        model_id=model_id,
+        product=product,
+        run_date=run_date,
+        statistics_fh=direct_fh,
+    )
+    cached_reason = _eps_direct_mean_negative_reason(cache_key=run_cache_key, fh=fh)
+    if cached_reason is not None:
+        last_exc = _HerbieInventoryUnavailableError(
+            f"ECMWF EPS terminal statistics inventory deferred for {model_id} "
+            f"fh{fh:03d}: {cached_reason}",
+            reason=cached_reason,
+        )
+        if fallback_to_pf_mean:
+            logger.info(
+                "Skipping cached-unavailable ECMWF EPS direct mean for %s fh%03d pattern=%s reason=%s",
+                model_id,
+                int(fh),
+                search_pattern,
+                cached_reason,
+            )
+            return _fetch_ecmwf_pf_mean_variable(
+                model_id=model_id,
+                product=product,
+                search_pattern=search_pattern,
+                run_date=run_date,
+                fh=fh,
+                herbie_kwargs=herbie_kwargs,
+                bundle_fetch_cache=bundle_fetch_cache,
+                return_meta=return_meta,
+            )
+        raise RuntimeError(
+            f"ECMWF EPS direct mean fetch deferred for {model_id} "
+            f"fh{fh:03d} pattern={search_pattern!r}"
+        ) from last_exc
 
+    stop_priorities = False
+    terminal_miss_reasons: list[str] = []
     for priority in priority_list:
         for attempt_idx in range(1, retries + 1):
             try:
-                direct_fh = _ecmwf_eps_statistics_file_fh(fh)
                 run_kwargs = _quiet_herbie_kwargs(kwargs)
                 run_kwargs["priority"] = priority
                 run_kwargs["fxx"] = direct_fh
-                H = Herbie(herbie_date, **run_kwargs)
+                H = _construct_herbie(Herbie, herbie_date, run_kwargs)
                 _point_herbie_at_ecmwf_eps_statistics_file(
                     H,
                     requested_fh=fh,
                     statistics_fh=direct_fh,
                 )
-                inv_result = _inventory_search(
+                inv_result = _search_eps_statistics_inventory(
                     H,
                     search_pattern=search_pattern,
                     priority=priority,
@@ -2607,11 +3026,15 @@ def _fetch_ecmwf_direct_mean_variable(
                     run_date=run_date,
                     product=product,
                     fh=fh,
+                    statistics_fh=direct_fh,
                 )
                 inventory = inv_result.inventory
                 if inv_result.reason != "ok" or inventory is None or len(inventory) == 0:
-                    raise RuntimeError(
-                        f"ECMWF EPS direct mean inventory unavailable for {model_id} fh{fh:03d} pattern={search_pattern!r}: {inv_result.reason}"
+                    reason = inv_result.reason if inv_result.reason != "ok" else "no_inventory"
+                    raise _HerbieInventoryUnavailableError(
+                        f"ECMWF EPS direct mean inventory unavailable for {model_id} "
+                        f"fh{fh:03d} pattern={search_pattern!r}: {reason}",
+                        reason=reason,
                     )
 
                 if "type" in inventory.columns:
@@ -2622,9 +3045,10 @@ def _fetch_ecmwf_direct_mean_variable(
                 direct_inventory = _filter_inventory_step(direct_inventory, fh=fh)
 
                 if len(direct_inventory) != 1:
-                    raise RuntimeError(
+                    raise _HerbieInventoryUnavailableError(
                         f"ECMWF EPS direct mean inventory expected one em record for {model_id} "
-                        f"fh{fh:03d} pattern={search_pattern!r}; found {len(direct_inventory)}"
+                        f"fh{fh:03d} pattern={search_pattern!r}; found {len(direct_inventory)}",
+                        reason="pattern_missing",
                     )
 
                 first_inventory_line = ""
@@ -2679,13 +3103,46 @@ def _fetch_ecmwf_direct_mean_variable(
                     "aggregation": "ecmwf_direct_mean",
                     "member_count": 1,
                 }
+                with _EPS_DIRECT_MEAN_CACHE_LOCK:
+                    _EPS_DIRECT_MEAN_NEGATIVE_CACHE.pop(run_cache_key, None)
                 if return_meta:
                     return data, crs, transform, meta
                 return data, crs, transform
             except Exception as exc:
                 last_exc = exc
+                failure = _classify_herbie_failure(exc)
+                terminal_reason = (
+                    exc.reason
+                    if isinstance(exc, _HerbieInventoryUnavailableError)
+                    and exc.reason in {"idx_missing", "idx_empty", "no_inventory"}
+                    else None
+                )
+                if terminal_reason is not None:
+                    # A mirror can lag another. Skip the redundant retries for
+                    # this priority, but do not poison the run-wide cache until
+                    # every configured source has reported the terminal file
+                    # unavailable.
+                    terminal_miss_reasons.append(terminal_reason)
+                    break
+                if not failure.retryable:
+                    stop_priorities = True
+                    break
                 if sleep_s > 0 and attempt_idx < retries:
                     time.sleep(sleep_s)
+        if stop_priorities:
+            break
+
+    if (
+        not stop_priorities
+        and priority_list
+        and len(terminal_miss_reasons) == len(priority_list)
+    ):
+        _record_eps_direct_mean_terminal_miss(
+            cache_key=run_cache_key,
+            fh=fh,
+            statistics_fh=direct_fh,
+            reason=terminal_miss_reasons[-1],
+        )
 
     if fallback_to_pf_mean:
         reason = f"{type(last_exc).__name__}: {last_exc}" if last_exc is not None else "unknown"
@@ -2730,6 +3187,9 @@ def reset_herbie_runtime_caches_for_tests() -> None:
     with _INVENTORY_CACHE_LOCK:
         _INVENTORY_CACHE.clear()
         _INVENTORY_INFLIGHT.clear()
+    with _EPS_DIRECT_MEAN_CACHE_LOCK:
+        _EPS_DIRECT_MEAN_NEGATIVE_CACHE.clear()
+        _EPS_STATISTICS_INVENTORY_CACHE.clear()
     with _FETCH_RUNTIME_METRICS_LOCK:
         _FETCH_RUNTIME_COUNTERS.clear()
         _FETCH_RUNTIME_TIMERS_MS.clear()
@@ -2778,7 +3238,7 @@ def inventory_lines_for_pattern(
         run_kwargs["priority"] = priority
         inv_reason = "unknown"
         try:
-            H = Herbie(herbie_date, **run_kwargs)
+            H = _construct_herbie(Herbie, herbie_date, run_kwargs)
             idx_ref = getattr(H, "idx", None)
             if not idx_ref:
                 inv_reason = "idx_missing"
@@ -2807,7 +3267,8 @@ def inventory_lines_for_pattern(
                 if lines:
                     return lines
         except Exception as exc:
-            if _is_missing_index_error(exc):
+            failure = _classify_herbie_failure(exc)
+            if failure.kind == "missing_index":
                 inv_reason = "idx_missing"
                 _record_and_log_idx_missing(
                     model_id=model_id,
@@ -2880,10 +3341,11 @@ def product_hour_has_any_idx(
         run_kwargs = _quiet_herbie_kwargs(kwargs)
         run_kwargs["priority"] = priority
         try:
-            H = Herbie(herbie_date, **run_kwargs)
+            H = _construct_herbie(Herbie, herbie_date, run_kwargs)
             idx_ref = getattr(H, "idx", None)
         except Exception as exc:
-            if _is_missing_index_error(exc):
+            failure = _classify_herbie_failure(exc)
+            if failure.kind == "missing_index":
                 if allow_grib_without_idx and getattr(H, "grib", None):
                     logger.info(
                         "Herbie readiness probe using GRIB fallback (%s %s fh%03d; priority=%s): idx exception but GRIB exists",
@@ -3028,6 +3490,38 @@ def _is_herbie_index_unavailable_error(exc: Exception) -> bool:
         or "can't open index file" in text
         or "download the full file first" in text
     )
+
+
+def _classify_herbie_failure(exc: Exception) -> _HerbieFailureClassification:
+    """Provide one retry vocabulary for every Herbie priority loop."""
+    if isinstance(exc, HerbieCallTimeoutError):
+        return _HerbieFailureClassification(kind="timeout", retryable=True)
+    if isinstance(exc, _HerbieInventoryUnavailableError):
+        reason = str(exc.reason).strip().lower()
+        if reason == "idx_missing":
+            return _HerbieFailureClassification(kind="missing_index", retryable=True)
+        if reason in {"idx_empty", "no_inventory"}:
+            return _HerbieFailureClassification(kind="empty_inventory", retryable=True)
+        if reason == "idx_unparseable":
+            return _HerbieFailureClassification(kind="index_unavailable", retryable=True)
+        if reason == "pattern_missing":
+            return _HerbieFailureClassification(kind="pattern_missing", retryable=False)
+    if isinstance(exc, _InvalidGribSubsetError):
+        return _HerbieFailureClassification(kind="invalid_subset", retryable=True)
+    if _is_no_space_error(exc):
+        return _HerbieFailureClassification(kind="no_space", retryable=False)
+    if _is_missing_index_error(exc):
+        return _HerbieFailureClassification(kind="missing_index", retryable=True)
+    if _is_empty_inventory_error(exc):
+        return _HerbieFailureClassification(kind="empty_inventory", retryable=True)
+    if _is_herbie_index_unavailable_error(exc):
+        return _HerbieFailureClassification(kind="index_unavailable", retryable=True)
+    if _is_grib_not_found_error(exc):
+        return _HerbieFailureClassification(kind="grib_not_found", retryable=True)
+    # Preserve availability for unknown third-party errors: only known
+    # deterministic failures are suppressed. Unknown failures retain the
+    # existing bounded retry behavior.
+    return _HerbieFailureClassification(kind="other", retryable=True)
 
 
 def _default_subset_target_path(
@@ -4107,7 +4601,7 @@ def fetch_variable(
             subset_target: Path | None = None
             precheck_pattern_missing = False
             try:
-                H = Herbie(herbie_date, **run_kwargs)
+                H = _construct_herbie(Herbie, herbie_date, run_kwargs)
                 precheck_ok, precheck_reason = _precheck_subset_available(
                     H,
                     model_id=model_id,
@@ -4228,9 +4722,13 @@ def fetch_variable(
                                 if subset_path is None:
                                     raise RuntimeError("inventory byte-range unavailable")
                             else:
-                                subset_path = H.download(search_pattern, errors="raise", overwrite=False)
+                                subset_path = _download_herbie_subset_isolated(
+                                    H,
+                                    search_pattern=search_pattern,
+                                    subset_hint=subset_hint,
+                                )
                         except Exception as herbie_exc:
-                            if _is_no_space_error(herbie_exc):
+                            if _classify_herbie_failure(herbie_exc).kind == "no_space":
                                 raise
                             logger.warning(
                                 "Herbie subset download failed; trying direct byte-range fallback (%s fh%03d %s; priority=%s; attempt=%d/%d): %s",
@@ -4330,9 +4828,10 @@ def fetch_variable(
                         break
             except Exception as exc:
                 last_exc = exc
+                failure = _classify_herbie_failure(exc)
                 if precheck_pattern_missing:
                     _note_pattern_missing_failure(priority)
-                if isinstance(exc, _InvalidGribSubsetError):
+                if failure.kind == "invalid_subset":
                     saw_missing_subset_file = True
                     logger.warning(
                         "Herbie subset unavailable: invalid GRIB byte-range payload (%s fh%03d %s; priority=%s; attempt=%d/%d): %s",
@@ -4347,7 +4846,7 @@ def fetch_variable(
                     if sleep_s > 0 and attempt_idx < attempts_for_priority:
                         time.sleep(sleep_s)
                     continue
-                if _is_missing_index_error(exc) or _is_empty_inventory_error(exc):
+                if failure.kind in {"missing_index", "empty_inventory"}:
                     saw_missing_index = True
                     _record_and_log_idx_missing(
                         model_id=model_id,
@@ -4362,7 +4861,7 @@ def fetch_variable(
                         prs_idx_lag_reason = "idx_missing_exception"
                         force_nomads_after_prs_idx_lag = True
                     break
-                if _is_no_space_error(exc):
+                if failure.kind == "no_space":
                     saw_missing_subset_file = True
                     logger.warning(
                         "Herbie subset transiently unavailable: no disk space for cache/write (%s fh%03d %s; priority=%s; attempt=%d/%d): %s",
@@ -4377,7 +4876,7 @@ def fetch_variable(
                     if sleep_s > 0 and attempt_idx < attempts_for_priority:
                         time.sleep(sleep_s)
                     continue
-                if _is_herbie_index_unavailable_error(exc):
+                if failure.kind == "index_unavailable":
                     saw_missing_index = True
                     logger.warning(
                         "Herbie subset transiently unavailable: index unavailable (%s fh%03d %s; priority=%s; attempt=%d/%d): %s",
@@ -4392,7 +4891,7 @@ def fetch_variable(
                     if sleep_s > 0 and attempt_idx < attempts_for_priority:
                         time.sleep(sleep_s)
                     continue
-                if _is_grib_not_found_error(exc):
+                if failure.kind == "grib_not_found":
                     manual_subset = None
                     if 'H' in locals():
                         manual_out_path = subset_target
