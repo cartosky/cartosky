@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from collections import OrderedDict
 import hashlib
@@ -37,7 +37,7 @@ import tempfile
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, overload
+from typing import Any, Callable, Iterator, Literal, overload
 from urllib.parse import urlsplit, urlunsplit
 
 import numpy as np
@@ -48,6 +48,7 @@ import rasterio.errors
 import rasterio.io
 import rasterio.transform
 import requests
+from requests.adapters import HTTPAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -427,6 +428,9 @@ _RANGE_THROTTLE_CONSECUTIVE = 0
 _RANGE_THROTTLE_COOLDOWN_UNTIL = 0.0
 RANGE_THROTTLE_TRIP_COUNT = 3
 RANGE_THROTTLE_COOLDOWN_SECONDS = 60.0
+
+_RANGE_HTTP_SESSION_LOCK = threading.Lock()
+_RANGE_HTTP_SESSION: requests.Session | None = None
 
 _INVENTORY_CACHE: dict[str, _InventoryCacheEntry] = {}
 _INVENTORY_CACHE_LOCK = threading.Lock()
@@ -895,6 +899,24 @@ def _env_int_setting(names: tuple[str, ...], default: int, *, minimum: int = 1) 
 
 def _range_fetch_workers() -> int:
     return _env_int_setting(ENV_HERBIE_RANGE_FETCH_WORKERS, DEFAULT_RANGE_FETCH_WORKERS, minimum=1)
+
+
+def _range_http_session() -> requests.Session:
+    global _RANGE_HTTP_SESSION
+    with _RANGE_HTTP_SESSION_LOCK:
+        if _RANGE_HTTP_SESSION is None:
+            pool_size = _range_fetch_workers()
+            adapter = HTTPAdapter(
+                pool_connections=pool_size,
+                pool_maxsize=pool_size,
+                max_retries=0,
+                pool_block=True,
+            )
+            session = requests.Session()
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+            _RANGE_HTTP_SESSION = session
+        return _RANGE_HTTP_SESSION
 
 
 def _eps_full_file_cache_enabled(*, model_id: str, product: str) -> bool:
@@ -2339,6 +2361,41 @@ def _aggregation_subset_path(base_path: Path, token: str) -> Path:
     return base_path.with_name(f"{base_path.stem}.{token}{suffix}")
 
 
+def _iter_ordered_range_payloads(
+    ordered_ranges: list[tuple[int, int | None]],
+    fetch_payload: Callable[[tuple[int, int | None]], bytes],
+    *,
+    max_workers: int,
+) -> Iterator[tuple[tuple[int, int | None], bytes]]:
+    worker_count = max(1, min(len(ordered_ranges), int(max_workers)))
+    if worker_count == 1:
+        for range_key in ordered_ranges:
+            yield range_key, fetch_payload(range_key)
+        return
+
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="eps-range") as executor:
+        pending: dict[int, Any] = {}
+        next_submit_index = 0
+        while next_submit_index < worker_count:
+            pending[next_submit_index] = executor.submit(
+                fetch_payload,
+                ordered_ranges[next_submit_index],
+            )
+            next_submit_index += 1
+
+        for range_index, range_key in enumerate(ordered_ranges):
+            future = pending.pop(range_index)
+            payload = future.result()
+            yield range_key, payload
+            del payload
+            if next_submit_index < len(ordered_ranges):
+                pending[next_submit_index] = executor.submit(
+                    fetch_payload,
+                    ordered_ranges[next_submit_index],
+                )
+                next_submit_index += 1
+
+
 def _download_subset_with_inventory_rows(
     H: Any,
     *,
@@ -2395,33 +2452,32 @@ def _download_subset_with_inventory_rows(
                 require_grib_payload=True,
             )
 
-        remote_payloads: dict[tuple[int, int | None], bytes] = {}
-        max_workers = min(len(ordered_ranges), _range_fetch_workers())
-        if is_remote and max_workers > 1:
-            with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="eps-range") as executor:
-                future_map = {
-                    executor.submit(_read_remote_payload, range_key): range_key
-                    for range_key in ordered_ranges
-                }
-                for future in as_completed(future_map):
-                    range_key = future_map[future]
-                    remote_payloads[range_key] = future.result()
-
         wrote_bytes = False
         with open(out_path, "wb") as dst:
             src = open(read_source, "rb") if not is_remote else None
             try:
-                for start_byte, end_byte in ordered_ranges:
-                    range_key = (int(start_byte), int(end_byte) if end_byte is not None else None)
-                    if is_remote:
-                        if remote_payloads:
-                            payload = remote_payloads.get(range_key, b"")
-                        else:
-                            payload = _read_remote_payload(range_key)
-                    else:
+                if is_remote:
+                    range_payloads = _iter_ordered_range_payloads(
+                        ordered_ranges,
+                        _read_remote_payload,
+                        max_workers=_range_fetch_workers(),
+                    )
+                else:
+                    assert src is not None
+
+                    def _read_local_payload(range_key: tuple[int, int | None]) -> bytes:
+                        start_byte, end_byte = range_key
                         assert src is not None
                         src.seek(start_byte)
-                        payload = src.read() if end_byte is None else src.read(end_byte - start_byte + 1)
+                        return src.read() if end_byte is None else src.read(end_byte - start_byte + 1)
+
+                    range_payloads = (
+                        (range_key, _read_local_payload(range_key))
+                        for range_key in ordered_ranges
+                    )
+
+                for range_key, payload in range_payloads:
+                    start_byte, end_byte = range_key
                     if not payload:
                         continue
                     _validate_grib_range_payload(
@@ -2436,6 +2492,7 @@ def _download_subset_with_inventory_rows(
                     )
                     dst.write(payload)
                     wrote_bytes = True
+                    del payload
             finally:
                 if src is not None:
                     src.close()
@@ -3209,7 +3266,7 @@ def _fetch_ecmwf_direct_mean_variable(
 
 def reset_herbie_runtime_caches_for_tests() -> None:
     """Reset process-local Herbie availability caches (tests only)."""
-    global _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS
+    global _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS, _RANGE_HTTP_SESSION
     global _RANGE_THROTTLE_CONSECUTIVE, _RANGE_THROTTLE_COOLDOWN_UNTIL
     with _IDX_NEGATIVE_CACHE_LOCK:
         _IDX_NEGATIVE_CACHE.clear()
@@ -3229,6 +3286,11 @@ def reset_herbie_runtime_caches_for_tests() -> None:
         _FETCH_RUNTIME_TIMERS_MS.clear()
     with _EPS_FULL_FILE_CACHE_CLEANUP_LOCK:
         _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS = 0.0
+    with _RANGE_HTTP_SESSION_LOCK:
+        range_http_session = _RANGE_HTTP_SESSION
+        _RANGE_HTTP_SESSION = None
+    if range_http_session is not None:
+        range_http_session.close()
 
 
 def inventory_lines_for_pattern(
@@ -3988,7 +4050,7 @@ def _network_fetch_range_bytes(
         )
     headers = {"Range": f"bytes={range_label}"}
     expected_size = None if end_byte is None else int(end_byte) - int(start_byte) + 1
-    response = requests.get(source_url, headers=headers, timeout=45, stream=True)
+    response = _range_http_session().get(source_url, headers=headers, timeout=45, stream=True)
     try:
         response.raise_for_status()
         if response.status_code != 206:

@@ -83,6 +83,14 @@ def _install_full_grib_response(monkeypatch: pytest.MonkeyPatch, response_factor
     )
 
 
+def _install_range_get(monkeypatch: pytest.MonkeyPatch, get) -> None:
+    monkeypatch.setattr(
+        fetch_module,
+        "_range_http_session",
+        lambda: SimpleNamespace(get=get),
+    )
+
+
 def _install_fake_herbie(monkeypatch: pytest.MonkeyPatch, herbie_cls: type) -> None:
     fake_core = types.ModuleType("herbie.core")
     fake_core.Herbie = herbie_cls
@@ -164,6 +172,8 @@ def test_eps_multirow_fetch_uses_healthy_ranges_before_full_cache(
         ]
     )
     range_calls: list[tuple[int, int | None]] = []
+    window_calls: list[int] = []
+    real_payload_window = fetch_module._iter_ordered_range_payloads
 
     def _fetch_range(**kwargs) -> bytes:
         range_key = (int(kwargs["start_byte"]), kwargs["end_byte"])
@@ -173,9 +183,19 @@ def test_eps_multirow_fetch_uses_healthy_ranges_before_full_cache(
     def _forbid_full_cache(*_args, **_kwargs) -> Path:
         raise AssertionError("healthy EPS ranges must not initiate a full-file download")
 
+    def _tracked_payload_window(ordered_ranges, fetch_payload, *, max_workers):
+        window_calls.append(max_workers)
+        yield from real_payload_window(
+            ordered_ranges,
+            fetch_payload,
+            max_workers=max_workers,
+        )
+
     monkeypatch.setenv("TWF_EPS_FULL_FILE_CACHE_ENABLE", "1")
+    monkeypatch.setenv("TWF_HERBIE_RANGE_FETCH_WORKERS", "2")
     monkeypatch.setattr(fetch_module, "_fetch_range_bytes", _fetch_range)
     monkeypatch.setattr(fetch_module, "_maybe_get_eps_full_grib_path", _forbid_full_cache)
+    monkeypatch.setattr(fetch_module, "_iter_ordered_range_payloads", _tracked_payload_window)
     out_path = tmp_path / "subset.grib2"
 
     written = fetch_module._download_subset_with_inventory_rows(
@@ -193,6 +213,7 @@ def test_eps_multirow_fetch_uses_healthy_ranges_before_full_cache(
     assert written == out_path
     assert out_path.read_bytes() == records[(0, 19)] + records[(20, 39)]
     assert sorted(range_calls) == [(0, 19), (20, 39)]
+    assert window_calls == [2]
 
 
 def test_eps_multirow_range_failure_uses_full_cache_once(
@@ -245,6 +266,51 @@ def test_eps_multirow_range_failure_uses_full_cache_once(
     assert cache_calls["count"] == 1
 
 
+def test_ordered_range_payload_window_does_not_prefetch_past_worker_limit() -> None:
+    ordered_ranges = [(index * 20, index * 20 + 19) for index in range(5)]
+    first_release = threading.Event()
+    started_events = {range_key: threading.Event() for range_key in ordered_ranges}
+    started_ranges: list[tuple[int, int | None]] = []
+    started_lock = threading.Lock()
+
+    def _fetch_payload(range_key: tuple[int, int | None]) -> bytes:
+        with started_lock:
+            started_ranges.append(range_key)
+        started_events[range_key].set()
+        if range_key == ordered_ranges[0]:
+            assert first_release.wait(timeout=2.0)
+        return b"GRIB" + bytes([range_key[0] // 20]) * 16
+
+    payloads = fetch_module._iter_ordered_range_payloads(
+        ordered_ranges,
+        _fetch_payload,
+        max_workers=2,
+    )
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            first_result_future = pool.submit(next, payloads)
+            assert started_events[ordered_ranges[0]].wait(timeout=1.0)
+            assert started_events[ordered_ranges[1]].wait(timeout=1.0)
+            with started_lock:
+                assert set(started_ranges) == set(ordered_ranges[:2])
+            first_release.set()
+            first_result = first_result_future.result(timeout=1.0)
+
+        # The generator pauses at the first yield, before admitting a third
+        # payload into the two-slot window. The caller can write and release
+        # this payload before requesting the next one.
+        with started_lock:
+            assert set(started_ranges) == set(ordered_ranges[:2])
+
+        remaining_results = list(payloads)
+    finally:
+        first_release.set()
+
+    results = [first_result, *remaining_results]
+    assert [range_key for range_key, _payload in results] == ordered_ranges
+
+
 def test_wgrib2_final_record_uses_an_open_ended_range(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -292,7 +358,7 @@ def test_wgrib2_final_record_uses_an_open_ended_range(
         observed_ranges.append(headers["Range"])
         return _FakeResponse(payload, status_code=206)
 
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
     assert fetch_module._network_fetch_range_bytes(
         "https://example.invalid/model.grib2",
         start_byte=100,
@@ -318,7 +384,7 @@ def test_open_ended_range_reuses_bundle_cache(
         calls["count"] += 1
         return _FakeResponse(payload, status_code=206)
 
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
     kwargs = dict(
         source="nomads",
         source_url="https://example.invalid/model.grib2",
@@ -380,7 +446,7 @@ def test_fetch_range_retries_transient_failure_before_returning(
 
     monkeypatch.setenv("TWF_HERBIE_RANGE_RETRIES", "3")
     monkeypatch.setenv("TWF_HERBIE_RANGE_RETRY_BACKOFF_SECONDS", "0")
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     result = fetch_module._fetch_range_bytes(
         source="nomads",
@@ -412,7 +478,7 @@ def test_fetch_range_does_not_retry_upstream_refusal(
 
     monkeypatch.setenv("TWF_HERBIE_RANGE_RETRIES", "3")
     monkeypatch.setenv("TWF_HERBIE_RANGE_RETRY_BACKOFF_SECONDS", "0")
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     with pytest.raises(fetch_module._RangeRequestNotHonoredError):
         fetch_module._fetch_range_bytes(
@@ -458,7 +524,7 @@ def test_range_retries_exhaust_before_full_file_fallback(
 
     monkeypatch.setenv("TWF_HERBIE_RANGE_RETRIES", "3")
     monkeypatch.setenv("TWF_HERBIE_RANGE_RETRY_BACKOFF_SECONDS", "0")
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
     monkeypatch.setattr(fetch_module, "_fetch_subset_bytes_from_full_source", _fake_full_fallback)
 
     out_path = tmp_path / "subset.grib2"
@@ -660,7 +726,7 @@ def test_fetch_range_cache_hit_store_and_single_http_call(monkeypatch: pytest.Mo
         calls.append((url, str(headers.get("Range", ""))))
         return _FakeResponse(b"ABCD")
 
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     kwargs = dict(
         source="nomads",
@@ -751,7 +817,7 @@ def test_fetch_range_cache_singleflight_concurrency(monkeypatch: pytest.MonkeyPa
         time.sleep(0.1)
         return _FakeResponse(b"DATA")
 
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     kwargs = dict(
         source="nomads",
@@ -784,7 +850,7 @@ def test_fetch_range_cache_separates_different_ranges(monkeypatch: pytest.Monkey
             return _FakeResponse(b"ABCD")
         return _FakeResponse(b"EFGH")
 
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     base = dict(
         source="nomads",
@@ -814,7 +880,7 @@ def test_fetch_range_cache_skips_large_ranges(monkeypatch: pytest.MonkeyPatch) -
         calls["count"] += 1
         return _FakeResponse(b"ABCD")
 
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     kwargs = dict(
         source="nomads",
@@ -851,7 +917,7 @@ def test_fetch_range_cache_failure_does_not_poison_cache(monkeypatch: pytest.Mon
 
     monkeypatch.setenv("TWF_HERBIE_RANGE_RETRIES", "3")
     monkeypatch.setenv("TWF_HERBIE_RANGE_RETRY_BACKOFF_SECONDS", "0")
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     kwargs = dict(
         source="nomads",
@@ -884,7 +950,7 @@ def test_network_fetch_range_bytes_rejects_full_file_200_response(monkeypatch: p
         del url, headers, timeout, stream
         return _FakeResponse(full_file, status_code=200)
 
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     with pytest.raises(fetch_module._InvalidGribSubsetError, match="Range request not honored"):
         fetch_module._network_fetch_range_bytes(
@@ -894,6 +960,51 @@ def test_network_fetch_range_bytes_rejects_full_file_200_response(monkeypatch: p
     assert metrics["counters"].get("range_request_not_honored", 0) == 1
 
 
+def test_range_http_session_is_reused_and_sized_for_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+    monkeypatch.setenv("TWF_HERBIE_RANGE_FETCH_WORKERS", "7")
+
+    first_session = fetch_module._range_http_session()
+    second_session = fetch_module._range_http_session()
+    adapter = first_session.get_adapter("https://example.invalid/model.grib2")
+
+    assert second_session is first_session
+    assert adapter._pool_connections >= 7
+    assert adapter._pool_maxsize >= 7
+    assert adapter._pool_block is True
+    fetch_module.reset_herbie_runtime_caches_for_tests()
+
+
+def test_network_range_fetch_uses_pooled_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = b"GRIB" + (b"P" * 28)
+    observed: list[tuple[str, str]] = []
+
+    class _FakeSession:
+        def get(self, url: str, *, headers: dict[str, str], timeout: int, stream: bool = False):
+            del timeout, stream
+            observed.append((url, headers["Range"]))
+            return _FakeResponse(payload, status_code=206)
+
+    def _forbid_unpooled_get(*_args, **_kwargs):
+        raise AssertionError("range fetch bypassed the pooled session")
+
+    monkeypatch.setattr(fetch_module, "_range_http_session", lambda: _FakeSession())
+    monkeypatch.setattr(fetch_module.requests, "get", _forbid_unpooled_get)
+
+    result = fetch_module._network_fetch_range_bytes(
+        "https://example.invalid/model.grib2",
+        start_byte=0,
+        end_byte=31,
+    )
+
+    assert result == payload
+    assert observed == [("https://example.invalid/model.grib2", "bytes=0-31")]
+
+
 def test_network_fetch_range_bytes_accepts_200_when_body_is_exactly_the_slice(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = b"GRIB" + (b"\0" * 28)
 
@@ -901,7 +1012,7 @@ def test_network_fetch_range_bytes_accepts_200_when_body_is_exactly_the_slice(mo
         del url, headers, timeout, stream
         return _FakeResponse(payload, status_code=200, headers={"Content-Length": str(len(payload))})
 
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     result = fetch_module._network_fetch_range_bytes(
         "https://nomads.example/gfs.grib2", start_byte=0, end_byte=31
@@ -916,7 +1027,7 @@ def test_network_fetch_range_bytes_rejects_truncated_206_payload(monkeypatch: py
         del url, headers, timeout, stream
         return _FakeResponse(b"GRIB" + (b"\0" * 10))  # 14 bytes; 32 requested
 
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     with pytest.raises(fetch_module._InvalidGribSubsetError, match="size mismatch"):
         fetch_module._network_fetch_range_bytes(
@@ -937,7 +1048,7 @@ def test_network_fetch_range_bytes_302_refusals_trip_cooldown(monkeypatch: pytes
         calls.append(url)
         return _FakeResponse(b"<html>blocked</html>", status_code=302)
 
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     for _ in range(fetch_module.RANGE_THROTTLE_TRIP_COUNT):
         with pytest.raises(fetch_module._RangeRequestNotHonoredError):
@@ -971,7 +1082,7 @@ def test_network_fetch_range_bytes_success_resets_throttle_counter(monkeypatch: 
         del url, headers, timeout, stream
         return responses.pop(0)
 
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     for _ in range(2):
         with pytest.raises(fetch_module._RangeRequestNotHonoredError):
@@ -1529,7 +1640,7 @@ def test_fetch_range_cache_invalid_grib_payload_does_not_poison_cache(monkeypatc
 
     monkeypatch.setenv("TWF_HERBIE_RANGE_RETRIES", "3")
     monkeypatch.setenv("TWF_HERBIE_RANGE_RETRY_BACKOFF_SECONDS", "0")
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
 
     kwargs = dict(
         source="nomads",
@@ -1593,7 +1704,7 @@ def test_derived_smoke_reports_fetch_cache_hit(monkeypatch: pytest.MonkeyPatch, 
         request_calls["count"] += 1
         return _FakeResponse(b"GRIB" + (b"X" * 28))
 
-    monkeypatch.setattr(fetch_module.requests, "get", _fake_get)
+    _install_range_get(monkeypatch, _fake_get)
     monkeypatch.setenv("TWF_HERBIE_PRIORITY", "nomads")
 
     class _Plugin:

@@ -402,10 +402,14 @@ scopes: A → precip_total_cumulative (item 3) + ptype_accumulation_cumulative
    inventory is retained in a bounded per-run cache and filtered locally for
    later fhs. The `tmp850__mean` routing change is intentionally not included;
    it remains behind the parity gate below.
-7. **3.11 high-value bullets.** Module-level pooled `requests.Session` sized
+~~7. **3.11 high-value bullets.** Module-level pooled `requests.Session` sized
    ≥ range workers (measured: ~125 ms/request × ~50 ranges per EPS mean
    variable per fh); stream pf range payloads to disk with a bounded window
-   instead of holding ~51 in RAM.
+   instead of holding ~51 in RAM.~~ **— DONE 2026-07-17 (PR D, local):**
+   range GETs share a lazy blocking HTTP/HTTPS connection pool sized to the
+   configured worker count. PF-mean ranges retain sorted inventory/band order
+   while flowing through an ordered sliding window; each payload is written
+   before another is admitted, replacing the all-~51-payload RAM buffer.
 8. **3.8.** Persist per-(run, var, fh) failure counts across `_process_run`
    calls with a cap/backoff; classify deterministic vs transient failures.
    **Extend to stats units (stats audit S2):** a persistently erroring
@@ -445,6 +449,15 @@ delete it in Wave 6/5.3; the live exclusion is the `type == "pf"` filter.)
    round wall-clock), sized from 3.6 measurements, protected by Wave 3's
    reliability work. Needs per-fh readiness-cache keys (done, 2.6) and a
    FetchContext strategy for non-cumulative vars.
+   **Sizing inputs inherited from Wave 3 (item 7 review, 2026-07-16):**
+   the pooled range `requests.Session` is a single process-wide pool
+   (`pool_maxsize = _range_fetch_workers()` = 8, `pool_block=True`) shared
+   across ALL concurrent builds — fh-parallelism multiplies concurrent
+   builds, so the pool must be resized (or made per-build-bounded) in the
+   same change or excess range workers will serialize on connection
+   acquisition. Similarly, the pf payload window (8) and the abandoned
+   Herbie-deadline-thread accumulation (no cap/gauge yet — see Wave 6
+   fold-ins) both scale with concurrent builds and need revisiting here.
 
 ## Wave 5 — Publication
 
@@ -474,6 +487,33 @@ delete it in Wave 6/5.3; the live exclusion is the `type == "pf"` filter.)
    escaping the pending scan to the whole-model catch-all, per-member
    transform-equality assertion, float64 temporaries in `stats_math`,
    sign-less prob-threshold id grammar blocking sub-zero thresholds).
+   **Plus Wave 2/3 review fold-ins (2026-07-16):**
+   - 4.2 residual: the pf band→member mapping is validated only against
+     .index byte order (write-sort contract + count/uniqueness); the
+     intrinsic GRIB perturbation-number cross-check
+     (`GRIB_PDS_TEMPLATE_NUMBERS`) is NOT implemented — cheap hardening if
+     EPS member products grow in importance.
+   - Abandoned Herbie-deadline threads: no cap or live gauge (only event
+     counters), and permanently-pinned workers strand their isolated
+     attempt dirs (multi-GB partials) until process exit; a wedged run in a
+     long upstream outage accumulates both unbounded (chip filed
+     2026-07-16; fold here if not yet landed).
+   - Terminal-stats inventory cache (4.4) has no completeness/mtime
+     invalidation — a partial early parse hides the direct-mean fast path
+     for that run's lifetime (pf-mean fallback still correct; perf only).
+   - Orphaned unique `.part`/`.full` temps are skipped by
+     `_iter_cache_files` cleanup → crash orphans accumulate (chip
+     task in flight 2026-07-16; fold here if not landed).
+   - Pre-existing unguarded partial-write: the full-file local-read
+     fallback (`_write_subset_from_source` call inside the except block,
+     fetch.py ~2530) lacks the `out_path` cleanup guard — rare path, add
+     the same `_remove_file_quietly` discipline.
+   - Pooled-session cookie policy: the shared range Session now persists
+     per-domain cookies (anti-abuse cookies ride along on same-host
+     requests) — consider a cookie-free policy as defensive tightening.
+   - Stats S2 residual: `error`/`gate_failed` streaks are now VISIBLE in
+     health alerting (Wave 2 PR C) but still retry every cycle with no
+     cap/backoff — closed by Wave 3 item 8's stats extension when it lands.
 2. **5.3.** Delete dead/misleading surface: unused `DeriveStrategy` metadata
    (or enforce it), `scale_divisor`, the dead wspd double-raise, the unreachable
    `rebuild_existing` parallel branch, the ~200 lines of dead loop-pregeneration

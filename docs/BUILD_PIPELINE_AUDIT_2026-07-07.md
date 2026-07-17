@@ -301,7 +301,14 @@ Fix (M): run Herbie calls under a deadline; cap the follower wait at 60–90 s i
 
 ### 3.11 MED/LOW — smaller perf items
 
-- **No `requests.Session`/connection pooling anywhere** (`fetch.py`, several `requests.get(` call sites — drifted from the original `3040`/`1181`/`725`, not individually re-pinned): every range request is a fresh TCP+TLS handshake; EPS pf-mean = ~51 ranges per variable per fh. **Measured in live prod logs, 2026-07-08:** one variable's single-fh PF-mean burst (`hgt500__mean` fh102, all `FETCH_CACHE event=miss ... url_hash=4458dafab34e` lines) ran 08:48:17.595→08:48:23.911 — ~6.3 s for ~50 small (300–700 KB) range requests to Azure blob storage, ~125 ms/request average, plausibly dominated by handshake overhead rather than transfer given the small payload sizes. Fix (S): module-level pooled Session sized ≥ range workers.
+- ~~**No `requests.Session`/connection pooling anywhere**~~ **FIXED 2026-07-17
+  (Wave 3 PR D, local):** range GETs now share a lazily constructed
+  module-level `requests.Session`. Its blocking HTTP/HTTPS adapter pools are
+  sized to the configured range-worker count, with adapter retries disabled so
+  the existing typed retry/backoff layer remains authoritative. The original
+  finding: every range request created a fresh TCP+TLS connection; EPS pf-mean
+  issues ~51 ranges per variable per fh, measured at ~6.3 s/~125 ms per request
+  for one live `hgt500__mean` burst.
 - **`np.savez_compressed` on every cumulative frame's hot path** (`derive.py:701`): zlib on a CONUS float32 grid ≈ 100–300 ms/frame × 4 strategies. Fix (S): uncompressed `np.savez` or zstd.
 - **Full-grid unicode ptype arrays** (`derive.py:4840-4841`, `2140-2141`, `2451-2452`): `np.array(["ice","snow","rain"])[idx]` ≥ 20 B/px (~38 MB transient on HRRR) + 3–4 full-grid string scans. Integer codes are ~5× smaller and faster.
 - **float64 promotion on climatology-grid warps** (`derive.py:2996`): `raw_data.astype(np.float64)` per component per fh; the generic warp path doesn't do this.
@@ -311,7 +318,12 @@ Fix (M): run Herbie calls under a deadline; cap the follower wait at 60–90 s i
 - **Memory-audit instrumentation logs at INFO unconditionally** (`_log_fetch_context_memory`, per-strategy entry/exit + per APCP step, `derive.py:3841`): O(cache entries) × steps × frames; gate behind `CARTOSKY_FRAME_MEMORY_AUDIT`.
 - **Frontier re-scan stat storm** (`scheduler.py:2182-2194`, `1425-1435`): thousands of stats per 60 s poll for ensembles; harmless on SSD, measurable on network filesystems.
 - **Member pending/promote scans** stat+JSON-parse every expected frame (~2.8k for GEFS) each scheduler poll (`members.py:1354-1381` `_iter_expected_member_frames`, `1384-1407` `member_pass_pending`, `1410-1434` `member_promote_pending`). **Note (2026-07-09):** the new `_mean_frame_available` helper (`members.py:475-484`, added by `675a5883`'s backfill logic) adds *more* of this same per-(var,fh) stat+parse cost during backfill scans — this bullet's cost is now somewhat worse under `mean_coverage_only`, not better.
-- **Parallel pf prefetch holds all ~51 range payloads in memory simultaneously** (`fetch.py:1939-1949`) before writing — tens-to-hundreds of MB spikes; stream to disk with a bounded window.
+- ~~**Parallel pf prefetch holds all ~51 range payloads in memory
+  simultaneously**~~ **FIXED 2026-07-17 (Wave 3 PR D, local):** an ordered
+  sliding window now admits at most the configured range-worker count and
+  yields each member payload for immediate disk write before admitting the
+  next. Inventory order and band mapping remain unchanged while the previous
+  all-payload dictionary is gone.
 - ~~**members.py warps at default `working_dtype=float64`** (`members.py:1028,1115,1269,1287,1303`): pass float32 at member call sites (the GDAL block cache is already capped at 256 MB in prod — see 2.3).~~ **FIXED 2026-07-10:** all five member warp call sites now pass `working_dtype=np.float32` (same opt-in MRMS/NDFD already use). Note the theoretical parity caveat: member values are packed to uint16, and float32-vs-float64 bilinear differences (~1e-7 relative) can flip a rare pixel across a packing quantization boundary (≤1 LSB); the deterministic main pipeline still warps at the float64 default, unchanged.
 - **Fixed 0.6 s retry sleeps, no jitter/backoff** in all four fetch retry loops.
 - **Colorize `transpose().copy()` doubles the RGBA transient** (`colorize.py:179/242/301`, ~145 MiB extra at MRMS scale); already mitigated for MRMS via `colorize_metadata()`. The LUT approach itself is good (256-entry, no per-pixel work).
