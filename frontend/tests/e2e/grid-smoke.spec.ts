@@ -906,6 +906,118 @@ test.describe('Grid-only smoke', () => {
     )).toBeLessThanOrEqual(1);
   });
 
+  test('desktop share dialog opens centered and can be dragged by its header', async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop-only dialog interaction.');
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
+    await stubViewerGridRoutes(page);
+    await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
+    await page.getByRole('button', { name: 'Share', exact: true }).first().click();
+
+    const dialog = page.getByRole('dialog', { name: 'Share' });
+    const panel = dialog.locator(':scope > div').first();
+    const header = panel.getByText('Share this view', { exact: true });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText('Screenshot ready', { exact: true })).toBeVisible();
+
+    const initialBox = await panel.boundingBox();
+    expect(initialBox).not.toBeNull();
+    expect(Math.abs(initialBox!.x + initialBox!.width / 2 - 640)).toBeLessThanOrEqual(1);
+    expect(Math.abs(initialBox!.y + initialBox!.height / 2 - 450)).toBeLessThanOrEqual(1);
+
+    const headerBox = await header.boundingBox();
+    expect(headerBox).not.toBeNull();
+    await page.mouse.move(
+      headerBox!.x + headerBox!.width / 2,
+      headerBox!.y + headerBox!.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      headerBox!.x + headerBox!.width / 2 + 220,
+      headerBox!.y + headerBox!.height / 2,
+      { steps: 5 },
+    );
+    await page.mouse.up();
+
+    await expect.poll(async () => (await panel.boundingBox())?.x ?? 0).toBeGreaterThan(initialBox!.x + 150);
+
+    const movedBox = await panel.boundingBox();
+    expect(movedBox).not.toBeNull();
+    const movedHeaderBox = await header.boundingBox();
+    expect(movedHeaderBox).not.toBeNull();
+    await page.mouse.move(
+      movedHeaderBox!.x + movedHeaderBox!.width / 2,
+      movedHeaderBox!.y + movedHeaderBox!.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(1600, movedHeaderBox!.y + movedHeaderBox!.height / 2, { steps: 5 });
+    await page.mouse.up();
+
+    const clampedBox = await panel.boundingBox();
+    expect(clampedBox).not.toBeNull();
+    expect(clampedBox!.x + clampedBox!.width).toBeLessThanOrEqual(1264.5);
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await page.getByRole('button', { name: 'Share', exact: true }).first().click();
+
+    const reopenedBox = await panel.boundingBox();
+    expect(reopenedBox).not.toBeNull();
+    expect(Math.abs(reopenedBox!.x + reopenedBox!.width / 2 - 640)).toBeLessThanOrEqual(1);
+    expect(Math.abs(reopenedBox!.y + reopenedBox!.height / 2 - 450)).toBeLessThanOrEqual(1);
+  });
+
+  test('mobile share dialog remains a fixed bottom sheet', async ({ page }) => {
+    test.skip(test.info().project.name !== 'chromium', 'Responsive behavior is covered in Chromium.');
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
+    await stubViewerGridRoutes(page);
+    await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
+    await page.getByRole('button', { name: 'Share', exact: true }).first().click();
+
+    const dialog = page.getByRole('dialog', { name: 'Share' });
+    const panel = dialog.locator(':scope > div').first();
+    const header = panel.getByText('Share this view', { exact: true });
+    const initialBox = await panel.boundingBox();
+    const headerBox = await header.boundingBox();
+    expect(initialBox).not.toBeNull();
+    expect(headerBox).not.toBeNull();
+    expect(Math.abs(initialBox!.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(initialBox!.width - 390)).toBeLessThanOrEqual(1);
+    expect(Math.abs(initialBox!.y + initialBox!.height - 844)).toBeLessThanOrEqual(1);
+
+    const startX = headerBox!.x + headerBox!.width / 2;
+    const startY = headerBox!.y + headerBox!.height / 2;
+    await header.dispatchEvent('pointerdown', {
+      button: 0,
+      clientX: startX,
+      clientY: startY,
+      pointerId: 1,
+      pointerType: 'touch',
+    });
+    await header.dispatchEvent('pointermove', {
+      button: 0,
+      clientX: startX + 100,
+      clientY: startY - 100,
+      pointerId: 1,
+      pointerType: 'touch',
+    });
+    await header.dispatchEvent('pointerup', {
+      button: 0,
+      clientX: startX + 100,
+      clientY: startY - 100,
+      pointerId: 1,
+      pointerType: 'touch',
+    });
+
+    const movedBox = await panel.boundingBox();
+    expect(movedBox).not.toBeNull();
+    expect(Math.abs(movedBox!.x - initialBox!.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(movedBox!.y - initialBox!.y)).toBeLessThanOrEqual(1);
+  });
+
   test('mobile touch controls keep 44px targets without horizontal overflow', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));

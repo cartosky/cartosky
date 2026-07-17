@@ -3,7 +3,7 @@
 // in front of the image. State lives in useScreenshotCapture / useTwfPosting /
 // useGifExport; this component is presentation + small copy-action state.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import * as SliderPrimitive from "@radix-ui/react-slider";
 import { useAuth } from "@clerk/react";
 import { CheckCircle2, Copy, Download, ExternalLink, Film, Link2, Loader2, Play, RefreshCw, Share2, X } from "lucide-react";
@@ -54,6 +54,11 @@ type ShareModalProps = {
   /** Viewer frame driver for GIF export; absent → GIF tab shows unavailable. */
   gifFrameDriver?: GifFrameDriver;
 };
+
+type DialogPosition = { x: number; y: number };
+
+const DESKTOP_DIALOG_MEDIA = "(min-width: 640px)";
+const DIALOG_VIEWPORT_PADDING = 16;
 
 const secondaryButtonClass =
   "inline-flex h-8 items-center rounded-md bg-white/[0.08] px-2.5 text-xs font-medium text-white/86 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-colors hover:bg-white/[0.12]";
@@ -199,6 +204,14 @@ export function ShareModal({
   const [linkCopied, setLinkCopied] = useState(false);
   const [textCopied, setTextCopied] = useState(false);
   const [imageCopied, setImageCopied] = useState(false);
+  const [dialogPosition, setDialogPosition] = useState<DialogPosition>({ x: 0, y: 0 });
+  const dialogPanelRef = useRef<HTMLDivElement | null>(null);
+  const dialogDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    origin: DialogPosition;
+  } | null>(null);
   const wasOpenRef = useRef(false);
 
   useEffect(() => {
@@ -214,7 +227,87 @@ export function ShareModal({
     setLinkCopied(false);
     setTextCopied(false);
     setImageCopied(false);
+    setDialogPosition({ x: 0, y: 0 });
   }, [open]);
+
+  const clampDialogPosition = useCallback((position: DialogPosition): DialogPosition => {
+    if (typeof window === "undefined" || !window.matchMedia(DESKTOP_DIALOG_MEDIA).matches) {
+      return { x: 0, y: 0 };
+    }
+    const panel = dialogPanelRef.current;
+    if (!panel) {
+      return position;
+    }
+    const bounds = panel.getBoundingClientRect();
+    const maxX = Math.max(0, (window.innerWidth - bounds.width) / 2 - DIALOG_VIEWPORT_PADDING);
+    const maxY = Math.max(0, (window.innerHeight - bounds.height) / 2 - DIALOG_VIEWPORT_PADDING);
+    return {
+      x: Math.max(-maxX, Math.min(maxX, position.x)),
+      y: Math.max(-maxY, Math.min(maxY, position.y)),
+    };
+  }, []);
+
+  const handleDialogPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (
+      event.button !== 0
+      || typeof window === "undefined"
+      || !window.matchMedia(DESKTOP_DIALOG_MEDIA).matches
+      || (event.target as HTMLElement).closest("button, a, input, select, textarea, [role='button']")
+    ) {
+      return;
+    }
+    dialogDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      origin: dialogPosition,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+
+  const handleDialogPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dialogDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    setDialogPosition(clampDialogPosition({
+      x: drag.origin.x + event.clientX - drag.startX,
+      y: drag.origin.y + event.clientY - drag.startY,
+    }));
+  };
+
+  const finishDialogDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dialogDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    dialogDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const keepDialogInViewport = () => {
+      setDialogPosition((current) => {
+        const next = clampDialogPosition(current);
+        return next.x === current.x && next.y === current.y ? current : next;
+      });
+    };
+    window.addEventListener("resize", keepDialogInViewport);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(keepDialogInViewport);
+    if (dialogPanelRef.current) {
+      observer?.observe(dialogPanelRef.current);
+    }
+    return () => {
+      window.removeEventListener("resize", keepDialogInViewport);
+      observer?.disconnect();
+    };
+  }, [clampDialogPosition, open]);
 
   useEffect(() => {
     if (!open) {
@@ -738,26 +831,39 @@ export function ShareModal({
       onClick={onClose}
     >
       <div
+        ref={dialogPanelRef}
         className="viewer-mobile-surface w-full max-w-[580px] flex flex-col overflow-hidden rounded-t-3xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
-        style={{ maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px))" }}
+        style={{
+          maxHeight: "calc(100dvh - env(safe-area-inset-top, 0px))",
+          transform: `translate3d(${dialogPosition.x}px, ${dialogPosition.y}px, 0)`,
+        }}
         onClick={(event) => event.stopPropagation()}
       >
-        {/* Drag handle */}
-        <div className="flex justify-center pb-1 pt-3">
-          <div className="h-1 w-9 rounded-full bg-white/20" />
-        </div>
+        <div
+          className="sm:cursor-grab sm:select-none sm:touch-none sm:active:cursor-grabbing"
+          onPointerDown={handleDialogPointerDown}
+          onPointerMove={handleDialogPointerMove}
+          onPointerUp={finishDialogDrag}
+          onPointerCancel={finishDialogDrag}
+          onLostPointerCapture={() => { dialogDragRef.current = null; }}
+        >
+          {/* Drag handle */}
+          <div className="flex justify-center pb-1 pt-3">
+            <div className="h-1 w-9 rounded-full bg-white/20" />
+          </div>
 
-        {/* Title + close */}
-        <div className="flex items-center justify-between px-4 pt-2 pb-2">
-          <div className="text-base font-semibold text-white">Share this view</div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-white/[0.08] text-white/70 transition-colors hover:bg-white/[0.12]"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          {/* Title + close */}
+          <div className="flex items-center justify-between px-4 pt-2 pb-2">
+            <div className="text-base font-semibold text-white">Share this view</div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md bg-white/[0.08] text-white/70 transition-colors hover:bg-white/[0.12]"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* Tabs */}
