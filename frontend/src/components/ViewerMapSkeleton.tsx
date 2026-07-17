@@ -21,7 +21,7 @@ export function ViewerMapSkeleton() {
       />
 
       <div className="relative flex flex-1 items-center justify-center">
-        <div className="glass-overlay flex min-w-36 flex-col items-center gap-3 rounded-2xl px-5 py-4 shadow-[0_22px_64px_rgba(0,0,0,0.36)]">
+        <div className="flex flex-col items-center gap-3">
           <HexSignalRing />
           <div className="max-w-[13rem] text-center text-xs font-medium text-white/76">
             Loading viewer
