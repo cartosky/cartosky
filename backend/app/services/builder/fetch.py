@@ -970,8 +970,18 @@ def _eps_full_file_cache_ttl_seconds() -> float:
 
 def _eps_full_file_cache_path(*, source_url: str, run_date: datetime, fh: int) -> Path:
     root = _eps_full_file_cache_root()
-    file_name = Path(str(source_url).split("?", 1)[0]).name or f"eps-fh{int(fh):03d}.grib2"
-    return root / _run_id_from_date(run_date) / f"fh{int(fh):03d}" / f"{_url_hash(source_url)}-{file_name}"
+    parsed = urlsplit(str(source_url))
+    file_name = Path(parsed.path).name or f"eps-fh{int(fh):03d}.grib2"
+    stable_source_url = urlunsplit(
+        (
+            parsed.scheme.lower(),
+            parsed.netloc.lower(),
+            parsed.path,
+            "",
+            "",
+        )
+    )
+    return root / _run_id_from_date(run_date) / f"fh{int(fh):03d}" / f"{_url_hash(stable_source_url)}-{file_name}"
 
 
 _CACHE_TEMP_SUFFIXES = (".part", ".full")
@@ -2344,16 +2354,6 @@ def _download_subset_with_inventory_rows(
     source_url = getattr(H, "grib", None)
     if source_url is None:
         return None
-    cached_full_path = _maybe_get_eps_full_grib_path(
-        H,
-        model_id=model_id,
-        product=product,
-        run_date=run_date,
-        fh=fh,
-        priority=priority,
-    )
-    if cached_full_path is not None:
-        source_url = str(cached_full_path)
 
     row_ranges: list[tuple[int, int | None]] = []
     for _, row in inventory.iterrows():
@@ -2376,67 +2376,101 @@ def _download_subset_with_inventory_rows(
         seen_ranges.add(range_key)
         ordered_ranges.append(range_key)
 
-    is_remote = str(source_url).startswith(("http://", "https://"))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _read_remote_payload(range_key: tuple[int, int | None]) -> bytes:
-        start_byte, end_byte = range_key
-        return _fetch_range_bytes(
-            source=priority,
-            source_url=str(source_url),
+    def _write_subset_from_source(read_source: str) -> bool:
+        is_remote = read_source.startswith(("http://", "https://"))
+
+        def _read_remote_payload(range_key: tuple[int, int | None]) -> bytes:
+            start_byte, end_byte = range_key
+            return _fetch_range_bytes(
+                source=priority,
+                source_url=read_source,
+                model_id=model_id,
+                run_date=run_date,
+                fh=fh,
+                start_byte=start_byte,
+                end_byte=end_byte,
+                bundle_fetch_cache=bundle_fetch_cache,
+                require_grib_payload=True,
+            )
+
+        remote_payloads: dict[tuple[int, int | None], bytes] = {}
+        max_workers = min(len(ordered_ranges), _range_fetch_workers())
+        if is_remote and max_workers > 1:
+            with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="eps-range") as executor:
+                future_map = {
+                    executor.submit(_read_remote_payload, range_key): range_key
+                    for range_key in ordered_ranges
+                }
+                for future in as_completed(future_map):
+                    range_key = future_map[future]
+                    remote_payloads[range_key] = future.result()
+
+        wrote_bytes = False
+        with open(out_path, "wb") as dst:
+            src = open(read_source, "rb") if not is_remote else None
+            try:
+                for start_byte, end_byte in ordered_ranges:
+                    range_key = (int(start_byte), int(end_byte) if end_byte is not None else None)
+                    if is_remote:
+                        if remote_payloads:
+                            payload = remote_payloads.get(range_key, b"")
+                        else:
+                            payload = _read_remote_payload(range_key)
+                    else:
+                        assert src is not None
+                        src.seek(start_byte)
+                        payload = src.read() if end_byte is None else src.read(end_byte - start_byte + 1)
+                    if not payload:
+                        continue
+                    _validate_grib_range_payload(
+                        payload,
+                        source=priority,
+                        source_url=read_source,
+                        model_id=model_id,
+                        run_date=run_date,
+                        fh=fh,
+                        start_byte=start_byte,
+                        end_byte=end_byte,
+                    )
+                    dst.write(payload)
+                    wrote_bytes = True
+            finally:
+                if src is not None:
+                    src.close()
+        return wrote_bytes
+
+    remote_source = str(source_url)
+    try:
+        wrote_bytes = _write_subset_from_source(remote_source)
+    except Exception as exc:
+        _remove_file_quietly(out_path)
+        if not remote_source.startswith(("http://", "https://")):
+            raise
+        if isinstance(exc, (_RangeRequestNotHonoredError, _RangeThrottleActiveError)):
+            raise
+        if not _eps_full_file_cache_enabled(model_id=model_id, product=product):
+            raise
+        logger.warning(
+            "EPS multi-row range fetch failed after retries; trying reusable full-file fallback "
+            "(%s fh%03d; priority=%s): %s",
+            model_id,
+            int(fh),
+            priority,
+            exc,
+        )
+        cached_full_path = _maybe_get_eps_full_grib_path(
+            H,
             model_id=model_id,
+            product=product,
             run_date=run_date,
             fh=fh,
-            start_byte=start_byte,
-            end_byte=end_byte,
-            bundle_fetch_cache=bundle_fetch_cache,
-            require_grib_payload=True,
+            priority=priority,
         )
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    wrote_bytes = False
-    remote_payloads: dict[tuple[int, int | None], bytes] = {}
-    max_workers = min(len(ordered_ranges), _range_fetch_workers())
-    if is_remote and max_workers > 1:
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="eps-range") as executor:
-            future_map = {
-                executor.submit(_read_remote_payload, range_key): range_key
-                for range_key in ordered_ranges
-            }
-            for future in as_completed(future_map):
-                range_key = future_map[future]
-                remote_payloads[range_key] = future.result()
-
-    with open(out_path, "wb") as dst:
-        src = open(source_url, "rb") if not is_remote else None
-        try:
-            for start_byte, end_byte in ordered_ranges:
-                range_key = (int(start_byte), int(end_byte) if end_byte is not None else None)
-                if is_remote:
-                    if remote_payloads:
-                        payload = remote_payloads.get(range_key, b"")
-                    else:
-                        payload = _read_remote_payload(range_key)
-                else:
-                    assert src is not None
-                    src.seek(start_byte)
-                    payload = src.read() if end_byte is None else src.read(end_byte - start_byte + 1)
-                if not payload:
-                    continue
-                _validate_grib_range_payload(
-                    payload,
-                    source=priority,
-                    source_url=str(source_url),
-                    model_id=model_id,
-                    run_date=run_date,
-                    fh=fh,
-                    start_byte=start_byte,
-                    end_byte=end_byte,
-                )
-                dst.write(payload)
-                wrote_bytes = True
-        finally:
-            if src is not None:
-                src.close()
+        if cached_full_path is None:
+            raise
+        wrote_bytes = _write_subset_from_source(str(cached_full_path))
 
     if not wrote_bytes:
         return None

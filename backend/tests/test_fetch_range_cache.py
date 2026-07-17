@@ -149,6 +149,102 @@ def test_subset_writer_orders_and_deduplicates_inventory_ranges(tmp_path: Path) 
     assert out_path.read_bytes() == b"".join(records)
 
 
+def test_eps_multirow_fetch_uses_healthy_ranges_before_full_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    records = {
+        (0, 19): b"GRIB" + (b"A" * 16),
+        (20, 39): b"GRIB" + (b"B" * 16),
+    }
+    inventory = pd.DataFrame(
+        [
+            {"start_byte": 20, "end_byte": 39},
+            {"start_byte": 0, "end_byte": 19},
+        ]
+    )
+    range_calls: list[tuple[int, int | None]] = []
+
+    def _fetch_range(**kwargs) -> bytes:
+        range_key = (int(kwargs["start_byte"]), kwargs["end_byte"])
+        range_calls.append(range_key)
+        return records[range_key]
+
+    def _forbid_full_cache(*_args, **_kwargs) -> Path:
+        raise AssertionError("healthy EPS ranges must not initiate a full-file download")
+
+    monkeypatch.setenv("TWF_EPS_FULL_FILE_CACHE_ENABLE", "1")
+    monkeypatch.setattr(fetch_module, "_fetch_range_bytes", _fetch_range)
+    monkeypatch.setattr(fetch_module, "_maybe_get_eps_full_grib_path", _forbid_full_cache)
+    out_path = tmp_path / "subset.grib2"
+
+    written = fetch_module._download_subset_with_inventory_rows(
+        SimpleNamespace(grib="https://example.invalid/eps.grib2?sig=fresh"),
+        inventory=inventory,
+        out_path=out_path,
+        model_id="ifs",
+        product="enfo",
+        run_date=datetime(2026, 7, 16, 12, 0),
+        fh=6,
+        priority="azure",
+        bundle_fetch_cache=None,
+    )
+
+    assert written == out_path
+    assert out_path.read_bytes() == records[(0, 19)] + records[(20, 39)]
+    assert sorted(range_calls) == [(0, 19), (20, 39)]
+
+
+def test_eps_multirow_range_failure_uses_full_cache_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    records = [
+        b"GRIB" + (b"A" * 16),
+        b"GRIB" + (b"B" * 16),
+    ]
+    full_path = tmp_path / "cached-full.grib2"
+    full_path.write_bytes(b"".join(records))
+    inventory = pd.DataFrame(
+        [
+            {"start_byte": 20, "end_byte": 39},
+            {"start_byte": 0, "end_byte": 19},
+        ]
+    )
+    range_calls = {"count": 0}
+    cache_calls = {"count": 0}
+
+    def _failed_range(**_kwargs) -> bytes:
+        range_calls["count"] += 1
+        raise OSError("range retries exhausted")
+
+    def _cached_full(*_args, **_kwargs) -> Path:
+        cache_calls["count"] += 1
+        return full_path
+
+    monkeypatch.setenv("TWF_EPS_FULL_FILE_CACHE_ENABLE", "1")
+    monkeypatch.setattr(fetch_module, "_fetch_range_bytes", _failed_range)
+    monkeypatch.setattr(fetch_module, "_maybe_get_eps_full_grib_path", _cached_full)
+    out_path = tmp_path / "subset.grib2"
+
+    written = fetch_module._download_subset_with_inventory_rows(
+        SimpleNamespace(grib="https://example.invalid/eps.grib2?sig=fresh"),
+        inventory=inventory,
+        out_path=out_path,
+        model_id="ifs",
+        product="enfo",
+        run_date=datetime(2026, 7, 16, 12, 0),
+        fh=6,
+        priority="azure",
+        bundle_fetch_cache=None,
+    )
+
+    assert written == out_path
+    assert out_path.read_bytes() == b"".join(records)
+    assert range_calls["count"] >= 1
+    assert cache_calls["count"] == 1
+
+
 def test_wgrib2_final_record_uses_an_open_ended_range(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1234,7 +1330,7 @@ def test_full_source_fallback_uses_a_unique_consumable_file_per_caller(
     assert not [path for path in tmp_path.iterdir() if path.name.endswith(".full")]
 
 
-def test_eps_full_file_cache_lock_wait_covers_download_deadline(
+def test_eps_full_file_cache_signed_urls_share_lock_and_download(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1263,12 +1359,13 @@ def test_eps_full_file_cache_lock_wait_covers_download_deadline(
     monkeypatch.setattr(fetch_module, "DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr(fetch_module, "_download_full_grib_to_path", _slow_download)
     monkeypatch.setattr(fetch_module, "_cleanup_eps_full_file_cache", lambda **_kwargs: None)
-    herbie = SimpleNamespace(grib=source_url)
+    first_herbie = SimpleNamespace(grib=f"{source_url}?st=first&sig=first")
+    second_herbie = SimpleNamespace(grib=f"{source_url}?st=second&sig=second")
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(
             fetch_module._maybe_get_eps_full_grib_path,
-            herbie,
+            first_herbie,
             model_id="ifs",
             product="enfo",
             run_date=run_date,
@@ -1278,7 +1375,7 @@ def test_eps_full_file_cache_lock_wait_covers_download_deadline(
         assert download_started.wait(timeout=1.0)
         second = pool.submit(
             fetch_module._maybe_get_eps_full_grib_path,
-            herbie,
+            second_herbie,
             model_id="ifs",
             product="enfo",
             run_date=run_date,
@@ -1290,6 +1387,31 @@ def test_eps_full_file_cache_lock_wait_covers_download_deadline(
     assert results[0] is not None
     assert results[1] == results[0]
     assert download_calls["count"] == 1
+
+
+def test_eps_full_file_cache_path_ignores_signed_query_parameters(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("TWF_EPS_FULL_FILE_CACHE_ROOT", str(tmp_path / "cache"))
+    run_date = datetime(2026, 7, 16, 12, 0)
+    blob_url = (
+        "https://ai4edataeuwest.blob.core.windows.net/ecmwf/20260716/12z/ifs/0p25/enfo/"
+        "20260716120000-6h-enfo-ef.grib2"
+    )
+
+    first_path = fetch_module._eps_full_file_cache_path(
+        source_url=f"{blob_url}?st=first&se=first-expiry&sig=first-signature",
+        run_date=run_date,
+        fh=6,
+    )
+    second_path = fetch_module._eps_full_file_cache_path(
+        source_url=f"{blob_url}?st=second&se=second-expiry&sig=second-signature",
+        run_date=run_date,
+        fh=6,
+    )
+
+    assert first_path == second_path
 
 
 def test_eps_full_file_cache_cleanup_reaps_stale_temp_files(

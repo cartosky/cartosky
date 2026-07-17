@@ -376,7 +376,11 @@ scopes: A → precip_total_cumulative (item 3) + ptype_accumulation_cumulative
    cooldown remain immediate/non-retryable. After exhaustion, EPS `enfo`
    fallbacks use the reusable full-file cache when enabled; disposable
    fallbacks are capped at 1 GiB from `Content-Length` and enforced again
-   while streaming when the header is absent or wrong.
+   while streaming when the header is absent or wrong. **Production follow-up
+   2026-07-17:** the EPS multi-row path is now range-first instead of eagerly
+   downloading the full GRIB, and rotating Azure SAS signatures map to one
+   stable cache path/lock. The cache flag remains off until this repaired path
+   is canaried.
 ~~5. **3.4.** Decouple cached-subset reuse from the disk-lock flag
    (`_subset_file_status` check + `overwrite=False` in both branches).~~
    **— DONE 2026-07-16 (PR A, local):** locked and unlocked fetches now share

@@ -213,6 +213,18 @@ body consumption and enforced again while streaming. Retry-success,
 retry-exhaustion, no-retry refusal, size-cap, and EPS-cache-routing regressions
 were each demonstrated RED pre-fix.
 
+**Production follow-up fixed 2026-07-17:** enabling the EPS full-file cache
+exposed two defects outside PR B's single-range fallback coverage. The
+multi-row PF-mean path acquired the cache eagerly before trying healthy byte
+ranges, and the cache key hashed Azure's rotating SAS query string, so the same
+6.73 GB blob was repeatedly stored under different names with no hits. The
+multi-row path is now range-first and enters the reusable cache only after a
+retry-exhausted range failure; signed URLs for the same scheme/host/path share
+one cache path and download lock. Regression coverage pins healthy-range
+bypass, failure-only fallback, signed-query identity, and signed-URL
+single-flight behavior. The production flag remains off pending a canary of
+the repaired path.
+
 `_download_subset_with_inventory_byte_range` fallback (`fetch.py:3481-3499`) → `_fetch_subset_bytes_from_full_source` (`fetch.py:3236-3256`) → full download (`fetch.py:747-778`, 90 s per-chunk timeout, no total deadline). There is **no per-range retry** (`fetch.py:3297-3377`), so one transient 500 on a ~2 MB range triggers a full-file download (GFS pgrb2 ~500 MB, EPS enfo multi-GB) to extract one message — and `finally` deletes the temp file with no reuse for the next variable in the same frame, which repeats the download. No size guard; can hold a build slot for the duration.
 
 Fix (M): retry the range request 2–3× with short backoff before the full-file fallback; cap fallback by Content-Length; route the fallback through the EPS full-file cache when enabled.

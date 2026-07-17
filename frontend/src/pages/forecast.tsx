@@ -248,6 +248,22 @@ function formatHour(time: string | null): string {
   return h < 12 ? `${h}a` : `${h - 12}p`;
 }
 
+// "YYYY-MM-DDTHH" for the current hour in the location's timezone, comparable
+// lexicographically against the naive-local hourly `time` strings.
+function currentHourKey(timeZone: string | null): string {
+  let parts: Intl.DateTimeFormatPart[];
+  const opts: Intl.DateTimeFormatOptions = {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23",
+  };
+  try {
+    parts = new Intl.DateTimeFormat("en-CA", { ...opts, timeZone: timeZone ?? undefined }).formatToParts(new Date());
+  } catch {
+    parts = new Intl.DateTimeFormat("en-CA", opts).formatToParts(new Date());
+  }
+  const get = (type: string) => parts.find(p => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}`;
+}
+
 function formatObservedAt(iso: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -1035,10 +1051,12 @@ function DailyRangeRows({
   daily,
   limit,
   expandable = false,
+  detailFor,
 }: {
   daily: DailyEntry[];
   limit?: number;
   expandable?: boolean;
+  detailFor?: (entry: DailyEntry, index: number) => ReactNode;
 }) {
   const entries = typeof limit === "number" ? daily.slice(0, limit) : daily;
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -1126,7 +1144,7 @@ function DailyRangeRows({
             ) : row}
             {expandable && isOpen && (
               <div className="pb-3 sm:pl-[90px] sm:pr-[52px]">
-                <DailyDetailGrid entry={entry} />
+                {detailFor ? detailFor(entry, i) : <DailyDetailGrid entry={entry} />}
               </div>
             )}
           </div>
@@ -1582,11 +1600,14 @@ function CurrentTab({
 
 // ── Hourly Tab ────────────────────────────────────────────────────────
 
-function HourlyTab({ hourly }: { hourly: HourlyEntry[] }) {
+function HourlyTab({ hourly, timeZone }: { hourly: HourlyEntry[]; timeZone: string | null }) {
   if (!hourly.length) {
     return <div className="py-16 text-center text-[13px] text-white/35">No hourly data available.</div>;
   }
-  const chartEntries = hourly.slice(0, 24);
+  const nowKey = currentHourKey(timeZone);
+  const filtered = hourly.filter(e => e.time && e.time.slice(0, 13) >= nowKey);
+  const upcoming = filtered.length ? filtered : hourly;
+  const chartEntries = upcoming.slice(0, 24);
   const timeIdx = [0, 6, 12, 18, chartEntries.length - 1].filter((v, i, a) => a.indexOf(v) === i);
   return (
     <div className="space-y-5">
@@ -1594,7 +1615,7 @@ function HourlyTab({ hourly }: { hourly: HourlyEntry[] }) {
         <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.20em] text-white/40">
           Temperature · Next 24 Hours
         </p>
-        <HourlyChart hourly={hourly} />
+        <HourlyChart hourly={upcoming} />
         <div className="relative h-5 mt-1.5">
           {timeIdx.map(i => {
             const pct = chartEntries.length > 1 ? (i / (chartEntries.length - 1)) * 100 : 0;
@@ -1611,7 +1632,7 @@ function HourlyTab({ hourly }: { hourly: HourlyEntry[] }) {
           })}
         </div>
       </div>
-      <HourlyStrip hourly={hourly} />
+      <HourlyStrip hourly={upcoming} />
     </div>
   );
 }
@@ -1672,71 +1693,69 @@ function AlertsBanner({ alerts, checking }: { alerts: AlertEntry[]; checking?: b
   );
 }
 
-// ── Day List Table (7-day tab) ────────────────────────────────────────
+// ── 7-day Tab ─────────────────────────────────────────────────────────
 
-function DayListTable({ daily }: { daily: DailyEntry[] }) {
-  return <DailyRangeRows daily={daily} limit={7} />;
+// NWS text periods carry only a name + day/night flag, no dates. Group them
+// sequentially into per-day day/night pairs: the forecast starts today, so
+// group index lines up with the daily rows (a leading night-only period —
+// "Tonight" — still belongs to day 0).
+function groupPeriodsByDay(periods: TextForecastPeriod[]): TextForecastPeriod[][] {
+  const groups: TextForecastPeriod[][] = [];
+  for (const period of periods) {
+    const last = groups[groups.length - 1];
+    if (period.is_daytime || !last || last.some(p => !p.is_daytime)) {
+      groups.push([period]);
+    } else {
+      last.push(period);
+    }
+  }
+  return groups;
 }
 
-// ── NWS Cards Grid (7-day tab) ────────────────────────────────────────
-
-function NWSCardsGrid({ data }: { data: NonNullable<ForecastPayload["official_text_forecast"]> }) {
-  const [showAll, setShowAll] = useState(false);
-  if (!data.periods.length) return null;
-  const visible = showAll ? data.periods : data.periods.slice(0, 6);
-
+function TextPeriodsDetail({ periods }: { periods: TextForecastPeriod[] }) {
   return (
-    <div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {visible.map((period, i) => (
-          <div key={i} className="rounded-xl bg-white/[0.04] border border-white/[0.06] p-4">
-            <div className="text-[11px] uppercase tracking-[0.16em] text-white/40">
+    <div className="grid gap-4 rounded-lg border border-cyan-300/10 bg-cyan-300/[0.035] p-4 sm:grid-cols-2">
+      {periods.map((period, i) => (
+        <div key={i}>
+          <div className="flex items-baseline gap-2">
+            <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-cyan-200/55">
               {period.name ?? (period.is_daytime ? "Day" : "Night")}
-            </div>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-xl font-medium text-white">{period.temperature_f ?? "--"}°</span>
-              <span className="text-[10px] uppercase tracking-[0.14em] text-white/30">
-                {period.is_daytime ? "High" : "Low"}
-              </span>
-            </div>
-            <div className="mt-1.5 text-[13px] text-white/75">{period.short_text ?? ""}</div>
-            {period.wind_text && (
-              <div className="mt-1 text-[12px] text-white/40">Wind: {period.wind_text}</div>
-            )}
-            {period.detailed_text && (
-              <p className="mt-3 border-t-[0.5px] border-white/[0.06] pt-3 text-[12px] leading-[1.6] text-white/40">
-                {period.detailed_text}
-              </p>
-            )}
+            </span>
+            <span className="text-[13px] font-medium text-white">{period.temperature_f ?? "--"}°</span>
+            <span className="text-[10px] uppercase tracking-[0.14em] text-white/30">
+              {period.is_daytime ? "High" : "Low"}
+            </span>
           </div>
-        ))}
-      </div>
-      {data.periods.length > 6 && (
-        <button
-          type="button"
-          onClick={() => setShowAll(v => !v)}
-          className="mt-4 flex items-center gap-1.5 text-[12px] text-white/40 transition hover:text-white/60"
-        >
-          {showAll
-            ? <><ChevronUp className="h-3.5 w-3.5" /> Show fewer</>
-            : <><ChevronDown className="h-3.5 w-3.5" /> Show all {data.periods.length} periods</>
-          }
-        </button>
-      )}
+          <div className="mt-1.5 text-[13px] text-white/75">{period.short_text ?? ""}</div>
+          {period.wind_text && (
+            <div className="mt-1 text-[12px] text-white/40">Wind: {period.wind_text}</div>
+          )}
+          {period.detailed_text && (
+            <p className="mt-2 text-[12px] leading-[1.6] text-white/50">{period.detailed_text}</p>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
-
-// ── 7-day Tab ─────────────────────────────────────────────────────────
 
 function SevenDayTab({ daily, textForecast }: {
   daily: DailyEntry[];
   textForecast: ForecastPayload["official_text_forecast"];
 }) {
+  const periodGroups = textForecast ? groupPeriodsByDay(textForecast.periods) : [];
   return (
     <div className="space-y-8">
-      <DayListTable daily={daily} />
-      {textForecast && <NWSCardsGrid data={textForecast} />}
+      <DailyRangeRows
+        daily={daily}
+        limit={7}
+        expandable
+        detailFor={(entry, i) =>
+          periodGroups[i]?.length
+            ? <TextPeriodsDetail periods={periodGroups[i]} />
+            : <DailyDetailGrid entry={entry} />
+        }
+      />
     </div>
   );
 }
@@ -2614,7 +2633,7 @@ export default function Forecast() {
           className="mx-auto max-w-6xl px-5 py-6 pb-12 md:px-8"
         >
           {activeTab === "current"    && <CurrentTab forecast={f} checkingAlerts={f.source_status?.nws === "pending"} />}
-          {activeTab === "hourly"     && <HourlyTab hourly={f.hourly} />}
+          {activeTab === "hourly"     && <HourlyTab hourly={f.hourly} timeZone={f.location.timezone} />}
           {activeTab === "7day"       && <SevenDayTab daily={f.daily} textForecast={f.official_text_forecast} />}
           {activeTab === "extended"   && <ExtendedTab daily={f.daily} attribution={f.attribution.daily} />}
           {activeTab === "models"     && (

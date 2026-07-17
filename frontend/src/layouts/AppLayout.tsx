@@ -28,11 +28,11 @@ export default function AppLayout() {
       }
     >
       {isViewerLike ? <ViewerSiteHeaderFallback /> : <SiteHeader variant="app" />}
+      <BootstrapCompleteMarker />
 
       <div className={isScrollableAppRoute ? "flex-1 min-h-0 w-full" : "flex flex-1 min-h-0 overflow-hidden"}>
         <Suspense fallback={isViewerLike ? <ViewerMapSkeleton /> : <AdminRouteSuspenseFallback />}>
           <Outlet />
-          <BootstrapCompleteMarker />
         </Suspense>
       </div>
     </div>
