@@ -53,14 +53,12 @@ def test_current_analysis_capabilities_schema_snapshot_invariants() -> None:
     tmp2m = payload["variables"]["tmp2m"]
     assert tmp2m["display_name"] == "Surface Temp"
     assert tmp2m["group"] == "Surface"
-    assert tmp2m["order"] == 0
     assert tmp2m["color_map_id"] == "tmp2m"
     assert tmp2m["render_substrates"] == ["grid"]
 
     dp2m = payload["variables"]["dp2m"]
     assert dp2m["display_name"] == "Surface Dew Point"
     assert dp2m["group"] == "Surface"
-    assert dp2m["order"] == 1
     assert dp2m["color_map_id"] == "dp2m"
 
     wspd10m = payload["variables"]["wspd10m"]

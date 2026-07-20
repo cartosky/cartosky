@@ -52,7 +52,6 @@ WPC_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         color_map_id="precip_total",
         default_fh=6,
         buildable=True,
-        order=0,
         group="Precipitation",
         constraints={
             "min_fh": 6,

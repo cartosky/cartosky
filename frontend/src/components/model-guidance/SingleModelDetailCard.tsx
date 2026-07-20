@@ -311,7 +311,7 @@ export function SingleModelDetailCard({
       const firstDayStart = temp.xs[0]! - 12 * 3600;
       if (firstDayStart < min) min = firstDayStart;
       const lastDayEnd = temp.xs[temp.xs.length - 1]! + 12 * 3600;
-      if (lastDayEnd < max) max = lastDayEnd;
+      if (lastDayEnd > max) max = lastDayEnd;
     }
     return [min, max];
   }, [temp.xs, precip.xs, wind.xs]);
@@ -323,7 +323,7 @@ export function SingleModelDetailCard({
     () => ({
       ...stripBase(tz, nowSec),
       // Override stripBase bottom padding to reserve room for the day labels.
-      padding: [null, 12, 32, null],
+      padding: [30, 12, 32, null],
       height: TEMP_STRIP_HEIGHT,
       scales: {
         x: xScale(xDomain),
@@ -357,6 +357,9 @@ export function SingleModelDetailCard({
             const highArr = u.data[1] as (number | null)[];
             const lowArr = u.data[2] as (number | null)[];
             const barWidthPx = Math.max(4, (u.bbox.width / xArr.length) * 0.72);
+            const isMobileChart = window.matchMedia("(max-width: 1023px)").matches;
+            const valueLabelFontSize = isMobileChart ? 20 : 15;
+            const valueLabelFontWeight = isMobileChart ? 700 : 600;
             const y0 = Math.round(u.valToPos(0, "y", true)); // baseline at 0°F
             for (let i = 0; i < xArr.length; i++) {
               const high = highArr[i];
@@ -381,15 +384,19 @@ export function SingleModelDetailCard({
               ctx.strokeRect(x, yHigh, barWidthPx, y0 - yHigh);
 
               // High label above the bar
-              ctx.font = `500 11px sans-serif`;
+              ctx.font = `${valueLabelFontWeight} ${valueLabelFontSize}px ui-sans-serif, system-ui, sans-serif`;
               ctx.textAlign = "center";
               ctx.fillStyle = DETAIL_COLORS.tempHigh;
-              ctx.fillText(`${Math.round(high)}°`, cx, yHigh - 4);
+              ctx.fillText(`${Math.round(high)}°`, cx, yHigh - (isMobileChart ? 8 : 6));
 
               // Low label inside the blue base, white for contrast. Clamped so a
               // very low value never pushes the label below the baseline.
               ctx.fillStyle = "#FFFFFF";
-              ctx.fillText(`${Math.round(low)}°`, cx, Math.min(yLow + 13, y0 - 4));
+              ctx.fillText(
+                `${Math.round(low)}°`,
+                cx,
+                Math.min(yLow + valueLabelFontSize + 3, y0 - 5),
+              );
             }
           },
           dayLabelHook(tz),
@@ -497,43 +504,56 @@ export function SingleModelDetailCard({
     );
   } else {
     content = (
-      <div className="flex flex-col">
-        <StripFrame label="Daily high / low" summary={tempSummary} first>
-          {temp.hasData ? (
-            <UplotChart options={tempOptions} data={temp.data} className="w-full" />
-          ) : (
-            <StripEmpty height={TEMP_STRIP_HEIGHT} text="No temperature data" />
-          )}
-        </StripFrame>
-        <StripFrame label="6-hour precipitation" summary={precipBarsSummary}>
-          {precip.xs.length > 0 ? (
-            <UplotChart
-              options={precipBarsOptions}
-              data={[precip.xs, precip.step] as unknown as uPlot.AlignedData}
-              className="w-full"
-            />
-          ) : (
-            <StripEmpty height={PRECIP_STRIP_HEIGHT} text="No precipitation data" />
-          )}
-        </StripFrame>
-        <StripFrame label="Cumulative precipitation" summary={cumulSummary}>
-          {precip.xs.length > 0 ? (
-            <UplotChart
-              options={cumulOptions}
-              data={[precip.xs, precip.cumul] as unknown as uPlot.AlignedData}
-              className="w-full"
-            />
-          ) : (
-            <StripEmpty height={CUMUL_STRIP_HEIGHT} text="No precipitation data" />
-          )}
-        </StripFrame>
-        <StripFrame label="Wind speed" summary={windSummary}>
-          {wind.hasData ? (
-            <UplotChart options={windOptions} data={wind.data} className="w-full" />
-          ) : (
-            <StripEmpty height={WIND_STRIP_HEIGHT} text="No wind data" />
-          )}
-        </StripFrame>
+      <div>
+        <p className="mb-2 text-[11px] text-white/45 lg:hidden">
+          Swipe horizontally to read each day.
+        </p>
+        <div
+          data-model-detail-charts
+          role="region"
+          aria-label={`${title} daily model detail charts`}
+          tabIndex={0}
+          className="overflow-x-auto overscroll-x-contain rounded-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/60"
+        >
+          <div className="flex min-w-[1000px] flex-col lg:min-w-0">
+            <StripFrame label="Daily high / low" summary={tempSummary} first>
+              {temp.hasData ? (
+                <UplotChart options={tempOptions} data={temp.data} className="w-full" />
+              ) : (
+                <StripEmpty height={TEMP_STRIP_HEIGHT} text="No temperature data" />
+              )}
+            </StripFrame>
+            <StripFrame label="6-hour precipitation" summary={precipBarsSummary}>
+              {precip.xs.length > 0 ? (
+                <UplotChart
+                  options={precipBarsOptions}
+                  data={[precip.xs, precip.step] as unknown as uPlot.AlignedData}
+                  className="w-full"
+                />
+              ) : (
+                <StripEmpty height={PRECIP_STRIP_HEIGHT} text="No precipitation data" />
+              )}
+            </StripFrame>
+            <StripFrame label="Cumulative precipitation" summary={cumulSummary}>
+              {precip.xs.length > 0 ? (
+                <UplotChart
+                  options={cumulOptions}
+                  data={[precip.xs, precip.cumul] as unknown as uPlot.AlignedData}
+                  className="w-full"
+                />
+              ) : (
+                <StripEmpty height={CUMUL_STRIP_HEIGHT} text="No precipitation data" />
+              )}
+            </StripFrame>
+            <StripFrame label="Wind speed" summary={windSummary}>
+              {wind.hasData ? (
+                <UplotChart options={windOptions} data={wind.data} className="w-full" />
+              ) : (
+                <StripEmpty height={WIND_STRIP_HEIGHT} text="No wind data" />
+              )}
+            </StripFrame>
+          </div>
+        </div>
       </div>
     );
   }

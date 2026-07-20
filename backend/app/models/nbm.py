@@ -310,14 +310,6 @@ NBM_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "snowfall_total": 6,
 }
 
-NBM_ORDER_BY_VAR_KEY: dict[str, int] = {
-    "tmp2m": 1,
-    "sbcape": 2,
-    "precip_total": 3,
-    "snowfall_total": 4,
-    "wspd10m": 5,
-}
-
 NBM_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Temperature",
     "sbcape": "Instability",
@@ -359,7 +351,6 @@ def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapabi
         color_map_id=NBM_COLOR_MAP_BY_VAR_KEY.get(var_key),
         default_fh=NBM_DEFAULT_FH_BY_VAR_KEY.get(var_key),
         buildable=is_buildable,
-        order=NBM_ORDER_BY_VAR_KEY.get(var_key),
         group=NBM_GROUP_BY_VAR_KEY.get(var_key),
         conversion=NBM_CONVERSION_BY_VAR_KEY.get(var_key),
         constraints=dict(NBM_CONSTRAINTS_BY_VAR_KEY.get(var_key, {})),

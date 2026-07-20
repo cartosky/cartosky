@@ -65,7 +65,6 @@ def test_mrms_capabilities_schema_snapshot_invariants() -> None:
     assert reflectivity["kind"] == "discrete"
     assert reflectivity["units"] == "dBZ"
     assert reflectivity["display_name"] == "Base Reflectivity"
-    assert reflectivity["order"] == 0
     assert reflectivity["group"] == "Radar"
     assert reflectivity["color_map_id"] == "mrms_reflectivity"
 
@@ -76,7 +75,6 @@ def test_mrms_capabilities_schema_snapshot_invariants() -> None:
     assert mrms_radar_ptype["kind"] == "discrete"
     assert mrms_radar_ptype["units"] == "dBZ"
     assert mrms_radar_ptype["display_name"] == "Reflectivity + Ptype"
-    assert mrms_radar_ptype["order"] == 1
     assert mrms_radar_ptype["group"] == "Radar"
     assert mrms_radar_ptype["color_map_id"] == "mrms_radar_ptype"
 
@@ -87,19 +85,16 @@ def test_mrms_capabilities_schema_snapshot_invariants() -> None:
     assert recent_precip_6h["kind"] == "continuous"
     assert recent_precip_6h["units"] == "in"
     assert recent_precip_6h["display_name"] == "Recent Precip (6h)"
-    assert recent_precip_6h["order"] == 10
     assert recent_precip_6h["group"] == "Precipitation"
     assert recent_precip_6h["color_map_id"] == "mrms_recent_precip_6h"
 
     recent_precip_24h = payload["variables"]["mrms_recent_precip_24h"]
     assert recent_precip_24h["display_name"] == "Recent Precip (24h)"
-    assert recent_precip_24h["order"] == 11
     assert recent_precip_24h["group"] == "Precipitation"
     assert recent_precip_24h["color_map_id"] == "mrms_recent_precip_24h"
 
     recent_precip_72h = payload["variables"]["mrms_recent_precip_72h"]
     assert recent_precip_72h["display_name"] == "Recent Precip (72h)"
-    assert recent_precip_72h["order"] == 12
     assert recent_precip_72h["group"] == "Precipitation"
     assert recent_precip_72h["color_map_id"] == "mrms_recent_precip_72h"
 

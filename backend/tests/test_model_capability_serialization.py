@@ -66,7 +66,6 @@ def test_serialize_model_capability_defaults_capability_variables_to_grid() -> N
                 kind="continuous",
                 units="F",
                 buildable=True,
-                order=1,
                 group="Temperature",
             )
         },

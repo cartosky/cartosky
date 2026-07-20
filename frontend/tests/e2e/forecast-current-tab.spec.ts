@@ -262,6 +262,233 @@ test.describe("Forecast current tab", () => {
     await expect(page.locator('[data-forecast-tab-fade="left"]')).toBeVisible();
   });
 
+  test("model detail daily temperatures stay prominent on mobile and desktop", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => {
+      const draws: Array<{
+        canvasId: number;
+        text: string;
+        font: string;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        canvasWidth: number;
+        canvasHeight: number;
+      }> = [];
+      const canvasIds = new WeakMap<HTMLCanvasElement, number>();
+      let nextCanvasId = 1;
+      const originalFillText = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, x, y, maxWidth) {
+        if (/^-?\d+°$/.test(String(text))) {
+          let canvasId = canvasIds.get(this.canvas);
+          if (canvasId === undefined) {
+            canvasId = nextCanvasId++;
+            canvasIds.set(this.canvas, canvasId);
+          }
+          const transform = this.getTransform();
+          const scaleX = Math.hypot(transform.a, transform.b) || 1;
+          const scaleY = Math.hypot(transform.c, transform.d) || 1;
+          const fontSize = Number.parseFloat(/(\d+(?:\.\d+)?)px/.exec(this.font)?.[1] ?? "0");
+          draws.push({
+            canvasId,
+            text: String(text),
+            font: this.font,
+            x: transform.a * x + transform.c * y + transform.e,
+            y: transform.b * x + transform.d * y + transform.f,
+            width: this.measureText(String(text)).width * scaleX,
+            height: fontSize * scaleY,
+            canvasWidth: this.canvas.width,
+            canvasHeight: this.canvas.height,
+          });
+        }
+        if (maxWidth === undefined) {
+          return originalFillText.call(this, text, x, y);
+        }
+        return originalFillText.call(this, text, x, y, maxWidth);
+      };
+      Object.defineProperty(window, "__modelDetailTempLabelDraws", {
+        configurable: true,
+        value: draws,
+      });
+    });
+
+    await page.route("**/api/v4/forecast-page/core**", async (route) => {
+      await route.fulfill({ json: FORECAST_PAYLOAD });
+    });
+    await page.route("**/api/v4/forecast-page?**", async (route) => {
+      await route.fulfill({ json: FORECAST_PAYLOAD });
+    });
+    await page.route("**/api/v4/capabilities", async (route) => {
+      await route.fulfill({ json: { supported_models: [], model_catalog: {}, availability: {} } });
+    });
+    await page.route("**/api/regions", async (route) => {
+      await route.fulfill({ json: { regions: {} } });
+    });
+    await page.route("**/api/v4/{ecmwf,gfs,aifs,nbm}/runs", async (route) => {
+      await route.fulfill({ json: ["20260720_06z"] });
+    });
+    await page.route("**/api/v4/forecast/meteogram", async (route) => {
+      const request = route.request().postDataJSON() as {
+        models: string[];
+        variables: string[];
+      };
+      const tempPoints = Array.from({ length: 384 }, (_, fh) => {
+        const day = Math.floor(fh / 24);
+        const base = day === 5 ? 104 : 82 + (day % 4) * 2;
+        return {
+          fh,
+          valid_time: new Date(Date.UTC(2026, 6, 20, 6 + fh)).toISOString(),
+          value: base + Math.round(16 * Math.sin((fh / 24) * Math.PI * 2)),
+        };
+      });
+      const variables = Object.fromEntries(
+        request.variables.map((variable) => [
+          variable,
+          {
+            units: variable === "tmp2m" ? "F" : variable === "wspd10m" ? "mph" : "in",
+            points: variable === "tmp2m" ? tempPoints : [],
+          },
+        ]),
+      );
+      await route.fulfill({
+        json: {
+          location: { lat: 43.55, lon: -96.73 },
+          generated_at: "2026-07-20T06:00:00Z",
+          run_policy: { type: "latest_per_model" },
+          series: Object.fromEntries(
+            request.models.map((model) => [
+              model,
+              {
+                status: "ok",
+                run_id: "20260720_06z",
+                latest_complete_run: "20260720_06z",
+                variables,
+              },
+            ]),
+          ),
+        },
+      });
+    });
+    await page.route("**/api/v4/mrms/latest/reflectivity/**", async (route) => {
+      await route.fulfill({ status: 404, body: "" });
+    });
+
+    await page.goto(
+      "/forecast?lat=43.55&lon=-96.73&name=Sioux%20Falls%2C%20SD&tab=models&section=detail&detail_model=ecmwf",
+    );
+    await expect(page.getByText("Daily high / low", { exact: true })).toBeVisible();
+
+    const copyImageButton = page.getByRole("button", { name: "Copy image" });
+    const downloadImageButton = page.getByRole("button", { name: "Download image" });
+    const cardTitle = page.locator("h3").filter({ hasText: /^(ECMWF|GFS|AIFS|NBM)$/ }).first();
+    const cardMetadata = cardTitle.locator("..");
+    const chartCard = copyImageButton.locator(
+      "xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' rounded-xl ')][1]",
+    );
+    await expect(copyImageButton).toBeVisible();
+    await expect(downloadImageButton).toBeVisible();
+
+    const expectExportActionsAtTopRight = async () => {
+      const [cardBox, metadataBox, titleBox, copyBox, downloadBox] = await Promise.all([
+        chartCard.boundingBox(),
+        cardMetadata.boundingBox(),
+        cardTitle.boundingBox(),
+        copyImageButton.boundingBox(),
+        downloadImageButton.boundingBox(),
+      ]);
+      expect(cardBox).not.toBeNull();
+      expect(metadataBox).not.toBeNull();
+      expect(titleBox).not.toBeNull();
+      expect(copyBox).not.toBeNull();
+      expect(downloadBox).not.toBeNull();
+      expect(Math.abs(copyBox!.y - titleBox!.y)).toBeLessThanOrEqual(8);
+      expect(downloadBox!.x).toBeGreaterThan(copyBox!.x);
+      expect(copyBox!.x - (metadataBox!.x + metadataBox!.width)).toBeGreaterThanOrEqual(8);
+      const rightInset = cardBox!.x + cardBox!.width - (downloadBox!.x + downloadBox!.width);
+      expect(rightInset).toBeGreaterThanOrEqual(12);
+      expect(rightInset).toBeLessThanOrEqual(24);
+    };
+    await expectExportActionsAtTopRight();
+
+    type TempLabelDraw = {
+      canvasId: number;
+      text: string;
+      font: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      canvasWidth: number;
+      canvasHeight: number;
+    };
+    const recordedDraws = async () => page.evaluate(() => (
+      window as Window & { __modelDetailTempLabelDraws?: TempLabelDraw[] }
+    ).__modelDetailTempLabelDraws ?? []);
+    const latestLayout = (draws: TempLabelDraw[], fontSize: number) => {
+      const matching = draws.filter(({ font }) => font.includes(`${fontSize}px`));
+      const latestCanvasId = Math.max(...matching.map(({ canvasId }) => canvasId));
+      const unique = new Map<string, TempLabelDraw>();
+      for (const draw of matching.filter(({ canvasId }) => canvasId === latestCanvasId)) {
+        unique.set(`${draw.text}:${Math.round(draw.x)}:${Math.round(draw.y)}`, draw);
+      }
+      const labels = [...unique.values()];
+      const slots = new Map<number, number>();
+      for (const label of labels) {
+        const center = Math.round(label.x);
+        slots.set(center, Math.max(slots.get(center) ?? 0, label.width));
+      }
+      const centers = [...slots].sort(([left], [right]) => left - right);
+      const outOfBounds = labels.filter((label) => !(
+        label.x - label.width / 2 >= 0
+        && label.x + label.width / 2 <= label.canvasWidth
+        && label.y - label.height >= 0
+        && label.y + 2 <= label.canvasHeight
+      ));
+      const collisions = centers.flatMap(([center, width], index) => {
+        const next = centers[index + 1];
+        return next !== undefined && next[0] - center < (width + next[1]) / 2 + 4
+          ? [{ center, width, nextCenter: next[0], nextWidth: next[1] }]
+          : [];
+      });
+      return {
+        labels,
+        centers,
+        outOfBounds,
+        collisions,
+      };
+    };
+
+    await expect.poll(async () => latestLayout(await recordedDraws(), 20).labels.length).toBeGreaterThan(20);
+    const mobileLayout = latestLayout(await recordedDraws(), 20);
+    expect(mobileLayout.labels.every(({ font }) => (
+      /^(?:bold|700) 20px ui-sans-serif, system-ui, sans-serif$/.test(font)
+    ))).toBe(true);
+    expect(mobileLayout.outOfBounds).toEqual([]);
+    expect(mobileLayout.collisions).toEqual([]);
+    const chartScroller = page.locator('[data-model-detail-charts]');
+    await expect(chartScroller).toBeVisible();
+    expect(await chartScroller.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    expect(await chartScroller.evaluate((element) => element.scrollWidth)).toBeGreaterThanOrEqual(1000);
+    expect(await chartScroller.evaluate((element) => {
+      element.scrollLeft = element.scrollWidth;
+      return element.scrollLeft > 0;
+    })).toBe(true);
+
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await expectExportActionsAtTopRight();
+    await expect.poll(async () => latestLayout(await recordedDraws(), 15).labels.length).toBeGreaterThan(20);
+    const desktopLayout = latestLayout(await recordedDraws(), 15);
+    expect(desktopLayout.labels.every(({ font }) => font.startsWith("600 "))).toBe(true);
+    expect(desktopLayout.outOfBounds).toEqual([]);
+    expect(desktopLayout.collisions).toEqual([]);
+    await expect.poll(() => chartScroller.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    expect(await chartScroller.evaluate((element) => {
+      const canvas = element.querySelector("canvas");
+      return canvas !== null && Math.abs(canvas.clientWidth - element.clientWidth) <= 1;
+    })).toBe(true);
+  });
+
   test("retries transient NWS-unavailable enrichment when a hidden tab becomes visible", async ({ page }) => {
     await page.addInitScript(() => {
       let state: DocumentVisibilityState = "hidden";

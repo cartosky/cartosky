@@ -3396,15 +3396,7 @@ def _ordered_manifest_var_keys(model: str, manifest_vars: dict[str, Any]) -> lis
         else:
             unknown.append(var_key)
 
-    known.sort(
-        key=lambda key: (
-            getattr(variable_catalog[key], "order", None) is None,
-            getattr(variable_catalog[key], "order", 0)
-            if getattr(variable_catalog[key], "order", None) is not None
-            else 0,
-            key,
-        )
-    )
+    known.sort()
     unknown.sort()
     return known + unknown
 

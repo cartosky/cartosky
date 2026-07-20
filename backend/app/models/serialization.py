@@ -106,7 +106,6 @@ def serialize_variable_capability(model_id: str, capability: Any) -> dict[str, A
         "display_name": str(getattr(capability, "name", "")),
         "kind": getattr(capability, "kind", None),
         "units": getattr(capability, "units", None),
-        "order": getattr(capability, "order", None),
         "group": getattr(capability, "group", None),
         "default_fh": getattr(capability, "default_fh", None),
         "buildable": bool(getattr(capability, "buildable", False)),
@@ -134,11 +133,7 @@ def serialize_model_capability(model_id: str, capability: Any) -> dict[str, Any]
                 and getattr(var_capability, "frontend", {}).get("internal_only")
             )
         ),
-        key=lambda item: (
-            getattr(item[1], "order", None) is None,
-            getattr(item[1], "order", 0) if getattr(item[1], "order", None) is not None else 0,
-            item[0],
-        ),
+        key=lambda item: item[0],
     )
     variables_payload = {
         var_key: serialize_variable_capability(model_id, var_capability)

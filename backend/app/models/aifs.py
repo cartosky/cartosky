@@ -178,7 +178,6 @@ AIFS_VARIABLE_CATALOG["tmp2m_anom"] = replace(
     AIFS_VARIABLE_CATALOG["tmp2m_anom"],
     color_map_id="tmp2m_anom",
     default_fh=0,
-    order=2,
     group="Temperature",
 )
 

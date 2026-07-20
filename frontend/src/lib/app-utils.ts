@@ -181,7 +181,6 @@ export type VariableEntry = {
   id: string;
   name?: string;
   displayName?: string;
-  order?: number | null;
   defaultFh?: number | null;
   buildable?: boolean;
   kind?: string | null;
@@ -518,11 +517,12 @@ export function makeRegionLabel(id: string, preset?: RegionPreset): string {
   return preset?.label ?? id.toUpperCase();
 }
 
+// Single source of truth for variable dropdown ordering (and label/group overrides).
+// Ids not listed here fall back to backend name/group and sort alphabetically after ordered entries.
 const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   tmp2m: { label: "Surface Temp", group: "SURFACE", order: 0 },
   tmp2m_anom: { label: "Surface Temp Anomaly", group: "SURFACE", order: 0.5 },
   dp2m: { label: "Surface Dew Point", group: "SURFACE", order: 1 },
-  td2m: { label: "Surface Dew Point", group: "SURFACE", order: 1 },
   tmp850: { label: "850mb Temp", group: "UPPER AIR", order: 30 },
   tmp850_anom: { label: "850mb Temp Anomaly", group: "UPPER AIR", order: 30.5 },
   wspd850: { label: "850mb Heights + Winds", group: "UPPER AIR", order: 31 },
@@ -536,7 +536,6 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   ptype_intensity: { label: "Precip Type & Intensity", group: "PRECIPITATION", order: 10 },
   radar_ptype: { label: "Composite Reflectivity + Ptype", group: "PRECIPITATION", order: 11 },
   precip_total: { label: "Total Precip", group: "PRECIPITATION", order: 12 },
-  qpf: { label: "Total Precip (QPF)", group: "PRECIPITATION", order: 12 },
   qpf_6h: { label: "QPF (6h)", group: "PRECIPITATION", order: 12.1 },
   qpf_24h: { label: "QPF (24h)", group: "PRECIPITATION", order: 12.2 },
   qpf_48h: { label: "QPF (48h)", group: "PRECIPITATION", order: 12.3 },
@@ -546,12 +545,10 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   precip_15d_anom: { label: "15-day Precip Anomaly", group: "PRECIPITATION", order: 43 },
   precip_16d_anom: { label: "16-day Precip Anomaly", group: "PRECIPITATION", order: 44 },
   snowfall_total: { label: "Total Snowfall (10:1)", group: "PRECIPITATION", order: 13 },
-  snow10to1: { label: "Total Snowfall (10:1)", group: "PRECIPITATION", order: 13 },
   snow_6h: { label: "Snowfall (6h)", group: "PRECIPITATION", order: 13.1 },
   snow_24h: { label: "Snowfall (24h)", group: "PRECIPITATION", order: 13.2 },
   snow_48h: { label: "Snowfall (48h)", group: "PRECIPITATION", order: 13.3 },
   snowfall_kuchera_total: { label: "Total Snowfall (Kuchera)", group: "PRECIPITATION", order: 14 },
-  snowkuchera: { label: "Total Snowfall (Kuchera)", group: "PRECIPITATION", order: 14 },
   ice_total: { label: "Total Ice", group: "PRECIPITATION", order: 15 },
   ice_6h: { label: "Ice (6h)", group: "PRECIPITATION", order: 15.1 },
   ice_24h: { label: "Ice (24h)", group: "PRECIPITATION", order: 15.2 },
@@ -566,16 +563,24 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   wv8: { label: "Upper-Level Water Vapor", group: "SATELLITE", order: 2 },
   vis2: { label: "Visible", group: "SATELLITE", order: 4 },
   true_color: { label: "True Color", group: "SATELLITE", order: 3 },
-  rh2m: { label: "Surface Relative Humidity", group: "PRECIPITATION", order: 8 },
-  rh700: { label: "700mb Relative Humidity", group: "PRECIPITATION", order: 9 },
+  rh2m: { label: "Surface Relative Humidity", group: "PRECIPITATION", order: 16.1 },
+  rh700: { label: "700mb Relative Humidity", group: "PRECIPITATION", order: 16.2 },
+  qpf6h: { order: 16.3 },
   tornado_prob: { label: "SPC Tornado Probability", group: "OUTLOOKS", order: 0 },
   wind_prob: { label: "SPC Wind Probability", group: "OUTLOOKS", order: 1 },
   hail_prob: { label: "SPC Hail Probability", group: "OUTLOOKS", order: 2 },
   convective: { label: "SPC Convective Outlook", group: "OUTLOOKS", order: 3 },
+  extended: { order: 4 },
   cpc_610_temp: { label: "6-10 Day Temp Outlook", group: "FORECASTS", order: 0 },
   cpc_610_precip: { label: "6-10 Day Precip Outlook", group: "FORECASTS", order: 1 },
   cpc_814_temp: { label: "8-14 Day Temp Outlook", group: "FORECASTS", order: 2 },
   cpc_814_precip: { label: "8-14 Day Precip Outlook", group: "FORECASTS", order: 3 },
+  cpc_w34_temp: { order: 4 },
+  cpc_w34_precip: { order: 5 },
+  cpc_1m_temp: { order: 6 },
+  cpc_1m_precip: { order: 7 },
+  cpc_3m_temp: { order: 8 },
+  cpc_3m_precip: { order: 9 },
   mrms_recent_precip_6h: { label: "Recent Precip (6h)", group: "PRECIPITATION", order: 17 },
   mrms_recent_precip_24h: { label: "Recent Precip (24h)", group: "PRECIPITATION", order: 18 },
   mrms_recent_precip_72h: { label: "Recent Precip (72h)", group: "PRECIPITATION", order: 19 },
@@ -694,9 +699,6 @@ export function variableCatalogOrder(id: string, backendOrder?: number | null): 
   const override = variableUiOverride(id);
   if (typeof override?.order === "number") {
     return override.order;
-  }
-  if (Number.isFinite(backendOrder)) {
-    return Number(backendOrder);
   }
   return 999;
 }
@@ -906,7 +908,6 @@ export function normalizeCapabilityVarRows(modelCapability: CapabilityModel | nu
     .map(([id, entry]) => ({
       id: String(id).trim(),
       displayName: entry.display_name?.trim() || undefined,
-      order: toNumberOrNull(entry.order),
       defaultFh: variableDefaultFh(entry),
       buildable: entry.buildable !== false,
       kind: typeof entry.kind === "string" ? entry.kind : null,
@@ -926,14 +927,7 @@ export function normalizeCapabilityVarRows(modelCapability: CapabilityModel | nu
     }))
     .filter((entry) => Boolean(entry.id) && entry.buildable);
 
-  return normalized.sort((a, b) => {
-    const aOrder = Number.isFinite(a.order) ? Number(a.order) : Number.POSITIVE_INFINITY;
-    const bOrder = Number.isFinite(b.order) ? Number(b.order) : Number.POSITIVE_INFINITY;
-    if (aOrder !== bOrder) {
-      return aOrder - bOrder;
-    }
-    return a.id.localeCompare(b.id);
-  });
+  return normalized.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export function capabilityVarsForManifest(

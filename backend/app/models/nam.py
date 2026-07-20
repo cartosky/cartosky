@@ -832,25 +832,6 @@ NAM_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "snowfall_kuchera_total": 1,
 }
 
-NAM_ORDER_BY_VAR_KEY: dict[str, int] = {
-    "radar_ptype": 0,
-    "tmp2m": 1,
-    "dp2m": 2,
-    "tmp850": 3,
-    "wspd850": 4,
-    "wspd300": 999,
-    "vort500": 5,
-    "sbcape": 6,
-    "mlcape": 7,
-    "mucape": 8,
-    "pwat": 9,
-    "precip_total": 10,
-    "snowfall_total": 11,
-    "wspd10m": 12,
-    "wgst10m": 13,
-    "snowfall_kuchera_total": 14,
-}
-
 NAM_GROUP_BY_VAR_KEY: dict[str, str] = {
     "radar_ptype": "Radar & Precipitation Type",
     "tmp2m": "Temperature",
@@ -927,7 +908,6 @@ def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapabi
         color_map_id=NAM_COLOR_MAP_BY_VAR_KEY.get(var_key),
         default_fh=NAM_DEFAULT_FH_BY_VAR_KEY.get(var_key),
         buildable=is_buildable,
-        order=NAM_ORDER_BY_VAR_KEY.get(var_key),
         group=NAM_GROUP_BY_VAR_KEY.get(var_key),
         conversion=NAM_CONVERSION_BY_VAR_KEY.get(var_key),
         constraints=dict(NAM_CONSTRAINTS_BY_VAR_KEY.get(var_key, {})),

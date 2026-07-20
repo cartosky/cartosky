@@ -143,14 +143,6 @@ _MRMS_VAR_COLOR_MAPS: dict[str, str] = {
     "mrms_recent_precip_72h": "mrms_recent_precip_72h",
 }
 
-_MRMS_VAR_ORDER: dict[str, int] = {
-    "reflectivity": 0,
-    "mrms_radar_ptype": 1,
-    "mrms_recent_precip_6h": 10,
-    "mrms_recent_precip_24h": 11,
-    "mrms_recent_precip_72h": 12,
-}
-
 _MRMS_VAR_GROUPS: dict[str, str] = {
     "reflectivity": "Radar",
     "mrms_radar_ptype": "Radar",
@@ -174,7 +166,6 @@ def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapabi
         scale=var_spec.scale,
         color_map_id=_MRMS_VAR_COLOR_MAPS.get(var_key),
         buildable=bool(var_spec.primary or var_spec.derived),
-        order=_MRMS_VAR_ORDER.get(var_key),
         group=_MRMS_VAR_GROUPS.get(var_key, "Radar"),
     )
 

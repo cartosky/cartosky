@@ -59,7 +59,6 @@ NWS_HAZARDS_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         primary=True,
         kind="categorical",
         buildable=True,
-        order=0,
         group="Hazards",
         legend_title="NWS Hazards",
         render_substrates=["vector"],

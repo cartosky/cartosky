@@ -113,7 +113,6 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
         "render_substrates",
         "supported_build_regions",
         "units",
-        "order",
         "group",
         "default_fh",
         "buildable",
@@ -136,7 +135,6 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert rh2m["buildable"] is True
     assert rh2m["derived"] is False
     assert rh2m["color_map_id"] == "rh"
-    assert rh2m["order"] == 2.5
     assert rh2m["group"] == "Moisture"
     assert rh2m["default_fh"] is None
     assert rh2m["render_substrates"] == ["grid"]
@@ -149,7 +147,6 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert rh700["buildable"] is True
     assert rh700["derived"] is False
     assert rh700["color_map_id"] == "rh"
-    assert rh700["order"] == 3.75
     assert rh700["group"] == "Moisture"
     assert rh700["default_fh"] is None
     assert rh700["render_substrates"] == ["grid"]
@@ -161,7 +158,6 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert wspd850["kind"] == "continuous"
     assert wspd850["units"] == "kt"
     assert wspd850["display_name"] == "850mb Heights + Winds"
-    assert wspd850["order"] == 4
     assert wspd850["group"] == "Wind"
     assert wspd850["color_map_id"] == "wspd850"
     assert wspd850["display_resampling_override"] is None
@@ -175,7 +171,6 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850_anom["derived"] is True
     assert tmp850_anom["derive_strategy_id"] == "anomaly_departure"
     assert tmp850_anom["color_map_id"] == "tmp850_anom"
-    assert tmp850_anom["order"] == 3.5
     assert tmp850_anom["group"] == "Temperature"
     assert tmp850_anom["display_resampling_override"] is None
 
@@ -186,7 +181,6 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert wspd300["kind"] == "continuous"
     assert wspd300["units"] == "kt"
     assert wspd300["display_name"] == "300mb Heights + Winds"
-    assert wspd300["order"] == 999
     assert wspd300["group"] == "Wind"
     assert wspd300["color_map_id"] == "wspd300"
     assert wspd300["display_resampling_override"] is None
@@ -198,7 +192,6 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert sbcape["kind"] == "continuous"
     assert sbcape["units"] == "J/kg"
     assert sbcape["display_name"] == "Surface-Based CAPE"
-    assert sbcape["order"] == 6
     assert sbcape["group"] == "Instability"
     assert sbcape["color_map_id"] == "mlcape"
     assert sbcape["display_resampling_override"] is None
@@ -210,7 +203,6 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert mlcape["kind"] == "continuous"
     assert mlcape["units"] == "J/kg"
     assert mlcape["display_name"] == "Mixed-Layer CAPE"
-    assert mlcape["order"] == 7
     assert mlcape["group"] == "Instability"
     assert mlcape["color_map_id"] == "mlcape"
     assert mlcape["display_resampling_override"] is None
@@ -222,7 +214,6 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert mucape["kind"] == "continuous"
     assert mucape["units"] == "J/kg"
     assert mucape["display_name"] == "Most-Unstable CAPE"
-    assert mucape["order"] == 8
     assert mucape["group"] == "Instability"
     assert mucape["color_map_id"] == "mlcape"
     assert mucape["display_resampling_override"] is None
@@ -234,7 +225,6 @@ def test_hrrr_capabilities_schema_snapshot_invariants() -> None:
     assert pwat["kind"] == "continuous"
     assert pwat["units"] == "in"
     assert pwat["display_name"] == "Precipitable Water"
-    assert pwat["order"] == 9
     assert pwat["group"] == "Moisture"
     assert pwat["color_map_id"] == "pwat"
     assert pwat["display_resampling_override"] is None

@@ -169,14 +169,6 @@ CURRENT_ANALYSIS_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "spres": "pressure_pa_to_hpa",
 }
 
-CURRENT_ANALYSIS_ORDER_BY_VAR_KEY: dict[str, int] = {
-    "tmp2m": 0,
-    "dp2m": 1,
-    "wspd10m": 2,
-    "wgst10m": 3,
-    "spres": 4,
-}
-
 CURRENT_ANALYSIS_GROUP_BY_VAR_KEY: dict[str, str] = {
     "tmp2m": "Surface",
     "dp2m": "Surface",
@@ -205,7 +197,6 @@ def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapabi
         scale=var_spec.scale,
         color_map_id=CURRENT_ANALYSIS_COLOR_MAP_BY_VAR_KEY.get(var_key),
         buildable=is_buildable,
-        order=CURRENT_ANALYSIS_ORDER_BY_VAR_KEY.get(var_key),
         group=CURRENT_ANALYSIS_GROUP_BY_VAR_KEY.get(var_key),
         conversion=CURRENT_ANALYSIS_CONVERSION_BY_VAR_KEY.get(var_key),
         render_substrates=["grid"],

@@ -70,7 +70,6 @@ def _capability(
     units: str,
     color_map_id: str,
     group: str,
-    order: float,
 ) -> VariableCapability:
     return VariableCapability(
         var_key=var_key,
@@ -80,7 +79,6 @@ def _capability(
         units=units,
         color_map_id=color_map_id,
         buildable=True,
-        order=order,
         group=group,
     )
 
@@ -92,7 +90,6 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="F",
         color_map_id="tmp2m",
         group="Temperature",
-        order=1,
     ),
     "maxt": _capability(
         var_key="maxt",
@@ -100,7 +97,6 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="F",
         color_map_id="tmp2m",
         group="Temperature",
-        order=0,
     ),
     "qpf_6h": _capability(
         var_key="qpf_6h",
@@ -108,7 +104,6 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="in",
         color_map_id="qpf6h",
         group="Precipitation",
-        order=10,
     ),
     "qpf_24h": _capability(
         var_key="qpf_24h",
@@ -116,7 +111,6 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="in",
         color_map_id="precip_total",
         group="Precipitation",
-        order=11,
     ),
     "qpf_48h": _capability(
         var_key="qpf_48h",
@@ -124,7 +118,6 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="in",
         color_map_id="precip_total",
         group="Precipitation",
-        order=12,
     ),
     "snow_6h": _capability(
         var_key="snow_6h",
@@ -132,7 +125,6 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="in",
         color_map_id="snowfall_total",
         group="Precipitation",
-        order=13,
     ),
     "snow_24h": _capability(
         var_key="snow_24h",
@@ -140,7 +132,6 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="in",
         color_map_id="snowfall_total",
         group="Precipitation",
-        order=14,
     ),
     "snow_48h": _capability(
         var_key="snow_48h",
@@ -148,7 +139,6 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="in",
         color_map_id="snowfall_total",
         group="Precipitation",
-        order=15,
     ),
     "ice_6h": _capability(
         var_key="ice_6h",
@@ -156,7 +146,6 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="in",
         color_map_id="ice_total",
         group="Precipitation",
-        order=16,
     ),
     "ice_24h": _capability(
         var_key="ice_24h",
@@ -164,7 +153,6 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="in",
         color_map_id="ice_total",
         group="Precipitation",
-        order=17,
     ),
     "wgust_6h_max": _capability(
         var_key="wgust_6h_max",
@@ -172,7 +160,6 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="mph",
         color_map_id="wgst10m",
         group="Wind",
-        order=20,
     ),
     "wgust_24h_max": _capability(
         var_key="wgust_24h_max",
@@ -180,7 +167,6 @@ NDFD_VARIABLE_CATALOG: dict[str, VariableCapability] = {
         units="mph",
         color_map_id="wgst10m",
         group="Wind",
-        order=21,
     ),
 }
 

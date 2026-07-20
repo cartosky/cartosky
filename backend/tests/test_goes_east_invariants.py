@@ -26,7 +26,6 @@ def test_goes_east_includes_wv9_catalog_entry_and_aliases() -> None:
     wv9 = capabilities.variable_catalog["wv9"]
     assert wv9.name == "Mid-Level Water Vapor"
     assert wv9.color_map_id == "goes_wv9_enhanced"
-    assert wv9.order == 1
     assert GOES_EAST_MODEL.normalize_var_id("water_vapor") == "wv9"
     assert GOES_EAST_MODEL.normalize_var_id("band9") == "wv9"
     assert GOES_EAST_MODEL.normalize_var_id("c09") == "wv9"

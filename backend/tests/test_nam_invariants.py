@@ -89,7 +89,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["kind"] == "continuous"
     assert tmp2m["units"] == "F"
     assert tmp2m["display_name"] == "Surface Temp"
-    assert tmp2m["order"] == 1
 
     dp2m = payload["variables"]["dp2m"]
     assert dp2m["buildable"] is True
@@ -97,7 +96,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert dp2m["kind"] == "continuous"
     assert dp2m["units"] == "F"
     assert dp2m["display_name"] == "Surface Dew Point"
-    assert dp2m["order"] == 2
 
     tmp850 = payload["variables"]["tmp850"]
     assert tmp850["buildable"] is True
@@ -105,7 +103,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850["kind"] == "continuous"
     assert tmp850["units"] == "C"
     assert tmp850["display_name"] == "850mb Temp"
-    assert tmp850["order"] == 3
 
     wspd850 = payload["variables"]["wspd850"]
     assert wspd850["buildable"] is True
@@ -116,7 +113,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert wspd850["display_name"] == "850mb Heights + Winds"
     assert wspd850["group"] == "Wind"
     assert wspd850["color_map_id"] == "wspd850"
-    assert wspd850["order"] == 4
     assert wspd850["display_resampling_override"] is None
 
     wspd300 = payload["variables"]["wspd300"]
@@ -128,7 +124,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert wspd300["display_name"] == "300mb Heights + Winds"
     assert wspd300["group"] == "Wind"
     assert wspd300["color_map_id"] == "wspd300"
-    assert wspd300["order"] == 999
     assert wspd300["display_resampling_override"] is None
 
     sbcape = payload["variables"]["sbcape"]
@@ -139,7 +134,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert sbcape["display_name"] == "Surface-Based CAPE"
     assert sbcape["group"] == "Instability"
     assert sbcape["color_map_id"] == "mlcape"
-    assert sbcape["order"] == 6
     assert sbcape["display_resampling_override"] is None
 
     mlcape = payload["variables"]["mlcape"]
@@ -150,7 +144,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert mlcape["display_name"] == "Mixed-Layer CAPE"
     assert mlcape["group"] == "Instability"
     assert mlcape["color_map_id"] == "mlcape"
-    assert mlcape["order"] == 7
     assert mlcape["display_resampling_override"] is None
 
     mucape = payload["variables"]["mucape"]
@@ -161,7 +154,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert mucape["display_name"] == "Most-Unstable CAPE"
     assert mucape["group"] == "Instability"
     assert mucape["color_map_id"] == "mlcape"
-    assert mucape["order"] == 8
     assert mucape["display_resampling_override"] is None
 
     pwat = payload["variables"]["pwat"]
@@ -172,7 +164,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert pwat["display_name"] == "Precipitable Water"
     assert pwat["group"] == "Moisture"
     assert pwat["color_map_id"] == "pwat"
-    assert pwat["order"] == 9
     assert pwat["display_resampling_override"] is None
 
     wspd10m = payload["variables"]["wspd10m"]
@@ -182,7 +173,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert wspd10m["kind"] == "continuous"
     assert wspd10m["units"] == "mph"
     assert wspd10m["display_name"] == "10m Wind Speed"
-    assert wspd10m["order"] == 12
 
     wgst10m = payload["variables"]["wgst10m"]
     assert wgst10m["buildable"] is True
@@ -190,7 +180,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert wgst10m["kind"] == "continuous"
     assert wgst10m["units"] == "mph"
     assert wgst10m["display_name"] == "10m Wind Gust"
-    assert wgst10m["order"] == 13
 
     precip_total = payload["variables"]["precip_total"]
     assert precip_total["buildable"] is True
@@ -201,7 +190,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["default_fh"] == 1
     assert precip_total["constraints"] == {"min_fh": 1}
     assert precip_total["display_name"] == "Total Precip"
-    assert precip_total["order"] == 10
     assert precip_total["display_resampling_override"] is None
 
     snowfall_total = payload["variables"]["snowfall_total"]
@@ -213,7 +201,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["default_fh"] == 1
     assert snowfall_total["constraints"] == {"min_fh": 1}
     assert snowfall_total["display_name"] == "Total Snowfall (10:1)"
-    assert snowfall_total["order"] == 11
     assert snowfall_total["display_resampling_override"] is None
 
     snowfall_kuchera_total = payload["variables"]["snowfall_kuchera_total"]
@@ -225,7 +212,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_kuchera_total["default_fh"] == 1
     assert snowfall_kuchera_total["constraints"] == {"min_fh": 1}
     assert snowfall_kuchera_total["display_name"] == "Total Snowfall (Kuchera)"
-    assert snowfall_kuchera_total["order"] == 14
 
     radar_ptype = payload["variables"]["radar_ptype"]
     assert radar_ptype["buildable"] is True
@@ -235,7 +221,6 @@ def test_nam_capabilities_schema_snapshot_invariants() -> None:
     assert radar_ptype["units"] == "dBZ"
     assert radar_ptype["default_fh"] == 1
     assert radar_ptype["display_name"] == "Composite Reflectivity + Ptype"
-    assert radar_ptype["order"] == 0
     radar_ptype_capability = capabilities.variable_catalog["radar_ptype"]
     assert radar_ptype_capability.frontend == {}
     for component_var in [

@@ -280,12 +280,6 @@ def test_fetch_and_normalize_w34_shapefile(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_cpc_catalog_includes_monthly_and_seasonal_products() -> None:
-    assert CPC_VARIABLE_CATALOG["cpc_w34_temp"].order == 4
-    assert CPC_VARIABLE_CATALOG["cpc_w34_precip"].order == 5
-    assert CPC_VARIABLE_CATALOG["cpc_1m_temp"].order == 6
-    assert CPC_VARIABLE_CATALOG["cpc_1m_precip"].order == 7
-    assert CPC_VARIABLE_CATALOG["cpc_3m_temp"].order == 8
-    assert CPC_VARIABLE_CATALOG["cpc_3m_precip"].order == 9
     assert CPC_MODEL.normalize_var_id("w34-temperature") == "cpc_w34_temp"
     assert CPC_MODEL.normalize_var_id("cpc_w34_precipitation") == "cpc_w34_precip"
     assert CPC_MODEL.normalize_var_id("1m-temperature") == "cpc_1m_temp"

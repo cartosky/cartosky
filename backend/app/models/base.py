@@ -71,7 +71,6 @@ class VariableCapability:
     color_map_id: Optional[str] = None
     default_fh: Optional[int] = None
     buildable: bool = True
-    order: Optional[int] = None
     group: Optional[str] = None
     legend_title: Optional[str] = None
     conversion: Optional[str] = None

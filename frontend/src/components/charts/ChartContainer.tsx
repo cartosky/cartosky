@@ -145,13 +145,13 @@ export function ChartContainer({
 
   return (
     <div ref={cardRef} className="rounded-xl border border-white/10 bg-white/[0.03] p-4 md:p-5">
-      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <h3 className="text-[14px] font-medium text-white/85">{title}</h3>
           {subtitle && <p className="mt-0.5 text-[12px] text-white/40">{subtitle}</p>}
         </div>
         {(filterSlot || showExport) && (
-          <div className="flex items-center gap-2 sm:flex-none">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {filterSlot}
             {showExport && exportImage && (
               <ExportButtons cardRef={cardRef} config={exportImage} />

@@ -452,7 +452,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m["buildable"] is True
     assert tmp2m["derived"] is False
     assert tmp2m["color_map_id"] == "tmp2m"
-    assert tmp2m["order"] == 1
     assert tmp2m["group"] == "Temperature"
     assert tmp2m["default_fh"] == 0
     assert tmp2m["render_substrates"] == ["grid"]
@@ -466,7 +465,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert tmp2m_anom["derived"] is True
     assert tmp2m_anom["derive_strategy_id"] == "anomaly_departure"
     assert tmp2m_anom["color_map_id"] == "tmp2m_anom"
-    assert tmp2m_anom["order"] == 2
     assert tmp2m_anom["group"] == "Temperature"
     assert tmp2m_anom["default_fh"] == 0
     assert tmp2m_anom["render_substrates"] == ["grid"]
@@ -479,7 +477,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert dp2m["buildable"] is True
     assert dp2m["derived"] is False
     assert dp2m["color_map_id"] == "dp2m"
-    assert dp2m["order"] == 2
     assert dp2m["group"] == "Temperature"
     assert dp2m["default_fh"] == 0
     assert dp2m["render_substrates"] == ["grid"]
@@ -493,7 +490,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert rh2m["derived"] is True
     assert rh2m["derive_strategy_id"] == "relative_humidity_from_temp_dewpoint"
     assert rh2m["color_map_id"] == "rh"
-    assert rh2m["order"] == 2.5
     assert rh2m["group"] == "Moisture"
     assert rh2m["default_fh"] == 0
     assert rh2m["render_substrates"] == ["grid"]
@@ -506,7 +502,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert rh700["buildable"] is True
     assert rh700["derived"] is False
     assert rh700["color_map_id"] == "rh"
-    assert rh700["order"] == 3.75
     assert rh700["group"] == "Moisture"
     assert rh700["default_fh"] == 0
     assert rh700["render_substrates"] == ["grid"]
@@ -519,7 +514,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850["buildable"] is True
     assert tmp850["derived"] is False
     assert tmp850["color_map_id"] == "tmp850"
-    assert tmp850["order"] == 3
     assert tmp850["group"] == "Temperature"
     assert tmp850["default_fh"] == 0
     assert tmp850["render_substrates"] == ["grid"]
@@ -533,7 +527,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert tmp850_anom["derived"] is True
     assert tmp850_anom["derive_strategy_id"] == "anomaly_departure"
     assert tmp850_anom["color_map_id"] == "tmp850_anom"
-    assert tmp850_anom["order"] == 3.5
     assert tmp850_anom["group"] == "Temperature"
     assert tmp850_anom["default_fh"] == 0
     assert tmp850_anom["render_substrates"] == ["grid"]
@@ -547,7 +540,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert hgt500_anom["derived"] is True
     assert hgt500_anom["derive_strategy_id"] == "anomaly_departure"
     assert hgt500_anom["color_map_id"] == "hgt500_anom"
-    assert hgt500_anom["order"] == 5
     assert hgt500_anom["group"] == "Dynamics"
     assert hgt500_anom["default_fh"] == 0
     assert hgt500_anom["display_resampling_override"] == "bilinear"
@@ -562,7 +554,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert wspd850["derived"] is True
     assert wspd850["derive_strategy_id"] == "wspd10m"
     assert wspd850["color_map_id"] == "wspd850"
-    assert wspd850["order"] == 4
     assert wspd850["group"] == "Wind"
     assert wspd850["default_fh"] == 0
     assert wspd850["render_substrates"] == ["grid"]
@@ -576,7 +567,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert wspd300["derived"] is True
     assert wspd300["derive_strategy_id"] == "wspd10m"
     assert wspd300["color_map_id"] == "wspd300"
-    assert wspd300["order"] == 999
     assert wspd300["group"] == "Wind"
     assert wspd300["default_fh"] == 0
     assert wspd300["render_substrates"] == ["grid"]
@@ -589,7 +579,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert vort500["buildable"] is True
     assert vort500["derived"] is False
     assert vort500["color_map_id"] == "vort500"
-    assert vort500["order"] == 5
     assert vort500["group"] == "Dynamics"
     assert vort500["default_fh"] == 0
     assert vort500["render_substrates"] == ["grid"]
@@ -602,7 +591,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert precip_total["buildable"] is True
     assert precip_total["derived"] is False
     assert precip_total["color_map_id"] == "precip_total"
-    assert precip_total["order"] == 10
     assert precip_total["group"] == "Precipitation"
     assert precip_total["default_fh"] == 3
     assert precip_total["constraints"] == {"min_fh": 3}
@@ -617,7 +605,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert ptype_intensity["derived"] is True
     assert ptype_intensity["derive_strategy_id"] == "ptype_intensity_ecmwf"
     assert ptype_intensity["color_map_id"] == "ptype_intensity"
-    assert ptype_intensity["order"] == 15
     assert ptype_intensity["group"] == "Precipitation"
     assert ptype_intensity["default_fh"] == 6
     assert ptype_intensity["constraints"] == {"min_fh": 3}
@@ -631,7 +618,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert pwat["buildable"] is True
     assert pwat["derived"] is False
     assert pwat["color_map_id"] == "pwat"
-    assert pwat["order"] == 9
     assert pwat["group"] == "Moisture"
     assert pwat["default_fh"] == 0
     assert pwat["render_substrates"] == ["grid"]
@@ -644,7 +630,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_total["buildable"] is True
     assert snowfall_total["derived"] is False
     assert snowfall_total["color_map_id"] == "snowfall_total"
-    assert snowfall_total["order"] == 11
     assert snowfall_total["group"] == "Precipitation"
     assert snowfall_total["default_fh"] == 3
     assert snowfall_total["constraints"] == {"min_fh": 3}
@@ -659,7 +644,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert snowfall_kuchera_total["derived"] is True
     assert snowfall_kuchera_total["derive_strategy_id"] == "snowfall_kuchera_total_cumulative"
     assert snowfall_kuchera_total["color_map_id"] == "snowfall_total"
-    assert snowfall_kuchera_total["order"] == 14
     assert snowfall_kuchera_total["group"] == "Precipitation"
     assert snowfall_kuchera_total["default_fh"] == 3
     assert snowfall_kuchera_total["constraints"] == {"min_fh": 3}
@@ -674,7 +658,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert ice_total["derived"] is True
     assert ice_total["derive_strategy_id"] == "ptype_accumulation_ecmwf"
     assert ice_total["color_map_id"] == "ice_total"
-    assert ice_total["order"] == 14.5
     assert ice_total["group"] == "Precipitation"
     assert ice_total["default_fh"] == 6
     assert ice_total["constraints"] == {"min_fh": 3}
@@ -688,7 +671,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert wspd10m["buildable"] is True
     assert wspd10m["derived"] is True
     assert wspd10m["color_map_id"] == "wspd10m"
-    assert wspd10m["order"] == 12
     assert wspd10m["group"] == "Wind"
     assert wspd10m["default_fh"] == 0
     assert wspd10m["render_substrates"] == ["grid"]
@@ -701,7 +683,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert wgst10m["buildable"] is True
     assert wgst10m["derived"] is False
     assert wgst10m["color_map_id"] == "wgst10m"
-    assert wgst10m["order"] == 13
     assert wgst10m["group"] == "Wind"
     assert wgst10m["default_fh"] == 3
     assert wgst10m["constraints"] == {"min_fh": 3}
@@ -715,7 +696,6 @@ def test_ecmwf_capabilities_schema_snapshot_invariants() -> None:
     assert mucape["buildable"] is True
     assert mucape["derived"] is False
     assert mucape["color_map_id"] == "mlcape"
-    assert mucape["order"] == 20
     assert mucape["group"] == "Instability"
     assert mucape["default_fh"] == 0
     assert mucape["render_substrates"] == ["grid"]
