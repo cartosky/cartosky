@@ -743,6 +743,13 @@ export default function App() {
     && (selectedCapabilityVarMap.has(variable) || manifestVarIds.has(variable))
   );
   const selectedVariableCapability = variable ? selectedModelCapability?.variables?.[variable] : undefined;
+  // The region selector is a camera preset. Weather artifacts stay keyed to the
+  // model's canonical build region so changing the viewport never reloads them.
+  const dataRegion = String(
+    selectedModelCapability?.constraints?.canonical_region
+    ?? selectedModelCapability?.canonical_region
+    ?? MAP_VIEW_DEFAULTS.region
+  ).trim().toLowerCase() || MAP_VIEW_DEFAULTS.region;
   // Ensemble stats products (stats design §7, option B): declared on the
   // parent variable's capability; "mean" = today's behavior. An ACTIVE
   // product swaps the requested variable id at data-request boundaries
@@ -1094,7 +1101,7 @@ export default function App() {
     : run === "latest"
       ? "latest"
       : resolvedRunForRequests;
-  const selectionKey = `${model}:${selectionRunKey}:${variable}:${region}:${ensembleView || "-"}:${product || "-"}`;
+  const selectionKey = `${model}:${selectionRunKey}:${variable}:${dataRegion}:${ensembleView || "-"}:${product || "-"}`;
   useEffect(() => {
     selectionKeyRef.current = selectionKey;
   }, [selectionKey]);
@@ -1365,18 +1372,6 @@ export default function App() {
     }
   }, [runs, resolvedGridLatestRunId]);
 
-  const previousRegionRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const previousRegion = previousRegionRef.current;
-    previousRegionRef.current = region;
-    if (previousRegion === null || previousRegion === region) {
-      return;
-    }
-    setGridManifest(null);
-    setCompositeGridManifests({});
-  }, [region]);
-
   useEffect(() => {
     if (!prefersGridSubstrate || !hasRenderableSelection || !selectionSupportsGrid) {
       setGridManifest(null);
@@ -1390,7 +1385,7 @@ export default function App() {
         // order) that returns a valid manifest.
         const results = await Promise.allSettled(
           latestGridRunCandidates.map((candidateRun) =>
-            fetchGridManifest(model, candidateRun, requestVariable, region, requestEnsembleView, { signal: controller.signal })
+            fetchGridManifest(model, candidateRun, requestVariable, dataRegion, requestEnsembleView, { signal: controller.signal })
               .then((manifest) => ({ candidateRun, manifest })),
           ),
         );
@@ -1412,7 +1407,7 @@ export default function App() {
         return;
       }
 
-      const manifest = await fetchGridManifest(model, resolvedRunForRequests, requestVariable, region, requestEnsembleView, { signal: controller.signal });
+      const manifest = await fetchGridManifest(model, resolvedRunForRequests, requestVariable, dataRegion, requestEnsembleView, { signal: controller.signal });
       if (controller.signal.aborted) {
         return;
       }
@@ -1439,7 +1434,7 @@ export default function App() {
     latestGridRunCandidates,
     model,
     prefersGridSubstrate,
-    region,
+    dataRegion,
     resolvedRunForRequests,
     run,
     gridOnlySelection,
@@ -1667,7 +1662,7 @@ export default function App() {
     const controller = new AbortController();
     void Promise.all(
       compositeLayerSpecs.map(async (layer) => {
-        const manifest = await fetchGridManifest(model, resolvedRunForRequests, layer.var, region, ensembleView, { signal: controller.signal });
+        const manifest = await fetchGridManifest(model, resolvedRunForRequests, layer.var, dataRegion, ensembleView, { signal: controller.signal });
         return [layer.id, manifest] as const;
       })
     ).then((entries) => {
@@ -1684,7 +1679,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [compositeLayerSpecs, model, resolvedRunForRequests]);
+  }, [compositeLayerSpecs, dataRegion, ensembleView, model, resolvedRunForRequests]);
   const gridFrameByHour = useMemo(() => {
     const map = new Map<number, NonNullable<typeof selectedGridLod>["frames"][number]>();
     const frames = Array.isArray(selectedGridLod?.frames) ? selectedGridLod.frames : [];
@@ -3442,7 +3437,7 @@ export default function App() {
           : run;
         const [runDataRaw, requestedManifest] = await Promise.all([
           runDataPromise,
-          fetchManifest(model, manifestRunKey, region, ensembleView, { signal: controller.signal }).catch(() => null),
+          fetchManifest(model, manifestRunKey, dataRegion, ensembleView, { signal: controller.signal }).catch(() => null),
         ]);
         if (controller.signal.aborted) {
           return;
@@ -3455,7 +3450,7 @@ export default function App() {
           ? ((gridOnlySelection && resolvedGridLatestRunId && runData.includes(resolvedGridLatestRunId)) ? resolvedGridLatestRunId : nextRun)
           : nextRun;
         if (!manifestData && nextManifestRunKey !== manifestRunKey) {
-          manifestData = await fetchManifest(model, nextManifestRunKey, region, ensembleView, { signal: controller.signal }).catch(() => null);
+          manifestData = await fetchManifest(model, nextManifestRunKey, dataRegion, ensembleView, { signal: controller.signal }).catch(() => null);
           if (controller.signal.aborted) {
             return;
           }
@@ -3493,7 +3488,7 @@ export default function App() {
             .filter((runId) => runId && runId !== resolvedManifestRunId)
             .slice(0, 2);
           for (const fallbackRunId of fallbackRunIds) {
-            const fallbackManifest = await fetchManifest(model, fallbackRunId, region, ensembleView, { signal: controller.signal }).catch(() => null);
+            const fallbackManifest = await fetchManifest(model, fallbackRunId, dataRegion, ensembleView, { signal: controller.signal }).catch(() => null);
             if (controller.signal.aborted) {
               return;
             }
@@ -3528,7 +3523,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [model, run, runs, selectedCapabilityVars, selectedModelCapability, gridOnlySelection, resolvedGridLatestRunId, ensembleView, initialPermalink.run, showInitialPermalinkFallbackNotice]);
+  }, [dataRegion, model, run, runs, selectedCapabilityVars, selectedModelCapability, gridOnlySelection, resolvedGridLatestRunId, ensembleView, initialPermalink.run, showInitialPermalinkFallbackNotice]);
 
   useEffect(() => {
     setFrameRows([]);
@@ -3646,11 +3641,11 @@ export default function App() {
         if (!framesRunKey) {
           return;
         }
-        // Variable-only and region switches re-run this effect (via
-        // selectionKey) without touching the manifest effect above, so the
-        // top progress bar must track this fetch too.
+        // Variable-only switches re-run this effect (via selectionKey) without
+        // touching the manifest effect above, so the top progress bar must track
+        // this fetch too.
         setFrameSwitchCount((count) => count + 1);
-        const rows = await fetchFrames(model, framesRunKey, requestVariable, region, requestEnsembleView, { signal: controller.signal })
+        const rows = await fetchFrames(model, framesRunKey, requestVariable, dataRegion, requestEnsembleView, { signal: controller.signal })
           .finally(() => setFrameSwitchCount((count) => count - 1));
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         setVariableSwitchState((current) => {
@@ -3744,6 +3739,7 @@ export default function App() {
     resolvedRunForRequests,
     runManifest,
     commitForecastHourTransition,
+    dataRegion,
     hasRenderableSelection,
     gridOnlySelection,
     rgbManifest,
@@ -3938,9 +3934,9 @@ export default function App() {
               : resolvedRunForRequests;
             setFrameSwitchCount((count) => count + 1);
             const [manifestData, nextGridManifest] = await Promise.all([
-              fetchManifest(model, manifestRunKey, region, ensembleView, { signal: tickController.signal }),
+              fetchManifest(model, manifestRunKey, dataRegion, ensembleView, { signal: tickController.signal }),
               (prefersGridSubstrate && selectionSupportsGrid)
-                ? fetchGridManifest(model, gridRunKey, requestVariable, region, requestEnsembleView, { signal: tickController.signal })
+                ? fetchGridManifest(model, gridRunKey, requestVariable, dataRegion, requestEnsembleView, { signal: tickController.signal })
                 : Promise.resolve(null),
             ]).finally(() => setFrameSwitchCount((count) => count - 1));
             if (cancelled || tickController?.signal.aborted) {
@@ -4012,9 +4008,9 @@ export default function App() {
             ? (retainedGridLatestRunId ?? framesRunKey)
             : resolvedRunForRequests;
           const [rows, nextGridManifest] = await Promise.all([
-            fetchFrames(model, framesRunKey, requestVariable, region, requestEnsembleView, { signal: tickController.signal }),
+            fetchFrames(model, framesRunKey, requestVariable, dataRegion, requestEnsembleView, { signal: tickController.signal }),
             (prefersGridSubstrate && selectionSupportsGrid)
-              ? fetchGridManifest(model, framesGridRunKey, requestVariable, region, requestEnsembleView, { signal: tickController.signal })
+              ? fetchGridManifest(model, framesGridRunKey, requestVariable, dataRegion, requestEnsembleView, { signal: tickController.signal })
               : Promise.resolve(null),
           ]);
           if (cancelled || tickController?.signal.aborted) {
@@ -4050,7 +4046,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, variable, ensembleView, product, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId, prefersGridSubstrate, selectionSupportsGrid, region]);
+  }, [model, run, variable, ensembleView, product, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId, prefersGridSubstrate, selectionSupportsGrid, dataRegion]);
 
   useEffect(() => {
     if (!model || run === "latest" || !isPageVisible) {
@@ -4755,7 +4751,7 @@ export default function App() {
       region_id: nextRegion,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, telemetryRunId, forecastHour]);
+  }, [model, variable, telemetryRunId, forecastHour, region]);
 
   const handleModelChange = useCallback((nextModel: string) => {
     const nextModelCapability = capabilities?.model_catalog?.[nextModel] ?? null;

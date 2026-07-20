@@ -154,6 +154,29 @@ function regionPayload() {
   };
 }
 
+function northAmericaRegionPayload() {
+  return {
+    regions: {
+      ...regionPayload().regions,
+      na: {
+        label: 'North America',
+        bbox: [-178, 5, -25, 82],
+        defaultCenter: [-101.5, 45],
+        defaultZoom: 0.5,
+        minZoom: -1,
+        maxZoom: 14,
+      },
+    },
+  };
+}
+
+function northAmericaCapabilityPayload() {
+  const payload = capabilityPayload();
+  payload.model_catalog.hrrr.canonical_region = 'na';
+  payload.model_catalog.hrrr.constraints.canonical_region = 'na';
+  return payload;
+}
+
 function manifestPayload(varKey: string) {
   return {
     model: 'hrrr',
@@ -515,6 +538,24 @@ async function stubViewerGridRoutes(page: Page) {
   });
 }
 
+async function stubViewerNorthAmericaGridRoutes(page: Page) {
+  await stubViewerGridRoutes(page);
+  await page.route('**/api/regions', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(northAmericaRegionPayload()),
+    });
+  });
+  await page.route('**/api/v4/capabilities', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(northAmericaCapabilityPayload()),
+    });
+  });
+}
+
 async function stubViewerVariableFallbackRoutes(page: Page) {
   await stubSharedViewerRoutes(page);
   await page.route('**/api/v4/capabilities', async (route) => {
@@ -783,6 +824,59 @@ test.describe('compare diff hour resolution', () => {
 });
 
 test.describe('Grid-only smoke', () => {
+  test('viewer region selection fits CONUS after North America', async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop region control coverage.');
+
+    await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
+    await stubViewerNorthAmericaGridRoutes(page);
+    await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
+    await expect(page.getByLabel('Region: CONUS')).toBeVisible();
+
+    await page.getByLabel('Region: CONUS').click();
+    await page.getByRole('button', { name: 'North America', exact: true }).click();
+    await expect.poll(() => {
+      const url = new URL(page.url());
+      return url.searchParams.get('reg') === 'na' ? Number(url.searchParams.get('z')) : Number.NaN;
+    }).toBeLessThan(3);
+    const northAmericaZoom = Number(new URL(page.url()).searchParams.get('z'));
+
+    await page.getByLabel('Region: North America').click();
+    await page.getByRole('button', { name: 'CONUS', exact: true }).click();
+    await expect.poll(() => {
+      const url = new URL(page.url());
+      return url.searchParams.get('reg') === 'conus' ? Number(url.searchParams.get('z')) : Number.NaN;
+    }).toBeGreaterThan(northAmericaZoom + 1);
+  });
+
+  test('viewer region selection does not reload weather data', async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop region control coverage.');
+
+    const dataRequests: string[] = [];
+    page.on('request', (request) => {
+      const url = request.url();
+      if (url.includes('/manifest') || url.includes('/frames')) {
+        dataRequests.push(url);
+      }
+    });
+    await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
+    await stubViewerNorthAmericaGridRoutes(page);
+    await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
+    await page.waitForLoadState('networkidle');
+    expect(dataRequests.length).toBeGreaterThan(0);
+    expect(dataRequests.every((url) => new URL(url).searchParams.get('region') === 'na')).toBe(true);
+    dataRequests.length = 0;
+
+    await page.getByLabel('Region: CONUS').click();
+    await page.getByRole('button', { name: 'North America', exact: true }).click();
+    await expect.poll(() => new URL(page.url()).searchParams.get('reg')).toBe('na');
+
+    await page.getByLabel('Region: North America').click();
+    await page.getByRole('button', { name: 'CONUS', exact: true }).click();
+    await expect.poll(() => new URL(page.url()).searchParams.get('reg')).toBe('conus');
+
+    expect(dataRequests).toEqual([]);
+  });
+
   test('compare swap preserves valid time when both offset runs are selected as Latest', async ({ page }) => {
     test.skip(/Mobile/.test(test.info().project.name), 'Desktop-only swap control.');
     let releaseGridManifests: () => void = () => {};
