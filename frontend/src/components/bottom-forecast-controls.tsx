@@ -399,6 +399,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
     : 0;
   const enhancedAvailabilityTrack = hasFreshnessTotal && timeAxisMode !== "observed";
   const desktopEnhancedTrack = isDesktopLayout && hasFreshnessTotal && timeAxisMode !== "observed";
+  const showDesktopBuildingStrip = desktopEnhancedTrack && !runIsComplete && staticSnapshotLabel === null;
   const publishedFrames = useMemo(() => {
     if (!enhancedAvailabilityTrack) {
       return availableFrames;
@@ -516,7 +517,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
           className={cn(
             "pointer-events-auto relative flex w-full max-w-full flex-col overflow-x-hidden",
             isDesktopLayout
-              ? "w-full max-w-[45rem] gap-2 rounded-2xl px-5 py-[15px]"
+              ? cn("w-full max-w-[45rem] gap-2 rounded-2xl px-5 py-[15px]", showDesktopBuildingStrip && "pb-[22px]")
               : isTabletTouchLayout
                 ? "w-[min(90vw,560px)] gap-1.5 rounded-3xl p-4"
                 : "w-full max-w-3xl gap-2 rounded-[1.6rem] p-5"
@@ -852,13 +853,6 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                               />
                             ) : null}
                           </div>
-                          {!runIsComplete ? (
-                            <div
-                              aria-hidden="true"
-                              className="pointer-events-none absolute top-1/2 z-20 h-4 w-px -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]"
-                              style={{ left: `${freshnessProgressPercent}%` }}
-                            />
-                          ) : null}
                         </>
                       ) : null}
                       <div
@@ -896,24 +890,18 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                         />
                       </div>
                     </div>
+                    {showDesktopBuildingStrip && freshnessTotal !== null ? (
+                      <div className="pointer-events-none absolute inset-x-0.5 top-full flex items-center gap-1.5 pt-0.5 text-[10px] font-medium leading-none">
+                        <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+                        <span className="shrink-0 text-amber-300/90">Building</span>
+                        <span className="shrink-0 tabular-nums text-white/50">
+                          {cappedAvailableForecastHours}/{freshnessTotal} hrs
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               )}
-
-              {hasFreshnessTotal && freshnessTotal !== null ? (
-                <>
-                  <div className="h-9 w-px shrink-0 bg-white/[0.1]" />
-                  <div className="flex shrink-0 flex-col items-center gap-0.5 px-1.5 font-['IBM_Plex_Mono',monospace]">
-                    <div className="text-[12px] font-semibold leading-none tracking-tight text-emerald-300 tabular-nums">
-                      {cappedAvailableForecastHours}
-                      <span className="text-[10px] font-medium text-white/40">/{freshnessTotal}</span>
-                    </div>
-                    <div className="text-[8px] font-medium uppercase leading-none tracking-[0.18em] text-white/45">
-                      {runIsComplete ? "HRS COMPLETE" : "HRS READY"}
-                    </div>
-                  </div>
-                </>
-              ) : null}
 
               {sourceStatusLabel ? (
                 <>
@@ -977,6 +965,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                 )}
               </div>
           </div>
+
         </div>
       </div>
     </TooltipProvider>
