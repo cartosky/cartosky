@@ -1058,6 +1058,84 @@ test.describe('Grid-only smoke', () => {
     expect(Math.abs(reopenedBox!.y + reopenedBox!.height / 2 - 450)).toBeLessThanOrEqual(1);
   });
 
+  test('run-trend GIF skips a short-horizon run and uses the next compatible run', async ({ page }) => {
+    test.skip(test.info().project.name !== 'chromium', 'GIF worker coverage runs in Chromium.');
+
+    await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
+    await stubViewerGridRoutes(page);
+    await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
+    await expect(page.getByText('Product', { exact: true })).toBeVisible();
+
+    await page.evaluate(() => {
+      const probeWindow = window as typeof window & {
+        __cartoskyGifDriver?: {
+          supportsRunTrend: () => boolean;
+          listRecentRuns: (count: number) => Array<{ runId: string; runTimeISO: string; label: string }>;
+          validTimeForHour: (hour: number) => string | null;
+          showRunFrame: (
+            runId: string,
+            validTimeISO: string,
+          ) => Promise<{ shown: boolean; fh: number | null; validTimeISO: string | null }>;
+          captureFrame: (maxWidth?: number, expectGridHour?: number | null) => Promise<HTMLCanvasElement | null>;
+          restore: (token: unknown) => void;
+        };
+        __gifTrendRunAttempts?: string[];
+      };
+      const driver = probeWindow.__cartoskyGifDriver;
+      if (!driver) {
+        throw new Error('GIF frame driver is unavailable');
+      }
+      const runs = [
+        { runId: '20260720_12z', runTimeISO: '2026-07-20T12:00:00.000Z', label: '12Z 7/20' },
+        { runId: '20260720_06z', runTimeISO: '2026-07-20T06:00:00.000Z', label: '06Z 7/20' },
+        { runId: '20260720_00z', runTimeISO: '2026-07-20T00:00:00.000Z', label: '00Z 7/20' },
+        { runId: '20260719_18z', runTimeISO: '2026-07-19T18:00:00.000Z', label: '18Z 7/19' },
+      ];
+      probeWindow.__gifTrendRunAttempts = [];
+      driver.supportsRunTrend = () => true;
+      driver.listRecentRuns = (count) => runs.slice(0, count);
+      driver.validTimeForHour = () => '2026-07-27T12:00:00.000Z';
+      driver.showRunFrame = async (runId) => {
+        probeWindow.__gifTrendRunAttempts!.push(runId);
+        if (runId.endsWith('_06z') || runId.endsWith('_18z')) {
+          return { shown: false, fh: null, validTimeISO: null };
+        }
+        const fh = runId.endsWith('_12z') ? 168 : 180;
+        return { shown: true, fh, validTimeISO: '2026-07-27T12:00:00.000Z' };
+      };
+      driver.captureFrame = async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 36;
+        const context = canvas.getContext('2d');
+        if (!context) {
+          return null;
+        }
+        context.fillStyle = '#2563eb';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        return canvas;
+      };
+      driver.restore = () => {};
+    });
+
+    await page.getByRole('button', { name: 'Share', exact: true }).first().click();
+    const dialog = page.getByRole('dialog', { name: 'Share' });
+    await dialog.getByRole('tab', { name: 'GIF', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Run trend', exact: true }).click();
+    await dialog.getByRole('button', { name: '2', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Generate GIF', exact: true }).click();
+
+    await expect(dialog.getByRole('img', { name: 'Animated GIF preview' })).toBeVisible({ timeout: 15_000 });
+    await expect(dialog.getByText(/2 frames/)).toBeVisible();
+    await expect.poll(() => page.evaluate(() => (
+      window as typeof window & { __gifTrendRunAttempts?: string[] }
+    ).__gifTrendRunAttempts)).toEqual([
+      '20260720_12z',
+      '20260720_06z',
+      '20260720_00z',
+    ]);
+  });
+
   test('mobile share dialog remains a fixed bottom sheet', async ({ page }) => {
     test.skip(test.info().project.name !== 'chromium', 'Responsive behavior is covered in Chromium.');
 

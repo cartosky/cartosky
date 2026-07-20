@@ -310,10 +310,13 @@ export function useGifExport({
       | { kind: "run"; run: GifTrendRun; targetValidISO: string };
 
     let planned: PlannedGifFrame[];
+    let trendFrameTarget = 0;
     if (settings.mode === "trend") {
-      // §3.2 trends: same valid time across the last runs, oldest first, with
-      // per-run fh resolved by the driver (nearest-frame cadence snap).
-      const runsNewestFirst = frameDriver.listRecentRuns(clampTrendRunCount(settings.trendRunCount));
+      // Resolve against every retained candidate, newest first. Some models
+      // have shorter 06Z/18Z horizons, so the first N run ids are not always
+      // the first N runs that can represent the selected valid time.
+      const requestedRunCount = clampTrendRunCount(settings.trendRunCount);
+      const runsNewestFirst = frameDriver.listRecentRuns(GIF_TREND_RUN_MAX);
       const anchorHour = settings.trendHour ?? baseState.fh;
       const targetValidISO = frameDriver.validTimeForHour(anchorHour);
       if (runsNewestFirst.length < 2 || !targetValidISO) {
@@ -321,9 +324,8 @@ export function useGifExport({
         setError("Run trend needs at least two runs for this selection.");
         return;
       }
-      planned = [...runsNewestFirst]
-        .reverse()
-        .map((run) => ({ kind: "run" as const, run, targetValidISO }));
+      trendFrameTarget = Math.min(requestedRunCount, runsNewestFirst.length);
+      planned = runsNewestFirst.map((run) => ({ kind: "run" as const, run, targetValidISO }));
     } else {
       const hours = applyHourRange(frameDriver.listFrameHours(), settings);
       if (hours.length < 2) {
@@ -342,7 +344,7 @@ export function useGifExport({
     releaseGif();
     setError(null);
     setStatus("capturing");
-    setProgress({ done: 0, total: planned.length });
+    setProgress({ done: 0, total: trendFrameTarget || planned.length });
 
     if (originalTimelineRef.current === null) {
       originalTimelineRef.current = frameDriver.getRestoreTarget();
@@ -355,10 +357,17 @@ export function useGifExport({
     let composeCanvas: HTMLCanvasElement | null = null;
     let dims: { width: number; height: number } | null = null;
     let written = 0;
+    // Trend candidates are tried newest first so an incompatible short run can
+    // fall through to the next older run. Hold only the selected frames (at
+    // most six) long enough to reverse them into chronological playback order.
+    const trendFramesNewestFirst: ArrayBuffer[] = [];
 
     try {
       for (let i = 0; i < planned.length; i += 1) {
         if (abortedRef.current) {
+          break;
+        }
+        if (trendFrameTarget > 0 && trendFramesNewestFirst.length >= trendFrameTarget) {
           break;
         }
         const plannedFrame = planned[i];
@@ -393,7 +402,9 @@ export function useGifExport({
         if (!frameState) {
           // Frame never became ready (eviction, missing run, fetch failure) —
           // skip it rather than aborting the whole run (§3.2 graceful skip).
-          setProgress((current) => ({ ...current, done: current.done + 1 }));
+          if (settings.mode !== "trend") {
+            setProgress((current) => ({ ...current, done: current.done + 1 }));
+          }
           continue;
         }
         // Capture with an atomic in-render grid check: the capture returns
@@ -413,7 +424,9 @@ export function useGifExport({
           break;
         }
         if (!mapCanvas) {
-          setProgress((current) => ({ ...current, done: current.done + 1 }));
+          if (settings.mode !== "trend") {
+            setProgress((current) => ({ ...current, done: current.done + 1 }));
+          }
           continue;
         }
         if (!dims) {
@@ -444,6 +457,11 @@ export function useGifExport({
           continue;
         }
         const imageData = composeCtx.getImageData(0, 0, dims.width, dims.height);
+        if (settings.mode === "trend") {
+          trendFramesNewestFirst.push(imageData.data.buffer);
+          setProgress({ done: trendFramesNewestFirst.length, total: trendFrameTarget });
+          continue;
+        }
         const isLast = i === planned.length - 1;
         worker!.postMessage(
           {
@@ -456,6 +474,23 @@ export function useGifExport({
         );
         written += 1;
         setProgress({ done: i + 1, total: planned.length });
+      }
+
+      if (settings.mode === "trend" && worker) {
+        const trendFramesOldestFirst = [...trendFramesNewestFirst].reverse();
+        trendFramesOldestFirst.forEach((buffer, index) => {
+          const isLast = index === trendFramesOldestFirst.length - 1;
+          worker!.postMessage(
+            {
+              type: "frame",
+              buffer,
+              delay: isLast ? Math.max(GIF_END_HOLD_MS, settings.delayMs) : settings.delayMs,
+              index,
+            },
+            [buffer],
+          );
+        });
+        written = trendFramesOldestFirst.length;
       }
 
       if (abortedRef.current) {
