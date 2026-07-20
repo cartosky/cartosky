@@ -401,4 +401,99 @@ test.describe("Forecast current tab", () => {
     await expect.poll(() => enrichmentRequests).toBe(2);
     await expect(page.getByText("NWS · Sioux Falls, Foss Field · 4.2 km", { exact: true })).toBeVisible();
   });
+
+  test("temperature member view omits the probability chart and its data requests", async ({ page }) => {
+    let temperatureProbabilityRequests = 0;
+    let precipitationProbabilityRequests = 0;
+
+    await page.route("**/api/v4/forecast-page/core**", async (route) => {
+      await route.fulfill({ json: FORECAST_PAYLOAD });
+    });
+    await page.route("**/api/v4/forecast-page?**", async (route) => {
+      await route.fulfill({ json: FORECAST_PAYLOAD });
+    });
+    await page.route("**/api/v4/capabilities", async (route) => {
+      await route.fulfill({ json: { supported_models: [], model_catalog: {}, availability: {} } });
+    });
+    await page.route("**/api/regions", async (route) => {
+      await route.fulfill({ json: { regions: {} } });
+    });
+    await page.route("**/api/v4/{eps,gefs}/runs", async (route) => {
+      await route.fulfill({ json: ["20260720_00z"] });
+    });
+    await page.route("**/api/v4/forecast/meteogram", async (route) => {
+      const request = route.request().postDataJSON() as {
+        models: string[];
+        variables: string[];
+      };
+      if (
+        request.variables.some((variable) =>
+          variable.startsWith("tmp2m__prob_"),
+        )
+      ) {
+        temperatureProbabilityRequests += 1;
+      }
+      if (
+        request.variables.some((variable) =>
+          variable.startsWith("precip_total__prob_"),
+        )
+      ) {
+        precipitationProbabilityRequests += 1;
+      }
+
+      const variables = Object.fromEntries(
+        request.variables.map((variable) => [
+          variable,
+          {
+            units: variable.startsWith("tmp2m") ? "F" : "in",
+            points: [
+              { fh: 0, valid_time: "2026-07-20T00:00:00Z", value: 50 },
+              { fh: 6, valid_time: "2026-07-20T06:00:00Z", value: 55 },
+            ],
+          },
+        ]),
+      );
+      await route.fulfill({
+        json: {
+          location: { lat: 43.55, lon: -96.73 },
+          generated_at: "2026-07-20T00:00:00Z",
+          run_policy: { type: "latest_per_model" },
+          series: Object.fromEntries(
+            request.models.map((model) => [
+              model,
+              {
+                status: "ok",
+                run_id: "20260720_00z",
+                latest_complete_run: "20260720_00z",
+                variables,
+              },
+            ]),
+          ),
+        },
+      });
+    });
+    await page.route("**/api/v4/mrms/latest/reflectivity/**", async (route) => {
+      await route.fulfill({ status: 404, body: "" });
+    });
+
+    await page.goto(
+      "/forecast?lat=43.55&lon=-96.73&name=Sioux%20Falls%2C%20SD&tab=ensembles&ensemble_view=gefs",
+    );
+
+    await expect(page.getByRole("heading", { name: "GEFS temperature percentiles" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "GEFS temperature probabilities" })).toHaveCount(0);
+    await expect.poll(() => temperatureProbabilityRequests).toBe(0);
+
+    await page.getByRole("combobox", { name: "Ensemble view" }).click();
+    await page.getByRole("option", { name: "EPS members" }).click();
+    await expect(page.getByRole("heading", { name: "EPS temperature percentiles" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "EPS temperature probabilities" })).toHaveCount(0);
+    await expect.poll(() => temperatureProbabilityRequests).toBe(0);
+
+    await page.getByRole("combobox", { name: "Ensemble variable" }).click();
+    await page.getByRole("option", { name: "Precipitation" }).click();
+
+    await expect(page.getByRole("heading", { name: "EPS precipitation probabilities" })).toBeVisible();
+    await expect.poll(() => precipitationProbabilityRequests).toBeGreaterThan(0);
+  });
 });

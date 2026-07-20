@@ -10,7 +10,7 @@
 | # | Item | Status | Gate / trigger | Scope lives in |
 |---|------|--------|----------------|----------------|
 | B1 | **Meteogram percentile band + probability charts** (Ensembles tab) | SHIPPED 2026-07-09 (working tree) | — | Stats design §8 (data path); design note below |
-| B2 | **tmp2m ensemble products** (maps + meteogram charts, `__prob_lt_` implemented) | SHIPPED 2026-07-10 (working tree) | — | Design note below; stats design §3 |
+| B2 | **tmp2m ensemble products** (maps + percentile meteogram, `__prob_lt_` implemented) | SHIPPED 2026-07-10; probability meteogram retired 2026-07-20 | — | Design note below; stats design §3 |
 | B3 | **`__spread` map product** (P90 − P10 as a published grid) | Idea, unscoped | Wanted when spread maps matter; deliberately NOT a compare-tool mode | One descriptor-family addition to the stats pass; needs its own colormap + diff scale entries |
 | B4 | **pf-mean missing-member tolerance** (build EPS mean from ≥45 members when ranges fail validation) | SCOPED, deferred by Brian | Next upstream index/file corruption incident that costs a run | `ENSEMBLE_MEMBER_SCHEDULER_DESIGN.md` §15 (full scope incl. env knob, logging, member-pass asymmetry) |
 | B5 | **MSLP + member low locations** | Double-gated | Its own data-source sizing spike first (net-new variable for both models) | Pipeline plan Phase 6 note; reuses pressure-center machinery across member fields |
@@ -38,15 +38,13 @@ guard:** thresholds must be >= 0 — the id token carries no sign, so
 deliberately before adding sub-zero rungs, e.g. P(< -10°F)).
 
 Meteogram charts (D-D): temperature bands reuse the B1 band chart (no
-zero-clamp, °F formatting); ONE probability chart carries all seven
-thresholds with explicit strokes — cold rungs in blue shades (darker =
-colder: 32 light blue → 0 dark blue), heat rungs yellow → orange → red
-(50 yellow → 100 deep red). Seven thresholds exceed the meteogram's 6-var
-request cap, so each DIRECTION is its own request (lt = 3, gt = 4; config
-contract: <= 6 per direction) and the chart drops both if the two served
-runs ever disagree. Per-variable chart config (thresholds + strokes +
-formatting + subtitle) lives in `ENSEMBLE_STATS_CHARTS` in
-chart-constants.ts — one entry per future variable.
+zero-clamp, °F formatting). The original seven-line probability chart was
+retired 2026-07-20 because the nested threshold series were difficult to
+read and mostly emphasized the normal diurnal cycle. Its cold/heat
+probability products, map exposure, thresholds, and frontend configuration
+remain intact for a future risk matrix or other point visualization; the
+temperature member view does not request those series while no visualization
+uses them. Precipitation retains the B1 probability chart.
 
 ## B1 design note — meteogram percentile/probability charts (SHIPPED)
 
@@ -67,12 +65,12 @@ cool→hot stroke ramp by threshold severity.
 Implementation notes:
 - Components: `EnsemblePercentileBandChart` / `EnsembleProbabilityChart`
   (uPlot native `bands`); config + id grammar mirrors in
-  `chart-constants.ts` (`ENSEMBLE_STATS_PERCENTILES`,
-  `ENSEMBLE_STATS_PROB_THRESHOLDS` — adding a variable there is the whole
-  frontend change when B2/snowfall land).
-- TWO meteogram requests, not one: the request schema caps `variables`
-  at 6 (main.py MeteogramRequest) and the band vars (base + 5
-  percentiles) and prob vars (6 thresholds) each exactly fit.
+  `chart-constants.ts` (`ENSEMBLE_STATS_PERCENTILES` and
+  `ENSEMBLE_STATS_CHARTS`).
+- Precipitation uses TWO stats meteogram requests, not one: the request schema
+  caps `variables` at 6 (main.py MeteogramRequest) and the band vars (base + 5
+  percentiles) and prob vars (6 thresholds) each exactly fit. Temperature now
+  makes only the band request because its probability chart is disabled.
 - Both requests are pinned to the run the MEMBER payload serves so the
   page is run-consistent; the backend silently falls back to the latest
   complete run when a pin can't serve the vars, so card subtitles read

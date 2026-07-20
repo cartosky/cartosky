@@ -197,10 +197,10 @@ export const PLUME_MEAN_STROKE = "#FFFFFF";
 // ── Ensemble stats meteogram charts (backlog B1 + B2) ───────────────────────
 // MUST mirror the backend stats descriptors (`ensemble.stats` in
 // models/gefs.py + models/eps.py); var ids are derived with the same grammar
-// as models/base.py `ensemble_stats_product_ids`. Only variables with an
-// ENSEMBLE_STATS_CHARTS entry get band + probability charts under the member
-// views — adding a variable (e.g. snowfall_total when it joins the tab) is
-// one entry here.
+// as models/base.py `ensemble_stats_product_ids`. Variables with an
+// ENSEMBLE_STATS_CHARTS entry get percentile bands under the member views;
+// the optional presentation flag separately controls the legacy probability
+// chart without removing its product configuration.
 
 export const ENSEMBLE_STATS_PERCENTILES = [10, 25, 50, 75, 90] as const;
 
@@ -227,6 +227,10 @@ export type EnsembleStatsChartConfig = {
   formatValue: (value: number, units: string) => string;
   /** Explanatory line for the probability card subtitle. */
   probSubtitle: string;
+  /** Whether to render the legacy multi-line probability meteogram. This is
+   * presentation-only: probability products remain available to maps and
+   * future point visualizations when false. */
+  showProbabilityChart?: boolean;
 };
 
 function temperatureUnitsLabel(units: string): string {
@@ -264,6 +268,7 @@ export const ENSEMBLE_STATS_CHARTS: Partial<Record<string, EnsembleStatsChartCon
     unitsFallback: "F",
     formatValue: (value, units) => `${Math.round(value)} ${temperatureUnitsLabel(units)}`,
     probSubtitle: "Chance that temperature is below or above each threshold",
+    showProbabilityChart: false,
   },
 };
 

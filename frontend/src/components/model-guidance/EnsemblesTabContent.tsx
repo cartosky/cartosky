@@ -442,12 +442,16 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
 
   // ── Stats charts data (backlog B1 + B2) ─────────────────────────────────
   // Percentile band + probability charts render below the plume when the
-  // selected variable has an ENSEMBLE_STATS_CHARTS entry. Requests are
+  // selected variable has an ENSEMBLE_STATS_CHARTS entry. Temperature keeps
+  // its probability products for maps/future visualizations but suppresses
+  // the legacy multi-line meteogram and its otherwise-unused requests.
+  // Requests are
   // chunked because the meteogram request schema caps `variables` at 6
   // (main.py MeteogramRequest): the band chart's vars (base + 5 percentiles)
-  // exactly fit one request, and each probability DIRECTION (<= 6 thresholds
-  // by config contract) is its own request — precip has 6 gt rungs, tmp2m 3
-  // lt + 4 gt. All are pinned to the run the MEMBER payload serves so every
+  // exactly fit one request, and each enabled probability DIRECTION (<= 6
+  // thresholds by config contract) is its own request — precip has 6 gt
+  // rungs; tmp2m retains 3 lt + 4 gt rungs for future presentation. All are
+  // pinned to the run the MEMBER payload serves so every
   // chart on the page describes the same run: unpinned, "latest
   // members-ready" and "latest stats-ready" can briefly diverge while a
   // fresh run's stats pass finishes (~2 min after members promote). The base
@@ -457,6 +461,8 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
   // pin validation derives the base anchor without adding it to this request.
   const statsConfig = ENSEMBLE_STATS_CHARTS[variable];
   const hasStatsCharts = Boolean(statsConfig);
+  const probabilityChartConfig =
+    statsConfig?.showProbabilityChart === false ? undefined : statsConfig;
   const statsRun = memberModel
     ? resolveEnsembleStatsRun(pinnedRuns[memberModel], memberServedRun)
     : null;
@@ -477,17 +483,17 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
   );
   const probGtVariables = useMemo(
     () =>
-      hasStatsCharts
+      probabilityChartConfig
         ? ensembleProbabilityRequestVariables(variable, "gt")
         : [],
-    [variable, hasStatsCharts],
+    [variable, probabilityChartConfig],
   );
   const probLtVariables = useMemo(
     () =>
-      hasStatsCharts
+      probabilityChartConfig
         ? ensembleProbabilityRequestVariables(variable, "lt")
         : [],
-    [variable, hasStatsCharts],
+    [variable, probabilityChartConfig],
   );
   const {
     data: percentileData,
@@ -565,7 +571,7 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
           (probGtData ?? probLtData)?.series?.[memberModel]?.run_id,
         )
       : null,
-    statsConfig?.probSubtitle,
+    probabilityChartConfig?.probSubtitle,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -727,7 +733,7 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
               </ChartContainer>
             </section>
           ) : null}
-          {statsConfig ? (
+          {probabilityChartConfig ? (
             <section id={`ensemble-${memberModel}-probabilities`}>
               <ChartContainer
                 title={statsProbTitle}
@@ -747,8 +753,8 @@ export function EnsemblesTabContent({ lat, lon, timezone, locationText }: Props)
                   model={memberModel!}
                   variable={variable}
                   expectedRun={statsRun}
-                  thresholds={statsConfig.probThresholds}
-                  thresholdUnitSuffix={statsConfig.thresholdUnitSuffix}
+                  thresholds={probabilityChartConfig.probThresholds}
+                  thresholdUnitSuffix={probabilityChartConfig.thresholdUnitSuffix}
                   timezone={timezone}
                   emptyMessage="No probability data available for this run yet."
                 />
