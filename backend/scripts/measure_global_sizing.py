@@ -185,6 +185,19 @@ def build_parser() -> argparse.ArgumentParser:
 ARGS = build_parser().parse_args()
 
 
+class _DropWebmercLatitudeNoise(logging.Filter):
+    """Drop the expected PROJ 'webmerc: Invalid latitude' spam.
+
+    The global source grids cover ±90° but Web Mercator only represents
+    ±85.05°, so GDAL warns about every polar row it (correctly) drops —
+    dozens of lines per frame. Only this exact message is filtered; all
+    other GDAL/PROJ warnings still surface.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "webmerc: Invalid latitude" not in record.getMessage()
+
+
 def _setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     handler = logging.StreamHandler(sys.stderr)
@@ -194,6 +207,7 @@ def _setup_logging(verbose: bool) -> None:
             datefmt="%Y-%m-%dT%H:%M:%S",
         )
     )
+    handler.addFilter(_DropWebmercLatitudeNoise())
     logging.basicConfig(level=level, handlers=[handler], force=True)
 
 
