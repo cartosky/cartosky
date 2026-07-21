@@ -370,6 +370,15 @@ def inject_global_region(plugin: Any, model: str) -> float:
     if isinstance(grid_map, dict):
         grid_map[GLOBAL_REGION_ID] = na_grid_m
     cog_writer.TARGET_GRID_METERS.setdefault(model, {})[GLOBAL_REGION_ID] = na_grid_m
+    # (4) climatology baseline grid table — reached for DERIVED vars via the
+    # contour-metadata path (pipeline._build_contour_metadata_for_variable
+    # hardcodes derive_component_warp_cache=True → _resolve_derive_target_grid
+    # → get_baseline_grid_params), which KeyErrors without a "global" entry.
+    # Baselines themselves remain NA-extent rasters; only the grid resolution
+    # lookup needs the key.
+    for source_grids in climatology._BASELINE_SOURCE_GRID_METERS.values():
+        if "na" in source_grids:
+            source_grids.setdefault(GLOBAL_REGION_ID, source_grids["na"])
 
     # Sanity: the path build_frame/warp actually take must now resolve.
     bbox, grid_m = get_grid_params(model, GLOBAL_REGION_ID)
