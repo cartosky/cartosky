@@ -132,6 +132,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Smoke mode: measure only the first N forecast hours per variable.",
     )
     parser.add_argument(
+        "--frame-delay",
+        type=float,
+        default=0.0,
+        help="Seconds to sleep between frame builds. Courtesy pacing for "
+        "NOMADS-only models (aigfs) whose anti-abuse throttle trips on the "
+        "unpaced measurement loop; leave 0 for AWS/ECMWF-sourced models.",
+    )
+    parser.add_argument(
         "--keep-artifacts",
         action="store_true",
         help="Keep converted staging output after measuring (default: delete).",
@@ -279,6 +287,7 @@ from app.services.builder.cog_writer import (  # noqa: E402
     get_grid_params,
 )
 from app.services.builder.derive import FetchContext, destroy_fetch_context  # noqa: E402
+from app.services.builder.fetch import _range_throttle_remaining  # noqa: E402
 from app.services.builder.pipeline import build_frame  # noqa: E402
 from app.services.grid import grid_dir_for_run_root  # noqa: E402
 from app.services.process_memory import peak_rss_bytes  # noqa: E402
@@ -724,6 +733,17 @@ def run(args: argparse.Namespace) -> int:
                 skipped += 1
                 counts["skipped"] += 1
             else:
+                # Don't burn a frame's retry attempts inside an active upstream
+                # range-throttle cooldown (NOMADS anti-abuse) — sleep it out.
+                cooldown = _range_throttle_remaining()
+                if cooldown > 0:
+                    logger.info(
+                        "Upstream range-throttle cooldown active — sleeping %.0fs "
+                        "before %s/fh%03d", cooldown + 2.0, var_key, fh,
+                    )
+                    time.sleep(cooldown + 2.0)
+                if args.frame_delay > 0:
+                    time.sleep(args.frame_delay)
                 ensemble_view = _var_default_ensemble_view(plugin, var_key)
                 runtime_var_id = _runtime_var_id(plugin, var_key, ensemble_view)
                 try:
@@ -872,10 +892,17 @@ def run(args: argparse.Namespace) -> int:
     _print_summary(report)
 
     # --- Cleanup (AFTER measuring + report) ---
-    if not args.keep_artifacts:
-        _safe_rmtree(staging_run_root, "converted staging")
-    if not args.keep_grib:
-        _safe_rmtree(HERBIE_MODEL_DIR, "dev herbie dir")
+    if failed > 0:
+        logger.warning(
+            "Keeping staging + grib despite cleanup defaults: %d frames failed. "
+            "Re-run the same command to resume (completed frames are skipped); "
+            "cleanup runs on the pass that finishes with 0 failures.", failed,
+        )
+    else:
+        if not args.keep_artifacts:
+            _safe_rmtree(staging_run_root, "converted staging")
+        if not args.keep_grib:
+            _safe_rmtree(HERBIE_MODEL_DIR, "dev herbie dir")
 
     return 0
 
