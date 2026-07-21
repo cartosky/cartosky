@@ -1961,17 +1961,24 @@ def _inventory_index_dataframe(
 
     if not downloader:
         follower_finished = inflight_event.wait(timeout=_inventory_follower_wait_seconds())
+        reused = _inventory_cache_get(idx_key)
+        if reused is not None:
+            _metric_increment("idx_cache_hit")
+            return reused
         if not follower_finished:
+            # Leader is still fetching. Returning None here would look like a
+            # definitive empty index to callers (including EPS direct-mean
+            # terminal-miss caching) and poison the run while the download is
+            # merely slow.
             _metric_increment("idx_cache_follower_timeout")
             logger.warning(
                 "Herbie inventory follower wait timed out wait_seconds=%.2f idx_key_hash=%s",
                 _inventory_follower_wait_seconds(),
                 hashlib.sha1(idx_key.encode("utf-8")).hexdigest()[:12],
             )
-        reused = _inventory_cache_get(idx_key)
-        if reused is not None:
-            _metric_increment("idx_cache_hit")
-            return reused
+            raise HerbieCallTimeoutError(
+                f"Herbie inventory follower wait exceeded {_inventory_follower_wait_seconds():.2f}s deadline"
+            )
         _metric_increment("idx_cache_miss")
         return None
 
@@ -2133,6 +2140,10 @@ def _inventory_search(
             idx_ref=idx_ref,
             grib_ref=grib_ref,
         )
+    except HerbieCallTimeoutError:
+        # Preserve timeout vs empty-index semantics for retry classifiers and
+        # EPS direct-mean terminal-miss caching.
+        raise
     except Exception:
         return _InventorySearchResult(inventory=None, reason="idx_unparseable", idx_key=idx_key)
     if index_df is None:
