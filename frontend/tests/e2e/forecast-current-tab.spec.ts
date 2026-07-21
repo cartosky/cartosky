@@ -137,9 +137,101 @@ const OPEN_METEO_CORE_PAYLOAD = {
 const NWS_ENRICHED_PAYLOAD = {
   ...FORECAST_PAYLOAD,
   source_status: { primary_region_mode: "us_hybrid", nws: "ok", open_meteo: "ok" },
+  daily: [
+    {
+      ...FORECAST_PAYLOAD.daily[0],
+      high_f: 110,
+      low_f: 74,
+    },
+  ],
+  official_text_forecast: {
+    source: "nws",
+    generated_at: "2026-06-29T12:00:00-05:00",
+    periods: [
+      {
+        name: "Tonight",
+        start: "2026-06-28T18:00:00-05:00",
+        end: "2026-06-29T06:00:00-05:00",
+        is_daytime: false,
+        temperature_f: 75,
+        wind_text: "S 5 mph",
+        short_text: "Clear",
+        detailed_text: "Clear tonight, with a low around 75.",
+      },
+      {
+        name: "Monday",
+        start: "2026-06-29T06:00:00-05:00",
+        end: "2026-06-29T18:00:00-05:00",
+        is_daytime: true,
+        temperature_f: 97,
+        wind_text: "S 10 mph",
+        short_text: "Sunny",
+        detailed_text: "Sunny, with a high near 97.",
+      },
+      {
+        name: "Monday Night",
+        start: "2026-06-29T18:00:00-05:00",
+        end: "2026-06-30T06:00:00-05:00",
+        is_daytime: false,
+        temperature_f: 70,
+        wind_text: "S 5 mph",
+        short_text: "Clear",
+        detailed_text: "Clear, with a low around 70.",
+      },
+      {
+        name: "Tuesday",
+        start: "2026-06-30T06:00:00-05:00",
+        end: "2026-06-30T18:00:00-05:00",
+        is_daytime: true,
+        temperature_f: 93,
+        wind_text: "S 10 mph",
+        short_text: "Mostly Sunny",
+        detailed_text: "Mostly sunny, with a high near 93.",
+      },
+    ],
+  },
 };
 
 test.describe("Forecast current tab", () => {
+  test("uses NWS temperatures for seven-day rows paired by forecast date", async ({ page }) => {
+    await page.route("**/api/v4/forecast-page/core**", async (route) => {
+      await route.fulfill({ json: OPEN_METEO_CORE_PAYLOAD });
+    });
+    await page.route("**/api/v4/forecast-page?**", async (route) => {
+      await route.fulfill({ json: NWS_ENRICHED_PAYLOAD });
+    });
+    await page.route("**/api/v4/capabilities", async (route) => {
+      await route.fulfill({ json: { supported_models: [], model_catalog: {}, availability: {} } });
+    });
+    await page.route("**/api/regions", async (route) => {
+      await route.fulfill({ json: { regions: {} } });
+    });
+    await page.route("**/api/v4/forecast/meteogram", async (route) => {
+      await route.fulfill({ status: 204, body: "" });
+    });
+    await page.route("**/api/v4/mrms/latest/reflectivity/**", async (route) => {
+      await route.fulfill({ status: 404, body: "" });
+    });
+
+    await page.goto("/forecast?lat=43.55&lon=-96.73&name=Sioux%20Falls%2C%20SD");
+    await page.getByRole("tab", { name: "7-day" }).click();
+
+    await expect(page.getByText("75°", { exact: true })).toBeVisible();
+    await expect(page.getByText("97°", { exact: true })).toBeVisible();
+    await expect(page.getByText("93°", { exact: true })).toBeVisible();
+    await expect(page.getByText("110°", { exact: true })).toBeHidden();
+    const sundayRow = page.getByRole("button").filter({ hasText: "Sun" });
+    await expect(sundayRow).not.toContainText("--°");
+    await sundayRow.click();
+    await expect(page.getByText("Clear tonight, with a low around 75.")).toBeVisible();
+    await page.getByRole("button").filter({ hasText: "Mon" }).click();
+    await expect(page.getByText("Sunny, with a high near 97.")).toBeVisible();
+    const tuesdayRow = page.getByRole("button").filter({ hasText: "Tue" });
+    await expect(tuesdayRow).not.toContainText("--°");
+    await tuesdayRow.click();
+    await expect(page.getByText("Mostly sunny, with a high near 93.")).toBeVisible();
+  });
+
   test("lands on Today and moves current conditions out of Hourly", async ({ page }) => {
     await page.route("**/api/v4/forecast-page/core**", async (route) => {
       await route.fulfill({ json: FORECAST_PAYLOAD });

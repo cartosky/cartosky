@@ -157,6 +157,8 @@ type ObservedPrecipData = {
 
 type TextForecastPeriod = {
   name: string | null;
+  start: string | null;
+  end: string | null;
   is_daytime: boolean;
   temperature_f: number | null;
   wind_text: string | null;
@@ -1065,10 +1067,11 @@ function DailyRangeRows({
 
   const lows  = entries.map(e => e.low_f  ?? null).filter((v): v is number => v !== null);
   const highs = entries.map(e => e.high_f ?? null).filter((v): v is number => v !== null);
-  if (!lows.length || !highs.length) return null;
+  const temperatures = [...lows, ...highs];
+  if (!temperatures.length) return null;
 
-  const globalMin = Math.min(...lows);
-  const globalMax = Math.max(...highs);
+  const globalMin = Math.min(...temperatures);
+  const globalMax = Math.max(...temperatures);
   const span = globalMax - globalMin || 1;
 
   function toggle(i: number) {
@@ -1083,19 +1086,21 @@ function DailyRangeRows({
   return (
     <div>
       {entries.map((entry, i) => {
-        const low  = entry.low_f  ?? globalMin;
-        const high = entry.high_f ?? globalMax;
-        const leftPct  = ((low  - globalMin) / span) * 100;
-        const widthPct = ((high - low) / span) * 100;
-        const highPct = leftPct + widthPct;
+        const low = entry.low_f;
+        const high = entry.high_f;
+        const lowPct = low != null ? ((low - globalMin) / span) * 100 : null;
+        const highPct = high != null ? ((high - globalMin) / span) * 100 : null;
+        const hasRange = lowPct != null && highPct != null;
+        const leftPct = lowPct ?? highPct ?? 0;
+        const widthPct = hasRange ? highPct - lowPct : 0;
         const pop = entry.pop_pct ?? 0;
         const isOpen = expanded.has(i);
         const lowLabelStyle = leftPct < 5
           ? { top: "0px", left: 0, transform: "none" as const }
           : { top: "0px", left: `${leftPct}%`, transform: "translateX(-50%)" as const };
-        const highLabelStyle = highPct > 95
+        const highLabelStyle = (highPct ?? 0) > 95
           ? { top: "0px", right: 0, left: "auto", transform: "none" as const }
-          : { top: "0px", left: `${highPct}%`, transform: "translateX(-50%)" as const };
+          : { top: "0px", left: `${highPct ?? leftPct}%`, transform: "translateX(-50%)" as const };
         const row = (
           <div className="grid grid-cols-[44px_34px_1fr_40px] items-center gap-3 py-3">
             <div className="text-[13px] font-medium text-white/65">
@@ -1103,23 +1108,29 @@ function DailyRangeRows({
             </div>
             <WeatherIcon code={entry.icon} size={30} className="flex-none" />
             <div className="relative" style={{ paddingTop: 24 }}>
-              <span
-                className="absolute text-[11px] font-medium text-white/55"
-                style={lowLabelStyle}
-              >
-                {entry.low_f ?? "--"}°
-              </span>
-              <span
-                className="absolute text-[12px] font-semibold text-white/90"
-                style={highLabelStyle}
-              >
-                {entry.high_f ?? "--"}°
-              </span>
+              {low != null && (
+                <span
+                  className="absolute text-[11px] font-medium text-white/55"
+                  style={lowLabelStyle}
+                >
+                  {low}°
+                </span>
+              )}
+              {high != null && (
+                <span
+                  className="absolute text-[12px] font-semibold text-white/90"
+                  style={highLabelStyle}
+                >
+                  {high}°
+                </span>
+              )}
               <div className="relative h-[6px] overflow-hidden rounded-full bg-slate-100 dark:bg-white/[0.07]">
-                <div
-                  className="absolute inset-y-0 rounded-full bg-sky-400/80 dark:bg-gradient-to-r dark:from-sky-400/32 dark:to-cyan-300/85"
-                  style={{ left: `${leftPct}%`, width: `${Math.max(widthPct, 1)}%` }}
-                />
+                {hasRange && (
+                  <div
+                    className="absolute inset-y-0 rounded-full bg-sky-400/80 dark:bg-gradient-to-r dark:from-sky-400/32 dark:to-cyan-300/85"
+                    style={{ left: `${leftPct}%`, width: `${Math.max(widthPct, 1)}%` }}
+                  />
+                )}
               </div>
             </div>
             <div className={`w-8 flex-none text-right text-[13px] font-medium ${precipColor(entry.pop_pct)}`}>
@@ -1695,21 +1706,53 @@ function AlertsBanner({ alerts, checking }: { alerts: AlertEntry[]; checking?: b
 
 // ── 7-day Tab ─────────────────────────────────────────────────────────
 
-// NWS text periods carry only a name + day/night flag, no dates. Group them
-// sequentially into per-day day/night pairs: the forecast starts today, so
-// group index lines up with the daily rows (a leading night-only period —
-// "Tonight" — still belongs to day 0).
-function groupPeriodsByDay(periods: TextForecastPeriod[]): TextForecastPeriod[][] {
-  const groups: TextForecastPeriod[][] = [];
+function nwsIconCode(shortText: string | null, isDaytime: boolean): string {
+  const text = (shortText ?? "").toLowerCase();
+  const suffix = isDaytime ? "day" : "night";
+  if (/thunder|t-?storm/.test(text)) return `thunderstorm-${suffix}`;
+  if (/snow|flurr/.test(text)) return "snow";
+  if (/sleet|ice pellets|freezing rain/.test(text)) return `sleet-${suffix}`;
+  if (/drizzle/.test(text)) return `drizzle-${suffix}`;
+  if (/rain|showers/.test(text)) return `rain-${suffix}`;
+  if (/fog|haze|smoke/.test(text)) return `fog-${suffix}`;
+  if (/mostly cloudy|cloudy|overcast/.test(text)) return "cloudy";
+  if (/partly|mostly sunny|mostly clear/.test(text)) return `partly-cloudy-${suffix}`;
+  return `clear-${suffix}`;
+}
+
+function groupNwsPeriodsByDate(periods: TextForecastPeriod[]): Map<string, TextForecastPeriod[]> {
+  const groups = new Map<string, TextForecastPeriod[]>();
   for (const period of periods) {
-    const last = groups[groups.length - 1];
-    if (period.is_daytime || !last || last.some(p => !p.is_daytime)) {
-      groups.push([period]);
-    } else {
-      last.push(period);
-    }
+    const date = period.start?.slice(0, 10);
+    if (!date) continue;
+    groups.set(date, [...(groups.get(date) ?? []), period]);
   }
   return groups;
+}
+
+function nwsDailyRows(periods: TextForecastPeriod[]): { rows: DailyEntry[]; detailsByDate: Map<string, TextForecastPeriod[]> } {
+  const detailsByDate = groupNwsPeriodsByDate(periods);
+  const rows: DailyEntry[] = [];
+  for (const [date, dayPeriods] of detailsByDate) {
+    const daytime = dayPeriods.find(period => period.is_daytime);
+    const nighttime = dayPeriods.find(period => !period.is_daytime);
+    const primary = daytime ?? nighttime;
+    if (primary) {
+      rows.push({
+        date,
+        high_f: daytime?.temperature_f ?? null,
+        low_f: nighttime?.temperature_f ?? null,
+        pop_pct: null,
+        qpf_in: null,
+        snow_in: null,
+        wind_speed_mph: null,
+        wind_gust_mph: null,
+        icon: nwsIconCode(primary.short_text, primary.is_daytime),
+        short_text: primary.short_text,
+      });
+    }
+  }
+  return { rows, detailsByDate };
 }
 
 function TextPeriodsDetail({ periods }: { periods: TextForecastPeriod[] }) {
@@ -1743,18 +1786,20 @@ function SevenDayTab({ daily, textForecast }: {
   daily: DailyEntry[];
   textForecast: ForecastPayload["official_text_forecast"];
 }) {
-  const periodGroups = textForecast ? groupPeriodsByDay(textForecast.periods) : [];
+  const nwsDaily = textForecast ? nwsDailyRows(textForecast.periods) : null;
+  const rows = nwsDaily?.rows.length ? nwsDaily.rows : daily;
   return (
     <div className="space-y-8">
       <DailyRangeRows
-        daily={daily}
+        daily={rows}
         limit={7}
         expandable
-        detailFor={(entry, i) =>
-          periodGroups[i]?.length
-            ? <TextPeriodsDetail periods={periodGroups[i]} />
-            : <DailyDetailGrid entry={entry} />
-        }
+        detailFor={(entry) => {
+          const details = entry.date ? nwsDaily?.detailsByDate.get(entry.date) : undefined;
+          return details?.length
+            ? <TextPeriodsDetail periods={details} />
+            : <DailyDetailGrid entry={entry} />;
+        }}
       />
     </div>
   );
