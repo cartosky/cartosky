@@ -65,6 +65,13 @@ DEFAULT_PRECIP_FRAME_CADENCE_MINUTES = 60
 DEFAULT_MAX_DECODE_FRAMES_PER_CYCLE = 2
 KGM2_TO_INCHES = np.float32(1.0 / 25.4)
 
+# NSSL MRMS GRIB2 sentinel values (per-product; encoded as ordinary data
+# values, not GRIB2 bitmap/missing management, so they must be masked here
+# before any warp or unit conversion runs).
+MRMS_REFLECTIVITY_SENTINELS: tuple[float, ...] = (-999.0, -99.0)  # no coverage, missing
+MRMS_PRECIP_FLAG_SENTINELS: tuple[float, ...] = (-3.0, -1.0)  # no coverage, missing
+MRMS_QPE_SENTINELS: tuple[float, ...] = (-3.0, -1.0)  # no coverage, missing (raw mm)
+
 MRMS_RECENT_PRECIP_PRODUCTS: dict[str, tuple[str, Any]] = {
     "mrms_recent_precip_6h": (MRMS_QPE_06H_PASS2_LISTING_URL, MRMS_QPE_06H_PASS2_FILE_RE),
     "mrms_recent_precip_24h": (MRMS_QPE_24H_PASS2_LISTING_URL, MRMS_QPE_24H_PASS2_FILE_RE),
@@ -461,7 +468,7 @@ def _decode_scan_ref(
                 preferred_decoder=config.preferred_decoder,
                 fallback_decoder=config.fallback_decoder,
             )
-            precip_flag_values = pf_decoded.values
+            precip_flag_values = _mask_mrms_sentinels(pf_decoded.values, MRMS_PRECIP_FLAG_SENTINELS)
             logger.info(
                 "MRMS PrecipFlag decoded shape=%s for refl scan valid=%s",
                 tuple(pf_decoded.values.shape),
@@ -477,7 +484,7 @@ def _decode_scan_ref(
     return MRMSBundleFrame(
         valid_time=scan.valid_time,
         source_valid_time=decoded.valid_time,
-        values=decoded.values,
+        values=_mask_mrms_sentinels(decoded.values, MRMS_REFLECTIVITY_SENTINELS),
         source_crs=getattr(decoded, "source_crs", None),
         source_transform=getattr(decoded, "source_transform", None),
         source_url=scan.url,
@@ -1007,8 +1014,24 @@ def _decode_scan_cached(
     return decoded
 
 
+def _mask_mrms_sentinels(values: np.ndarray, sentinels: tuple[float, ...]) -> np.ndarray:
+    """Replace exact MRMS sentinel codes with NaN so downstream warps and
+    encoders treat them as nodata instead of physical values."""
+    masked = np.asarray(values, dtype=np.float32)
+    sentinel_mask = np.zeros(masked.shape, dtype=bool)
+    for sentinel in sentinels:
+        sentinel_mask |= masked == np.float32(sentinel)
+    if not sentinel_mask.any():
+        return masked
+    masked = masked.copy()
+    masked[sentinel_mask] = np.nan
+    return masked
+
+
 def _precip_values_to_inches(values: np.ndarray) -> np.ndarray:
-    values_array = np.asarray(values, dtype=np.float32)
+    # Sentinels are defined on the raw mm values; mask them before the
+    # unit conversion rescales them into small negatives.
+    values_array = _mask_mrms_sentinels(values, MRMS_QPE_SENTINELS)
     converted = values_array * KGM2_TO_INCHES
     finite_mask = np.isfinite(converted)
     converted = np.where(finite_mask, np.maximum(converted, 0.0), np.nan).astype(np.float32, copy=False)

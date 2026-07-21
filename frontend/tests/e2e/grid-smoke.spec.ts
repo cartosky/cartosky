@@ -1,4 +1,46 @@
+import { readFile } from 'node:fs/promises';
+
 import { test, expect, type Page } from '@playwright/test';
+
+const mobileControlSurface = new URL('../../src/styles/globals.css', import.meta.url);
+const bottomForecastControls = new URL('../../src/components/bottom-forecast-controls.tsx', import.meta.url);
+const compareMobileDrawer = new URL('../../src/components/compare/CompareMobileDrawer.tsx', import.meta.url);
+
+test('mobile viewer and comparison controls share an opaque glass surface', async () => {
+  const [styles, viewerControls, compareControls] = await Promise.all([
+    readFile(mobileControlSurface, 'utf8'),
+    readFile(bottomForecastControls, 'utf8'),
+    readFile(compareMobileDrawer, 'utf8'),
+  ]);
+
+  expect(styles).toMatch(/\.viewer-mobile-control-surface\s*\{[\s\S]*?background-color:\s*rgba\(4, 16, 30, 0\.88\)/);
+  expect(styles).toMatch(/\.viewer-mobile-control-surface\s*\{[\s\S]*?backdrop-filter:\s*blur\(12px\) saturate\(1\.6\)/);
+  expect(viewerControls).toContain('viewer-mobile-control-surface');
+  expect(compareControls).toContain('viewer-mobile-control-surface');
+});
+
+test('formats persistent stats health causes for the admin dashboard', async ({ page }) => {
+  await page.goto('/src/lib/admin-api.ts');
+  const formatted = await page.evaluate(async () => {
+    const modulePath = '/src/lib/admin-api.ts';
+    const adminApi = await import(/* @vite-ignore */ modulePath);
+    const formatCause = adminApi.formatStatsIncompleteUnitCause;
+    if (typeof formatCause !== 'function') return null;
+    return [
+      formatCause({ failure_statuses: ['error'] }),
+      formatCause({ failure_statuses: ['gate_failed'] }),
+      formatCause({ missing_members: ['m17', 'm22'] }),
+      formatCause({}),
+    ];
+  });
+
+  expect(formatted).toEqual([
+    'Processing error',
+    'Pre-encode sanity gate failed',
+    'Missing m17, m22',
+    'Incomplete member roster',
+  ]);
+});
 
 function nearestFrame(frames: number[], current: number): number {
   if (frames.length === 0) return 0;
@@ -592,6 +634,112 @@ async function stubViewerVariableFallbackRoutes(page: Page) {
   });
 }
 
+const OFFSET_LEFT_RUN = '20260330_12z';
+const OFFSET_RIGHT_RUN = '20260330_00z';
+const OFFSET_HOURS = [0, 6, 12, 18, 24];
+
+function offsetValidTime(run: string, fh: number) {
+  const cycle = run === OFFSET_LEFT_RUN ? 12 : 0;
+  return new Date(Date.UTC(2026, 2, 30, cycle + fh)).toISOString();
+}
+
+function offsetRunManifest(model: string, run: string) {
+  return {
+    model,
+    run,
+    region: 'conus',
+    variables: {
+      tmp2m: {
+        display_name: 'Temperature 2m',
+        kind: 'continuous',
+        units: 'F',
+        frames: OFFSET_HOURS.map((fh) => ({ fh, valid_time: offsetValidTime(run, fh) })),
+      },
+    },
+  };
+}
+
+function offsetFrames(run: string) {
+  return OFFSET_HOURS.map((fh) => ({
+    fh,
+    has_cog: true,
+    run,
+    valid_time: offsetValidTime(run, fh),
+    meta: { meta: { valid_time: offsetValidTime(run, fh), units: 'F', kind: 'continuous', display_name: 'Temperature 2m' } },
+  }));
+}
+
+function offsetGridManifest(model: string, run: string) {
+  return {
+    manifest_version: 1,
+    subtype: 'grid',
+    model,
+    run,
+    var: 'tmp2m',
+    projection: 'EPSG:3857',
+    bbox: [-14920000.0, 7356000.0, -14914000.0, 7362000.0],
+    grid: { width: 2, height: 2, dtype: 'uint16', endianness: 'little', scale: 0.1, offset: -100.0, nodata: 65535, units: 'F' },
+    palette: { color_map_id: 'tmp2m', kind: 'continuous', transparent_below_min: null, transparent_zero: false },
+    lods: [{
+      level: 0,
+      width: 2,
+      height: 2,
+      frames: OFFSET_HOURS.map((fh) => ({
+        fh,
+        file: `fh${String(fh).padStart(3, '0')}.l0.u16.bin`,
+        valid_time: offsetValidTime(run, fh),
+        url: `/api/v4/grid/${model}/${run}/tmp2m/fh${String(fh).padStart(3, '0')}.l0.u16.bin`,
+      })),
+    }],
+  };
+}
+
+async function stubCompareOffsetRoutes(
+  page: Page,
+  waitForGridManifest: () => Promise<void> = async () => {},
+) {
+  await stubSharedViewerRoutes(page);
+  const regions = regionPayload();
+  regions.regions.conus.defaultCenter = [-98.58, 39.83];
+  await page.route('**/api/regions', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(regions) });
+  });
+  const capabilities = variableFallbackCapabilityPayload();
+  capabilities.availability.hrrr.latest_run = OFFSET_LEFT_RUN;
+  capabilities.availability.hrrr.published_runs = [OFFSET_LEFT_RUN];
+  capabilities.availability.gfs.latest_run = OFFSET_RIGHT_RUN;
+  capabilities.availability.gfs.published_runs = [OFFSET_RIGHT_RUN];
+  await page.route('**/api/v4/capabilities', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(capabilities) });
+  });
+  for (const [model, run] of [['hrrr', OFFSET_LEFT_RUN], ['gfs', OFFSET_RIGHT_RUN]] as const) {
+    await page.route(`**/api/v4/${model}/runs`, async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([run]) });
+    });
+    for (const runKey of ['latest', run]) {
+      await page.route(`**/api/v4/${model}/${runKey}/manifest**`, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(offsetRunManifest(model, run)) });
+      });
+      await page.route(`**/api/v4/${model}/${runKey}/tmp2m/frames**`, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(offsetFrames(run)) });
+      });
+      await page.route(`**/api/v4/${model}/${runKey}/tmp2m/grid-manifest**`, async (route) => {
+        await waitForGridManifest();
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(offsetGridManifest(model, run)) });
+      });
+    }
+  }
+  await page.route('**/api/v4/grid/hrrr/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_A.buffer) });
+  });
+  await page.route('**/api/v4/grid/gfs/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(GRID_FRAME_B.buffer) });
+  });
+  await page.route('**/static/cities/v1/cities_conus_can_v2.json', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ type: 'FeatureCollection', features: [] }) });
+  });
+}
+
 async function stubViewerSpcEmptyStateRoutes(page: Page) {
   await stubSharedViewerRoutes(page);
   await page.route('**/api/v4/capabilities', async (route) => {
@@ -639,6 +787,78 @@ test.describe('compare diff hour resolution', () => {
 });
 
 test.describe('Grid-only smoke', () => {
+  test('compare swap preserves valid time when both offset runs are selected as Latest', async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop-only swap control.');
+    let releaseGridManifests: () => void = () => {};
+    const gridManifestGate = new Promise<void>((resolve) => {
+      releaseGridManifests = resolve;
+    });
+    await stubCompareOffsetRoutes(page, () => gridManifestGate);
+    await page.goto('/compare?lm=hrrr&lv=tmp2m&lr=latest&rm=gfs&rv=tmp2m&rr=latest&fh=6&lat=39.83&lon=-98.58&z=4');
+    const swapButton = page.getByRole('button', { name: 'Swap left and right panels' }).first();
+    await expect(swapButton).toBeDisabled({ timeout: 15_000 });
+    releaseGridManifests();
+    await expect(page.getByText('FH 6 / 18', { exact: true })).toBeVisible();
+    await expect(swapButton).toBeEnabled();
+    await swapButton.click();
+    await expect(page.getByText('FH 18 / 6', { exact: true })).toBeVisible();
+  });
+
+  test('compare diff hides the prior result in the selection-change commit', async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop-only swap control.');
+    let blockGridManifests = false;
+    let releaseGridManifests: () => void = () => {};
+    const gridManifestGate = new Promise<void>((resolve) => {
+      releaseGridManifests = resolve;
+    });
+    await stubCompareOffsetRoutes(
+      page,
+      () => (blockGridManifests ? gridManifestGate : Promise.resolve()),
+    );
+    await page.goto('/compare?mode=diff&lm=hrrr&lv=tmp2m&lr=latest&rm=gfs&rv=tmp2m&rr=latest&fh=6&lat=39.83&lon=-98.58&z=4');
+
+    const oldLegend = page.getByText('Difference: HRRR − GFS', { exact: true });
+    const swapButton = page.getByRole('button', { name: 'Swap left and right panels' }).first();
+    await expect(oldLegend).toBeVisible({ timeout: 15_000 });
+    await expect(swapButton).toBeEnabled();
+    blockGridManifests = true;
+
+    await page.evaluate(() => {
+      const probeWindow = window as typeof window & {
+        __staleDiffAtSelectionCommit?: boolean | null;
+      };
+      probeWindow.__staleDiffAtSelectionCommit = null;
+      const observer = new MutationObserver(() => {
+        const button = document.querySelector<HTMLButtonElement>(
+          'button[aria-label="Swap left and right panels"]',
+        );
+        if (!button?.disabled) {
+          return;
+        }
+        probeWindow.__staleDiffAtSelectionCommit =
+          document.body.textContent?.includes('Difference: HRRR − GFS') ?? false;
+        observer.disconnect();
+      });
+      observer.observe(document.body, {
+        attributes: true,
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    });
+
+    await swapButton.click();
+    await expect.poll(() => page.evaluate(() => (
+      window as typeof window & { __staleDiffAtSelectionCommit?: boolean | null }
+    ).__staleDiffAtSelectionCommit)).toBe(false);
+    await expect(oldLegend).toBeHidden();
+    await expect(swapButton).toBeDisabled();
+
+    releaseGridManifests();
+    await expect(page.getByText('Difference: GFS − HRRR', { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(swapButton).toBeEnabled();
+  });
+
   test('grid-default viewer path avoids retired legacy requests', async ({ page }) => {
     const loopRequests: string[] = [];
     const tileRequests: string[] = [];
@@ -665,6 +885,25 @@ test.describe('Grid-only smoke', () => {
     expect(gridManifestRequests.length).toBeGreaterThanOrEqual(1);
     expect(loopRequests).toEqual([]);
     expect(tileRequests).toEqual([]);
+  });
+
+  test('viewer logo is vertically centered in the desktop header', async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop-only header layout.');
+
+    await stubViewerGridRoutes(page);
+    await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
+    await expect(page.getByText('Product', { exact: true })).toBeVisible();
+
+    const header = page.locator('header').filter({ has: page.getByText('Product', { exact: true }) });
+    const logo = header.getByRole('img', { name: 'CartoSky' });
+    const headerBox = await header.boundingBox();
+    const logoBox = await logo.boundingBox();
+
+    expect(headerBox).not.toBeNull();
+    expect(logoBox).not.toBeNull();
+    expect(Math.abs(
+      (logoBox!.y + logoBox!.height / 2) - (headerBox!.y + headerBox!.height / 2),
+    )).toBeLessThanOrEqual(1);
   });
 
   test('compare grid mount avoids maximum update depth warnings', async ({ page }) => {

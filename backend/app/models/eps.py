@@ -490,6 +490,17 @@ EPS_VARIABLE_CATALOG = {
             # the same subsets the mean build downloads. Publishing also
             # requires the model on CARTOSKY_MEMBER_PUBLISH_MODELS.
             "members": {"count": 50, "control": False, "prefix": "m", "enabled": True},
+            # Tier 2 stats products (backlog B2, ratified 2026-07-10): same
+            # two-sided temperature matrix as GEFS — cold rungs
+            # P(< 0/20/32°F) via prob_lt_thresholds, heat rungs
+            # P(> 50/70/90/100°F). Enabled with GEFS in one stage per D-E.
+            "stats": {
+                "percentiles": [10, 25, 50, 75, 90],
+                "prob_lt_thresholds": [0, 20, 32],
+                "prob_thresholds": [50, 70, 90, 100],
+                "label_noun": "temperature",
+                "enabled": True,
+            },
         },
     ),
     "tmp2m__mean": VariableCapability(
@@ -766,6 +777,7 @@ EPS_VARIABLE_CATALOG = {
             "supported_views": ["mean"],
             "default_view": "mean",
             "artifact_map": {"mean": "tmp850__mean"},
+            "members": {"count": 50, "control": False, "prefix": "m", "enabled": True},
         },
     ),
     "tmp850__mean": VariableCapability(

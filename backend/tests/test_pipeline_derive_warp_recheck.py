@@ -33,6 +33,9 @@ class _Plugin:
 
 
 def test_build_frame_rewarps_derived_output_when_cached_component_grid_does_not_match_target(monkeypatch, tmp_path: Path) -> None:
+    # Exercises build_frame's retained COG path: opt the model out of the
+    # (now default) binary-only substrate.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs,hrrr,nbm,eps,aigfs,ifs")
     plugin = _Plugin()
     var_spec_model = SimpleNamespace(
         id="vort500",

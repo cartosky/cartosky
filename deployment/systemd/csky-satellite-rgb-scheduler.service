@@ -7,6 +7,10 @@ Wants=network-online.target
 Type=simple
 User=root
 EnvironmentFile=/etc/cartosky/scheduler-satellite-rgb.env
+# Bound the GDAL raster block cache (MB). Matches the cap operators set on the
+# live scheduler units 2026-07 (EPS memory audit); without it GDAL defaults to
+# 5% of RAM per process.
+Environment=GDAL_CACHEMAX=256
 WorkingDirectory=/opt/cartosky/backend
 ExecStart=/opt/cartosky/.venv/bin/python -m app.services.goes_rgb_poller
 Restart=on-failure

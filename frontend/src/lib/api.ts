@@ -263,6 +263,8 @@ export type GridManifestDisplayPrep = {
   support_min_value?: number | null;
   support_coverage_threshold?: number | null;
   categorical_nearest?: boolean | null;
+  edge_fade?: boolean | null;
+  edge_fill_value?: number | null;
 };
 
 export type GridManifestCompositeLayer = {

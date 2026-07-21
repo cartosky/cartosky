@@ -175,6 +175,9 @@ def test_ensure_products_ready_readiness_cache_is_scoped_per_forecast_hour(monke
 
 
 def test_build_frame_tmp2m_skips_dead_contour_generation(monkeypatch, tmp_path: Path) -> None:
+    # Exercises build_frame's retained COG path: opt the model out of the
+    # (now default) binary-only substrate.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs,hrrr,nbm,eps")
     plugin = _Plugin()
     var_spec_model = SimpleNamespace(
         id="tmp2m",

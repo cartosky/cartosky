@@ -11,10 +11,10 @@
  */
 
 // Sized for the diff scrub prefetch window: 2 sides × (active + 4 ahead +
-// 2 behind) plus scroll-back history. The byte budget is the real ceiling —
-// large ensemble grids (~1.7MB each) evict by size well before the count cap.
+// 2 behind) plus scroll-back history. A GFS + ECMWF hgt500_anom pair is about
+// 7.44 MiB, so the full seven-pair active/warm window already needs ~52 MiB.
 const MAX_ENTRIES = 32;
-const MAX_BYTES = 50 * 1024 * 1024; // ~50MB
+export const DIFF_GRID_FRAME_CACHE_MAX_BYTES = 96 * 1024 * 1024;
 
 class GridFrameCache {
   // Map iteration order is insertion order; re-inserting on access keeps the
@@ -49,7 +49,7 @@ class GridFrameCache {
   }
 
   private evict(): void {
-    while (this.store.size > MAX_ENTRIES || this.totalBytes > MAX_BYTES) {
+    while (this.store.size > MAX_ENTRIES || this.totalBytes > DIFF_GRID_FRAME_CACHE_MAX_BYTES) {
       const oldestKey = this.store.keys().next().value;
       if (oldestKey === undefined) {
         break;

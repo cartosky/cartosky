@@ -1,8 +1,18 @@
 import { productFetch, type GridManifestResponse } from "@/lib/api";
+import {
+  alignedMutualGridHours,
+  reanchorForecastHourOnSwap,
+  runAlignmentOffsetHours,
+} from "@/lib/compare-alignment";
 import { gridFrameCache } from "@/lib/grid-frame-cache";
 import { gridUvToLonLat, latToGridV, lonToGridU } from "@/lib/grid-sample";
-import { parseRunId } from "@/lib/time-axis";
 import type { DiffScale } from "@/lib/compare-diff-scales";
+
+export {
+  alignedMutualGridHours,
+  reanchorForecastHourOnSwap,
+  runAlignmentOffsetHours,
+} from "@/lib/compare-alignment";
 
 /**
  * Frame fetching, decoding, resampling, and diff computation for compare
@@ -33,41 +43,6 @@ const DIFF_ENCODE_MAX = 65534;
 export function intersectSortedHours(left: number[], right: number[]): number[] {
   const rightSet = new Set(right);
   return left.filter((hour) => rightSet.has(hour));
-}
-
-/**
- * Forecast-hour offset that aligns the right run's frames to the left run's
- * valid times: a left frame at hour `h` and a right frame at hour
- * `h + offset` are valid at the same instant. Positive when the left run is
- * newer (e.g. left 12Z vs right 00Z → +12). Returns 0 when either run id
- * fails to parse (unresolved runs during load degrade to plain same-hour
- * comparison).
- */
-export function runAlignmentOffsetHours(
-  leftRun: string | null | undefined,
-  rightRun: string | null | undefined,
-): number {
-  const left = parseRunId(leftRun);
-  const right = parseRunId(rightRun);
-  if (!left || !right) {
-    return 0;
-  }
-  return Math.round((left.getTime() - right.getTime()) / 3_600_000);
-}
-
-/**
- * Left-anchored hours at which BOTH sides have a ready grid frame for the
- * SAME valid time: left hour `h` is kept when the right side has a frame at
- * `h + offsetHours`. With offset 0 (same run / unresolved) this is the plain
- * intersection.
- */
-export function alignedMutualGridHours(
-  leftHours: number[],
-  rightHours: number[],
-  offsetHours: number,
-): number[] {
-  const rightSet = new Set(rightHours);
-  return leftHours.filter((hour) => rightSet.has(hour + offsetHours));
 }
 
 // Signal-less (prefetch) fetches in flight, shared so a compute fetch for the

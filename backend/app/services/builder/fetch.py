@@ -20,6 +20,7 @@ Usage
 
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from collections import OrderedDict
@@ -38,6 +39,7 @@ from typing import Any, Literal, overload
 from urllib.parse import urlsplit, urlunsplit
 
 import numpy as np
+import httpx
 import rasterio
 import rasterio.crs
 import rasterio.errors
@@ -84,6 +86,16 @@ ENV_HERBIE_RANGE_FETCH_WORKERS = (
     "CARTOSKY_HERBIE_RANGE_FETCH_WORKERS",
     "TWF_HERBIE_RANGE_FETCH_WORKERS",
 )
+ENV_HERBIE_RANGE_ATTEMPTS = (
+    "CARTOSKY_HERBIE_RANGE_ATTEMPTS",
+    "TWF_HERBIE_RANGE_ATTEMPTS",
+    "CARTOSKY_HERBIE_RANGE_RETRIES",
+    "TWF_HERBIE_RANGE_RETRIES",
+)
+ENV_HERBIE_RANGE_RETRY_BACKOFF_SECONDS = (
+    "CARTOSKY_HERBIE_RANGE_RETRY_BACKOFF_SECONDS",
+    "TWF_HERBIE_RANGE_RETRY_BACKOFF_SECONDS",
+)
 ENV_EPS_FULL_FILE_CACHE_ENABLE = (
     "CARTOSKY_EPS_FULL_FILE_CACHE_ENABLE",
     "TWF_EPS_FULL_FILE_CACHE_ENABLE",
@@ -99,6 +111,14 @@ ENV_EPS_FULL_FILE_CACHE_MAX_BYTES = (
 ENV_EPS_FULL_FILE_CACHE_TTL_SECONDS = (
     "CARTOSKY_EPS_FULL_FILE_CACHE_TTL_SECONDS",
     "TWF_EPS_FULL_FILE_CACHE_TTL_SECONDS",
+)
+ENV_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS = (
+    "CARTOSKY_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS",
+    "TWF_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS",
+)
+ENV_FULL_GRIB_FALLBACK_MAX_BYTES = (
+    "CARTOSKY_FULL_GRIB_FALLBACK_MAX_BYTES",
+    "TWF_FULL_GRIB_FALLBACK_MAX_BYTES",
 )
 ENV_GRIB_DISK_CACHE_LOCK = (
     "CARTOSKY_GRIB_DISK_CACHE_LOCK",
@@ -117,12 +137,32 @@ DEFAULT_FETCH_CACHE_MAX_ENTRIES = 256
 DEFAULT_FETCH_CACHE_MAX_BYTES = 64 * 1024 * 1024
 DEFAULT_FETCH_CACHE_MAX_CACHEABLE_BYTES = 4 * 1024 * 1024
 DEFAULT_RANGE_FETCH_WORKERS = 8
+DEFAULT_RANGE_FETCH_ATTEMPTS = 3
+DEFAULT_RANGE_RETRY_BACKOFF_SECONDS = 0.25
 DEFAULT_EPS_FULL_FILE_CACHE_MAX_BYTES = 200 * 1024 * 1024 * 1024
 DEFAULT_EPS_FULL_FILE_CACHE_TTL_SECONDS = 2 * 60 * 60
 DEFAULT_EPS_FULL_FILE_CACHE_CLEANUP_INTERVAL_SECONDS = 60.0
+DEFAULT_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS = 30 * 60.0
+DEFAULT_FULL_GRIB_READ_TIMEOUT_SECONDS = 90.0
+DEFAULT_FULL_GRIB_FALLBACK_MAX_BYTES = 1024 * 1024 * 1024
 _GRIB_DISK_CACHE_LOCK_WAITS = 0
 _EPS_FULL_FILE_CACHE_CLEANUP_LOCK = threading.Lock()
 _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS = 0.0
+
+# Internal CartoSky model ids that are NOT valid Herbie model names. Both map
+# to Herbie's "ifs" via their plugin's herbie_request(). Passing one verbatim
+# to Herbie is the July 6 eps/ifs incident class: probes/fetches against a
+# nonexistent Herbie model. Callers must resolve ids via
+# plugin.herbie_request().model before calling into this module.
+INTERNAL_ONLY_MODEL_IDS = frozenset({"eps", "ecmwf"})
+
+
+def _reject_internal_model_id(model_id: str) -> None:
+    if str(model_id).strip().lower() in INTERNAL_ONLY_MODEL_IDS:
+        raise ValueError(
+            f"model_id {model_id!r} is an internal CartoSky model id, not a Herbie model id; "
+            "resolve it via plugin.herbie_request().model before calling the fetch layer"
+        )
 
 _MISSING_VALUE_TAG_KEYS = (
     "missing_value",
@@ -160,6 +200,10 @@ class _RangeRequestNotHonoredError(_InvalidGribSubsetError):
 
 class _RangeThrottleActiveError(_InvalidGribSubsetError):
     """Raised without a network hit while the upstream range-throttle cooldown is active."""
+
+
+class _FullGribFallbackTooLargeError(_InvalidGribSubsetError):
+    """Raised before an ephemeral full-file fallback can exceed its byte cap."""
 
 
 @dataclass
@@ -452,6 +496,38 @@ def _float_from_env(name: str | tuple[str, ...], default: float, *, minimum: flo
     return max(minimum, parsed)
 
 
+def _full_grib_download_deadline_seconds() -> float:
+    return _float_from_env(
+        ENV_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS,
+        DEFAULT_FULL_GRIB_DOWNLOAD_DEADLINE_SECONDS,
+        minimum=1.0,
+    )
+
+
+def _full_grib_fallback_max_bytes() -> int:
+    return _int_from_env(
+        ENV_FULL_GRIB_FALLBACK_MAX_BYTES,
+        DEFAULT_FULL_GRIB_FALLBACK_MAX_BYTES,
+        minimum=1,
+    )
+
+
+def _range_fetch_attempts() -> int:
+    return _int_from_env(
+        ENV_HERBIE_RANGE_ATTEMPTS,
+        DEFAULT_RANGE_FETCH_ATTEMPTS,
+        minimum=1,
+    )
+
+
+def _range_retry_backoff_seconds() -> float:
+    return _float_from_env(
+        ENV_HERBIE_RANGE_RETRY_BACKOFF_SECONDS,
+        DEFAULT_RANGE_RETRY_BACKOFF_SECONDS,
+        minimum=0.0,
+    )
+
+
 def _int_from_env(name: str | tuple[str, ...], default: int, *, minimum: int = 1) -> int:
     raw = _env_value(name)
     if not raw:
@@ -637,6 +713,28 @@ def _eps_subset_fallback_path(*, prefix: str, token: str) -> Path:
     return _eps_subset_fallback_root() / f"{safe_prefix}_{safe_token}.grib2"
 
 
+def _eps_subset_fallback_token(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    fh: int,
+    search_pattern: str,
+    priority: str,
+) -> str:
+    cache_identity = "|".join(
+        (
+            str(model_id),
+            str(product),
+            _run_id_from_date(run_date),
+            str(int(fh)),
+            str(search_pattern),
+            str(priority),
+        )
+    )
+    return hashlib.sha1(cache_identity.encode("utf-8")).hexdigest()[:16]
+
+
 def _eps_full_file_cache_max_bytes() -> int:
     return _int_from_env(
         ENV_EPS_FULL_FILE_CACHE_MAX_BYTES,
@@ -659,6 +757,9 @@ def _eps_full_file_cache_path(*, source_url: str, run_date: datetime, fh: int) -
     return root / _run_id_from_date(run_date) / f"fh{int(fh):03d}" / f"{_url_hash(source_url)}-{file_name}"
 
 
+_CACHE_TEMP_SUFFIXES = (".part", ".full")
+
+
 def _iter_cache_files(root: Path) -> list[tuple[Path, int, float]]:
     files: list[tuple[Path, int, float]] = []
     try:
@@ -669,13 +770,46 @@ def _iter_cache_files(root: Path) -> list[tuple[Path, int, float]]:
 
     for path in root.rglob("*"):
         try:
-            if not path.is_file() or path.name.endswith(".lock") or path.name.endswith(".part"):
+            if not path.is_file() or path.name.endswith(".lock") or path.name.endswith(_CACHE_TEMP_SUFFIXES):
                 continue
             stat = path.stat()
         except OSError:
             continue
         files.append((path, int(stat.st_size), float(stat.st_mtime)))
     return files
+
+
+def _reap_stale_cache_temp_files(root: Path, *, now_wall: float) -> None:
+    # Temp files (.part downloads, .full fallbacks) are normally removed by
+    # their creator's finally-block; only a hard crash (SIGKILL, OOM, power
+    # loss) orphans them.  Age-based deletion only — a temp younger than 2x
+    # the download deadline may belong to an in-flight download and must
+    # never be reaped, and temps are exempt from size-pressure eviction.
+    stale_after_seconds = 2.0 * _full_grib_download_deadline_seconds()
+    try:
+        if not root.exists():
+            return
+    except OSError:
+        return
+
+    # Materialize before deleting: reaping can empty (and remove) a directory
+    # that a live rglob generator still intends to scan.
+    stale_paths: list[Path] = []
+    for path in root.rglob("*"):
+        try:
+            if not path.is_file() or not path.name.endswith(_CACHE_TEMP_SUFFIXES):
+                continue
+            modified_at = float(path.stat().st_mtime)
+        except OSError:
+            continue
+        if (now_wall - modified_at) <= stale_after_seconds:
+            continue
+        stale_paths.append(path)
+
+    for path in stale_paths:
+        if _remove_file_quietly(path):
+            _metric_increment("eps_full_file_cache_temp_reaped")
+            _remove_empty_parent_dirs(path, stop_at=root)
 
 
 def _remove_file_quietly(path: Path) -> bool:
@@ -709,6 +843,8 @@ def _cleanup_eps_full_file_cache(*, keep_paths: set[Path] | None = None, force: 
         if not force and (now_wall - _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS) < DEFAULT_EPS_FULL_FILE_CACHE_CLEANUP_INTERVAL_SECONDS:
             return
         _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS = now_wall
+
+        _reap_stale_cache_temp_files(root, now_wall=now_wall)
 
         files = _iter_cache_files(root)
         if not files:
@@ -744,38 +880,120 @@ def _cleanup_eps_full_file_cache(*, keep_paths: set[Path] | None = None, force: 
                 _remove_empty_parent_dirs(path, stop_at=root)
 
 
-def _download_full_grib_to_path(*, source_url: str, out_path: Path) -> Path:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = out_path.with_suffix(f"{out_path.suffix}.part")
-    response = requests.get(source_url, stream=True, timeout=90)
-    try:
-        response.raise_for_status()
-        if response.status_code != 200:
-            # raise_for_status passes 3xx; an unfollowable redirect (e.g. NOMADS
-            # anti-abuse block) would otherwise be saved as the "full file".
-            raise RuntimeError(
-                f"Full GRIB download returned status {response.status_code}: {source_url}"
-            )
-        expected_size = _parse_float_tag(response.headers.get("Content-Length"))
-        with open(tmp_path, "wb") as dst:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if not chunk:
-                    continue
-                dst.write(chunk)
-    finally:
-        response.close()
+def _full_grib_http_client(*, timeout_seconds: float) -> httpx.AsyncClient:
+    operation_timeout = max(0.001, min(DEFAULT_FULL_GRIB_READ_TIMEOUT_SECONDS, timeout_seconds))
+    return httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=httpx.Timeout(operation_timeout),
+    )
 
-    file_ok, file_size = _subset_file_status(tmp_path)
-    if not file_ok:
-        _remove_file_quietly(tmp_path)
-        raise RuntimeError(f"EPS full GRIB download produced no file bytes: {source_url}")
-    if expected_size is not None and int(expected_size) > 0 and int(file_size) != int(expected_size):
-        _remove_file_quietly(tmp_path)
-        raise RuntimeError(
-            f"EPS full GRIB download size mismatch for {source_url}: got {file_size}, expected {int(expected_size)}"
+
+async def _download_full_grib_to_path_async(
+    *,
+    source_url: str,
+    out_path: Path,
+    max_bytes: int | None = None,
+) -> Path:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline_seconds = _full_grib_download_deadline_seconds()
+    started_at = time.monotonic()
+    tmp_path: Path | None = None
+
+    def _deadline_error() -> TimeoutError:
+        return TimeoutError(
+            f"Full GRIB download exceeded wall-clock deadline "
+            f"({deadline_seconds:.1f}s): {source_url}"
         )
-    tmp_path.replace(out_path)
-    return out_path
+
+    def _raise_if_deadline_exceeded() -> None:
+        if time.monotonic() - started_at >= deadline_seconds:
+            raise _deadline_error()
+
+    try:
+        async with asyncio.timeout(deadline_seconds):
+            async with _full_grib_http_client(timeout_seconds=deadline_seconds) as client:
+                async with client.stream("GET", source_url) as response:
+                    response.raise_for_status()
+                    if response.status_code != 200:
+                        # raise_for_status passes 3xx; an unfollowable redirect
+                        # body must not be saved as the full GRIB.
+                        raise RuntimeError(
+                            f"Full GRIB download returned status {response.status_code}: {source_url}"
+                        )
+                    expected_size = _parse_float_tag(response.headers.get("Content-Length"))
+                    if (
+                        max_bytes is not None
+                        and expected_size is not None
+                        and int(expected_size) > int(max_bytes)
+                    ):
+                        _metric_increment("full_grib_fallback_too_large")
+                        raise _FullGribFallbackTooLargeError(
+                            f"Full GRIB fallback declared size {int(expected_size)} exceeds "
+                            f"the {int(max_bytes)}-byte cap: {source_url}"
+                        )
+                    with tempfile.NamedTemporaryFile(
+                        mode="wb",
+                        prefix=f".{out_path.name}.",
+                        suffix=".part",
+                        dir=out_path.parent,
+                        delete=False,
+                    ) as dst:
+                        tmp_path = Path(dst.name)
+                        received_bytes = 0
+                        async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
+                            _raise_if_deadline_exceeded()
+                            if not chunk:
+                                continue
+                            received_bytes += len(chunk)
+                            if max_bytes is not None and received_bytes > int(max_bytes):
+                                _metric_increment("full_grib_fallback_too_large")
+                                raise _FullGribFallbackTooLargeError(
+                                    f"Full GRIB fallback streamed size exceeds the "
+                                    f"{int(max_bytes)}-byte cap: {source_url}"
+                                )
+                            dst.write(chunk)
+                            _raise_if_deadline_exceeded()
+
+            _raise_if_deadline_exceeded()
+            file_ok, file_size = _subset_file_status(tmp_path)
+            if not file_ok:
+                raise RuntimeError(f"EPS full GRIB download produced no file bytes: {source_url}")
+            if expected_size is not None and int(expected_size) > 0 and int(file_size) != int(expected_size):
+                raise RuntimeError(
+                    f"EPS full GRIB download size mismatch for {source_url}: got {file_size}, expected {int(expected_size)}"
+                )
+            tmp_path.replace(out_path)
+            return out_path
+    except TimeoutError as exc:
+        if str(exc).startswith("Full GRIB download exceeded wall-clock deadline"):
+            raise
+        raise _deadline_error() from exc
+    except asyncio.CancelledError as exc:
+        if time.monotonic() - started_at >= deadline_seconds:
+            raise _deadline_error() from exc
+        raise
+    finally:
+        if tmp_path is not None:
+            _remove_file_quietly(tmp_path)
+
+
+def _download_full_grib_to_path(
+    *,
+    source_url: str,
+    out_path: Path,
+    max_bytes: int | None = None,
+) -> Path:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            _download_full_grib_to_path_async(
+                source_url=source_url,
+                out_path=out_path,
+                max_bytes=max_bytes,
+            )
+        )
+    raise RuntimeError("Full GRIB download cannot run inside an active asyncio event loop")
 
 
 def _maybe_get_eps_full_grib_path(
@@ -795,7 +1013,16 @@ def _maybe_get_eps_full_grib_path(
 
     cache_path = _eps_full_file_cache_path(source_url=source_url, run_date=run_date, fh=fh)
     try:
-        with _path_download_lock(cache_path):
+        with _path_download_lock(
+            cache_path,
+            timeout_seconds=(
+                _full_grib_download_deadline_seconds()
+                + max(
+                    DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS,
+                    DEFAULT_GRIB_DISK_LOCK_POLL_SECONDS,
+                )
+            ),
+        ):
             cached_ok, cached_size = _subset_file_status(cache_path)
             if cached_ok:
                 cache_path.touch()
@@ -849,8 +1076,9 @@ def _range_cache_key(
     fh: int,
     url: str,
     start_byte: int,
-    end_byte: int,
+    end_byte: int | None,
 ) -> str:
+    range_token = f"{int(start_byte)}-" if end_byte is None else f"{int(start_byte)}-{int(end_byte)}"
     return "|".join(
         [
             str(source).strip().lower() or "-",
@@ -858,7 +1086,7 @@ def _range_cache_key(
             _run_id_from_date(run_date),
             f"{int(fh):03d}",
             str(url).strip(),
-            f"{int(start_byte)}-{int(end_byte)}",
+            range_token,
         ]
     )
 
@@ -1762,7 +1990,7 @@ def _normalize_temperature_units_for_xarray(data: np.ndarray, units: str | None)
     return data
 
 
-def _inventory_row_byte_range(row: Any) -> tuple[int, int] | None:
+def _inventory_row_byte_range(row: Any) -> tuple[int, int | None] | None:
     start_byte: int | None = None
     end_byte: int | None = None
 
@@ -1813,7 +2041,7 @@ def _inventory_row_byte_range(row: Any) -> tuple[int, int] | None:
     if end_byte is None and parsed_length is not None:
         end_byte = start_byte + parsed_length - 1
 
-    if end_byte is None or end_byte < start_byte:
+    if end_byte is not None and end_byte < start_byte:
         return None
     return start_byte, end_byte
 
@@ -1900,7 +2128,7 @@ def _download_subset_with_inventory_rows(
     if cached_full_path is not None:
         source_url = str(cached_full_path)
 
-    row_ranges: list[tuple[int, int]] = []
+    row_ranges: list[tuple[int, int | None]] = []
     for _, row in inventory.iterrows():
         byte_range = _inventory_row_byte_range(row)
         if byte_range is None:
@@ -1909,10 +2137,13 @@ def _download_subset_with_inventory_rows(
     if not row_ranges:
         return None
 
-    ordered_ranges: list[tuple[int, int]] = []
-    seen_ranges: set[tuple[int, int]] = set()
-    for start_byte, end_byte in sorted(row_ranges, key=lambda item: (item[0], item[1])):
-        range_key = (int(start_byte), int(end_byte))
+    ordered_ranges: list[tuple[int, int | None]] = []
+    seen_ranges: set[tuple[int, int | None]] = set()
+    for start_byte, end_byte in sorted(
+        row_ranges,
+        key=lambda item: (item[0], item[1] if item[1] is not None else float("inf")),
+    ):
+        range_key = (int(start_byte), int(end_byte) if end_byte is not None else None)
         if range_key in seen_ranges:
             continue
         seen_ranges.add(range_key)
@@ -1920,7 +2151,7 @@ def _download_subset_with_inventory_rows(
 
     is_remote = str(source_url).startswith(("http://", "https://"))
 
-    def _read_remote_payload(range_key: tuple[int, int]) -> bytes:
+    def _read_remote_payload(range_key: tuple[int, int | None]) -> bytes:
         start_byte, end_byte = range_key
         return _fetch_range_bytes(
             source=priority,
@@ -1936,7 +2167,7 @@ def _download_subset_with_inventory_rows(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wrote_bytes = False
-    remote_payloads: dict[tuple[int, int], bytes] = {}
+    remote_payloads: dict[tuple[int, int | None], bytes] = {}
     max_workers = min(len(ordered_ranges), _range_fetch_workers())
     if is_remote and max_workers > 1:
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="eps-range") as executor:
@@ -1952,7 +2183,7 @@ def _download_subset_with_inventory_rows(
         src = open(source_url, "rb") if not is_remote else None
         try:
             for start_byte, end_byte in ordered_ranges:
-                range_key = (int(start_byte), int(end_byte))
+                range_key = (int(start_byte), int(end_byte) if end_byte is not None else None)
                 if is_remote:
                     if remote_payloads:
                         payload = remote_payloads.get(range_key, b"")
@@ -1961,7 +2192,7 @@ def _download_subset_with_inventory_rows(
                 else:
                     assert src is not None
                     src.seek(start_byte)
-                    payload = src.read(end_byte - start_byte + 1)
+                    payload = src.read() if end_byte is None else src.read(end_byte - start_byte + 1)
                 if not payload:
                     continue
                 _validate_grib_range_payload(
@@ -2136,8 +2367,10 @@ def _fetch_ecmwf_pf_mean_variable(
 
                 if "number" in pf_inventory.columns:
                     try:
+                        import pandas as pd
+
                         pf_inventory = pf_inventory.assign(
-                            _cartosky_member_number=np.to_numeric(pf_inventory["number"], errors="coerce")
+                            _cartosky_member_number=pd.to_numeric(pf_inventory["number"], errors="coerce")
                         ).sort_values("_cartosky_member_number", kind="stable")
                     except Exception:
                         pass
@@ -2153,9 +2386,14 @@ def _fetch_ecmwf_pf_mean_variable(
                 except Exception:
                     subset_hint = None
                 if subset_hint is None:
-                    fallback_name = hashlib.sha1(
-                        f"{model_id}|{product}|{fh}|{search_pattern}|{priority}".encode("utf-8")
-                    ).hexdigest()[:16]
+                    fallback_name = _eps_subset_fallback_token(
+                        model_id=model_id,
+                        product=product,
+                        run_date=run_date,
+                        fh=fh,
+                        search_pattern=search_pattern,
+                        priority=priority,
+                    )
                     subset_hint = _eps_subset_fallback_path(prefix="eps_pf_mean", token=fallback_name)
 
                 subset_path = _aggregation_subset_path(subset_hint, "cartosky_pf")
@@ -2202,6 +2440,22 @@ def _fetch_ecmwf_pf_mean_variable(
                                 f"ECMWF EPS pf-mean subset refresh failed for {model_id} fh{fh:03d} pattern={search_pattern!r}"
                             ) from exc
                         data, crs, transform, member_count = _aggregate_grib_subset_mean(subset_path)
+
+                    expected_member_count = int(len(pf_inventory))
+                    if int(member_count) != expected_member_count:
+                        # A short subset would ship a plausible-looking mean
+                        # computed over fewer members. Drop the cached subset so
+                        # the retry redownloads instead of reusing the partial
+                        # file, then fail loudly (audit 4.3).
+                        try:
+                            subset_path.unlink()
+                        except OSError:
+                            pass
+                        raise RuntimeError(
+                            f"ECMWF EPS pf-mean subset covered {int(member_count)} of "
+                            f"{expected_member_count} perturbed members for {model_id} "
+                            f"fh{fh:03d} pattern={search_pattern!r}"
+                        )
 
                 meta = {
                     "inventory_line": first_inventory_line or f"aggregate:{search_pattern}:pf_mean",
@@ -2385,9 +2639,14 @@ def _fetch_ecmwf_direct_mean_variable(
                 except Exception:
                     subset_hint = None
                 if subset_hint is None:
-                    fallback_name = hashlib.sha1(
-                        f"{model_id}|{product}|{fh}|{search_pattern}|{priority}|em".encode("utf-8")
-                    ).hexdigest()[:16]
+                    fallback_name = _eps_subset_fallback_token(
+                        model_id=model_id,
+                        product=product,
+                        run_date=run_date,
+                        fh=fh,
+                        search_pattern=search_pattern,
+                        priority=priority,
+                    )
                     subset_hint = _eps_subset_fallback_path(prefix="eps_direct_mean", token=fallback_name)
 
                 subset_path = _aggregation_subset_path(subset_hint, f"cartosky_em_fh{int(fh):03d}")
@@ -2490,6 +2749,7 @@ def inventory_lines_for_pattern(
     """Return inventory lines for a pattern with process-local cache/dedupe."""
     from herbie.core import Herbie
 
+    _reject_internal_model_id(model_id)
     kwargs = {
         "model": model_id,
         "product": product,
@@ -2592,6 +2852,7 @@ def product_hour_has_any_idx(
     """Cheap run-hour readiness probe using IDX, with optional GRIB fallback."""
     from herbie.core import Herbie
 
+    _reject_internal_model_id(model_id)
     kwargs = {
         "model": model_id,
         "product": product,
@@ -2836,7 +3097,7 @@ def _subset_file_status(path: Path) -> tuple[bool, int]:
 
 
 @contextmanager
-def _path_download_lock(path: Path):
+def _path_download_lock(path: Path, *, timeout_seconds: float | None = None):
     if not _grib_disk_cache_lock_enabled():
         yield
         return
@@ -2852,7 +3113,12 @@ def _path_download_lock(path: Path):
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(lock_path, "a+")
     waited = False
-    deadline = time.monotonic() + DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS
+    wait_seconds = (
+        DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS
+        if timeout_seconds is None
+        else max(DEFAULT_GRIB_DISK_LOCK_POLL_SECONDS, float(timeout_seconds))
+    )
+    deadline = time.monotonic() + wait_seconds
     try:
         while True:
             try:
@@ -3111,7 +3377,7 @@ def _inventory_primary_byte_range(
     fh: int,
     priority: str,
     force_inventory_refresh: bool = False,
-) -> tuple[str, int, int] | None:
+) -> tuple[str, int, int | None] | None:
     try:
         inv_result = _inventory_search(
             H,
@@ -3169,7 +3435,7 @@ def _inventory_primary_byte_range(
         except Exception:
             end_byte = None
 
-    if end_byte is None or end_byte < start_byte:
+    if end_byte is not None and end_byte < start_byte:
         return None
 
     source = getattr(H, "grib", None)
@@ -3178,20 +3444,41 @@ def _inventory_primary_byte_range(
     return str(source), start_byte, end_byte
 
 
-def _network_fetch_range_bytes(source_url: str, *, start_byte: int, end_byte: int) -> bytes:
+def _network_fetch_range_bytes(
+    source_url: str,
+    *,
+    start_byte: int,
+    end_byte: int | None,
+) -> bytes:
+    range_label = f"{int(start_byte)}-" if end_byte is None else f"{int(start_byte)}-{int(end_byte)}"
     cooldown_remaining = _range_throttle_remaining()
     if cooldown_remaining > 0.0:
         _metric_increment("range_throttle_cooldown_skip")
         raise _RangeThrottleActiveError(
             f"Range fetch skipped: upstream throttle cooldown active ({cooldown_remaining:.0f}s left) "
-            f"range={start_byte}-{end_byte} url_hash={_url_hash(source_url)}"
+            f"range={range_label} url_hash={_url_hash(source_url)}"
         )
-    headers = {"Range": f"bytes={start_byte}-{end_byte}"}
-    expected_size = int(end_byte) - int(start_byte) + 1
+    headers = {"Range": f"bytes={range_label}"}
+    expected_size = None if end_byte is None else int(end_byte) - int(start_byte) + 1
     response = requests.get(source_url, headers=headers, timeout=45, stream=True)
     try:
         response.raise_for_status()
         if response.status_code != 206:
+            if 300 <= response.status_code < 400:
+                # An unfollowable 3xx (e.g. NOMADS anti-abuse block) refuses
+                # the request outright. Never accept it based on body length:
+                # a block page can coincidentally match a small byte range.
+                _metric_increment("range_request_not_honored")
+                _record_range_throttle_refusal(
+                    status_code=response.status_code, source_url=source_url
+                )
+                raise _RangeRequestNotHonoredError(
+                    f"Range request not honored: status={response.status_code} "
+                    f"expected_bytes={expected_size} "
+                    f"content_length={response.headers.get('Content-Length') or 'unknown'} "
+                    f"range={range_label} url_hash={_url_hash(source_url)}",
+                    status_code=response.status_code,
+                )
             # A 200 means the server ignored the Range header and the body is
             # the ENTIRE file — which starts with "GRIB", so it would pass
             # payload validation and decode as the wrong message. Reject before
@@ -3202,34 +3489,22 @@ def _network_fetch_range_bytes(source_url: str, *, start_byte: int, end_byte: in
                 content_length = int(content_length_header) if content_length_header is not None else None
             except (TypeError, ValueError):
                 content_length = None
-            if content_length != expected_size:
+            if expected_size is None or content_length != expected_size:
                 _metric_increment("range_request_not_honored")
-                if 300 <= response.status_code < 400:
-                    # An unfollowable 3xx (e.g. NOMADS anti-abuse block) refuses
-                    # the request outright; count it toward the global cooldown.
-                    _record_range_throttle_refusal(
-                        status_code=response.status_code, source_url=source_url
-                    )
-                    raise _RangeRequestNotHonoredError(
-                        f"Range request not honored: status={response.status_code} "
-                        f"expected_bytes={expected_size} content_length={content_length_header or 'unknown'} "
-                        f"range={start_byte}-{end_byte} url_hash={_url_hash(source_url)}",
-                        status_code=response.status_code,
-                    )
                 raise _InvalidGribSubsetError(
                     f"Range request not honored: status={response.status_code} "
                     f"expected_bytes={expected_size} content_length={content_length_header or 'unknown'} "
-                    f"range={start_byte}-{end_byte} url_hash={_url_hash(source_url)}"
+                    f"range={range_label} url_hash={_url_hash(source_url)}"
                 )
         data = bytes(response.content)
         _clear_range_throttle()
     finally:
         response.close()
-    if len(data) != expected_size:
+    if expected_size is not None and len(data) != expected_size:
         _metric_increment("range_payload_truncated")
         raise _InvalidGribSubsetError(
             f"Range payload size mismatch: expected_bytes={expected_size} got={len(data)} "
-            f"range={start_byte}-{end_byte} url_hash={_url_hash(source_url)}"
+            f"range={range_label} url_hash={_url_hash(source_url)}"
         )
     return data
 
@@ -3238,19 +3513,31 @@ def _fetch_subset_bytes_from_full_source(
     *,
     out_path: Path,
     start_byte: int,
-    end_byte: int,
+    end_byte: int | None,
+    max_bytes: int | None = None,
 ) -> bytes:
     temp_full_path: Path | None = None
     source_path = source_url
     try:
         if source_url.startswith(("http://", "https://")):
-            temp_full_path = out_path.with_suffix(f"{out_path.suffix}.full")
-            downloaded_path = _download_full_grib_to_path(source_url=source_url, out_path=temp_full_path)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                prefix=f".{out_path.name}.",
+                suffix=".full",
+                dir=out_path.parent,
+                delete=False,
+            ) as temp_full:
+                temp_full_path = Path(temp_full.name)
+            downloaded_path = _download_full_grib_to_path(
+                source_url=source_url,
+                out_path=temp_full_path,
+                max_bytes=max_bytes,
+            )
             source_path = str(downloaded_path)
 
         with open(source_path, "rb") as src:
             src.seek(start_byte)
-            return src.read(end_byte - start_byte + 1)
+            return src.read() if end_byte is None else src.read(end_byte - start_byte + 1)
     finally:
         if temp_full_path is not None:
             _remove_file_quietly(temp_full_path)
@@ -3280,16 +3567,17 @@ def _validate_grib_range_payload(
     run_date: datetime,
     fh: int,
     start_byte: int,
-    end_byte: int,
+    end_byte: int | None,
 ) -> None:
     reason = _grib_payload_invalid_reason(payload)
     if reason is None:
         return
     _metric_increment("invalid_grib_range_payload")
+    range_label = f"{int(start_byte)}-" if end_byte is None else f"{int(start_byte)}-{int(end_byte)}"
     raise _InvalidGribSubsetError(
         f"Invalid GRIB range payload source={source} model={model_id} "
         f"run={_run_id_from_date(run_date)} fh{int(fh):03d} "
-        f"range={int(start_byte)}-{int(end_byte)} url_hash={_url_hash(source_url)} "
+        f"range={range_label} url_hash={_url_hash(source_url)} "
         f"size={len(payload)} reason={reason}"
     )
 
@@ -3302,10 +3590,11 @@ def _fetch_range_bytes(
     run_date: datetime,
     fh: int,
     start_byte: int,
-    end_byte: int,
+    end_byte: int | None,
     bundle_fetch_cache: BundleFetchCache | None,
     require_grib_payload: bool = False,
 ) -> bytes:
+    range_label = f"{int(start_byte)}-" if end_byte is None else f"{int(start_byte)}-{int(end_byte)}"
     total_start = time.monotonic()
     lookup_start = time.monotonic()
     cache_key = _range_cache_key(
@@ -3321,50 +3610,80 @@ def _fetch_range_bytes(
 
     def _fetch_from_network() -> bytes:
         http_start = time.monotonic()
-        payload = _network_fetch_range_bytes(
-            source_url,
-            start_byte=start_byte,
-            end_byte=end_byte,
-        )
-        if require_grib_payload:
-            _validate_grib_range_payload(
-                payload,
-                source=source,
-                source_url=source_url,
-                model_id=model_id,
-                run_date=run_date,
-                fh=fh,
-                start_byte=start_byte,
-                end_byte=end_byte,
-            )
-        _metric_observe_ms("fetch_http_ms", (time.monotonic() - http_start) * 1000.0)
-        return payload
+        attempts = _range_fetch_attempts()
+        backoff_seconds = _range_retry_backoff_seconds()
+        for attempt in range(1, attempts + 1):
+            try:
+                payload = _network_fetch_range_bytes(
+                    source_url,
+                    start_byte=start_byte,
+                    end_byte=end_byte,
+                )
+                if require_grib_payload:
+                    _validate_grib_range_payload(
+                        payload,
+                        source=source,
+                        source_url=source_url,
+                        model_id=model_id,
+                        run_date=run_date,
+                        fh=fh,
+                        start_byte=start_byte,
+                        end_byte=end_byte,
+                    )
+                _metric_observe_ms("fetch_http_ms", (time.monotonic() - http_start) * 1000.0)
+                return payload
+            except (_RangeRequestNotHonoredError, _RangeThrottleActiveError):
+                raise
+            except Exception as exc:
+                if attempt >= attempts:
+                    if attempts > 1:
+                        _metric_increment("range_request_retry_exhausted")
+                    raise
+                _metric_increment("range_request_retry")
+                delay = backoff_seconds * (2 ** (attempt - 1))
+                logger.warning(
+                    "Range fetch failed; retrying (%s fh%03d range=%s url_hash=%s attempt=%d/%d delay=%.2fs): %s",
+                    model_id,
+                    int(fh),
+                    range_label,
+                    _url_hash(source_url),
+                    attempt,
+                    attempts,
+                    delay,
+                    exc,
+                )
+                if delay > 0:
+                    time.sleep(delay)
+        raise RuntimeError("range retry loop exhausted without result")
 
     if bundle_fetch_cache is None:
         _metric_increment("fetch_cache_miss")
         logger.info(
-            "FETCH_CACHE event=miss source=%s model=%s run=%s fh=%03d range=%d-%d url_hash=%s reason=no_bundle_cache",
+            "FETCH_CACHE event=miss source=%s model=%s run=%s fh=%03d range=%s url_hash=%s reason=no_bundle_cache",
             source,
             model_id,
             _run_id_from_date(run_date),
             int(fh),
-            int(start_byte),
-            int(end_byte),
+            range_label,
             _url_hash(source_url),
         )
         payload = _fetch_from_network()
         _metric_observe_ms("fetch_total_ms", (time.monotonic() - total_start) * 1000.0)
         return payload
 
-    expected_size = max(0, int(end_byte) - int(start_byte) + 1)
-    cacheable = expected_size <= max(1, int(bundle_fetch_cache.max_cacheable_bytes))
+    expected_size = (
+        None
+        if end_byte is None
+        else max(0, int(end_byte) - int(start_byte) + 1)
+    )
+    cacheable = expected_size is None or expected_size <= max(1, int(bundle_fetch_cache.max_cacheable_bytes))
     if not cacheable:
         _metric_increment("fetch_cache_skip_too_large")
     payload, event, evicted = bundle_fetch_cache.get_or_fetch(
         cache_key,
         fetcher=_fetch_from_network,
         cacheable=cacheable,
-        expected_size=expected_size if expected_size > 0 else None,
+        expected_size=expected_size if expected_size is not None and expected_size > 0 else None,
     )
     if require_grib_payload:
         try:
@@ -3385,32 +3704,30 @@ def _fetch_range_bytes(
     if event in {"hit", "wait"}:
         _metric_increment("fetch_cache_hit")
         logger.info(
-            "FETCH_CACHE event=hit source=%s model=%s run=%s fh=%03d range=%d-%d url_hash=%s mode=%s",
+            "FETCH_CACHE event=hit source=%s model=%s run=%s fh=%03d range=%s url_hash=%s mode=%s",
             source,
             model_id,
             _run_id_from_date(run_date),
             int(fh),
-            int(start_byte),
-            int(end_byte),
+            range_label,
             _url_hash(source_url),
             event,
         )
     else:
         _metric_increment("fetch_cache_miss")
         logger.info(
-            "FETCH_CACHE event=miss source=%s model=%s run=%s fh=%03d range=%d-%d url_hash=%s cacheable=%s",
+            "FETCH_CACHE event=miss source=%s model=%s run=%s fh=%03d range=%s url_hash=%s cacheable=%s",
             source,
             model_id,
             _run_id_from_date(run_date),
             int(fh),
-            int(start_byte),
-            int(end_byte),
+            range_label,
             _url_hash(source_url),
             "true" if cacheable else "false",
         )
         if cacheable:
             if (
-                len(payload) == expected_size
+                (expected_size is None or len(payload) == expected_size)
                 and len(payload) <= int(bundle_fetch_cache.max_cacheable_bytes)
                 and len(payload) <= int(bundle_fetch_cache.max_bytes)
             ):
@@ -3437,16 +3754,6 @@ def _download_subset_with_inventory_byte_range(
     force_inventory_refresh: bool = False,
 ) -> Path | None:
     source_url = str(getattr(H, "grib", "") or "")
-    cached_full_path = _maybe_get_eps_full_grib_path(
-        H,
-        model_id=model_id,
-        product=product,
-        run_date=run_date,
-        fh=fh,
-        priority=priority,
-    )
-    if cached_full_path is not None:
-        source_url = str(cached_full_path)
     primary_range = _inventory_primary_byte_range(
         H,
         search_pattern=search_pattern,
@@ -3484,23 +3791,47 @@ def _download_subset_with_inventory_byte_range(
                     # full-file GET would meet the same refusal — don't try it.
                     raise
                 logger.warning(
-                    "Byte-range subset fetch failed; retrying via full-file download (%s fh%03d %s; priority=%s): %s",
+                    "Byte-range subset fetch failed after retries; trying bounded full-file fallback (%s fh%03d %s; priority=%s): %s",
                     model_id,
                     fh,
                     search_pattern,
                     priority,
                     exc,
                 )
+                cache_enabled = _eps_full_file_cache_enabled(
+                    model_id=model_id,
+                    product=product,
+                )
+                cached_full_path = None
+                if cache_enabled:
+                    cached_full_path = _maybe_get_eps_full_grib_path(
+                        H,
+                        model_id=model_id,
+                        product=product,
+                        run_date=run_date,
+                        fh=fh,
+                        priority=priority,
+                    )
+                    if cached_full_path is None:
+                        # Do not repeat the same large transfer outside the
+                        # reusable cache after its cache-owned download failed.
+                        raise
+                fallback_source = str(cached_full_path) if cached_full_path is not None else source_url
                 payload = _fetch_subset_bytes_from_full_source(
-                    source_url,
+                    fallback_source,
                     out_path=out_path,
                     start_byte=start_byte,
                     end_byte=end_byte,
+                    max_bytes=(
+                        None
+                        if cached_full_path is not None
+                        else _full_grib_fallback_max_bytes()
+                    ),
                 )
         else:
             with open(source_url, "rb") as src:
                 src.seek(start_byte)
-                payload = src.read(end_byte - start_byte + 1)
+                payload = src.read() if end_byte is None else src.read(end_byte - start_byte + 1)
 
         if not payload:
             return None
@@ -3663,6 +3994,7 @@ def fetch_variable(
     """
     from herbie.core import Herbie  # lazy — not always installed
 
+    _reject_internal_model_id(model_id)
     raw_herbie_kwargs = dict(herbie_kwargs or {})
     fetch_aggregation = str(raw_herbie_kwargs.pop("_cartosky_fetch_aggregation", "")).strip().lower()
     if fetch_aggregation == "ecmwf_direct_mean_or_pf_mean":
@@ -3720,8 +4052,6 @@ def fetch_variable(
     ]
     retries = _retry_count()
     sleep_s = _retry_sleep_seconds()
-    lock_enabled = _grib_disk_cache_lock_enabled()
-
     last_exc: Exception | None = None
     saw_missing_index = False
     saw_missing_subset_file = False
@@ -3859,11 +4189,9 @@ def fetch_variable(
                     fh=fh,
                     search_pattern=search_pattern,
                 )
-                subset_hint: Path | None = None
-                if lock_enabled:
-                    subset_hint = subset_target
+                subset_hint = subset_target
 
-                if lock_enabled and subset_hint is not None:
+                if subset_hint is not None:
                     with _subset_download_lock(subset_hint):
                         cached_ok, cached_size = _subset_file_status(subset_hint)
                         if cached_ok:
@@ -4000,125 +4328,6 @@ def fetch_variable(
                         )
                         selected_meta = attempt_meta
                         break
-                else:
-                    try:
-                        if _prefer_inventory_byte_range:
-                            subset_path = _download_subset_with_inventory_byte_range(
-                                H,
-                                search_pattern=search_pattern,
-                                out_path=subset_target,
-                                model_id=model_id,
-                                run_date=run_date,
-                                product=product,
-                                fh=fh,
-                                priority=priority,
-                                bundle_fetch_cache=bundle_fetch_cache,
-                                force_inventory_refresh=True,
-                            )
-                            if subset_path is None:
-                                raise RuntimeError("inventory byte-range unavailable")
-                        else:
-                            subset_path = H.download(search_pattern, errors="raise", overwrite=True)
-                    except Exception as herbie_exc:
-                        if _is_no_space_error(herbie_exc):
-                            raise
-                        logger.warning(
-                            "Herbie subset download failed; trying direct byte-range fallback (%s fh%03d %s; priority=%s; attempt=%d/%d): %s",
-                            model_id,
-                            fh,
-                            search_pattern,
-                            priority,
-                            attempt_idx,
-                            attempts_for_priority,
-                            herbie_exc,
-                        )
-                        subset_path = _download_subset_with_inventory_byte_range(
-                            H,
-                            search_pattern=search_pattern,
-                            out_path=subset_target,
-                            model_id=model_id,
-                            run_date=run_date,
-                            product=product,
-                            fh=fh,
-                            priority=priority,
-                            bundle_fetch_cache=bundle_fetch_cache,
-                            force_inventory_refresh=True,
-                        )
-                        if subset_path is None:
-                            raise herbie_exc
-                    if subset_path is None:
-                        saw_missing_subset_file = True
-                        if precheck_pattern_missing:
-                            _note_pattern_missing_failure(priority)
-                        logger.warning(
-                            "Herbie subset unavailable: download returned None (%s fh%03d %s; priority=%s; attempt=%d/%d)",
-                            model_id,
-                            fh,
-                            search_pattern,
-                            priority,
-                            attempt_idx,
-                            attempts_for_priority,
-                        )
-                        if sleep_s > 0 and attempt_idx < attempts_for_priority:
-                            time.sleep(sleep_s)
-                        continue
-                    subset_candidate = Path(subset_path)
-                    subset_ok, subset_size = _subset_file_status(subset_candidate)
-
-                    if not subset_ok:
-                        saw_missing_subset_file = True
-                        logger.warning(
-                            "Herbie subset file missing/empty after download (%s fh%03d %s; priority=%s; attempt=%d/%d): %s (size=%d)",
-                            model_id,
-                            fh,
-                            search_pattern,
-                            priority,
-                            attempt_idx,
-                            attempts_for_priority,
-                            subset_candidate,
-                            subset_size,
-                        )
-                        manual_subset = _manual_subset_download_with_corrected_range(
-                            H,
-                            search_pattern=search_pattern,
-                            out_path=subset_candidate,
-                            model_id=model_id,
-                            run_date=run_date,
-                            product=product,
-                            fh=fh,
-                            priority=priority,
-                            bundle_fetch_cache=bundle_fetch_cache,
-                        )
-                        if manual_subset is not None:
-                            grib_path = manual_subset
-                            grib_priority = priority
-                            selected_meta = attempt_meta
-                            break
-                        if precheck_pattern_missing:
-                            _note_pattern_missing_failure(priority)
-                        try:
-                            if subset_candidate.exists():
-                                subset_candidate.unlink()
-                        except OSError:
-                            pass
-                        if sleep_s > 0 and attempt_idx < attempts_for_priority:
-                            time.sleep(sleep_s)
-                        continue
-
-                    grib_path = subset_candidate
-                    grib_priority = priority
-                    logger.info(
-                        "Downloaded GRIB: %s (%s fh%03d %s; priority=%s; attempt=%d/%d)",
-                        grib_path.name,
-                        model_id,
-                        fh,
-                        search_pattern,
-                        priority,
-                        attempt_idx,
-                        attempts_for_priority,
-                    )
-                    selected_meta = attempt_meta
-                    break
             except Exception as exc:
                 last_exc = exc
                 if precheck_pattern_missing:

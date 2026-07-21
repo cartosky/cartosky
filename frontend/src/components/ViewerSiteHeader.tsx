@@ -1869,7 +1869,7 @@ export default function ViewerSiteHeader() {
           to="/"
           className={cn(
             "flex shrink-0 items-center font-semibold tracking-tight text-white",
-            isViewerDesktop ? "self-start" : "",
+            isViewerDesktop ? "self-center translate-y-1" : "",
           )}
         >
           <img

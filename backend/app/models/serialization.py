@@ -27,7 +27,14 @@ def _ensemble_products_payload(capability: Any) -> list[dict[str, Any]] | None:
         return None
     var_key = str(getattr(capability, "var_key", "") or "")
     units = str(getattr(capability, "units", "") or "").strip()
-    unit_suffix = '"' if units == "in" else (f" {units}" if units else "")
+    # Threshold display suffix: inches read as 0.5", Fahrenheit as 32°F
+    # (capability units say "F"); anything else keeps a spaced unit.
+    if units == "in":
+        unit_suffix = '"'
+    elif units.lstrip("°").lower() in ("f", "c"):
+        unit_suffix = f"°{units.lstrip('°').upper()}"
+    else:
+        unit_suffix = f" {units}" if units else ""
     noun = str(stats.get("label_noun") or "").strip()
 
     products: list[dict[str, Any]] = [
@@ -40,18 +47,19 @@ def _ensemble_products_payload(capability: Any) -> list[dict[str, Any]] | None:
         },
     ]
     for key, var_id in ensemble_stats_product_ids(var_key, stats).items():
-        if key.startswith("prob_gt_"):
-            threshold = parse_prob_threshold(key[len("prob_gt_"):])
+        if key.startswith(("prob_gt_", "prob_lt_")):
+            op = ">" if key.startswith("prob_gt_") else "<"
+            threshold = parse_prob_threshold(key.split("_", 2)[2])
             threshold_text = f"{threshold:g}{unit_suffix}"
-            label = f"P(> {threshold_text})"
+            label = f"P({op} {threshold_text})"
             long_label = (
-                f"Probability of {noun} > {threshold_text}"
-                if noun else f"Probability > {threshold_text}"
+                f"Probability of {noun} {op} {threshold_text}"
+                if noun else f"Probability {op} {threshold_text}"
             )
             # The base variable name already carries the field ("Total
             # Precip"), so the overlay qualifier stays noun-free to avoid
             # "Total Precip (Prob. Precip > 0.5")".
-            overlay_label = f"Prob. > {threshold_text}"
+            overlay_label = f"Prob. {op} {threshold_text}"
         else:
             label = key.upper()
             long_label = f"{_ordinal(int(key[1:]))} percentile"

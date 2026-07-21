@@ -1,0 +1,24 @@
+[Unit]
+Description=CartoSky Serving Canary (origin<->Cloudflare grid-fetch probe)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=cartosky
+Group=cartosky
+UMask=0027
+WorkingDirectory=/opt/cartosky/backend
+EnvironmentFile=-/etc/cartosky/serving-canary.env
+Environment=PATH=/opt/cartosky/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart=/opt/cartosky/.venv/bin/python /opt/cartosky/backend/scripts/serving_canary.py
+Nice=10
+CPUWeight=20
+IOWeight=20
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -157,7 +157,7 @@ def test_binary_only_model_rejects_bad_frame(monkeypatch: pytest.MonkeyPatch, tm
     # rejects (min == max). With gfs allowlisted, that rejection must fail the
     # frame build — not publish it ungated — and the COG write/gates must
     # never even be reached.
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gfs")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32))
     monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
@@ -176,7 +176,7 @@ def test_binary_only_model_rejects_bad_frame(monkeypatch: pytest.MonkeyPatch, tm
 def test_binary_only_model_builds_good_frame_without_value_cog(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gfs")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _harness(monkeypatch, fetched=np.array([[32.0, 33.0], [34.0, 35.0]], dtype=np.float32))
     monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
@@ -199,7 +199,7 @@ def test_non_allowlisted_model_gate_behavior_unchanged(
 ) -> None:
     # Empty allowlist (default): the COG write and both COG gates all run, and
     # a FAILING pre-encode gate stays shadow-only — the build still succeeds.
-    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS", raising=False)
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs")
     _harness(monkeypatch, fetched=np.array([[32.0, 33.0], [34.0, 35.0]], dtype=np.float32))
 
     calls: list[str] = []
@@ -346,7 +346,7 @@ def test_binary_only_model_rejects_bad_frame_hrrr_tmp2m(
     # 32.0 F sits inside HRRR's real tmp2m packing band
     # (_PACKING_BY_MODEL_VAR[("hrrr", "tmp2m")]: scale=0.1, offset=-100.0) —
     # the rejection is the gate's doing, not an out-of-band encode artifact.
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "hrrr")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _hrrr_harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32), var="tmp2m")
     monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
@@ -405,7 +405,7 @@ def test_binary_only_model_rejects_bad_frame_hrrr_radar_ptype(
     bad = np.full((40, 50), np.nan, dtype=np.float32)
     bad.flat[0] = rain_lo  # 1/2000 finite -> nodata ratio 0.9995, not fully dry
 
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "hrrr")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _hrrr_harness(monkeypatch, fetched=bad, var="radar_ptype")
     monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
@@ -489,7 +489,7 @@ def test_binary_only_model_rejects_bad_frame_nbm_tmp2m(
     # reached. 32.0 F sits inside NBM's real tmp2m packing band
     # (_PACKING_BY_MODEL_VAR[("nbm", "tmp2m")]: scale=0.1, offset=-100.0) —
     # the rejection is the gate's doing, not an out-of-band encode artifact.
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "nbm")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _nbm_harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32))
     monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
@@ -655,7 +655,7 @@ def test_binary_only_model_rejects_bad_frame_gefs_tmp2m(
     # (_PACKING_BY_MODEL_VAR[("gefs", "tmp2m__mean")]: scale=0.1,
     # offset=-100.0; there is NO bare ("gefs", "tmp2m") packing entry) — the
     # rejection is the gate's doing, not an out-of-band encode artifact.
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _gefs_harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32), var="tmp2m__mean")
     monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
@@ -720,7 +720,7 @@ def test_binary_only_model_rejects_bad_frame_gefs_precip_total(
     bad.flat[0] = 0.2
     bad.flat[1] = 0.6
 
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _gefs_harness(monkeypatch, fetched=bad, var="precip_total__mean")
     monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
@@ -815,7 +815,7 @@ def test_binary_only_model_rejects_bad_frame_eps_tmp2m(
     # (_PACKING_BY_MODEL_VAR[("eps", "tmp2m__mean")]: scale=0.1,
     # offset=-100.0) — the rejection is the gate's doing, not an out-of-band
     # encode artifact.
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "eps")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _eps_harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32))
     monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
@@ -856,7 +856,7 @@ def test_scheduler_frame_marker_is_grid_meta_for_binary_only_models(
     (staging_var / "fh000.json").write_text("{}")
 
     # Sidecar present but no grid meta and no COG: not built either way.
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gfs")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     assert scheduler_module._frame_artifacts_exist(tmp_path, "gfs", run_id, "tmp2m", 0) is False
 
     # Grid meta appears: built for the binary-only model...
@@ -864,7 +864,7 @@ def test_scheduler_frame_marker_is_grid_meta_for_binary_only_models(
     assert scheduler_module._frame_artifacts_exist(tmp_path, "gfs", run_id, "tmp2m", 0) is True
 
     # ...but with the allowlist empty the marker is still the value COG.
-    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS")
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs")
     assert scheduler_module._frame_artifacts_exist(tmp_path, "gfs", run_id, "tmp2m", 0) is False
     (staging_var / "fh000.val.cog.tif").write_bytes(b"value")
     assert scheduler_module._frame_artifacts_exist(tmp_path, "gfs", run_id, "tmp2m", 0) is True
@@ -896,7 +896,7 @@ def test_frame_has_cog_reports_binary_frame_for_allowlisted_model(
     main_module._manifest_cache.clear()
 
     # Only the grid binary is published (no value COG, as post-cutover).
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gfs")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     assert main_module._frame_has_cog("gfs", run_id, "tmp2m", 0) is True
-    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS")
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs")
     assert main_module._frame_has_cog("gfs", run_id, "tmp2m", 0) is False

@@ -220,7 +220,7 @@ def variable_color_map_id(model_id: str, var_key: str) -> str | None:
             base_var, kind, _detail = classified
             if kind == "percentile":
                 return variable_color_map_id(model_norm, base_var)
-            if kind == "prob_gt":
+            if kind in ("prob_gt", "prob_lt"):
                 return "ensemble_probability"
         return None
     color_map_id = getattr(entry, "color_map_id", None)

@@ -12,6 +12,10 @@ LimitNOFILE=65536
 WorkingDirectory=/opt/cartosky/backend
 EnvironmentFile=-/etc/cartosky/scheduler-gefs.env
 Environment=PATH=/opt/cartosky/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+# Bound the GDAL raster block cache (MB). Matches the cap operators set on the
+# live scheduler units 2026-07 (EPS memory audit); without it GDAL defaults to
+# 5% of RAM per process.
+Environment=GDAL_CACHEMAX=256
 ExecStart=/opt/cartosky/.venv/bin/python -m app.services.scheduler --model gefs
 Nice=10
 CPUWeight=50

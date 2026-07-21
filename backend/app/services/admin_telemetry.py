@@ -14,6 +14,8 @@ from typing import Any
 import rasterio
 
 from ..models.registry import MODEL_REGISTRY
+from .ensemble_stats_health import load_ensemble_stats_health
+from .frames_404_telemetry import load_frames_404_summary
 from .grid import expected_grid_frame_size_bytes, grid_manifest_path, grid_supported
 from .observed_bundle_health import build_observed_bundle_health, is_observed_model_capability, parse_iso_datetime
 from .run_ids import RUN_ID_RE, parse_run_id_datetime
@@ -26,6 +28,15 @@ TELEMETRY_DB_PATH = Path(
 MRMS_RUNTIME_ARTIFACTS_PENDING_KEY = "runtime_artifacts_pending"
 RUNTIME_ARTIFACT_PENDING_GRACE_SECONDS = 300
 DEFAULT_STALLED_RUN_IDLE_MINUTES = 90
+CUMULATIVE_DERIVE_STRATEGIES = frozenset(
+    {
+        "precip_total_cumulative",
+        "snowfall_total_10to1_cumulative",
+        "snowfall_kuchera_total_cumulative",
+        "ptype_accumulation_cumulative",
+        "ptype_accumulation_ecmwf",
+    }
+)
 
 ALLOWED_PERF_EVENT_NAMES = {
     "viewer_first_frame",
@@ -431,6 +442,24 @@ def _stalled_run_idle_minutes(model_id: str) -> int:
 def clear_operational_status_cache() -> None:
     with _operational_status_cache_lock:
         _operational_status_cache.clear()
+
+
+def build_frames_404_section(*, data_root: Path, recent_limit: int = 20) -> dict[str, Any]:
+    """Frames/grid 404 telemetry for the admin status dashboard.
+
+    Surfaces the swap_gap / manifest_skew classes (audit 2.1) with their
+    seconds-since-publish recency buckets alongside stale_run / not_published
+    context, plus a capped tail of recent samples.
+    """
+    summary = load_frames_404_summary(data_root)
+    return {
+        "since": summary.get("since"),
+        "totals_by_reason": summary.get("totals_by_reason", {}),
+        "today": summary.get("today", {}),
+        "last_7_days": summary.get("last_7_days", {}),
+        "recency_buckets": summary.get("recency_buckets", {}),
+        "recent": list(summary.get("recent", []))[: max(0, int(recent_limit))],
+    }
 
 
 def _published_run_ids(data_root: Path, model_id: str, *, keep_runs: int) -> list[str]:
@@ -1213,6 +1242,13 @@ def _scan_run_issue(
         latest_for_model=latest_for_model,
         now_utc=now_utc,
     )
+    stats_health = load_ensemble_stats_health(data_root, model_id, run_id) or {}
+    stats_incomplete_units = [
+        dict(unit)
+        for unit in stats_health.get("units", [])
+        if isinstance(unit, dict) and unit.get("alerting") is True
+    ]
+    stats_incomplete_alert_count = len(stats_incomplete_units)
 
     base_row = {
         "id": f"{model_id}:{run_id}",
@@ -1246,6 +1282,11 @@ def _scan_run_issue(
         "degraded_reason": observed_bundle.get("degraded_reason"),
         "observation_to_publish_latency_seconds": observed_bundle.get("observation_to_publish_latency_seconds"),
         "runtime_artifacts_pending": runtime_artifacts_pending,
+        "stats_incomplete_alert_count": stats_incomplete_alert_count,
+        "stats_incomplete_units": stats_incomplete_units if include_details else [],
+        "accum_step_gap_variable_count": 0,
+        "accum_step_gap_max_affected_pixel_percentage": 0.0,
+        "accum_step_gap_samples": [],
     }
 
     if manifest is None:
@@ -1277,6 +1318,9 @@ def _scan_run_issue(
     latest_forecast_hours: list[int] = []
     target_forecast_hours: list[int] = []
     variable_forecast_progress: list[dict[str, Any]] = []
+    accum_step_gap_variable_count = 0
+    accum_step_gap_max_affected_pixel_percentage = 0.0
+    accum_step_gap_samples: list[dict[str, Any]] = []
 
     for variable_id, entry in sorted(variables.items()):
         if not isinstance(entry, dict):
@@ -1310,10 +1354,57 @@ def _scan_run_issue(
         )
         latest_forecast_hour = max(frame_hours) if frame_hours else None
         target_forecast_hour = max(expected_hours) if expected_hours else None
+        variable_spec = None
+        if plugin is not None:
+            try:
+                variable_spec = plugin.get_var(plugin.normalize_var_id(public_variable_id))
+            except Exception:
+                variable_spec = None
+        scans_cumulative_quality = (
+            str(getattr(variable_spec, "derive", "")).strip()
+            in CUMULATIVE_DERIVE_STRATEGIES
+        )
         if latest_forecast_hour is not None:
             latest_forecast_hours.append(latest_forecast_hour)
         if target_forecast_hour is not None:
             target_forecast_hours.append(target_forecast_hour)
+        if latest_forecast_hour is not None and scans_cumulative_quality:
+            latest_sidecar_path = _sidecar_path(
+                data_root,
+                model_id,
+                run_id,
+                artifact_variable_id,
+                latest_forecast_hour,
+            )
+            latest_sidecar = _load_json_file(latest_sidecar_path)
+            latest_quality_flags = (
+                latest_sidecar.get("quality_flags", [])
+                if isinstance(latest_sidecar, dict)
+                else []
+            )
+            if isinstance(latest_quality_flags, list) and "accum_step_gap" in {
+                str(flag).strip() for flag in latest_quality_flags
+            }:
+                accum_step_gap_variable_count += 1
+                details = latest_sidecar.get("quality_flag_details", {})
+                gap_details = details.get("accum_step_gap", {}) if isinstance(details, dict) else {}
+                try:
+                    affected_percentage = float(gap_details.get("affected_pixel_percentage", 0.0))
+                except (TypeError, ValueError):
+                    affected_percentage = 0.0
+                affected_percentage = round(min(max(affected_percentage, 0.0), 100.0), 4)
+                accum_step_gap_max_affected_pixel_percentage = max(
+                    accum_step_gap_max_affected_pixel_percentage,
+                    affected_percentage,
+                )
+                if include_details:
+                    accum_step_gap_samples.append(
+                        {
+                            "variable_id": public_variable_id,
+                            "forecast_hour": latest_forecast_hour,
+                            "affected_pixel_percentage": affected_percentage,
+                        }
+                    )
         if include_details:
             variable_forecast_progress.append(
                 {
@@ -1614,6 +1705,25 @@ def _scan_run_issue(
         issue_type = "run_incomplete"
         summary = f"Run is incomplete at {available_frames}/{expected_frames} frames."
 
+    if accum_step_gap_variable_count > 0 and status != "error":
+        status = "warning"
+        issue_type = "accum_step_gap"
+        noun = "variable carries" if accum_step_gap_variable_count == 1 else "variables carry"
+        summary = (
+            f"{accum_step_gap_variable_count} cumulative {noun} partial-step gaps; "
+            f"maximum affected coverage is {accum_step_gap_max_affected_pixel_percentage:.4g}%."
+        )
+
+    if stats_incomplete_alert_count > 0 and status != "error":
+        status = "warning"
+        issue_type = "stats_incomplete"
+        noun = "unit has" if stats_incomplete_alert_count == 1 else "units have"
+        threshold = int(stats_health.get("alert_after_passes") or 3)
+        summary = (
+            f"{stats_incomplete_alert_count} ensemble stats {noun} remained incomplete "
+            f"across at least {threshold} stats passes."
+        )
+
     build_age_reference_ts = now_ts if latest_for_model and available_frames < expected_frames else last_updated_at
     run_age_hours = (
         round(max(0.0, (build_age_reference_ts - build_started_at) / 3600.0), 1)
@@ -1621,13 +1731,14 @@ def _scan_run_issue(
         else base_row["run_age_hours"]
     )
 
+    stats_updated_at = int(stats_health.get("updated_at") or 0)
     return {
         **base_row,
         "run_age_hours": run_age_hours,
         "status": status,
         "issue_type": issue_type,
         "summary": summary,
-        "last_updated_at": last_updated_at,
+        "last_updated_at": max(last_updated_at, stats_updated_at),
         "expected_frames": expected_frames,
         "available_frames": available_frames,
         "completion_pct": completion_pct,
@@ -1642,6 +1753,12 @@ def _scan_run_issue(
         "incomplete_variables": incomplete_variables[:12] if include_details else [],
         "sample_paths": sample_paths if include_details else [],
         "runtime_artifacts_pending": runtime_artifacts_pending,
+        "accum_step_gap_variable_count": accum_step_gap_variable_count,
+        "accum_step_gap_max_affected_pixel_percentage": round(
+            accum_step_gap_max_affected_pixel_percentage,
+            4,
+        ),
+        "accum_step_gap_samples": accum_step_gap_samples[:12] if include_details else [],
     }
 
 

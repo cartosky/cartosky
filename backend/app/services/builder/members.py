@@ -9,12 +9,12 @@ Members are processed **sequentially per member, ascending fh** (Phase 2
 design Section 12 / D6): the derived member variables (``precip_total``,
 ``snowfall_total``) are cumulative, so a member's fh-N frame depends on that
 member's fields at every prior step. Per (member, fh) the pass downloads ONE
-bundled subset (TMP + APCP + CSNOW as enabled — D5's member-bundled fetch,
-keeping the request count at members × fhs regardless of variable count),
-then:
+bundled subset (all enabled direct fields + APCP + CSNOW as needed — D5's
+member-bundled fetch, keeping the request count at members × fhs regardless
+of variable count), then:
 
-  * ``tmp2m``: convert -> warp -> gate -> slim write (the spike-validated
-    direct-field shape);
+  * direct fields (currently ``tmp2m`` and ``tmp850``): convert -> warp ->
+    gate -> slim write (the spike-validated direct-field shape);
   * ``precip_total`` / ``snowfall_total``: warp the step fields and fold them
     into per-member running cumulative state (target-grid space — bilinear
     warping is linear, so accumulating warped steps equals warping the
@@ -43,9 +43,10 @@ gepNN, ``member=0`` -> gec00.
 
 EPS (member pipeline Phase 4, design Section 13 / D7) runs through the SAME
 pass in ``pf_subset`` mode: ECMWF publishes all 50 perturbed members in one
-file per fh with no control, and both EPS member variables (``tmp2m``,
-``precip_total`` — ECMWF ``tp`` is natively run-cumulative) are direct
-fields. The unit of work is ``(var, fh)``, not ``(member, fh)``: the pass
+file per fh with no control, and all EPS member variables (currently
+``tmp2m``, ``tmp850``, and ``precip_total`` — ECMWF ``tp`` is natively
+run-cumulative) are direct fields. The unit of work is ``(var, fh)``, not
+``(member, fh)``: the pass
 resolves the SAME ``*.cartosky_pf.grib2`` subset the mean build downloaded
 (reused from the Herbie cache at its deterministic path, or re-downloaded
 via the same production range-fetch primitive on a miss), derives the
@@ -58,7 +59,6 @@ patterns, no scheduler changes.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -79,6 +79,7 @@ from rasterio.transform import Affine
 from ...models.base import ensemble_member_descriptors, ensemble_member_ids
 from ..colormaps import get_color_map_spec
 from ..grid import (
+    GRID_DTYPE_UINT8,
     _decode_values,
     _packing_config,
     expected_grid_frame_size_bytes,
@@ -92,6 +93,8 @@ from .fetch import (
     _aggregation_subset_path,
     _download_subset_with_inventory_rows,
     _eps_subset_fallback_path,
+    _eps_subset_fallback_token,
+    _inventory_line_from_row,
     _inventory_row_byte_range,
     _inventory_search,
     _priority_candidates,
@@ -142,7 +145,8 @@ MODE_PF_SUBSET = "pf_subset"
 MEMBER_APCP_PATTERN = r":APCP:surface:[0-9]+-[0-9]+ hour acc"
 MEMBER_CSNOW_PATTERN = r":CSNOW:surface:"
 
-# GRIB band element -> bundle field key (rasterio GRIB driver band tags).
+# GRIB band element -> bundle field key fallback for single-level bundles.
+# Multi-level same-element fields use inventory-line mapping instead.
 _BUNDLE_ELEMENT_TO_FIELD = {"TMP": "tmp2m", "APCP": "apcp", "CSNOW": "csnow"}
 
 
@@ -200,11 +204,11 @@ def member_frame_is_complete(run_root: Path, model: str, var_id: str, fh: int) -
 # ── Pure cumulative step math (parity-pinned to the production derive) ──────
 def precip_step_contribution(step_data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Mirror of the production precip cumulative ``_process_step``:
-    contribution = max(step, 0) where finite else 0; valid = finite(step)."""
-    step_clean = np.where(
-        np.isfinite(step_data), np.maximum(step_data, 0.0), 0.0,
-    ).astype(np.float32)
-    return step_clean, np.isfinite(step_data)
+    contribution = step where finite and nonnegative else 0; validity uses
+    the same finite-and-nonnegative D1 contract as every cumulative derive."""
+    step_valid = np.isfinite(step_data) & (step_data >= 0.0)
+    step_clean = np.where(step_valid, step_data, 0.0).astype(np.float32)
+    return step_clean, step_valid
 
 
 def snowfall_step_contribution(
@@ -555,6 +559,21 @@ def build_member_plan(
     if derived_with_fhs:
         max_step_fh = max(max(fhs_by_var[v]) for v in derived_with_fhs)
         step_fhs = list(range(cumulative.step_hours, max_step_fh + 1, cumulative.step_hours))
+        step_fh_set = set(step_fhs)
+        off_cadence = {
+            var: sorted(set(fhs_by_var[var]) - step_fh_set)
+            for var in derived_with_fhs
+            if set(fhs_by_var[var]) - step_fh_set
+        }
+        if off_cadence:
+            details = ", ".join(
+                f"{var}={fhs}" for var, fhs in off_cadence.items()
+            )
+            raise ValueError(
+                f"{model_id} member plan derived schedule invalid: {details}; "
+                f"expected all derived fhs on the {cumulative.step_hours}-hour "
+                "cumulative step grid"
+            )
 
     all_fhs = sorted({fh for fhs in fhs_by_var.values() for fh in fhs} | set(step_fhs))
     return _MemberBuildPlan(
@@ -581,9 +600,10 @@ class MemberFetchError(RuntimeError):
 def _bundle_fields_for_fh(plan: _MemberBuildPlan, fh: int) -> dict[str, str]:
     """Field key -> search pattern for everything needed at this fh."""
     fields: dict[str, str] = {}
-    tmp_ctx = plan.contexts.get("tmp2m")
-    if tmp_ctx is not None and fh in plan.fhs_by_var["tmp2m"]:
-        fields["tmp2m"] = tmp_ctx.search_patterns[0]
+    for base_var, ctx in plan.contexts.items():
+        if ctx.derived or fh not in plan.fhs_by_var[base_var] or not ctx.search_patterns:
+            continue
+        fields[base_var] = ctx.search_patterns[0]
     if plan.has_cumulative and fh in plan.step_fhs:
         fields["apcp"] = MEMBER_APCP_PATTERN
         if "snowfall_total" in plan.contexts:
@@ -594,11 +614,36 @@ def _bundle_fields_for_fh(plan: _MemberBuildPlan, fh: int) -> dict[str, str]:
 def _map_bundle_bands(
     band_elements: list[str],
     expected_fields: dict[str, str],
+    *,
+    band_inventory_lines: list[str] | None = None,
 ) -> dict[str, int]:
-    """GRIB band element names -> bundle field keys -> 1-based band index."""
+    """Map bundle bands to requested fields.
+
+    Inventory lines are authoritative when supplied because multiple vertical
+    levels share one GRIB element (for example tmp2m and tmp850 are both
+    ``TMP``). The element-only path remains as a fallback for single-level
+    bundles and synthetic callers.
+    """
+    if band_inventory_lines is not None and len(band_inventory_lines) != len(band_elements):
+        raise MemberFetchError(
+            "Bundle inventory/band count mismatch "
+            f"({len(band_inventory_lines)} inventory rows, {len(band_elements)} bands)"
+        )
     mapping: dict[str, int] = {}
     for band_index, element in enumerate(band_elements, start=1):
-        key = _BUNDLE_ELEMENT_TO_FIELD.get(_normalize_grib_element(element))
+        if band_inventory_lines is None:
+            key = _BUNDLE_ELEMENT_TO_FIELD.get(_normalize_grib_element(element))
+        else:
+            inventory_line = band_inventory_lines[band_index - 1]
+            matches = [
+                field for field, pattern in expected_fields.items()
+                if re.search(pattern, inventory_line)
+            ]
+            if len(matches) > 1:
+                raise MemberFetchError(
+                    f"Bundle inventory line matches multiple fields {matches}: {inventory_line}"
+                )
+            key = matches[0] if matches else None
         if key is None or key not in expected_fields:
             continue
         if key in mapping:
@@ -612,16 +657,41 @@ def _map_bundle_bands(
     return mapping
 
 
+def _ordered_bundle_inventory_lines(inventory: Any) -> list[str]:
+    """Inventory lines in the exact unique byte-range order written to disk."""
+    by_range: dict[tuple[int, int], str] = {}
+    for _, row in inventory.iterrows():
+        byte_range = _inventory_row_byte_range(row)
+        if byte_range is None:
+            continue
+        line = _inventory_line_from_row(row)
+        existing = by_range.get(byte_range)
+        if existing is not None and existing != line:
+            raise MemberFetchError(
+                f"Bundle inventory range {byte_range} has conflicting field labels"
+            )
+        by_range[byte_range] = line
+    if not by_range:
+        raise MemberFetchError("Bundle inventory produced no ordered byte ranges")
+    return [line for _byte_range, line in sorted(by_range.items())]
+
+
 def _read_bundle_subset(
     subset_path: Path,
     expected_fields: dict[str, str],
+    *,
+    band_inventory_lines: list[str] | None = None,
 ) -> dict[str, tuple[np.ndarray, Any, Any]]:
     with rasterio.open(subset_path) as src:
         band_elements = [
             str(src.tags(band_index).get("GRIB_ELEMENT", "") or "")
             for band_index in range(1, int(src.count) + 1)
         ]
-        mapping = _map_bundle_bands(band_elements, expected_fields)
+        mapping = _map_bundle_bands(
+            band_elements,
+            expected_fields,
+            band_inventory_lines=band_inventory_lines,
+        )
         return {
             key: (_read_rasterio_band(src, band_index=band_index), src.crs, src.transform)
             for key, band_index in mapping.items()
@@ -640,7 +710,9 @@ def _fetch_member_bundle(
 
     Reuses the production inventory-search + byte-range subset primitives
     (the EPS pf-subset pattern) with a combined regex pattern; band -> field
-    mapping comes from the GRIB band element tags.
+    mapping comes from the inventory rows in the same byte-range order used
+    to construct the subset, so same-element fields at different levels stay
+    distinct.
     """
     from herbie.core import Herbie  # lazy — matches production fetch style
 
@@ -697,6 +769,7 @@ def _fetch_member_bundle(
                             f"bundle inventory unavailable ({inv_result.reason}) "
                             f"member={member} fh{fh:03d} priority={priority}"
                         )
+                    band_inventory_lines = _ordered_bundle_inventory_lines(inventory)
                     subset_hint = Path(H.get_localFilePath(combined_pattern))
                     subset_path = _aggregation_subset_path(subset_hint, "cartosky_mbr")
                     with _subset_download_lock(subset_path):
@@ -718,7 +791,11 @@ def _fetch_member_bundle(
                                     f"bundle subset download failed member={member} "
                                     f"fh{fh:03d} priority={priority}"
                                 )
-                        return _read_bundle_subset(subset_path, fields)
+                        return _read_bundle_subset(
+                            subset_path,
+                            fields,
+                            band_inventory_lines=band_inventory_lines,
+                        )
                 except Exception as exc:  # noqa: BLE001 — recorded; next priority
                     last_exc = exc
                     logger.warning(
@@ -900,9 +977,14 @@ def _resolve_pf_subset(
                     except Exception:  # noqa: BLE001 — mirror the mean's fallback
                         subset_hint = None
                     if subset_hint is None:
-                        fallback_name = hashlib.sha1(
-                            f"{fetch_model_id}|{request.product}|{fh}|{pattern}|{priority}".encode("utf-8")
-                        ).hexdigest()[:16]
+                        fallback_name = _eps_subset_fallback_token(
+                            model_id=fetch_model_id,
+                            product=request.product,
+                            run_date=plan.run_date,
+                            fh=fh,
+                            search_pattern=pattern,
+                            priority=priority,
+                        )
                         subset_hint = _eps_subset_fallback_path(
                             prefix="eps_pf_mean", token=fallback_name,
                         )
@@ -1029,7 +1111,7 @@ def _process_pf_unit(
                     converted, src.crs, src.transform,
                     model=plan.model_id, region=plan.region,
                     resampling=ctx.resampling, src_nodata=None,
-                    dst_nodata=float("nan"),
+                    dst_nodata=float("nan"), working_dtype=np.float32,
                 )
                 status = _gate_and_write(
                     plan=plan, ctx=ctx, var_id=member_var_id(base_var, member),
@@ -1067,7 +1149,8 @@ def _decode_member_frame(
     frame_path = grid_frame_path_for_run_root(run_root, var_id, fh, dtype=packing_dtype)
     meta_path = grid_frame_meta_path_for_run_root(run_root, var_id, fh)
     meta = json.loads(meta_path.read_text())
-    encoded = np.frombuffer(frame_path.read_bytes(), dtype="<u2").reshape(
+    encoded_dtype = np.uint8 if packing_dtype == GRID_DTYPE_UINT8 else "<u2"
+    encoded = np.frombuffer(frame_path.read_bytes(), dtype=encoded_dtype).reshape(
         int(meta["height"]), int(meta["width"]))
     return _decode_values(encoded, model=model, var=var_id), meta
 
@@ -1116,8 +1199,41 @@ def _rebase_cumulative_state(
             csnow_native, crs, transform,
             model=plan.model_id, region=plan.region,
             resampling=snow_ctx.resampling, src_nodata=None, dst_nodata=float("nan"),
+            working_dtype=np.float32,
         )
     return state
+
+
+def _last_complete_cumulative_checkpoint(
+    *,
+    plan: _MemberBuildPlan,
+    member: str,
+    staging_run_root: Path,
+    resume_fh: int,
+) -> int | None:
+    """Latest scheduled fh that can safely seed every cumulative field."""
+    cumulative_vars = [
+        base_var for base_var, ctx in plan.contexts.items() if ctx.derived
+    ]
+    if not cumulative_vars:
+        return None
+
+    common_fhs = set(plan.fhs_by_var[cumulative_vars[0]])
+    for base_var in cumulative_vars[1:]:
+        common_fhs.intersection_update(plan.fhs_by_var[base_var])
+
+    for fh in sorted((fh for fh in common_fhs if fh < resume_fh), reverse=True):
+        if all(
+            member_frame_is_complete(
+                staging_run_root,
+                plan.model_id,
+                member_var_id(base_var, member),
+                fh,
+            )
+            for base_var in cumulative_vars
+        ):
+            return fh
+    return None
 
 
 def _gate_and_write(
@@ -1193,7 +1309,7 @@ def _process_member(
         return
 
     resume_fh = min(min(fhs) for fhs in missing_by_var.values() if fhs)
-    work_fhs = [fh for fh in plan.all_fhs if fh >= resume_fh]
+    work_start_fh = resume_fh
 
     def _mark_remaining(status: str, from_fh: int) -> None:
         for base_var, fhs in missing_by_var.items():
@@ -1203,12 +1319,17 @@ def _process_member(
 
     state = _CumulativeState()
     if plan.has_cumulative:
-        prior_steps = [s for s in plan.step_fhs if s < resume_fh]
-        if prior_steps:
+        checkpoint_fh = _last_complete_cumulative_checkpoint(
+            plan=plan,
+            member=member,
+            staging_run_root=staging_run_root,
+            resume_fh=resume_fh,
+        )
+        if checkpoint_fh is not None:
             try:
                 state = _rebase_cumulative_state(
                     plan=plan, member=member, staging_run_root=staging_run_root,
-                    base_fh=prior_steps[-1], should_stop=should_stop,
+                    base_fh=checkpoint_fh, should_stop=should_stop,
                 )
             except MemberFetchError as exc:
                 if "preempted" in str(exc):
@@ -1216,7 +1337,7 @@ def _process_member(
                     return
                 logger.warning(
                     "Member %s rebase fetch failed at fh%03d: %s",
-                    member, prior_steps[-1], exc,
+                    member, checkpoint_fh, exc,
                 )
                 _mark_remaining(STATUS_FETCH_FAILED, resume_fh)
                 return
@@ -1224,6 +1345,16 @@ def _process_member(
                 logger.exception("Member %s cumulative rebase failed", member)
                 _mark_remaining(STATUS_ERROR, resume_fh)
                 return
+            next_steps = [fh for fh in plan.step_fhs if fh > checkpoint_fh]
+            if next_steps:
+                work_start_fh = min(resume_fh, next_steps[0])
+        else:
+            # No scheduled, complete frame can seed every cumulative field.
+            # Replay the chain from its first step and leave write decisions to
+            # missing_by_var so already-complete artifacts are not overwritten.
+            work_start_fh = min(resume_fh, plan.step_fhs[0])
+
+    work_fhs = [fh for fh in plan.all_fhs if fh >= work_start_fh]
 
     for fh in work_fhs:
         if should_stop():
@@ -1257,27 +1388,28 @@ def _process_member(
             return
 
         try:
-            # tmp2m — direct field.
-            tmp_ctx = plan.contexts.get("tmp2m")
-            if tmp_ctx is not None and "tmp2m" in fields and fh in plan.fhs_by_var["tmp2m"]:
-                if fh in missing_by_var["tmp2m"]:
-                    raw, crs, transform = bundle["tmp2m"]
+            # Direct fields (tmp2m, tmp850, and future descriptor-driven vars).
+            for base_var, ctx in plan.contexts.items():
+                if ctx.derived or base_var not in fields or fh not in plan.fhs_by_var[base_var]:
+                    continue
+                if fh in missing_by_var[base_var]:
+                    raw, crs, transform = bundle[base_var]
                     converted = convert_units(
-                        raw, var_key="tmp2m", model_id=plan.model_id,
-                        var_capability=tmp_ctx.capability,
+                        raw, var_key=base_var, model_id=plan.model_id,
+                        var_capability=ctx.capability,
                     )
                     warped, dst_transform = warp_to_target_grid(
                         converted, crs, transform,
                         model=plan.model_id, region=plan.region,
-                        resampling=tmp_ctx.resampling, src_nodata=None,
-                        dst_nodata=float("nan"),
+                        resampling=ctx.resampling, src_nodata=None,
+                        dst_nodata=float("nan"), working_dtype=np.float32,
                     )
                     status = _gate_and_write(
-                        plan=plan, ctx=tmp_ctx, var_id=member_var_id("tmp2m", member),
+                        plan=plan, ctx=ctx, var_id=member_var_id(base_var, member),
                         fh=fh, values=warped, dst_transform=dst_transform,
                         staging_run_root=staging_run_root,
                     )
-                    _rec("tmp2m", fh, status,
+                    _rec(base_var, fh, status,
                          time.perf_counter() - frame_started if status == STATUS_WRITTEN else None)
 
             # Cumulative step — precip/snow.
@@ -1288,7 +1420,7 @@ def _process_member(
                     apcp_native, apcp_crs, apcp_transform,
                     model=plan.model_id, region=plan.region,
                     resampling=any_cum_ctx.resampling, src_nodata=None,
-                    dst_nodata=float("nan"),
+                    dst_nodata=float("nan"), working_dtype=np.float32,
                 )
                 state.dst_transform = dst_transform
 
@@ -1304,7 +1436,7 @@ def _process_member(
                         csnow_native, csnow_crs, csnow_transform,
                         model=plan.model_id, region=plan.region,
                         resampling=snow_ctx.resampling, src_nodata=None,
-                        dst_nodata=float("nan"),
+                        dst_nodata=float("nan"), working_dtype=np.float32,
                     )
                     # step_endpoints sampling: csnow at [step start, step end];
                     # the fh-0 endpoint is skipped per skip_zero_hour_sample.

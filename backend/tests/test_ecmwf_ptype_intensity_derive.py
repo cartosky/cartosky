@@ -96,7 +96,11 @@ def test_ecmwf_ptype_intensity_prefers_snow_from_sf_step(monkeypatch) -> None:
     assert out_crs == crs
     assert out_transform == transform
     assert 16.0 <= indexed[0, 0] <= 25.0
-    assert snow_values[0, 0] > 0.0
+    # The stored snow component plane is the raw liquid-equivalent snow rate with
+    # NO display boost baked in: the sf step is 0.05 - 0.02 = 0.03 m LWE, which
+    # converts to 0.03 * 39.37... in. The 2x display bias lives only in binning.
+    expected_snow_rate = np.float32(0.03 * 39.37007874015748)
+    np.testing.assert_allclose(snow_values[0, 0], expected_snow_rate, rtol=1e-5, atol=1e-5)
     assert rain_values[0, 0] == 0.0
 
 
@@ -365,3 +369,184 @@ def test_ecmwf_ptype_intensity_uses_warped_component_fetches_when_requested(monk
     # the warp-params fix those fetches came back native-shape, were silently
     # skipped, and this pixel classified as rain instead of snow.
     assert 16.0 <= indexed[0, 0] <= 25.0
+
+
+def test_ecmwf_ptype_intensity_records_full_quality_when_all_components_resolve(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    cumulative = {
+        ("precip_total", 3): np.array([[0.03]], dtype=np.float32),
+        ("precip_total", 6): np.array([[0.06]], dtype=np.float32),
+        ("sf", 3): np.array([[0.02]], dtype=np.float32),
+        ("sf", 6): np.array([[0.05]], dtype=np.float32),
+    }
+    thermal = {
+        "tmp2m": np.array([[-2.0]], dtype=np.float32),
+        "tmp925": np.array([[-3.0]], dtype=np.float32),
+        "tmp850": np.array([[-5.0]], dtype=np.float32),
+    }
+
+    def _fake_fetch_step_component(**kwargs):
+        var_key = str(kwargs["var_key"])
+        key = (var_key, int(kwargs["step_fh"]))
+        if key in cumulative:
+            return cumulative[key], crs, transform
+        return thermal[var_key], crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_step_component", _fake_fetch_step_component)
+
+    ctx = derive_module.FetchContext()
+    derive_module._derive_ptype_intensity_ecmwf(
+        model_id="ecmwf",
+        var_key="ptype_intensity",
+        product="oper",
+        run_date=datetime(2026, 4, 14, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec(),
+        var_capability=None,
+        model_plugin=object(),
+        ctx=ctx,
+    )
+
+    quality = ctx.derive_quality[("ptype_intensity", 6)]
+    assert quality["quality"] == "full"
+    assert quality["quality_flags"] == []
+
+
+def test_ecmwf_ptype_intensity_records_snow_component_missing_quality_flag(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    cumulative = {
+        ("precip_total", 3): np.array([[0.02]], dtype=np.float32),
+        ("precip_total", 6): np.array([[0.05]], dtype=np.float32),
+    }
+    thermal = {
+        "tmp2m": np.array([[6.0]], dtype=np.float32),
+        "tmp925": np.array([[4.0]], dtype=np.float32),
+        "tmp850": np.array([[3.0]], dtype=np.float32),
+    }
+
+    def _fake_fetch_step_component(**kwargs):
+        var_key = str(kwargs["var_key"])
+        if var_key == "sf":
+            raise RuntimeError("simulated sf fetch failure")
+        key = (var_key, int(kwargs["step_fh"]))
+        if key in cumulative:
+            return cumulative[key], crs, transform
+        return thermal[var_key], crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_step_component", _fake_fetch_step_component)
+
+    ctx = derive_module.FetchContext()
+    indexed, _, _ = derive_module._derive_ptype_intensity_ecmwf(
+        model_id="ecmwf",
+        var_key="ptype_intensity",
+        product="oper",
+        run_date=datetime(2026, 4, 14, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec(),
+        var_capability=None,
+        model_plugin=object(),
+        ctx=ctx,
+    )
+
+    # Fail-open data behavior is unchanged: snow_lwe falls back to zeros and the
+    # warm profile classifies as rain — but the frame must now carry the flag.
+    assert 0.0 <= indexed[0, 0] <= 15.0
+    quality = ctx.derive_quality[("ptype_intensity", 6)]
+    assert quality["quality"] == "degraded"
+    assert "snow_component_missing" in quality["quality_flags"]
+    assert "phase_signals_missing" not in quality["quality_flags"]
+
+
+def test_ecmwf_ptype_intensity_records_phase_signals_missing_quality_flag(monkeypatch) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    cumulative = {
+        ("precip_total", 3): np.array([[0.03]], dtype=np.float32),
+        ("precip_total", 6): np.array([[0.06]], dtype=np.float32),
+        ("sf", 3): np.array([[0.02]], dtype=np.float32),
+        ("sf", 6): np.array([[0.05]], dtype=np.float32),
+    }
+
+    def _fake_fetch_step_component(**kwargs):
+        var_key = str(kwargs["var_key"])
+        key = (var_key, int(kwargs["step_fh"]))
+        if key in cumulative:
+            return cumulative[key], crs, transform
+        raise RuntimeError(f"simulated thermal fetch failure for {var_key}")
+
+    monkeypatch.setattr(derive_module, "_fetch_step_component", _fake_fetch_step_component)
+
+    ctx = derive_module.FetchContext()
+    derive_module._derive_ptype_intensity_ecmwf(
+        model_id="ecmwf",
+        var_key="ptype_intensity",
+        product="oper",
+        run_date=datetime(2026, 4, 14, 0, 0),
+        fh=6,
+        var_spec_model=_ptype_var_spec(),
+        var_capability=None,
+        model_plugin=object(),
+        ctx=ctx,
+    )
+
+    quality = ctx.derive_quality[("ptype_intensity", 6)]
+    assert quality["quality"] == "degraded"
+    assert "phase_signals_missing" in quality["quality_flags"]
+    assert "snow_component_missing" not in quality["quality_flags"]
+
+
+def test_ecmwf_ice_total_records_quality_flags_when_snow_component_missing(monkeypatch, tmp_path) -> None:
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    cumulative = {
+        ("precip_total", 6): np.array([[0.0060]], dtype=np.float32),
+        ("precip_total", 12): np.array([[0.0180]], dtype=np.float32),
+    }
+    thermal = {
+        "tmp2m": np.array([[-2.0]], dtype=np.float32),
+        "tmp925": np.array([[2.5]], dtype=np.float32),
+        "tmp850": np.array([[3.0]], dtype=np.float32),
+    }
+
+    def _fake_fetch_step_component(**kwargs):
+        var_key = str(kwargs["var_key"])
+        if var_key == "sf":
+            raise RuntimeError("simulated sf fetch failure")
+        key = (var_key, int(kwargs["step_fh"]))
+        if key in cumulative:
+            return cumulative[key], crs, transform
+        return thermal[var_key], crs, transform
+
+    monkeypatch.setattr(derive_module, "_fetch_step_component", _fake_fetch_step_component)
+
+    ctx = derive_module.FetchContext()
+    ctx.data_root = str(tmp_path)
+    derive_module._derive_ptype_accumulation_ecmwf(
+        model_id="ecmwf",
+        var_key="ice_total",
+        product="oper",
+        run_date=datetime(2026, 4, 14, 0, 0),
+        fh=12,
+        var_spec_model=SimpleNamespace(
+            selectors=SimpleNamespace(
+                hints={
+                    "ptype_component": "ice",
+                    "precip_component": "precip_total",
+                    "snow_component": "sf",
+                    "surface_temp_component": "tmp2m",
+                    "low_temp_component": "tmp925",
+                    "mid_temp_component": "tmp850",
+                    "step_hours": "6",
+                }
+            )
+        ),
+        var_capability=None,
+        model_plugin=object(),
+        ctx=ctx,
+    )
+
+    quality = ctx.derive_quality[("ice_total", 12)]
+    assert quality["quality"] == "degraded"
+    assert "snow_component_missing" in quality["quality_flags"]

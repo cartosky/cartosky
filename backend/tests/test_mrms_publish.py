@@ -36,6 +36,9 @@ def _write_test_value_raster(path: Path, values: np.ndarray) -> None:
 
 
 def _configure_small_grid(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests exercise the retained legacy COG publish flow: opt mrms out
+    # of the (now default) binary-only substrate.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "mrms")
     monkeypatch.setattr(mrms_publish, "_expected_target_shape", lambda: (2, 3))
     monkeypatch.setattr(
         mrms_publish,
@@ -824,7 +827,7 @@ def test_reuse_mrms_frame_writes_grids_without_generic_value_cog_helper(
     monkeypatch.setattr(mrms_publish, "write_grid_frame_from_value_cog_for_run_root", _fail_generic_helper, raising=False)
     monkeypatch.setattr(mrms_publish, "write_grid_frames_for_run_root", _capture_grid_write)
 
-    has_ptype = mrms_publish.reuse_mrms_frame(
+    _reused_refl, has_ptype = mrms_publish.reuse_mrms_frame(
         data_root=tmp_path,
         run_id="20260327_1208z",
         forecast_hour=0,
@@ -885,7 +888,7 @@ def test_reuse_mrms_frame_reuses_existing_grid_artifacts_without_rewrite(
         ptype_sidecar={"valid_time": "2026-03-27T12:15:00Z"},
     )
 
-    has_ptype = mrms_publish.reuse_mrms_frame(
+    _reused_refl, has_ptype = mrms_publish.reuse_mrms_frame(
         data_root=tmp_path,
         run_id="20260327_1208z",
         forecast_hour=4,
@@ -902,3 +905,130 @@ def test_reuse_mrms_frame_reuses_existing_grid_artifacts_without_rewrite(
         meta = json.loads((grid_dir / "fh004.l0.meta.json").read_text())
         assert meta["fh"] == 4
         assert meta["file"] == "fh004.l0.u16.bin"
+
+
+# ---------------------------------------------------------------------------
+# _warp_frame_to_target_grid: nodata-aware resampling
+# ---------------------------------------------------------------------------
+
+
+def _capture_warp_kwargs(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    captured: list[dict] = []
+
+    def _warp(values, *args, **kwargs):
+        captured.append(kwargs)
+        return np.asarray(values, dtype=np.float32), from_origin(-101.0, 46.0, 1.0, 1.0)
+
+    monkeypatch.setattr(mrms_publish, "warp_to_target_grid", _warp)
+    return captured
+
+
+def _warpable_frame(values: np.ndarray) -> mrms_publish.MRMSBundleFrame:
+    return mrms_publish.MRMSBundleFrame(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        values=values,
+        source_crs="EPSG:4326",
+        source_transform=from_origin(-130.0, 55.0, 0.01, 0.01),
+    )
+
+
+def test_warp_frame_to_target_grid_declares_nan_src_nodata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_warp_kwargs(monkeypatch)
+    frame = _warpable_frame(np.zeros((2, 3), dtype=np.float32))
+
+    mrms_publish._warp_frame_to_target_grid(frame.values, frame=frame)
+
+    assert captured[0]["resampling"] == "bilinear"
+    assert np.isnan(captured[0]["src_nodata"])
+
+
+def test_warp_frame_to_target_grid_forwards_nearest_resampling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_warp_kwargs(monkeypatch)
+    frame = _warpable_frame(np.zeros((2, 3), dtype=np.float32))
+
+    mrms_publish._warp_frame_to_target_grid(frame.values, frame=frame, resampling="nearest")
+
+    assert captured[0]["resampling"] == "nearest"
+
+
+def test_radar_ptype_frame_warps_precip_flag_nearest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # PrecipFlag is categorical: bilinear blends round into wrong (or
+    # unmapped) flag codes, so the composite write must warp it nearest.
+    _configure_small_grid(monkeypatch)
+    monkeypatch.setattr(mrms_publish, "grid_build_enabled", lambda: False)
+
+    warp_resamplings: list[str] = []
+    real_warp = mrms_publish._warp_frame_to_target_grid
+
+    def _spy(values, *, frame, resampling="bilinear"):
+        warp_resamplings.append(resampling)
+        return real_warp(values, frame=frame, resampling=resampling)
+
+    monkeypatch.setattr(mrms_publish, "_warp_frame_to_target_grid", _spy)
+
+    refl = np.array([[25.0, 40.0, 12.0], [18.0, 33.0, 20.0]], dtype=np.float32)
+    flags = np.ones_like(refl)  # rain everywhere
+    frame = mrms_publish.MRMSBundleFrame(
+        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
+        values=refl,
+        precip_flag_values=flags,
+    )
+
+    assert mrms_publish.write_mrms_radar_ptype_frame(
+        data_root=tmp_path,
+        run_id="20260327_1200z",
+        forecast_hour=0,
+        frame=frame,
+        build_grid_artifacts=False,
+    )
+    assert warp_resamplings == ["bilinear", "nearest"]
+
+
+def test_warp_frame_with_nan_uses_normalized_convolution_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bilinear warps of NaN-masked frames must go through the stacked
+    # values+weights (normalized convolution) path so echo edges get the
+    # weighted average of real data instead of GDAL's kernel-touches-NaN
+    # nodata (which erodes and stair-steps edges).
+    calls: list[np.ndarray] = []
+
+    def _warp(values, *args, **kwargs):
+        calls.append(np.asarray(values, dtype=np.float32))
+        return np.asarray(values, dtype=np.float32), from_origin(-101.0, 46.0, 1.0, 1.0)
+
+    monkeypatch.setattr(mrms_publish, "warp_to_target_grid", _warp)
+
+    values = np.array([[np.nan, 20.0], [30.0, np.nan]], dtype=np.float32)
+    frame = _warpable_frame(values)
+
+    warped = mrms_publish._warp_frame_to_target_grid(values, frame=frame)
+
+    assert len(calls) == 1
+    assert calls[0].ndim == 3 and calls[0].shape[0] == 2  # stacked values+weights
+    assert np.array_equal(calls[0][1], np.isfinite(values).astype(np.float32))
+    # Identity warp: fully-covered pixels keep their value, uncovered are NaN.
+    assert warped[0, 1] == np.float32(20.0)
+    assert warped[1, 0] == np.float32(30.0)
+    assert np.isnan(warped[0, 0]) and np.isnan(warped[1, 1])
+
+
+def test_warp_frame_nearest_with_nan_keeps_single_nodata_warp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _capture_warp_kwargs(monkeypatch)
+    values = np.array([[np.nan, 3.0]], dtype=np.float32)
+    frame = _warpable_frame(values)
+
+    mrms_publish._warp_frame_to_target_grid(values, frame=frame, resampling="nearest")
+
+    assert len(captured) == 1
+    assert captured[0]["resampling"] == "nearest"
+    assert np.isnan(captured[0]["src_nodata"])

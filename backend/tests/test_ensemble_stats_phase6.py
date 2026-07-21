@@ -5,6 +5,8 @@ See docs/ENSEMBLE_STATS_GRIDS_DESIGN.md. Synthetic arrays only — no network.
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
@@ -45,9 +47,9 @@ def test_classify_ensemble_var_id_grammar() -> None:
     assert classify_ensemble_var_id("tmp2m__m07") == ("tmp2m", "member", "m07")
     assert classify_ensemble_var_id("snowfall_total__p25") == ("snowfall_total", "percentile", 25)
     assert classify_ensemble_var_id("precip_total__prob_gt_0p5") == ("precip_total", "prob_gt", 0.5)
-    # prob_lt is RESERVED (stats design §3): recognized so nothing else
-    # claims the token, but flagged unimplemented for every consumer.
-    assert classify_ensemble_var_id("tmp2m__prob_lt_32p0") == ("tmp2m", "prob_lt_reserved", 32.0)
+    # prob_lt implemented with B2 (temperature "below" thresholds).
+    assert classify_ensemble_var_id("tmp2m__prob_lt_32p0") == ("tmp2m", "prob_lt", 32.0)
+    assert classify_ensemble_var_id("tmp2m__prob_lt_0p0") == ("tmp2m", "prob_lt", 0.0)
     # Non-ensemble ids pass through as None.
     assert classify_ensemble_var_id("tmp2m") is None
     assert classify_ensemble_var_id("precip_total__prob_gt_") is None
@@ -58,14 +60,18 @@ def test_classify_ensemble_var_id_grammar() -> None:
 def test_stats_descriptor_rollout_posture() -> None:
     gefs = ensemble_stats_descriptors(MODEL_REGISTRY["gefs"])
     # 6A (precip) gate passed 2026-07-08 -> 6B (snowfall) enabled; both carry
-    # the LOCKED §4.2 thresholds.
-    assert set(gefs) == {"precip_total", "snowfall_total"}
+    # the LOCKED §4.2 thresholds. B2 (2026-07-10) adds two-sided tmp2m on
+    # both models at once.
+    assert set(gefs) == {"precip_total", "snowfall_total", "tmp2m"}
     assert gefs["precip_total"]["percentiles"] == [10, 25, 50, 75, 90]
     assert gefs["precip_total"]["prob_thresholds"] == [0.10, 0.25, 0.50, 1.00, 1.50, 2.00]
     assert gefs["snowfall_total"]["prob_thresholds"] == [1, 3, 6, 12]
+    assert gefs["tmp2m"]["prob_lt_thresholds"] == [0, 20, 32]
+    assert gefs["tmp2m"]["prob_thresholds"] == [50, 70, 90, 100]
 
     eps = ensemble_stats_descriptors(MODEL_REGISTRY["eps"])
-    assert set(eps) == {"precip_total"}
+    assert set(eps) == {"precip_total", "tmp2m"}
+    assert eps["tmp2m"] == gefs["tmp2m"]
 
 
 def test_stats_descriptor_requires_enabled_and_products() -> None:
@@ -159,6 +165,57 @@ def test_prob_exceedance_counts_and_nan_pattern() -> None:
     assert np.array_equal(np.isfinite(pct[0]), np.isfinite(prob[0]))
 
 
+def test_prob_non_exceedance_counts_and_nan_pattern() -> None:
+    from backend.app.services.builder.stats_math import prob_non_exceedance
+
+    stack = np.full((4, 2, 2), np.nan, dtype=np.float32)
+    stack[:, 0, 0] = [10.0, 25.0, 33.0, 40.0]  # 4 valid
+    stack[:2, 0, 1] = [15.0, 18.0]             # 2 valid
+    stack[0, 1, 0] = 35.0                      # 1 valid
+    out = prob_non_exceedance(stack, [32.0, 20.0])
+    assert out[0, 0, 0] == pytest.approx(50.0)   # 2/4 < 32
+    assert out[1, 0, 0] == pytest.approx(25.0)   # 1/4 < 20
+    assert out[0, 0, 1] == pytest.approx(100.0)  # 2/2 < 32
+    assert out[0, 1, 0] == pytest.approx(0.0)    # 0/1 < 32
+    assert np.isnan(out[0, 1, 1])                # no valid members
+    # Strict '<' — a member exactly AT the threshold counts toward NEITHER
+    # direction (mirrors prob_exceedance's strict '>').
+    at = np.full((2, 1, 1), 32.0, dtype=np.float32)
+    assert prob_non_exceedance(at, [32.0])[0, 0, 0] == pytest.approx(0.0)
+    # NaN pattern identical to the percentile products.
+    stack2 = _member_stack()
+    pct = sorted_nanpercentile(stack2, [50])
+    prob = prob_non_exceedance(stack2, [15.0])
+    assert np.array_equal(np.isfinite(pct[0]), np.isfinite(prob[0]))
+
+
+def test_stats_product_ids_two_sided_and_sign_guard() -> None:
+    from backend.app.models.base import ensemble_stats_product_ids
+
+    descriptor = {
+        "percentiles": [50],
+        "prob_lt_thresholds": [32, 0, 20],
+        "prob_thresholds": [100, 50],
+        "enabled": True,
+    }
+    products = ensemble_stats_product_ids("tmp2m", descriptor)
+    # Percentiles, then cold rungs ascending, then heat rungs ascending.
+    assert list(products.items()) == [
+        ("p50", "tmp2m__p50"),
+        ("prob_lt_0p0", "tmp2m__prob_lt_0p0"),
+        ("prob_lt_20p0", "tmp2m__prob_lt_20p0"),
+        ("prob_lt_32p0", "tmp2m__prob_lt_32p0"),
+        ("prob_gt_50p0", "tmp2m__prob_gt_50p0"),
+        ("prob_gt_100p0", "tmp2m__prob_gt_100p0"),
+    ]
+    # The id grammar carries no sign: negative thresholds must fail loudly
+    # at descriptor time, not mint an unclassifiable id.
+    with pytest.raises(ValueError, match="Negative prob_lt"):
+        ensemble_stats_product_ids("tmp2m", {"prob_lt_thresholds": [-10]})
+    with pytest.raises(ValueError, match="Negative prob_gt"):
+        ensemble_stats_product_ids("tmp2m", {"prob_thresholds": [-0.5]})
+
+
 # ── Packing (stats design §6) ────────────────────────────────────────
 def test_percentile_packing_falls_back_to_mean_twin() -> None:
     from backend.app.services.grid import _PACKING_BY_MODEL_VAR, _packing_config, normalize_grid_pack_var_id
@@ -178,9 +235,14 @@ def test_probability_packing_explicit_generated_entries() -> None:
     assert grid._packing_config("eps", "precip_total__prob_gt_1p0") is not None
     # 6B: snowfall prob entries generate from its (now enabled) descriptor.
     assert grid._packing_config("gefs", "snowfall_total__prob_gt_6p0") is not None
+    # B2: tmp2m prob entries (both directions) generate from its descriptor.
+    assert grid._packing_config("gefs", "tmp2m__prob_gt_90p0") is not None
+    assert grid._packing_config("eps", "tmp2m__prob_lt_32p0") == {
+        "scale": 0.1, "offset": 0.0, "nodata": 65535, "units": "%",
+    }
     # Explicit entries only: a prob id no descriptor declares resolves to
-    # nothing (never a fallback) — tmp2m has no stats descriptor at all.
-    assert grid._packing_config("gefs", "tmp2m__prob_gt_90p0") is None
+    # nothing (never a fallback) — pwat has no stats descriptor at all.
+    assert grid._packing_config("gefs", "pwat__prob_gt_1p0") is None
 
 
 def test_probability_colormap_spec() -> None:
@@ -288,6 +350,131 @@ def test_stats_pass_end_to_end_manual_tally(tmp_path, stats_roster_plugin) -> No
     )
 
 
+def test_stats_pass_recomputes_frame_when_sidecar_is_missing(
+    tmp_path,
+    stats_roster_plugin,
+) -> None:
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        for fh in (6, 12):
+            _publish_member_precip(tmp_path, run_id, member, fh, 0.8)
+
+    first = stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+    assert first.counts == {stats_mod.STATUS_WRITTEN: 4}
+
+    staging = tmp_path / "staging" / "gefs" / run_id
+    sidecar = staging / "precip_total__p50" / "fh006.json"
+    frame = staging / "precip_total__p50" / "grid" / "fh006.l0.u16.bin"
+    meta = staging / "precip_total__p50" / "grid" / "fh006.l0.meta.json"
+    assert frame.is_file() and meta.is_file() and sidecar.is_file()
+    sidecar.unlink()
+
+    assert stats_mod.stats_pass_pending(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+    )
+    second = stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+
+    assert second.counts == {
+        stats_mod.STATUS_RESUMED: 3,
+        stats_mod.STATUS_WRITTEN: 1,
+    }
+    assert sidecar.is_file()
+    assert not stats_mod.stats_pass_pending(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+    )
+
+
+def test_stats_promote_pending_requires_complete_sidecars(
+    tmp_path,
+    stats_roster_plugin,
+) -> None:
+    import shutil
+
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        for fh in (6, 12):
+            _publish_member_precip(tmp_path, run_id, member, fh, 0.8)
+
+    first = stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+    assert first.counts == {stats_mod.STATUS_WRITTEN: 4}
+
+    staging = tmp_path / "staging" / "gefs" / run_id
+    sidecars = [
+        staging / var_id / f"fh{fh:03d}.json"
+        for var_id in ("precip_total__p50", "precip_total__prob_gt_0p5")
+        for fh in (6, 12)
+    ]
+    for sidecar in sidecars:
+        sidecar.unlink()
+
+    assert not stats_mod.stats_promote_pending(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+    )
+
+    repaired = stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+    assert repaired.counts == {stats_mod.STATUS_WRITTEN: 4}
+    assert stats_mod.stats_promote_pending(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+    )
+
+    published = tmp_path / "published" / "gefs" / run_id
+    shutil.copytree(staging, published, dirs_exist_ok=True)
+    assert not stats_mod.stats_promote_pending(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+    )
+
+    (published / "precip_total__p50" / "fh006.json").unlink()
+    assert stats_mod.stats_promote_pending(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+    )
+
+
 def test_stats_pass_completeness_gate_skips_partial_rosters(
     tmp_path, stats_roster_plugin,
 ) -> None:
@@ -314,8 +501,8 @@ def test_stats_pass_completeness_gate_skips_partial_rosters(
     assert summary.complete  # skipped-incomplete is not failure
     staging = tmp_path / "staging" / "gefs" / run_id
     assert not (staging / "precip_total__p50" / "grid" / "fh012.l0.u16.bin").exists()
-    # Pending excludes the partial fh — the pass has converged for now.
-    assert not stats_mod.stats_pass_pending(
+    # The partial fh drives bounded health-only passes until the alert threshold.
+    assert stats_mod.stats_pass_pending(
         plugin=stats_roster_plugin, model_id="gefs", run_id=run_id, data_root=tmp_path,
     )
 
@@ -333,6 +520,256 @@ def test_stats_pass_completeness_gate_skips_partial_rosters(
         stats_mod.STATUS_WRITTEN: 2,
         stats_mod.STATUS_RESUMED: 2,
     }
+
+
+def test_stats_pass_persists_and_clears_repeated_incomplete_roster_alert(
+    tmp_path, stats_roster_plugin,
+) -> None:
+    """A roster gap becomes visible after three full stats passes and the
+    durable warning disappears as soon as the missing member recovers."""
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        _publish_member_precip(tmp_path, run_id, member, 6, 0.8)
+    for member in ("m01", "m02"):
+        _publish_member_precip(tmp_path, run_id, member, 12, 0.8)
+
+    health_path = (
+        tmp_path / "status" / "ensemble_stats" / "gefs" / f"{run_id}.json"
+    )
+    for expected_passes in (1, 2, 3):
+        summary = stats_mod.run_stats_pass(
+            plugin=stats_roster_plugin,
+            model_id="gefs",
+            run_id=run_id,
+            data_root=tmp_path,
+            region="na",
+        )
+        assert summary.incomplete_units == [
+            {
+                "base_var": "precip_total",
+                "forecast_hour": 12,
+                "missing_members": ["control"],
+            }
+        ]
+        payload = json.loads(health_path.read_text())
+        assert payload["units"][0]["consecutive_passes"] == expected_passes
+        assert payload["units"][0]["alerting"] is (expected_passes >= 3)
+        assert stats_mod.stats_pass_pending(
+            plugin=stats_roster_plugin,
+            model_id="gefs",
+            run_id=run_id,
+            data_root=tmp_path,
+        ) is (expected_passes < 3)
+
+    _publish_member_precip(tmp_path, run_id, "control", 12, 0.8)
+    stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+    assert not health_path.exists()
+
+
+def test_stats_pass_persists_processing_error_streak(
+    tmp_path, stats_roster_plugin,
+) -> None:
+    """A fully present roster that cannot be processed must alert through
+    the same durable stats-health channel as a partial roster."""
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        _publish_member_precip(tmp_path, run_id, member, 6, 0.8)
+
+    broken_meta_path = (
+        tmp_path / "published" / "gefs" / run_id
+        / "precip_total__m01" / "grid" / "fh006.l0.meta.json"
+    )
+    broken_meta = json.loads(broken_meta_path.read_text())
+    valid_transform = broken_meta["transform"]
+    broken_meta["transform"] = [1.0, 0.0]
+    broken_meta_path.write_text(json.dumps(broken_meta))
+
+    health_path = (
+        tmp_path / "status" / "ensemble_stats" / "gefs" / f"{run_id}.json"
+    )
+    for expected_passes in (1, 2, 3):
+        summary = stats_mod.run_stats_pass(
+            plugin=stats_roster_plugin,
+            model_id="gefs",
+            run_id=run_id,
+            data_root=tmp_path,
+            region="na",
+        )
+        assert summary.failed_units == [
+            {
+                "base_var": "precip_total",
+                "forecast_hour": 6,
+                "failure_statuses": [stats_mod.STATUS_ERROR],
+            }
+        ]
+        payload = json.loads(health_path.read_text())
+        assert payload["units"] == [
+            {
+                "alerting": expected_passes >= 3,
+                "base_var": "precip_total",
+                "consecutive_passes": expected_passes,
+                "failure_statuses": [stats_mod.STATUS_ERROR],
+                "first_seen_at": payload["units"][0]["first_seen_at"],
+                "forecast_hour": 6,
+                "last_seen_at": payload["units"][0]["last_seen_at"],
+                "missing_members": [],
+            }
+        ]
+
+    broken_meta["transform"] = valid_transform
+    broken_meta_path.write_text(json.dumps(broken_meta))
+    recovered = stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+    assert recovered.complete
+    assert not health_path.exists()
+
+
+def test_stats_pass_persists_gate_failure_streak(
+    tmp_path, stats_roster_plugin, monkeypatch,
+) -> None:
+    """A persistent pre-encode rejection is visible instead of retrying
+    forever with no health signal."""
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        _publish_member_precip(tmp_path, run_id, member, 6, 0.8)
+    monkeypatch.setattr(
+        stats_mod, "check_pre_encode_value_sanity", lambda *_args, **_kwargs: False,
+    )
+
+    for _ in range(3):
+        summary = stats_mod.run_stats_pass(
+            plugin=stats_roster_plugin,
+            model_id="gefs",
+            run_id=run_id,
+            data_root=tmp_path,
+            region="na",
+        )
+        assert summary.failed_units == [
+            {
+                "base_var": "precip_total",
+                "forecast_hour": 6,
+                "failure_statuses": [stats_mod.STATUS_GATE_FAILED],
+            }
+        ]
+
+    health_path = (
+        tmp_path / "status" / "ensemble_stats" / "gefs" / f"{run_id}.json"
+    )
+    unit = json.loads(health_path.read_text())["units"][0]
+    assert unit["failure_statuses"] == [stats_mod.STATUS_GATE_FAILED]
+    assert unit["missing_members"] == []
+    assert unit["consecutive_passes"] == 3
+    assert unit["alerting"] is True
+
+
+def test_stats_pass_does_not_alert_for_future_hour_with_zero_member_frames(
+    tmp_path, stats_roster_plugin,
+) -> None:
+    """A wholly absent roster is normal future work; only a partial roster
+    is evidence that one or more members may be wedged."""
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        _publish_member_precip(tmp_path, run_id, member, 6, 0.8)
+
+    for _ in range(3):
+        summary = stats_mod.run_stats_pass(
+            plugin=stats_roster_plugin,
+            model_id="gefs",
+            run_id=run_id,
+            data_root=tmp_path,
+            region="na",
+        )
+        assert summary.incomplete_units == []
+
+    health_path = (
+        tmp_path / "status" / "ensemble_stats" / "gefs" / f"{run_id}.json"
+    )
+    assert not health_path.exists()
+
+
+def test_stats_health_persistence_failure_does_not_block_stats_publish(
+    tmp_path, stats_roster_plugin, monkeypatch,
+) -> None:
+    from backend.app.services.builder import stats as stats_mod
+
+    run_id = "20260706_00z"
+    for member in ("m01", "m02", "control"):
+        for fh in (6, 12):
+            _publish_member_precip(tmp_path, run_id, member, fh, 0.8)
+
+    def _fail_health_write(**_kwargs):
+        raise OSError("status filesystem unavailable")
+
+    monkeypatch.setattr(
+        stats_mod, "update_ensemble_stats_health", _fail_health_write,
+    )
+    summary = stats_mod.run_stats_pass(
+        plugin=stats_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+    )
+
+    assert summary.counts == {stats_mod.STATUS_WRITTEN: 4}
+    assert summary.complete
+
+
+def test_preempted_stats_pass_does_not_advance_incomplete_roster_alert(
+    tmp_path,
+) -> None:
+    from backend.app.services.ensemble_stats_health import (
+        load_ensemble_stats_health,
+        update_ensemble_stats_health,
+    )
+
+    unit = {
+        "base_var": "precip_total",
+        "forecast_hour": 12,
+        "missing_members": ["control"],
+    }
+    update_ensemble_stats_health(
+        data_root=tmp_path,
+        model_id="gefs",
+        run_id="20260706_00z",
+        incomplete_units=[unit],
+        pass_complete=True,
+        now_ts=100,
+    )
+    update_ensemble_stats_health(
+        data_root=tmp_path,
+        model_id="gefs",
+        run_id="20260706_00z",
+        incomplete_units=[unit],
+        pass_complete=False,
+        now_ts=200,
+    )
+
+    payload = load_ensemble_stats_health(
+        tmp_path, "gefs", "20260706_00z",
+    )
+    assert payload is not None
+    assert payload["units"][0]["consecutive_passes"] == 1
+    assert payload["units"][0]["last_seen_at"] == 100
 
 
 def test_stats_pass_preemption(tmp_path, stats_roster_plugin) -> None:
@@ -406,10 +843,26 @@ def test_capabilities_products_payload() -> None:
     snow_products = {p["key"]: p for p in snow_payload["ensemble"]["products"]}
     assert snow_products["prob_gt_6p0"]["label"] == 'P(> 6")'
     assert snow_products["prob_gt_6p0"]["long_label"] == 'Probability of snowfall > 6"'
-    # No stats descriptor at all -> unchanged shape.
+    # B2: tmp2m products are two-sided with degree-Fahrenheit labels,
+    # ordered mean, percentiles, cold rungs ascending, heat rungs ascending.
     tmp = MODEL_REGISTRY["gefs"].get_var_capability("tmp2m")
     tmp_payload = serialize_variable_capability("gefs", tmp)
-    assert "products" not in tmp_payload.get("ensemble", {})
+    tmp_products = tmp_payload["ensemble"]["products"]
+    tmp_by_key = {p["key"]: p for p in tmp_products}
+    assert tmp_by_key["prob_lt_32p0"]["label"] == "P(< 32\u00b0F)"
+    assert tmp_by_key["prob_lt_32p0"]["long_label"] == "Probability of temperature < 32\u00b0F"
+    assert tmp_by_key["prob_lt_32p0"]["overlay_label"] == "Prob. < 32\u00b0F"
+    assert tmp_by_key["prob_gt_100p0"]["label"] == "P(> 100\u00b0F)"
+    assert tmp_by_key["prob_lt_32p0"]["var_id"] == "tmp2m__prob_lt_32p0"
+    assert [p["key"] for p in tmp_products] == [
+        "mean", "p10", "p25", "p50", "p75", "p90",
+        "prob_lt_0p0", "prob_lt_20p0", "prob_lt_32p0",
+        "prob_gt_50p0", "prob_gt_70p0", "prob_gt_90p0", "prob_gt_100p0",
+    ]
+    # No stats descriptor at all -> unchanged shape.
+    pwat = MODEL_REGISTRY["gefs"].get_var_capability("pwat")
+    pwat_payload = serialize_variable_capability("gefs", pwat)
+    assert "products" not in pwat_payload.get("ensemble", {})
 
 
 def test_stats_pass_writes_frame_sidecars(tmp_path, stats_roster_plugin) -> None:

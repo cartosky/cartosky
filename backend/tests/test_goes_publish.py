@@ -35,6 +35,9 @@ def _write_test_value_raster(path: Path, values: np.ndarray) -> None:
 
 
 def _configure_publish(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests exercise the retained legacy COG publish flow: opt the model
+    # out of the (now default) binary-only substrate.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "goes-east")
     monkeypatch.setattr(goes_publish, "grid_build_enabled", lambda: False)
     monkeypatch.setattr(
         goes_publish,

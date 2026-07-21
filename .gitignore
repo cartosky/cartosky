@@ -28,7 +28,9 @@ frontend/tests/*
 frontend/tests/e2e/*
 !frontend/tests/e2e/grid-smoke.spec.ts
 !frontend/tests/e2e/compare-map-regressions.spec.ts
+!frontend/tests/e2e/compare-alignment.spec.ts
 !frontend/tests/e2e/forecast-current-tab.spec.ts
+!frontend/tests/e2e/site-navigation.spec.ts
 !frontend/playwright.config.ts
 
 # Dependencies

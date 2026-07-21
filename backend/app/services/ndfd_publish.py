@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from app.config import grid_build_enabled
+from app.config import binary_sampling_enabled, grid_build_enabled
 from app.models.ndfd import NDFD_MODEL
 from app.services.builder.colorize import colorize_metadata
 from app.services.builder.cog_writer import warp_to_target_grid, write_value_cog
@@ -74,16 +74,17 @@ def publish_ndfd_bundle(
     for var_id, frames in _iter_frame_batches(frames_by_var=frames_by_var, frame_batches=frame_batches):
         if not frames:
             continue
-        published_vars.add(var_id)
         for fh, frame in enumerate(sorted(frames, key=lambda item: item.valid_time.astimezone(timezone.utc))):
-            _write_ndfd_frame(
+            if not _write_ndfd_frame(
                 data_root=data_root,
                 run_id=run_id,
                 var_id=var_id,
                 forecast_hour=fh,
                 issue_time=issue_time,
                 frame=frame,
-            )
+            ):
+                continue
+            published_vars.add(var_id)
             targets.append((var_id, fh))
             frame_count += 1
             frame_valid_time = frame.valid_time.astimezone(timezone.utc)
@@ -162,7 +163,10 @@ def _write_ndfd_frame(
     forecast_hour: int,
     issue_time: datetime,
     frame: NDFDSourceField,
-) -> None:
+) -> bool:
+    """Write one frame's artifacts. Returns False when the enforced pre-encode
+    gate rejected the frame (nothing written), mirroring how build_frame
+    signals a failed frame to the scheduler via status rather than raising."""
     fh_str = f"fh{int(forecast_hour):03d}"
     staging_dir = data_root / "staging" / NDFD_MODEL_ID / run_id / var_id
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -182,27 +186,32 @@ def _write_ndfd_frame(
         raise ValueError(f"Missing NDFD color map registration for {var_id}")
     var_spec_colormap = get_color_map_spec(str(var_capability.color_map_id))
     var_spec_model = NDFD_MODEL.get_var(var_id)
+    # Pre-encode gate (COG->binary sampling migration): the check itself runs
+    # on every frame. For a binary-sampling model (the default; a
+    # CARTOSKY_COG_SAMPLING_MODELS opt-out disables it) it is ENFORCED —
+    # failure (or a gate error) rejects the frame before ANY artifact is
+    # written, matching pipeline.py's binary_only branch. Otherwise it stays
+    # the Phase C shadow gate: log-only, frame governed by the COG path.
+    binary_only = binary_sampling_enabled(NDFD_MODEL_ID)
     if check_pre_encode_value_sanity is not None:
-        # Phase C shadow gate (COG->binary sampling migration): log-only on
-        # every frame. Enforcement + the value-COG skip are Phase 4's
-        # separate, allowlist-gated step, gated on the shadow evidence this
-        # logging accumulates.
         try:
-            if not check_pre_encode_value_sanity(
+            gate_ok = check_pre_encode_value_sanity(
                 values,
                 var_spec_colormap,
                 var_spec_model=var_spec_model,
                 var_capability=var_capability,
                 label=f"{NDFD_MODEL_ID}/{var_id}/fh{int(forecast_hour):03d}",
-            ):
-                logger.warning(
-                    "Phase C shadow gate failed: pre-encode value sanity "
-                    "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+            )
+        except Exception:
+            if binary_only:
+                logger.exception(
+                    "Pre-encode sanity gate errored — rejecting frame "
+                    "model=%s var=%s fh%03d — frame not published",
                     NDFD_MODEL_ID,
                     var_id,
                     int(forecast_hour),
                 )
-        except Exception:
+                return False
             logger.exception(
                 "Phase C shadow gate errored: pre-encode value sanity "
                 "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
@@ -210,8 +219,35 @@ def _write_ndfd_frame(
                 var_id,
                 int(forecast_hour),
             )
+            gate_ok = True
+        if not gate_ok:
+            if binary_only:
+                logger.error(
+                    "Pre-encode sanity gate rejected frame model=%s var=%s "
+                    "fh%03d — frame not published",
+                    NDFD_MODEL_ID,
+                    var_id,
+                    int(forecast_hour),
+                )
+                return False
+            logger.warning(
+                "Phase C shadow gate failed: pre-encode value sanity "
+                "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                NDFD_MODEL_ID,
+                var_id,
+                int(forecast_hour),
+            )
     colorize_meta = colorize_metadata(values, str(var_capability.color_map_id), meta_var_key=var_id)
-    write_value_cog(values, value_path, model=NDFD_MODEL_ID, region=NDFD_REGION_ID)
+    if binary_only:
+        # Value COG retired for binary-sampling models: the grid binary
+        # (written below) serves rendering and sampling, and the enforced
+        # gate above already applied the value-quality gate.
+        logger.info(
+            "Value COG write skipped (model=%s is binary-only)",
+            NDFD_MODEL_ID,
+        )
+    else:
+        write_value_cog(values, value_path, model=NDFD_MODEL_ID, region=NDFD_REGION_ID)
 
     sidecar = _build_sidecar_json(
         model=NDFD_MODEL_ID,
@@ -247,6 +283,7 @@ def _write_ndfd_frame(
             transform=dst_transform,
             projection="EPSG:3857",
         )
+    return True
 
 
 def _warp_frame_to_target_grid(frame: NDFDSourceField) -> tuple[np.ndarray, Any]:

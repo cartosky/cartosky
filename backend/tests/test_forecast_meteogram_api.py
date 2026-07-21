@@ -166,6 +166,10 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     _publish_tmp2m(published_root, manifests_root, "gfs", run_id)
     _publish_tmp2m(published_root, manifests_root, "ecmwf", run_id)
 
+    # These fixtures publish COG-only frames: opt the fixture models out of
+    # the (now default) binary-only substrate.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs,ecmwf")
+
     monkeypatch.setattr(main_module, "DATA_ROOT", data_root)
     monkeypatch.setattr(main_module, "MANIFESTS_ROOT", manifests_root)
     monkeypatch.setattr(main_module, "PUBLISHED_ROOT", published_root)
@@ -376,6 +380,91 @@ async def test_meteogram_pinned_unknown_run_falls_back(client: httpx.AsyncClient
     assert gfs["status"] == "ok"
 
 
+def test_pinned_probability_validation_anchors_to_base_variable() -> None:
+    helper = getattr(
+        main_module.forecast_page_service,
+        "_pinned_run_validation_variables",
+        None,
+    )
+    assert helper is not None
+    probability_vars = [
+        "precip_total__prob_gt_0p1",
+        "precip_total__prob_gt_0p25",
+        "precip_total__prob_gt_0p5",
+        "precip_total__prob_gt_1p0",
+        "precip_total__prob_gt_1p5",
+        "precip_total__prob_gt_2p0",
+    ]
+    assert helper(probability_vars) == [*probability_vars, "precip_total"]
+    assert helper(["tmp2m"]) == ["tmp2m"]
+
+
+async def test_pinned_probability_request_stays_on_base_complete_run(
+    client: httpx.AsyncClient,
+) -> None:
+    older_run = "20260306_00z"
+    newer_run = "20260306_06z"
+    base_var = "precip_total"
+    probability_vars = [
+        "precip_total__prob_gt_0p1",
+        "precip_total__prob_gt_0p25",
+        "precip_total__prob_gt_0p5",
+        "precip_total__prob_gt_1p0",
+        "precip_total__prob_gt_1p5",
+        "precip_total__prob_gt_2p0",
+    ]
+    _publish_tmp2m(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gefs",
+        older_run,
+        set_latest=False,
+    )
+    _publish_variable(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gefs",
+        older_run,
+        base_var,
+        "in",
+    )
+    for probability_var in probability_vars:
+        _publish_variable(
+            main_module.PUBLISHED_ROOT,
+            main_module.MANIFESTS_ROOT,
+            "gefs",
+            older_run,
+            probability_var,
+            "%",
+        )
+    _publish_tmp2m(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gefs",
+        newer_run,
+        set_latest=True,
+    )
+    _publish_variable(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gefs",
+        newer_run,
+        base_var,
+        "in",
+    )
+    _reset_main_caches()
+
+    body = _body(["gefs"], probability_vars)
+    body["pinned_runs"] = {"gefs": newer_run}
+    response = await client.post("/api/v4/forecast/meteogram", json=body)
+
+    assert response.status_code == 200
+    gefs = response.json()["series"]["gefs"]
+    assert gefs["run_id"] == newer_run
+    assert gefs["status"] == "partial"
+    assert all(gefs["variables"][var]["points"] is None for var in probability_vars)
+
+
 async def test_meteogram_no_complete_run_is_unavailable(client: httpx.AsyncClient) -> None:
     # nam has only a building run (2 of 10 frames) -> no complete run -> unavailable.
     _publish_tmp2m(
@@ -476,8 +565,8 @@ async def test_meteogram_binary_allowlist_switches_substrate_and_cache_key(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Phase F Step 2: CARTOSKY_BINARY_SAMPLING_MODELS routes allowlisted models
-    # to the grid-binary sampler. Publish gfs tmp2m binaries whose value (5.0)
+    # Post-inversion: binary is the default; CARTOSKY_COG_SAMPLING_MODELS is
+    # the opt-out that routes a model back to the COG sampler. Publish gfs tmp2m binaries whose value (5.0)
     # differs from the COGs (1.3) so the substrate actually serving the payload
     # is observable, then prove: empty allowlist -> COG values; allowlist=gfs ->
     # binary values for gfs only, WITHOUT clearing the meteogram cache in
@@ -508,9 +597,9 @@ async def test_meteogram_binary_allowlist_switches_substrate_and_cache_key(
         points = first_payload["series"][model]["variables"]["tmp2m"]["points"]
         assert all(p["value"] == TEST_VALUE for p in points)
 
-    # Allowlist gfs (test-local only): gfs flips to the binary substrate, ecmwf
-    # in the same request stays on the COG path.
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gfs")
+    # Drop gfs from the opt-out (test-local only): gfs flips to the binary
+    # substrate, ecmwf in the same request stays on the COG path.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "ecmwf")
     second = await client.post("/api/v4/forecast/meteogram", json=body)
     assert second.status_code == 200
     second_payload = second.json()
@@ -521,9 +610,9 @@ async def test_meteogram_binary_allowlist_switches_substrate_and_cache_key(
     ecmwf_points = second_payload["series"]["ecmwf"]["variables"]["tmp2m"]["points"]
     assert all(p["value"] == TEST_VALUE for p in ecmwf_points)
 
-    # Back to empty: the original "cog" cache key must be unchanged by all of
-    # the above — this request is a cache hit on the first payload, verbatim.
-    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS")
+    # Back to both opted out: the original "cog" cache key must be unchanged by
+    # all of the above — this request is a cache hit on the first payload, verbatim.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs,ecmwf")
     third = await client.post("/api/v4/forecast/meteogram", json=body)
     assert third.status_code == 200
     assert third.json() == first_payload
@@ -545,6 +634,14 @@ async def test_meteogram_include_members_contract(
 
     run_id = "20260306_00z"
     _publish_tmp2m(main_module.PUBLISHED_ROOT, main_module.MANIFESTS_ROOT, "gefs", run_id)
+    _publish_variable(
+        main_module.PUBLISHED_ROOT,
+        main_module.MANIFESTS_ROOT,
+        "gefs",
+        run_id,
+        "tmp850",
+        "C",
+    )
     run_root = main_module.PUBLISHED_ROOT / "gefs" / run_id
     transform = from_origin(-101.0, 46.0, 1.0, 1.0)
     for fh in FRAME_HOURS:
@@ -554,6 +651,15 @@ async def test_meteogram_include_members_contract(
             var="tmp2m__mean",
             fh=fh,
             values=np.full((3, 3), 5.0, dtype=np.float32),
+            transform=transform,
+            projection="EPSG:4326",
+        )
+        grid_module.write_grid_frames_for_run_root(
+            run_root=run_root,
+            model="gefs",
+            var="tmp850__mean",
+            fh=fh,
+            values=np.full((3, 3), -5.0, dtype=np.float32),
             transform=transform,
             projection="EPSG:4326",
         )
@@ -569,10 +675,21 @@ async def test_meteogram_include_members_contract(
                 transform=transform,
                 projection="EPSG:4326",
             )
+    for member_var, value in (("tmp850__m01", -4.0), ("tmp850__control", -6.0)):
+        for fh in FRAME_HOURS:
+            write_slim_grid_frame_for_run_root(
+                run_root=run_root,
+                model="gefs",
+                var=member_var,
+                fh=fh,
+                values=np.full((3, 3), value, dtype=np.float32),
+                transform=transform,
+                projection="EPSG:4326",
+            )
 
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
 
-    body = _body(["gefs"], ["tmp2m"])
+    body = _body(["gefs"], ["tmp2m", "tmp850"])
     body["include_members"] = True
     response = await client.post("/api/v4/forecast/meteogram", json=body)
     assert response.status_code == 200
@@ -587,6 +704,14 @@ async def test_meteogram_include_members_contract(
     assert all(p["valid_time"] for p in members["m01"]["points"])
     assert [p["value"] for p in members["control"]["points"]] == [4.0] * len(FRAME_HOURS)
     assert members["m02"]["points"] is None
+
+    tmp850_payload = response.json()["series"]["gefs"]["variables"]["tmp850"]
+    tmp850_members = tmp850_payload["members"]
+    assert tmp850_payload["units"] == "C"
+    assert tmp850_members["mean"]["points"] == tmp850_payload["points"]
+    assert [p["value"] for p in tmp850_members["m01"]["points"]] == [-4.0] * len(FRAME_HOURS)
+    assert [p["value"] for p in tmp850_members["control"]["points"]] == [-6.0] * len(FRAME_HOURS)
+    assert tmp850_members["m02"]["points"] is None
 
     # include_members omitted -> no members key, and a distinct cache entry
     # (the cache key already varies by the flag).
@@ -2014,7 +2139,7 @@ async def test_meteogram_members_prefers_members_ready_run(
         run_root=older_root, model="gefs", run=older, variables=("tmp2m__m01",),
     )
 
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
 
     body = _body(["gefs"], ["tmp2m"])
     body["include_members"] = True

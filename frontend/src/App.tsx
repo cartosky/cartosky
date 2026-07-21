@@ -3464,12 +3464,46 @@ export default function App() {
         }
         setRun(nextRun);
 
-        setRunManifest(manifestData);
         const baseCapabilityVars = selectedCapabilityVars;
+        // Two-phase publishes (e.g. MRMS) update the LATEST pointer before
+        // async postprocessing adds supplemental variables (recent precip) to
+        // the new run's manifest. If the selected variable is a buildable
+        // capability variable that this manifest transiently lacks, fall back
+        // to the newest previous run whose manifest still has it so frames
+        // keep rendering — never silently swap to the model default.
+        const keptVariable = variableRef.current;
+        const keptCapabilityEntry = keptVariable
+          ? baseCapabilityVars.find((entry) => entry.id === keptVariable)
+          : undefined;
+        if (
+          keptCapabilityEntry
+          && nextRun === "latest"
+          && manifestData?.variables
+          && !manifestData.variables[keptVariable]
+        ) {
+          const resolvedManifestRunId = manifestData.run;
+          const fallbackRunIds = runData
+            .filter((runId) => runId && runId !== resolvedManifestRunId)
+            .slice(0, 2);
+          for (const fallbackRunId of fallbackRunIds) {
+            const fallbackManifest = await fetchManifest(model, fallbackRunId, region, ensembleView, { signal: controller.signal }).catch(() => null);
+            if (controller.signal.aborted) {
+              return;
+            }
+            if (fallbackManifest?.variables?.[keptVariable]) {
+              manifestData = fallbackManifest;
+              break;
+            }
+          }
+        }
+        setRunManifest(manifestData);
         const resolvedVars = manifestData
           ? capabilityVarsForManifest(manifestData.variables, baseCapabilityVars, { modelId: model })
           : baseCapabilityVars;
-        const variableOptions = makeVariableOptions(resolvedVars, model);
+        const resolvedVarsWithKept = keptCapabilityEntry && !resolvedVars.some((entry) => entry.id === keptVariable)
+          ? [...resolvedVars, keptCapabilityEntry]
+          : resolvedVars;
+        const variableOptions = makeVariableOptions(resolvedVarsWithKept, model);
         const variableIds = variableOptions.map((opt) => opt.value);
         const nextVar = pickDefaultVariableForModel(model, selectedModelCapability, variableIds);
         setVariables(variableOptions);
@@ -3905,7 +3939,18 @@ export default function App() {
             });
             const capabilityVars = capabilityVarsForManifest(manifestData.variables, selectedCapabilityVars, { modelId: model });
             if (capabilityVars.length > 0) {
-              const variableOptions = makeVariableOptions(capabilityVars, model);
+              // Keep the selected variable when a fresher manifest transiently
+              // lacks it (two-phase publish window) — frameRows are preserved
+              // below because the manifest has no frame list for it, so the
+              // current frames keep rendering until postprocessing lands.
+              const keptVariable = variableRef.current;
+              const keptCapabilityEntry = keptVariable && !capabilityVars.some((entry) => entry.id === keptVariable)
+                ? selectedCapabilityVars.find((entry) => entry.id === keptVariable)
+                : undefined;
+              const capabilityVarsWithKept = keptCapabilityEntry
+                ? [...capabilityVars, keptCapabilityEntry]
+                : capabilityVars;
+              const variableOptions = makeVariableOptions(capabilityVarsWithKept, model);
               const variableIds = variableOptions.map((opt) => opt.value);
               const nextVar = pickDefaultVariableForModel(model, selectedModelCapability, variableIds);
               setVariables(variableOptions);

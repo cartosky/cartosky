@@ -526,7 +526,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
           <div
             aria-hidden="true"
             className={cn(
-              "viewer-mobile-surface pointer-events-none absolute inset-0",
+              "viewer-mobile-control-surface pointer-events-none absolute inset-0",
               isDesktopLayout ? "rounded-2xl" : isTabletTouchLayout ? "rounded-3xl" : "rounded-[1.6rem]"
             )}
             style={{ willChange: "transform" }}

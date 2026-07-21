@@ -254,6 +254,14 @@ def _discrete_levels_colors(var_key: str, spec: dict[str, Any]) -> tuple[list[fl
         raise ValueError(
             f"Discrete spec for {var_key!r} must have at least 2 levels, got {len(levels)}"
         )
+    # Boundary tables use N-1 colors for N interval edges; lower-bound tables
+    # use N colors for N thresholds. Reject every other shape before digitize
+    # can silently collapse extra bins into the last color.
+    if len(colors) not in {len(levels), len(levels) - 1}:
+        raise ValueError(
+            f"Discrete spec for {var_key!r} must have colors length == levels or levels-1 "
+            f"(got colors={len(colors)} levels={len(levels)})"
+        )
     return levels, colors
 
 

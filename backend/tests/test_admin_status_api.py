@@ -234,6 +234,7 @@ def isolate_environment(tmp_path: Path) -> None:
     admin_telemetry.TELEMETRY_DB_PATH = telemetry_db
     admin_telemetry._db_initialized = False
     admin_telemetry.clear_operational_status_cache()
+    main_module.frames_404_telemetry.reset()
 
     main_module.DATA_ROOT = data_root
     main_module.PUBLISHED_ROOT = data_root / "published"
@@ -338,6 +339,74 @@ async def test_status_results_reports_ongoing_latest_run_and_artifact_failures(
     assert artifact_row["sample_paths"]
 
 
+async def test_status_results_surfaces_accumulation_step_gaps(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    real_datetime = admin_telemetry.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return real_datetime(2026, 4, 17, 19, 0, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+    monkeypatch.setattr(
+        main_module.time,
+        "time",
+        lambda: FrozenDateTime.now(admin_telemetry.timezone.utc).timestamp(),
+    )
+
+    _seed_run(
+        main_module.DATA_ROOT,
+        model_id="gfs",
+        run_id="20260417_18z",
+        variables={"precip_total": [0, 6]},
+        last_updated="2026-04-17T18:45:00Z",
+    )
+    sidecar_path = (
+        main_module.DATA_ROOT
+        / "published"
+        / "gfs"
+        / "20260417_18z"
+        / "precip_total"
+        / "fh006.json"
+    )
+    sidecar = json.loads(sidecar_path.read_text())
+    sidecar.update(
+        {
+            "quality": "degraded",
+            "quality_flags": ["accum_step_gap"],
+            "quality_flag_details": {
+                "accum_step_gap": {"affected_pixel_percentage": 12.5}
+            },
+        }
+    )
+    sidecar_path.write_text(json.dumps(sidecar))
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=24h&include_details=true",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    row = next(item for item in response.json()["results"] if item["model_id"] == "gfs")
+    assert row["status"] == "warning"
+    assert row["issue_type"] == "accum_step_gap"
+    assert row["accum_step_gap_variable_count"] == 1
+    assert row["accum_step_gap_max_affected_pixel_percentage"] == 12.5
+    assert row["accum_step_gap_samples"] == [
+        {
+            "variable_id": "precip_total",
+            "forecast_hour": 6,
+            "affected_pixel_percentage": 12.5,
+        }
+    ]
+
+
 async def test_status_results_treats_grid_runtime_artifacts_as_healthy_without_legacy_value_files(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -436,6 +505,120 @@ async def test_status_results_reports_zero_frame_grid_variable_as_incomplete_not
     assert incomplete_row["unreadable_artifact_count"] == 0
     assert incomplete_row["incomplete_variable_count"] == 1
     assert incomplete_row["incomplete_variables"] == ["ptype_intensity"]
+
+
+async def test_status_results_surfaces_persistent_ensemble_stats_roster_alert(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    real_datetime = admin_telemetry.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return real_datetime(2026, 7, 14, 18, 0, tzinfo=tz)
+
+    monkeypatch.setattr(admin_telemetry, "datetime", FrozenDateTime)
+    frozen_ts = FrozenDateTime.now(admin_telemetry.timezone.utc).timestamp()
+    monkeypatch.setattr(main_module.time, "time", lambda: frozen_ts)
+
+    run_id = "20260714_12z"
+    _write_manifest(
+        main_module.DATA_ROOT / "manifests" / "gefs" / f"{run_id}.json",
+        model_id="gefs",
+        run_id=run_id,
+        variables={"tmp2m": [0, 6]},
+        last_updated="2026-07-14T17:30:00Z",
+    )
+    _write_grid_runtime(
+        main_module.DATA_ROOT,
+        model_id="gefs",
+        run_id=run_id,
+        variable_id="tmp2m__mean",
+        hours=[0, 6],
+    )
+    health_path = (
+        main_module.DATA_ROOT
+        / "status"
+        / "ensemble_stats"
+        / "gefs"
+        / f"{run_id}.json"
+    )
+    health_path.parent.mkdir(parents=True, exist_ok=True)
+    health_path.write_text(
+        json.dumps(
+            {
+                "contract_version": "1.0",
+                "model_id": "gefs",
+                "run_id": run_id,
+                "updated_at": int(frozen_ts) - 60,
+                "alert_after_passes": 3,
+                "units": [
+                    {
+                        "base_var": "precip_total",
+                        "forecast_hour": 120,
+                        "missing_members": ["m17"],
+                        "consecutive_passes": 3,
+                        "first_seen_at": int(frozen_ts) - 600,
+                        "last_seen_at": int(frozen_ts) - 60,
+                        "alerting": True,
+                    }
+                ],
+            }
+        )
+    )
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=gefs&include_details=true",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["results"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "warning"
+    assert rows[0]["issue_type"] == "stats_incomplete"
+    assert rows[0]["stats_incomplete_alert_count"] == 1
+    assert rows[0]["summary"] == (
+        "1 ensemble stats unit has remained incomplete across at least 3 stats passes."
+    )
+    assert rows[0]["stats_incomplete_units"] == [
+        {
+            "base_var": "precip_total",
+            "forecast_hour": 120,
+            "missing_members": ["m17"],
+            "consecutive_passes": 3,
+            "first_seen_at": int(frozen_ts) - 600,
+            "last_seen_at": int(frozen_ts) - 60,
+            "alerting": True,
+        }
+    ]
+
+    # The dedicated stats fields remain available without hiding a more
+    # severe artifact error on the same run.
+    grid_frame = (
+        main_module.DATA_ROOT
+        / "published"
+        / "gefs"
+        / run_id
+        / "tmp2m__mean"
+        / "grid"
+        / "fh006.l0.u16.bin"
+    )
+    grid_frame.unlink()
+    admin_telemetry.clear_operational_status_cache()
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d&model=gefs&include_details=true",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+    row = response.json()["results"][0]
+    assert row["status"] == "error"
+    assert row["issue_type"] == "artifact_failure"
+    assert row["stats_incomplete_alert_count"] == 1
+    assert row["stats_incomplete_units"][0]["base_var"] == "precip_total"
 
 
 async def test_status_results_suppresses_latest_artifact_failures_while_runtime_artifacts_pending(
@@ -940,3 +1123,103 @@ async def test_status_results_treats_vector_only_spc_run_as_valid_bundle(client:
 async def test_status_results_requires_admin(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v4/admin/status/results?window=30d")
     assert response.status_code == 401
+
+
+def _seed_grid_run(*, model_id: str, run_id: str, variable_id: str, hours: list[int]) -> Path:
+    _write_manifest(
+        main_module.DATA_ROOT / "manifests" / model_id / f"{run_id}.json",
+        model_id=model_id,
+        run_id=run_id,
+        variables={variable_id: hours},
+    )
+    _write_grid_runtime(
+        main_module.DATA_ROOT,
+        model_id=model_id,
+        run_id=run_id,
+        variable_id=variable_id,
+        hours=hours,
+    )
+    return main_module.DATA_ROOT / "published" / model_id / run_id / variable_id / "grid"
+
+
+def _frames_404_summary() -> dict:
+    return main_module.frames_404_telemetry.load_frames_404_summary(main_module.DATA_ROOT)
+
+
+async def test_grid_file_stale_run_404_is_classified_and_unchanged(
+    client: httpx.AsyncClient,
+) -> None:
+    # Valid-format run id that never published: run resolution fails (class 2.2).
+    response = await client.get("/api/v4/grid/hrrr/20260714_00z/tmp2m/fh006.l0.u16.bin")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Run not found"}
+
+    totals = _frames_404_summary()["totals_by_reason"]
+    assert totals == {"stale_run": 1}
+
+
+async def test_grid_file_swap_gap_404_when_listed_but_missing_on_disk(
+    client: httpx.AsyncClient,
+) -> None:
+    grid_dir = _seed_grid_run(model_id="hrrr", run_id="20260714_12z", variable_id="tmp2m", hours=[0, 6])
+    # File listed in the manifest but absent from disk: the 2.1 swap-gap signature.
+    (grid_dir / "fh006.l0.u16.bin").unlink()
+
+    response = await client.get("/api/v4/grid/hrrr/20260714_12z/tmp2m/fh006.l0.u16.bin")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Grid artifact not found"}
+
+    summary = _frames_404_summary()
+    assert summary["totals_by_reason"] == {"swap_gap": 1}
+    sample = summary["recent"][0]
+    assert sample["reason"] == "swap_gap"
+    assert sample["run_resolved"] == "20260714_12z"
+    assert sample["seconds_since_publish"] is not None
+
+
+async def test_grid_file_not_published_404_when_missing_and_unlisted(
+    client: httpx.AsyncClient,
+) -> None:
+    _seed_grid_run(model_id="hrrr", run_id="20260714_12z", variable_id="tmp2m", hours=[0, 6])
+    # Never built, not listed: benign — client asked for a frame that does not exist.
+    response = await client.get("/api/v4/grid/hrrr/20260714_12z/tmp2m/fh099.l0.u16.bin")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Grid artifact not found"}
+
+    assert _frames_404_summary()["totals_by_reason"] == {"not_published": 1}
+
+
+async def test_grid_file_manifest_skew_404_when_present_but_unlisted(
+    client: httpx.AsyncClient,
+) -> None:
+    grid_dir = _seed_grid_run(model_id="hrrr", run_id="20260714_12z", variable_id="tmp2m", hours=[0, 6])
+    # File present on disk but absent from the manifest: reverse-direction skew.
+    (grid_dir / "fh012.l0.u16.bin").write_bytes(b"\x00\x00" * 4)
+
+    response = await client.get("/api/v4/grid/hrrr/20260714_12z/tmp2m/fh012.l0.u16.bin")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Grid artifact not listed in manifest"}
+
+    assert _frames_404_summary()["totals_by_reason"] == {"manifest_skew": 1}
+
+
+async def test_status_results_includes_frames_404_section(
+    client: httpx.AsyncClient,
+) -> None:
+    _create_session(session_id="admin-session", member_id=42, name="Admin")
+
+    grid_dir = _seed_grid_run(model_id="hrrr", run_id="20260714_12z", variable_id="tmp2m", hours=[0, 6])
+    (grid_dir / "fh006.l0.u16.bin").unlink()
+    await client.get("/api/v4/grid/hrrr/20260714_12z/tmp2m/fh006.l0.u16.bin")
+    await client.get("/api/v4/grid/hrrr/20260714_00z/tmp2m/fh006.l0.u16.bin")
+
+    response = await client.get(
+        "/api/v4/admin/status/results?window=30d",
+        cookies={twf_oauth.SESSION_COOKIE_NAME: "admin-session"},
+    )
+    assert response.status_code == 200
+    frames_404 = response.json()["frames_404"]
+    assert frames_404["totals_by_reason"] == {"swap_gap": 1, "stale_run": 1}
+    assert frames_404["recency_buckets"]["swap_gap"]["lt1s"] >= 0
+    assert len(frames_404["recent"]) == 2
+    assert isinstance(frames_404["since"], str)

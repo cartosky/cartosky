@@ -1211,7 +1211,7 @@ function CurrentRadarCard({ lat, lon }: { lat: number; lon: number }) {
       <h2 className={cardHeadingClassName()}>
         Live Radar
       </h2>
-      <RadarPreviewCard lat={lat} lon={lon} className="mt-3 w-full flex-1" mapHeightClassName="h-full flex-1" />
+      <RadarPreviewCard lat={lat} lon={lon} className="mt-3 w-full flex-1" mapHeightClassName="h-full min-h-[12rem] flex-1 lg:min-h-0" />
     </section>
   );
 }
@@ -1820,6 +1820,19 @@ function mergeNwsEnrichment(core: ForecastPayload, full: ForecastPayload): Forec
   };
 }
 
+const NWS_ENRICHMENT_RETRY_DELAYS_MS = [1_500, 5_000] as const;
+const NWS_DEGRADED_RETRY_DELAY_MS = 65_000;
+
+type PendingNwsEnrichmentRetry = {
+  lat: number;
+  lon: number;
+  hint: Partial<LocationResult> | undefined;
+  ctrl: AbortController;
+  nextAttempt: number;
+  retryAt: number;
+  resumeImmediatelyOnVisible: boolean;
+};
+
 // ── Main Page ─────────────────────────────────────────────────────────
 
 export default function Forecast() {
@@ -1862,6 +1875,8 @@ export default function Forecast() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchGenerationRef = useRef(0);
   const loadAbortRef = useRef<AbortController | null>(null);
+  const nwsRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingNwsRetryRef = useRef<PendingNwsEnrichmentRetry | null>(null);
   const favoriteLimitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialRestorePendingRef = useRef(initialRestorePending);
 
@@ -2087,41 +2102,161 @@ export default function Forecast() {
   }, [query, pendingName]);
 
   // Background NWS enrichment for an already-rendered core. Best-effort: failures
-  // and aborts leave the Open-Meteo core in place. Guards against a superseded
-  // load merging stale data over a newer location.
+  // leave the Open-Meteo core in place while bounded retries recover transient
+  // failures. Guards against a superseded load merging stale data over a newer
+  // location.
+  function clearNwsRetryTimer() {
+    if (nwsRetryTimerRef.current !== null) {
+      clearTimeout(nwsRetryTimerRef.current);
+      nwsRetryTimerRef.current = null;
+    }
+  }
+
+  function cancelPendingNwsRetry() {
+    clearNwsRetryTimer();
+    pendingNwsRetryRef.current = null;
+  }
+
+  function resolveNwsUnavailable(ctrl: AbortController) {
+    if (ctrl.signal.aborted || loadAbortRef.current !== ctrl) return;
+    cancelPendingNwsRetry();
+    setForecast((prev) =>
+      prev && prev.source_status?.nws === "pending"
+        ? { ...prev, source_status: { ...prev.source_status, nws: "unavailable" } }
+        : prev,
+    );
+  }
+
+  function resumePendingNwsRetry() {
+    if (document.visibilityState !== "visible") return;
+    const pending = pendingNwsRetryRef.current;
+    if (!pending) return;
+    const remainingDelay = pending.retryAt - Date.now();
+    if (remainingDelay > 0) {
+      clearNwsRetryTimer();
+      nwsRetryTimerRef.current = setTimeout(() => {
+        nwsRetryTimerRef.current = null;
+        resumePendingNwsRetry();
+      }, remainingDelay);
+      return;
+    }
+    clearNwsRetryTimer();
+    pendingNwsRetryRef.current = null;
+    void enrichWithNws(
+      pending.lat,
+      pending.lon,
+      pending.hint,
+      pending.ctrl,
+      pending.nextAttempt,
+    );
+  }
+
+  function scheduleNwsRetry(
+    lat: number,
+    lon: number,
+    hint: Partial<LocationResult> | undefined,
+    ctrl: AbortController,
+    attempt: number,
+    options?: {
+      delayMs?: number;
+      resumeImmediatelyOnVisible?: boolean;
+    },
+  ) {
+    if (ctrl.signal.aborted || loadAbortRef.current !== ctrl) return;
+    if (attempt >= NWS_ENRICHMENT_RETRY_DELAYS_MS.length) {
+      resolveNwsUnavailable(ctrl);
+      return;
+    }
+
+    clearNwsRetryTimer();
+    const delayMs = options?.delayMs ?? NWS_ENRICHMENT_RETRY_DELAYS_MS[attempt];
+    const resumeImmediatelyOnVisible = options?.resumeImmediatelyOnVisible ?? true;
+    pendingNwsRetryRef.current = {
+      lat,
+      lon,
+      hint,
+      ctrl,
+      nextAttempt: attempt + 1,
+      retryAt: Date.now() + delayMs,
+      resumeImmediatelyOnVisible,
+    };
+    if (document.visibilityState !== "visible") {
+      if (resumeImmediatelyOnVisible) {
+        pendingNwsRetryRef.current.retryAt = Date.now();
+      }
+      return;
+    }
+
+    nwsRetryTimerRef.current = setTimeout(() => {
+      nwsRetryTimerRef.current = null;
+      resumePendingNwsRetry();
+    }, delayMs);
+  }
+
   async function enrichWithNws(
     lat: number,
     lon: number,
     hint: Partial<LocationResult> | undefined,
     ctrl: AbortController,
+    attempt = 0,
   ) {
-    // Resolve the "pending" marker (so the alerts banner stops "checking") even
-    // when enrichment fails — best-effort, keeping the Open-Meteo core. No-ops if
-    // this load was superseded.
-    const resolvePending = () => {
-      if (ctrl.signal.aborted || loadAbortRef.current !== ctrl) return;
-      setForecast((prev) =>
-        prev && prev.source_status?.nws === "pending"
-          ? { ...prev, source_status: { ...prev.source_status, nws: "unavailable" } }
-          : prev,
-      );
-    };
     try {
       const params = buildForecastParams(lat, lon, hint);
-      const res = await fetch(`${API_V4_BASE}/forecast-page?${params.toString()}`, { signal: ctrl.signal });
+      const res = await fetch(`${API_V4_BASE}/forecast-page?${params.toString()}`, {
+        signal: ctrl.signal,
+        cache: "no-store",
+      });
       if (!res.ok) {
-        resolvePending();
+        scheduleNwsRetry(lat, lon, hint, ctrl, attempt);
         return;
       }
       const full = (await res.json()) as ForecastPayload;
       if (ctrl.signal.aborted || loadAbortRef.current !== ctrl) return;
+      if (full.source_status?.nws === "unavailable") {
+        scheduleNwsRetry(lat, lon, hint, ctrl, attempt);
+        return;
+      }
+      if (full.source_status?.nws === "degraded" && full.attribution?.current !== "NWS") {
+        setForecast((prev) => (prev ? mergeNwsEnrichment(prev, full) : prev));
+        scheduleNwsRetry(lat, lon, hint, ctrl, attempt, {
+          delayMs: NWS_DEGRADED_RETRY_DELAY_MS,
+          resumeImmediatelyOnVisible: false,
+        });
+        return;
+      }
+      cancelPendingNwsRetry();
       setForecast((prev) => (prev ? mergeNwsEnrichment(prev, full) : prev));
     } catch {
-      resolvePending();
+      scheduleNwsRetry(lat, lon, hint, ctrl, attempt);
     }
   }
 
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        resumePendingNwsRetry();
+      } else {
+        clearNwsRetryTimer();
+        if (pendingNwsRetryRef.current?.resumeImmediatelyOnVisible) {
+          pendingNwsRetryRef.current.retryAt = Date.now();
+        }
+      }
+    };
+    const onOnline = () => resumePendingNwsRetry();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("online", onOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("online", onOnline);
+      cancelPendingNwsRetry();
+      loadAbortRef.current?.abort();
+    };
+    // Request identity is carried by refs so listeners stay stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function loadByCoords(lat: number, lon: number, preferredName?: string, locationHint?: Partial<LocationResult>) {
+    cancelPendingNwsRetry();
     if (loadAbortRef.current) loadAbortRef.current.abort();
     const ctrl = new AbortController();
     loadAbortRef.current = ctrl;
@@ -2178,6 +2313,7 @@ export default function Forecast() {
   }
 
   async function loadByQuery(q: string) {
+    cancelPendingNwsRetry();
     if (loadAbortRef.current) loadAbortRef.current.abort();
     const ctrl = new AbortController();
     loadAbortRef.current = ctrl;
@@ -2272,6 +2408,7 @@ export default function Forecast() {
     setQuery(""); setPendingName(null); setForecast(null); setError(null);
     setFavoriteLimitMessage(null);
     setSearchResults([]);
+    cancelPendingNwsRetry();
     if (loadAbortRef.current) loadAbortRef.current.abort();
     initialRestorePendingRef.current = false;
     setIsLoading(false);

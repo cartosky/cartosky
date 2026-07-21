@@ -12,10 +12,18 @@ import { initRumTelemetry } from "./lib/rum";
 import { BootstrapProvider } from "./lib/bootstrap-loading";
 import { SiteLoadingProvider } from "./lib/site-loading";
 import { clerkAppearance } from "./lib/clerk-appearance";
+import { markChunkReloadAttempted } from "./lib/chunk-reload";
 import "./styles/globals.css";
 
 initRumTelemetry();
 initAnalytics();
+
+window.addEventListener("vite:preloadError", (event) => {
+  if (markChunkReloadAttempted()) {
+    event.preventDefault();
+    window.location.reload();
+  }
+});
 
 type EnvClerkProviderProps = Omit<ClerkProviderProps, "publishableKey">;
 const EnvClerkProvider = ClerkProvider as React.ComponentType<EnvClerkProviderProps>;

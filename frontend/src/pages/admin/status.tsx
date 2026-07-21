@@ -6,13 +6,15 @@ import {
   fetchAdminAuthStatus,
   fetchAdminStatusRunDetail,
   fetchAdminStatusResults,
+  formatStatsIncompleteUnitCause,
+  type Frames404Summary,
   type StatusResult,
   type TwfStatus,
 } from "@/lib/admin-api";
 import { formatObservedValidTime, formatRunLabel } from "@/lib/time-axis";
 
 type WindowValue = "24h" | "7d" | "30d";
-type ViewFilter = "issues" | "ongoing" | "artifacts" | "stale" | "all";
+type ViewFilter = "issues" | "gaps" | "stats" | "ongoing" | "artifacts" | "stale" | "all";
 type StatusTone = "pass" | "info" | "warning" | "fail";
 
 const ADMIN_POLL_INTERVAL_MS = 5 * 60 * 1000;
@@ -63,6 +65,8 @@ function issueLabel(issueType: string): string {
   if (issueType === "run_stalled") return "Run stalled";
   if (issueType === "run_ongoing") return "Run ongoing";
   if (issueType === "run_incomplete") return "Run incomplete";
+  if (issueType === "accum_step_gap") return "Accumulation step gap";
+  if (issueType === "stats_incomplete") return "Stats processing incomplete";
   if (issueType === "stale_run") return "Stale latest run";
   if (issueType === "bundle_unavailable") return "Bundle unavailable";
   if (issueType === "bundle_stalled") return "Bundle stalled";
@@ -160,6 +164,8 @@ function CompactMetric(props: {
 function filterRows(rows: StatusResult[], view: ViewFilter): StatusResult[] {
   if (view === "all") return rows;
   if (view === "issues") return rows.filter((row) => row.status === "warning" || row.status === "error");
+  if (view === "gaps") return rows.filter((row) => (row.accum_step_gap_variable_count ?? 0) > 0);
+  if (view === "stats") return rows.filter((row) => (row.stats_incomplete_alert_count ?? 0) > 0);
   if (view === "ongoing") return rows.filter((row) => row.issue_type === "run_ongoing");
   if (view === "artifacts") return rows.filter((row) => row.issue_type === "artifact_failure" || row.issue_type === "manifest_missing" || row.issue_type === "manifest_invalid");
   return rows.filter((row) => (
@@ -174,10 +180,129 @@ function filterRows(rows: StatusResult[], view: ViewFilter): StatusResult[] {
 
 function viewLabel(view: ViewFilter): string {
   if (view === "issues") return "Open pipeline issues";
+  if (view === "gaps") return "Accumulation step gaps";
+  if (view === "stats") return "Ensemble stats alerts";
   if (view === "ongoing") return "Ongoing runs";
   if (view === "artifacts") return "Artifact and manifest failures";
   if (view === "stale") return "Stale or stalled runs";
   return "All retained runs";
+}
+
+function formatIsoTimestamp(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return parsed.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatSecondsSincePublish(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  return `${Number(value).toFixed(value < 10 ? 2 : 1)}s`;
+}
+
+function RecencyBuckets(props: { buckets?: { lt1s: number; lt5s: number; gte5s: number } }) {
+  const buckets = props.buckets ?? { lt1s: 0, lt5s: 0, gte5s: 0 };
+  return (
+    <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-white/58">
+      <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">&lt;1s {buckets.lt1s}</span>
+      <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">&lt;5s {buckets.lt5s}</span>
+      <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5">≥5s {buckets.gte5s}</span>
+    </div>
+  );
+}
+
+function Frames404Panel(props: { summary: Frames404Summary | null }) {
+  const summary = props.summary;
+  if (!summary) return null;
+  const totals = summary.totals_by_reason ?? {};
+  const reasonTotal = (reason: string) => totals[reason] ?? 0;
+  const contextReasons: Array<[string, string]> = [
+    ["stale_run", "Stale run (2.2)"],
+    ["not_published", "Not published"],
+    ["not_supported", "Not supported"],
+    ["size_mismatch", "Size mismatch"],
+    ["manifest_missing", "Manifest missing"],
+  ];
+  const recent = summary.recent ?? [];
+  return (
+    <AdminSurface
+      className="mt-4 p-4"
+      title="Frame 404 telemetry"
+      headerRight={
+        <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white/60">
+          since {formatIsoTimestamp(summary.since)}
+        </div>
+      }
+    >
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded-2xl border border-amber-400/18 bg-amber-500/[0.06] px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-100/72">Swap gap (2.1)</div>
+          <div className="mt-2 text-[1.6rem] font-semibold tracking-tight text-amber-200">{reasonTotal("swap_gap")}</div>
+          <RecencyBuckets buckets={summary.recency_buckets?.swap_gap} />
+        </div>
+        <div className="rounded-2xl border border-amber-400/18 bg-amber-500/[0.06] px-4 py-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-100/72">Manifest skew (2.1)</div>
+          <div className="mt-2 text-[1.6rem] font-semibold tracking-tight text-amber-200">{reasonTotal("manifest_skew")}</div>
+          <RecencyBuckets buckets={summary.recency_buckets?.manifest_skew} />
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-3">
+        {contextReasons.map(([reason, label]) => (
+          <div key={reason} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/44">{label}</div>
+            <div className="mt-1 text-lg font-semibold text-white/82">{reasonTotal(reason)}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-max min-w-[720px] border-separate border-spacing-y-2 text-left text-sm">
+          <thead className="text-white/48">
+            <tr>
+              <th className="px-3 py-2 font-medium">Time</th>
+              <th className="px-3 py-2 font-medium">Endpoint</th>
+              <th className="px-3 py-2 font-medium">Model / Run / Var</th>
+              <th className="px-3 py-2 font-medium">Reason</th>
+              <th className="px-3 py-2 font-medium">s-since-publish</th>
+            </tr>
+          </thead>
+          <tbody>
+            {recent.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-6 text-center text-white/48">
+                  No frame 404s recorded yet.
+                </td>
+              </tr>
+            ) : (
+              recent.map((sample, index) => (
+                <tr key={`${sample.ts_iso}-${index}`} className="bg-white/[0.03] text-white/82">
+                  <td className="rounded-l-2xl border-y border-l border-white/10 px-3 py-2 text-white/62">{formatIsoTimestamp(sample.ts_iso)}</td>
+                  <td className="border-y border-white/10 px-3 py-2">{sample.endpoint}</td>
+                  <td className="border-y border-white/10 px-3 py-2 text-white/70">
+                    {[sample.model, sample.run_resolved ?? sample.run_requested, sample.var].filter(Boolean).join(" / ") || "—"}
+                  </td>
+                  <td className="border-y border-white/10 px-3 py-2">
+                    <StatusBadge
+                      tone={sample.reason === "swap_gap" || sample.reason === "manifest_skew" ? "warning" : "info"}
+                      label={sample.reason}
+                    />
+                  </td>
+                  <td className="rounded-r-2xl border-y border-r border-white/10 px-3 py-2 text-white/62">{formatSecondsSincePublish(sample.seconds_since_publish)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </AdminSurface>
+  );
 }
 
 export default function AdminStatusPage() {
@@ -186,6 +311,7 @@ export default function AdminStatusPage() {
   const [modelFilter, setModelFilter] = useState<string>("all");
   const [viewFilter, setViewFilter] = useState<ViewFilter>("issues");
   const [results, setResults] = useState<StatusResult[]>([]);
+  const [frames404, setFrames404] = useState<Frames404Summary | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<StatusResult | null>(null);
   const [selectedDetailLoading, setSelectedDetailLoading] = useState(false);
@@ -216,6 +342,7 @@ export default function AdminStatusPage() {
         });
         if (cancelled) return;
         setResults(response.results);
+        setFrames404(response.frames_404 ?? null);
         setError(null);
       } catch (nextError) {
         if (cancelled) return;
@@ -319,6 +446,8 @@ export default function AdminStatusPage() {
 
   const modelOptions = Array.from(new Set(results.map((item) => item.model_id))).sort();
   const issueRows = results.filter((row) => row.status === "warning" || row.status === "error");
+  const gapRows = results.filter((row) => (row.accum_step_gap_variable_count ?? 0) > 0);
+  const statsRows = results.filter((row) => (row.stats_incomplete_alert_count ?? 0) > 0);
   const ongoingRows = results.filter((row) => row.issue_type === "run_ongoing");
   const artifactRows = results.filter((row) => row.issue_type === "artifact_failure" || row.issue_type === "manifest_missing" || row.issue_type === "manifest_invalid");
   const staleRows = results.filter((row) => (
@@ -335,6 +464,10 @@ export default function AdminStatusPage() {
       ? "No retained published runs were found for the current window."
       : viewFilter === "issues"
         ? "No operational issues were found in the retained published runs."
+        : viewFilter === "gaps"
+          ? "No cumulative accumulation step gaps were found."
+        : viewFilter === "stats"
+          ? "No persistent ensemble stats roster gaps were found."
         : viewFilter === "ongoing"
           ? "No retained latest runs are currently building."
         : viewFilter === "artifacts"
@@ -364,7 +497,7 @@ export default function AdminStatusPage() {
         ) : null}
 
         <div className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
             <CompactMetric
               label="Retained runs"
               value={results.length}
@@ -377,6 +510,20 @@ export default function AdminStatusPage() {
               accentClassName="text-amber-300"
               active={viewFilter === "issues"}
               onClick={() => setViewFilter("issues")}
+            />
+            <CompactMetric
+              label="Accum gaps"
+              value={gapRows.length}
+              accentClassName="text-amber-300"
+              active={viewFilter === "gaps"}
+              onClick={() => setViewFilter("gaps")}
+            />
+            <CompactMetric
+              label="Stats alerts"
+              value={statsRows.length}
+              accentClassName="text-amber-300"
+              active={viewFilter === "stats"}
+              onClick={() => setViewFilter("stats")}
             />
             <CompactMetric
               label="Ongoing runs"
@@ -439,6 +586,8 @@ export default function AdminStatusPage() {
               className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-white outline-none"
             >
               <option value="issues">Open issues</option>
+              <option value="gaps">Accumulation step gaps</option>
+              <option value="stats">Ensemble stats alerts</option>
               <option value="ongoing">Ongoing runs</option>
               <option value="artifacts">Artifact failures</option>
               <option value="stale">Stale or stalled</option>
@@ -532,6 +681,8 @@ export default function AdminStatusPage() {
         </div>
       </AdminSurface>
 
+      <Frames404Panel summary={frames404} />
+
       {selected ? (
         <>
           <button type="button" aria-label="Close status details" className="fixed inset-0 z-30 bg-black/45 backdrop-blur-[2px]" onClick={() => setSelectedId(null)} />
@@ -607,6 +758,51 @@ export default function AdminStatusPage() {
                 <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Summary</div>
                 <div className="mt-3 text-sm leading-6 text-white/78">{selected.summary}</div>
               </div>
+
+              {(selected.stats_incomplete_units ?? []).length > 0 ? (
+                <div className="border-t border-amber-400/18 pt-5">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-100/72">Persistent stats issues</div>
+                  <div className="mt-3 space-y-3">
+                    {(selected.stats_incomplete_units ?? []).map((unit) => (
+                      <div key={`${unit.base_var}-${unit.forecast_hour}`} className="rounded-xl border border-amber-400/15 bg-amber-500/[0.06] px-4 py-3 text-sm">
+                        <div className="font-medium text-amber-50">
+                          {unit.base_var} · {formatForecastHour(unit.forecast_hour)} · {unit.consecutive_passes} passes
+                        </div>
+                        <div className="mt-1 text-amber-100/68">
+                          {formatStatsIncompleteUnitCause(unit)}
+                        </div>
+                        <div className="mt-1 text-xs text-white/44">
+                          First seen {formatTimestamp(unit.first_seen_at)} · last seen {formatTimestamp(unit.last_seen_at)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {(selected.accum_step_gap_samples ?? []).length > 0 ? (
+                <div className="border-t border-amber-400/18 pt-5">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-100/72">Cumulative accumulation step gaps</div>
+                  <div className="mt-2 text-sm text-amber-100/68">
+                    {selected.accum_step_gap_variable_count ?? selected.accum_step_gap_samples?.length ?? 0} affected variable(s)
+                    {Number.isFinite(selected.accum_step_gap_max_affected_pixel_percentage)
+                      ? ` · up to ${formatPercent(selected.accum_step_gap_max_affected_pixel_percentage ?? 0)} of defined pixels`
+                      : ""}
+                  </div>
+                  <div className="mt-3 space-y-3">
+                    {(selected.accum_step_gap_samples ?? []).map((sample) => (
+                      <div key={`${sample.variable_id}-${sample.forecast_hour}`} className="rounded-xl border border-amber-400/15 bg-amber-500/[0.06] px-4 py-3 text-sm">
+                        <div className="font-medium text-amber-50">
+                          {sample.variable_id} · {formatForecastHour(sample.forecast_hour)}
+                        </div>
+                        <div className="mt-1 text-amber-100/68">
+                          {formatPercent(sample.affected_pixel_percentage)} of defined pixels had one or more missing accumulation steps
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="grid gap-4 border-t border-white/8 pt-5 sm:grid-cols-3">
                 <div className="border-l border-white/10 pl-4">

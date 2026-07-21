@@ -81,6 +81,18 @@ suffix that §4.1 does not yet define. The shared id helper RESERVES
 `prob_lt` in its parse grammar now (rejecting it as unimplemented) so the
 naming space is claimed before any consumer invents an alternative.
 
+> **B2 amendment (2026-07-10, ratified):** tmp2m shipped on BOTH models with
+> `__prob_lt_` implemented end-to-end — descriptor key
+> `prob_lt_thresholds: [0, 20, 32]` (°F) alongside
+> `prob_thresholds: [50, 70, 90, 100]`; `prob_non_exceedance` engine twin
+> (strict `<`; a member exactly AT a threshold counts toward neither
+> direction); packing regex, serialization (`P(< 32°F)` labels, "F"/"C"
+> units render as °F/°C), and colormap classification all accept
+> `prob_(gt|lt)`. Thresholds must be >= 0 — the id token grammar carries no
+> sign, and `ensemble_stats_product_ids` raises on negatives. Product order:
+> percentiles, then lt ascending, then gt ascending. See
+> `ENSEMBLE_BACKLOG.md` B2 design note for the meteogram chart layout.
+
 ## 4. Percentile engine (D-C)
 
 Benchmarked 2026-07-08 on a GEFS-shaped stack (31 × 721 × 1049, NaN fringe +

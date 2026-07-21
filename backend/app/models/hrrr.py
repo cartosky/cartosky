@@ -659,7 +659,7 @@ HRRR_VARS: dict[str, VarSpec] = {
                 "shortName": "crain",
                 "typeOfLevel": "surface",
             },
-            hints={"upstream_var": "crain"},
+            hints={"upstream_var": "crain", "probability_units": "fraction"},
         ),
     ),
     "csnow": VarSpec(
@@ -671,7 +671,7 @@ HRRR_VARS: dict[str, VarSpec] = {
                 "shortName": "csnow",
                 "typeOfLevel": "surface",
             },
-            hints={"upstream_var": "csnow"},
+            hints={"upstream_var": "csnow", "probability_units": "fraction"},
         ),
     ),
     "cicep": VarSpec(
@@ -683,7 +683,7 @@ HRRR_VARS: dict[str, VarSpec] = {
                 "shortName": "cicep",
                 "typeOfLevel": "surface",
             },
-            hints={"upstream_var": "cicep"},
+            hints={"upstream_var": "cicep", "probability_units": "fraction"},
         ),
     ),
     "cfrzr": VarSpec(
@@ -695,7 +695,7 @@ HRRR_VARS: dict[str, VarSpec] = {
                 "shortName": "cfrzr",
                 "typeOfLevel": "surface",
             },
-            hints={"upstream_var": "cfrzr"},
+            hints={"upstream_var": "cfrzr", "probability_units": "fraction"},
         ),
     ),
     "radar_ptype": VarSpec(

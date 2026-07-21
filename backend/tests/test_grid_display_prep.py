@@ -273,3 +273,53 @@ def test_sampling_tolerance_group_covers_all_four_config_shapes() -> None:
             render_categorical_nearest=False,
         )
     ) == 4
+
+
+def test_mrms_reflectivity_display_prep_preserves_negative_dbz() -> None:
+    # Real echo can be negative dBZ; the negative-noise clamp is disabled for
+    # mrms/reflectivity and the smoothing support includes values >= -35.
+    values = np.full((6, 6), -18.0, dtype=np.float32)
+    values[0, 0] = np.nan  # masked sentinel / outside coverage
+
+    prepared, meta = prepare_grid_display_values(model="mrms", var="reflectivity", values=values)
+
+    assert meta is not None
+    assert meta["id"] == "mrms_reflectivity_display_v2"
+    assert np.isnan(prepared[0, 0])
+    finite = prepared[np.isfinite(prepared)]
+    # Smoothing a constant field must return the constant, not zero it.
+    assert finite.size == values.size - 1
+    assert np.allclose(finite, -18.0, atol=1e-4)
+
+
+def test_mrms_reflectivity_display_prep_keeps_nan_out_of_smoothing() -> None:
+    values = np.full((6, 6), 30.0, dtype=np.float32)
+    values[:, 3:] = np.nan
+
+    prepared, _ = prepare_grid_display_values(model="mrms", var="reflectivity", values=values)
+
+    assert np.isnan(prepared[:, 3:]).all()
+    assert np.allclose(prepared[:, 0], 30.0, atol=1e-4)
+
+
+def test_clamped_display_prep_variables_still_zero_negatives() -> None:
+    # Default clamp behavior must be unchanged for physically non-negative
+    # variables (negative inputs are numeric noise).
+    values = np.array([[2.0, -0.5], [-0.5, 2.0]], dtype=np.float32)
+
+    prepared, _ = prepare_grid_display_values(model="ecmwf", var="snowfall_total", values=values)
+
+    assert float(prepared.min()) >= 0.0
+
+
+def test_mrms_reflectivity_display_prep_sets_edge_fade_render_hint() -> None:
+    values = np.full((4, 4), 20.0, dtype=np.float32)
+
+    _, meta = prepare_grid_display_values(model="mrms", var="reflectivity", values=values)
+    assert meta is not None
+    assert meta.get("edge_fade") is True
+    assert meta.get("edge_fill_value") == 0.0
+
+    _, other_meta = prepare_grid_display_values(model="gfs", var="precip_total", values=values)
+    assert other_meta is not None
+    assert "edge_fade" not in other_meta

@@ -378,7 +378,7 @@ export default function Home() {
               less friction.
             </h2>
             <p className="mt-5 text-base leading-8 text-white/66">
-              CartoSky keeps the map dominant, with core controls always within reach - so you can move through data without breaking your flow.
+              CartoSky keeps the map dominant, with core controls always within reach so you can move through data without breaking your flow.
             </p>
 
           <div className="mt-8 space-y-5">
@@ -480,7 +480,7 @@ export default function Home() {
                 <span className="mt-[0.55rem] h-1.5 w-1.5 flex-none rounded-full bg-cyan-300" />
                 <p className="text-base leading-8">
                   <span className="font-semibold text-white">Model signal summary -</span>
-                  {" "}see where HRRR, GFS, and NBM agree or diverge before you drill in.
+                  {" "}meteogram charts that show you how models compare for your selected location.
                 </p>
               </div>
               <div className="flex gap-3">
@@ -500,13 +500,6 @@ export default function Home() {
                 Open Forecast
                 <ArrowRight className="h-4 w-4" />
               </PrefetchLink>
-              <PrefetchLink
-                to="/viewer"
-                className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-transparent px-5 py-3 text-sm font-semibold text-white/88 transition duration-200 hover:border-white/24 hover:bg-white/[0.05]"
-              >
-                Go to Viewer
-                <ArrowRight className="h-4 w-4" />
-              </PrefetchLink>
             </div>
           </div>
 
@@ -520,7 +513,7 @@ export default function Home() {
                 </div>
                 <div className="border-t border-white/8 pt-3">
                   <div className="text-[1.05rem] font-semibold tracking-tight text-white">Model signals</div>
-                  <div className="mt-0.5 text-sm text-cyan-100/62">HRRR · GFS · NBM agreement</div>
+                  <div className="mt-0.5 text-sm text-cyan-100/62">ECMWF · GFS · AIFS agreement</div>
                 </div>
                 <div className="border-t border-white/8 pt-3">
                   <div className="text-[1.05rem] font-semibold tracking-tight text-white">Viewer handoff</div>
@@ -540,35 +533,6 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="border-y border-white/6 bg-[#0d182d] px-5 py-12 md:px-8 md:py-16 lg:py-24">
-        <div className="mx-auto max-w-6xl">
-          <SectionEyebrow>Forecast Products</SectionEyebrow>
-          <h2 className="mt-6 max-w-3xl text-balance text-4xl font-semibold tracking-tight text-white md:text-5xl">
-            Workflows for winter and severe weather.
-          </h2>
-          <p className="mt-5 max-w-2xl text-base leading-8 text-white/64">
-            Move from core fields into the products that matter most when timing, structure, and impact come into focus.
-          </p>
-
-          <div className="mt-12 grid gap-6 lg:grid-cols-2">
-            <ProductCard
-              eyebrow="Winter Analysis"
-              title="Understand where snow will actually accumulate."
-              description="Use snowfall, thermal structure, and timing to see how a setup evolves and where real impacts are likely."
-              icon={<Snowflake className="h-5 w-5" />}
-              variant="winter"
-            />
-            <ProductCard
-              eyebrow="Severe Analysis"
-              title="See the full severe setup in one place."
-              description="Models, SPC Outlooks, and radar come together in a single view so you can track how storms evolve in real time."
-              icon={<CloudLightning className="h-5 w-5" />}
-              variant="severe"
-            />
-          </div>
-        </div>
-      </section>
-
       <section className="bg-[#0a1425] px-5 py-12 md:px-8 md:py-16 lg:py-24">
         <div className="mx-auto max-w-6xl">
           <SectionEyebrow>Why CartoSky</SectionEyebrow>
@@ -577,7 +541,7 @@ export default function Home() {
           </h2>
           <div className="mt-8 border-t border-white/8 md:mt-12" />
           <div className="grid pt-8 md:grid-cols-3 md:gap-8">
-            <div className="pb-8 pt-8 first:pt-8 last:pb-0 border-b border-white/8 last:border-b-0 md:border-b-0 md:border-l md:border-white/8 md:pb-0 md:pl-5 md:pt-0 md:first:border-l-0 md:first:pl-0">
+            <div className="pb-8 pt-8 last:pb-0 border-b border-white/8 last:border-b-0 md:border-b-0 md:border-l md:border-white/8 md:pb-0 md:pl-5 md:pt-0 md:first:border-l-0 md:first:pl-[21px]">
               <div className="flex items-center gap-3">
                 <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
                   <Gauge className="h-5 w-5" />
@@ -588,7 +552,7 @@ export default function Home() {
                 Pan, zoom, and work the forecast directly on the map instead of stepping through static images.
               </p>
             </div>
-            <div className="pb-8 pt-8 last:pb-0 border-b border-white/8 last:border-b-0 md:border-b-0 md:border-l md:border-white/8 md:pb-0 md:pl-5 md:pt-0">
+            <div className="pb-8 pt-8 pt-8 last:pb-0 border-b border-white/8 last:border-b-0 md:border-b-0 md:border-l md:border-white/8 md:pb-0 md:pl-5 md:pt-0">
               <div className="flex items-center gap-3">
                 <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/12 bg-cyan-300/10 text-cyan-200">
                   <Sparkles className="h-5 w-5" />

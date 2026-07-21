@@ -64,6 +64,9 @@ def test_packing_config_member_fallback_is_mean_entry() -> None:
     mean_packing = _PACKING_BY_MODEL_VAR[("gefs", "tmp2m__mean")]
     assert _packing_config("gefs", "tmp2m__m17") is mean_packing
     assert _packing_config("gefs", "tmp2m__control") is mean_packing
+    tmp850_packing = _PACKING_BY_MODEL_VAR[("gefs", "tmp850__mean")]
+    assert _packing_config("gefs", "tmp850__m17") is tmp850_packing
+    assert _packing_config("eps", "tmp850__m50") is _PACKING_BY_MODEL_VAR[("eps", "tmp850__mean")]
     # Exact matches still win and non-members never fall through.
     assert _packing_config("gefs", "tmp2m__mean") is mean_packing
     assert _packing_config("gefs", "nonexistent__m01") is None
@@ -173,7 +176,7 @@ def test_member_frames_sample_through_production_sampler(tmp_path, transform, va
 def test_gefs_descriptor_enumeration() -> None:
     plugin = MODEL_REGISTRY["gefs"]
     descriptors = ensemble_member_descriptors(plugin)
-    assert set(descriptors) == {"tmp2m", "precip_total", "snowfall_total"}
+    assert set(descriptors) == {"tmp2m", "tmp850", "precip_total", "snowfall_total"}
     for descriptor in descriptors.values():
         ids = ensemble_member_ids(descriptor)
         assert len(ids) == 31
@@ -274,6 +277,70 @@ def small_roster_plugin(monkeypatch):
 
 
 @pytest.fixture()
+def direct_temperature_roster_plugin(monkeypatch):
+    """GEFS proxy with two direct temperature member variables."""
+    plugin = MODEL_REGISTRY["gefs"]
+    descriptor = {"count": 2, "control": True, "prefix": "m", "enabled": True}
+    monkeypatch.setattr(
+        members,
+        "ensemble_member_descriptors",
+        lambda _plugin: {"tmp2m": descriptor, "tmp850": descriptor},
+    )
+
+    class _PluginProxy:
+        def __getattr__(self, name):
+            return getattr(plugin, name)
+
+        def scheduled_fhs_for_var(self, var_key, cycle_hour):
+            return [0, 6]
+
+    return _PluginProxy()
+
+
+def test_member_pass_writes_all_direct_temperature_fields(
+    tmp_path, direct_temperature_roster_plugin, monkeypatch,
+) -> None:
+    calls: list[tuple[str, int, tuple[str, ...]]] = []
+
+    def _fake_bundle(*, plan, member, fh, fields, should_stop):
+        calls.append((member, fh, tuple(sorted(fields))))
+        return {
+            field: (
+                _native_tmp_c(fh)
+                if field == "tmp2m"
+                else _native_tmp_c(fh) - np.float32(20.0),
+                NATIVE_CRS,
+                NATIVE_TRANSFORM,
+            )
+            for field in fields
+        }
+
+    monkeypatch.setattr(members, "_fetch_member_bundle", _fake_bundle)
+    run_id = "20260706_00z"
+    summary = members.run_member_pass(
+        plugin=direct_temperature_roster_plugin,
+        model_id="gefs",
+        run_id=run_id,
+        data_root=tmp_path,
+        region="na",
+        workers=1,
+    )
+
+    assert summary.counts == {members.STATUS_WRITTEN: 12}
+    assert summary.complete
+    assert len(calls) == 6
+    assert all(fields == ("tmp2m", "tmp850") for _member, _fh, fields in calls)
+    decoded, _ = members._decode_member_frame(
+        tmp_path / "staging" / "gefs" / run_id,
+        "gefs",
+        "tmp850__m01",
+        6,
+    )
+    assert np.nanmin(decoded) < -10.0
+    assert np.nanmax(decoded) > 0.0
+
+
+@pytest.fixture()
 def cumulative_roster_plugin(monkeypatch):
     """GEFS plugin proxy: 2-member roster, all three member vars enabled."""
     plugin = MODEL_REGISTRY["gefs"]
@@ -298,6 +365,27 @@ def cumulative_roster_plugin(monkeypatch):
             return [0, 6, 12]
 
     return _PluginProxy()
+
+
+def test_build_member_plan_rejects_off_cadence_derived_fhs(
+    cumulative_roster_plugin,
+) -> None:
+    class _OffCadenceProxy:
+        def __getattr__(self, name):
+            return getattr(cumulative_roster_plugin, name)
+
+        def scheduled_fhs_for_var(self, var_key, cycle_hour):
+            if var_key in {"precip_total", "snowfall_total"}:
+                return [0, 7, 12]
+            return [0, 6, 12]
+
+    with pytest.raises(
+        ValueError,
+        match=r"gefs.*precip_total.*7.*6-hour cumulative step grid",
+    ):
+        members.build_member_plan(
+            _OffCadenceProxy(), "gefs", "20260706_00z", "na",
+        )
 
 
 def test_member_pass_resume_and_pending(tmp_path, small_roster_plugin, monkeypatch) -> None:
@@ -445,6 +533,59 @@ def test_cumulative_resume_rebases_from_written_frames(tmp_path, cumulative_rost
     assert np.nanmax(np.abs(snow12 - 1.575)) < 0.11
 
 
+def test_cumulative_resume_replays_steps_after_last_complete_scheduled_frame(
+    tmp_path, cumulative_roster_plugin, monkeypatch,
+) -> None:
+    class _SparseScheduleProxy:
+        def __getattr__(self, name):
+            return getattr(cumulative_roster_plugin, name)
+
+        def scheduled_fhs_for_var(self, var_key, cycle_hour):
+            return [0, 12, 24]
+
+    plugin = _SparseScheduleProxy()
+    fake_bundle, calls = _make_fake_bundle(apcp_value=2.0, csnow_value=1.0)
+    monkeypatch.setattr(members, "_fetch_member_bundle", fake_bundle)
+    run_id = "20260706_00z"
+    members.run_member_pass(
+        plugin=plugin, model_id="gefs", run_id=run_id,
+        data_root=tmp_path, region="na", workers=1,
+    )
+    staging_root = tmp_path / "staging" / "gefs" / run_id
+
+    # Simulate a lost fh24 for m01. The synthetic cumulative grid also has
+    # fh18, but sparse schedules never wrote a cumulative checkpoint there.
+    for var in ("tmp2m__m01", "precip_total__m01", "snowfall_total__m01"):
+        for artifact in (staging_root / var / "grid").glob("fh024.*"):
+            artifact.unlink()
+    calls.clear()
+
+    summary = members.run_member_pass(
+        plugin=plugin, model_id="gefs", run_id=run_id,
+        data_root=tmp_path, region="na", workers=1,
+    )
+
+    assert summary.counts == {
+        members.STATUS_RESUMED: 18,
+        members.STATUS_WRITTEN: 3,
+    }
+    assert summary.complete
+    # Rebase at the last complete scheduled checkpoint, then replay every
+    # cumulative step after it so fh18 is not silently omitted from fh24.
+    assert ("m01", 12, ("csnow",)) in calls
+    assert ("m01", 18, ("apcp", "csnow")) in calls
+    assert ("m01", 24, ("apcp", "csnow", "tmp2m")) in calls
+
+    precip24, _ = members._decode_member_frame(
+        staging_root, "gefs", "precip_total__m01", 24,
+    )
+    assert np.nanmax(np.abs(precip24 - 0.315)) < 0.021
+    snow24, _ = members._decode_member_frame(
+        staging_root, "gefs", "snowfall_total__m01", 24,
+    )
+    assert np.nanmax(np.abs(snow24 - 3.15)) < 0.11
+
+
 def test_cumulative_bundle_failure_aborts_member_chain(tmp_path, cumulative_roster_plugin, monkeypatch) -> None:
     def _failing_bundle(*, plan, member, fh, fields, should_stop):
         if member == "m01" and fh == 6:
@@ -469,6 +610,27 @@ def test_cumulative_bundle_failure_aborts_member_chain(tmp_path, cumulative_rost
 
 
 # ── D6: parity with the production derive strategies ─────────────────
+def test_precip_member_step_treats_negative_sentinels_as_invalid() -> None:
+    step = np.array([[-1.0, 0.0, 2.0, np.nan]], dtype=np.float32)
+
+    contribution, valid = members.precip_step_contribution(step)
+    field = members.cumulative_field(contribution, valid)
+
+    np.testing.assert_array_equal(
+        contribution,
+        np.array([[0.0, 0.0, 2.0, 0.0]], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        valid,
+        np.array([[False, True, True, False]], dtype=bool),
+    )
+    np.testing.assert_allclose(
+        field,
+        np.array([[np.nan, 0.0, 2.0, np.nan]], dtype=np.float32),
+        equal_nan=True,
+    )
+
+
 def _synthetic_steps(rng_seed: int = 7) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
     rng = np.random.default_rng(rng_seed)
     apcp: dict[int, np.ndarray] = {}
@@ -612,19 +774,43 @@ def test_map_bundle_bands() -> None:
         members._map_bundle_bands(["TMP", "TMP", "APCP", "CSNOW"], fields)
 
 
+def test_map_bundle_bands_distinguishes_temperature_levels_from_inventory() -> None:
+    fields = {
+        "tmp2m": r":TMP:2 m above ground:",
+        "tmp850": r":TMP:850 mb:",
+        "apcp": members.MEMBER_APCP_PATTERN,
+    }
+    mapping = members._map_bundle_bands(
+        ["TMP", "TMP", "APCP06"],
+        fields,
+        band_inventory_lines=[
+            ":TMP:2 m above ground:anl:ENS=+1",
+            ":TMP:850 mb:anl:ENS=+1",
+            ":APCP:surface:0-6 hour acc fcst:ENS=+1",
+        ],
+    )
+    assert mapping == {"tmp2m": 1, "tmp850": 2, "apcp": 3}
+
+
 def test_build_member_plan_real_gefs_schedules() -> None:
     plugin = MODEL_REGISTRY["gefs"]
     plan = members.build_member_plan(plugin, "gefs", "20260706_00z", "na")
     assert plan is not None
-    assert set(plan.contexts) == {"tmp2m", "precip_total", "snowfall_total"}
+    assert set(plan.contexts) == {"tmp2m", "tmp850", "precip_total", "snowfall_total"}
     assert len(plan.member_ids) == 31
-    assert len(plan.member_var_ids) == 93
+    assert len(plan.member_var_ids) == 124
     assert plan.fhs_by_var["tmp2m"] == list(range(0, 385, 6))
+    assert plan.fhs_by_var["tmp850"] == list(range(0, 385, 6))
     assert plan.fhs_by_var["precip_total"] == list(range(6, 385, 6))  # min_fh 6
     assert plan.step_fhs == list(range(6, 385, 6))
     assert plan.cumulative.slr == 10.0
-    assert members._bundle_fields_for_fh(plan, 0) == {"tmp2m": plan.contexts["tmp2m"].search_patterns[0]}
-    assert set(members._bundle_fields_for_fh(plan, 6)) == {"tmp2m", "apcp", "csnow"}
+    assert members._bundle_fields_for_fh(plan, 0) == {
+        "tmp2m": plan.contexts["tmp2m"].search_patterns[0],
+        "tmp850": plan.contexts["tmp850"].search_patterns[0],
+    }
+    assert set(members._bundle_fields_for_fh(plan, 6)) == {
+        "tmp2m", "tmp850", "apcp", "csnow",
+    }
     # The member APCP pattern must NOT be end-anchored (member idx lines carry
     # an ENS suffix, unlike the deterministic GFS lines).
     assert not members.MEMBER_APCP_PATTERN.endswith("$")
@@ -681,6 +867,48 @@ def test_member_frame_is_complete_checks_size(tmp_path, transform, values) -> No
     assert not members.member_frame_is_complete(tmp_path, "gefs", "tmp2m__m01", 0)
 
 
+def test_decode_member_frame_uses_configured_uint8_dtype(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    packing = dict(_PACKING_BY_MODEL_VAR[("gefs", "tmp2m__mean")])
+    packing.update({"dtype": "uint8", "nodata": 255})
+    monkeypatch.setitem(
+        _PACKING_BY_MODEL_VAR,
+        ("gefs", "tmp2m__mean"),
+        packing,
+    )
+    values = np.array(
+        [[-99.9, -90.0], [-80.0, np.nan]],
+        dtype=np.float32,
+    )
+    frame_transform = from_bounds(*BOUNDS, 2, 2)
+    write_slim_grid_frame_for_run_root(
+        run_root=tmp_path,
+        model="gefs",
+        var="tmp2m__m01",
+        fh=0,
+        values=values,
+        transform=frame_transform,
+        projection="EPSG:4326",
+    )
+    assert (
+        tmp_path / "tmp2m__m01" / "grid" / "fh000.l0.u8.bin"
+    ).is_file()
+
+    decoded, meta = members._decode_member_frame(
+        tmp_path,
+        "gefs",
+        "tmp2m__m01",
+        0,
+    )
+
+    assert meta["width"] == 2 and meta["height"] == 2
+    np.testing.assert_allclose(decoded[:, :1], values[:, :1], atol=0.051)
+    assert decoded[0, 1] == pytest.approx(-90.0, abs=0.051)
+    assert np.isnan(decoded[1, 1])
+
+
 def test_member_fetch_workers_env(monkeypatch) -> None:
     monkeypatch.delenv(members.ENV_MEMBER_FETCH_WORKERS, raising=False)
     assert members.member_fetch_workers() == 2
@@ -711,15 +939,18 @@ def test_meteogram_probe_requires_allowlist_and_descriptor(monkeypatch) -> None:
     # Phase 5 backend is live: the payload can serve member series.
     assert forecast_page._MEMBER_SERIES_PAYLOAD_SUPPORTED is True
 
-    # Not on the binary-sampling allowlist -> unsupported even with a
-    # descriptor (member frames exist only as grid binaries).
+    # Binary sampling is the zero-config default, so a model with a member
+    # descriptor is supported out of the box.
     monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS", raising=False)
-    assert forecast_page._model_supports_members("gefs") is False
-
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gefs,gfs")
+    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     assert forecast_page._model_supports_members("gefs") is True
     assert forecast_page._model_supports_members("gfs") is False   # no descriptor
-    assert forecast_page._model_supports_members("hrrr") is False  # neither
+    assert forecast_page._model_supports_members("hrrr") is False  # no descriptor
+
+    # A COG opt-out removes the binary substrate member frames live on ->
+    # unsupported even with a descriptor.
+    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gefs")
+    assert forecast_page._model_supports_members("gefs") is False
 
 
 # ── Phase 5: seek sampler equality with the full-read sampler ─────────
@@ -800,19 +1031,21 @@ def test_build_member_plan_real_eps_is_pf_subset_mode() -> None:
     plan = members.build_member_plan(plugin, "eps", "20260706_00z", "na")
     assert plan is not None
     assert plan.mode == members.MODE_PF_SUBSET
-    assert set(plan.contexts) == {"tmp2m", "precip_total"}
+    assert set(plan.contexts) == {"tmp2m", "tmp850", "precip_total"}
     # 50 pf members, NO control (plan §2.2 correction).
     assert len(plan.member_ids) == 50
     assert plan.member_ids[0] == "m01" and plan.member_ids[-1] == "m50"
     assert "control" not in plan.member_ids
-    assert len(plan.member_var_ids) == 100
-    # ECMWF tp is natively run-cumulative: both vars direct, no step chain.
+    assert len(plan.member_var_ids) == 150
+    # ECMWF tp is natively run-cumulative: all member vars are direct, no step chain.
     assert not plan.contexts["tmp2m"].derived
+    assert not plan.contexts["tmp850"].derived
     assert not plan.contexts["precip_total"].derived
     assert plan.step_fhs == [] and not plan.has_cumulative
     # min_fh 6 honored by the schedule (no phantom fh-0 precip unit).
     assert plan.fhs_by_var["precip_total"][0] == 6
     assert plan.fhs_by_var["tmp2m"][0] == 0
+    assert len(plan.fhs_by_var["tmp850"]) == 61
     # GEFS is untouched by mode detection.
     gefs_plan = members.build_member_plan(MODEL_REGISTRY["gefs"], "gefs", "20260706_00z", "na")
     assert gefs_plan.mode == members.MODE_MEMBER_FILES

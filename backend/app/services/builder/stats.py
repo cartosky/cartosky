@@ -53,6 +53,12 @@ from ...models.base import (
     ensemble_member_ids,
     ensemble_stats_descriptors,
     ensemble_stats_product_ids,
+    format_prob_threshold,
+)
+from ..ensemble_stats_health import (
+    ENSEMBLE_STATS_ALERT_AFTER_PASSES,
+    load_ensemble_stats_health,
+    update_ensemble_stats_health,
 )
 from ..colormaps import get_color_map_spec
 from ..grid import write_grid_frames_for_run_root
@@ -91,7 +97,8 @@ class _StatsVarContext:
     base_colormap_spec: dict[str, Any]
     member_ids: list[str]
     percentiles: list[int]
-    thresholds: list[float]
+    thresholds: list[float]  # exceedance (prob_gt)
+    lt_thresholds: list[float]  # non-exceedance (prob_lt, B2)
     products: dict[str, str]  # product_key -> runtime var id
 
 
@@ -141,6 +148,9 @@ def build_stats_plan(plugin: Any, model_id: str, run_id: str, region: str) -> _S
             member_ids=ensemble_member_ids(member_descriptor),
             percentiles=sorted(int(q) for q in (descriptor.get("percentiles") or [])),
             thresholds=sorted(float(t) for t in (descriptor.get("prob_thresholds") or [])),
+            lt_thresholds=sorted(
+                float(t) for t in (descriptor.get("prob_lt_thresholds") or [])
+            ),
             products=ensemble_stats_product_ids(base_var, descriptor),
         )
         fhs = sorted({int(fh) for fh in plugin.scheduled_fhs_for_var(base_var, cycle_hour)})
@@ -159,12 +169,19 @@ def build_stats_plan(plugin: Any, model_id: str, run_id: str, region: str) -> _S
 def _roster_complete(
     published_run_root: Path, model_id: str, ctx: _StatsVarContext, fh: int,
 ) -> bool:
-    return all(
-        member_frame_is_complete(
+    return not _missing_roster_members(published_run_root, model_id, ctx, fh)
+
+
+def _missing_roster_members(
+    published_run_root: Path, model_id: str, ctx: _StatsVarContext, fh: int,
+) -> list[str]:
+    return [
+        member
+        for member in ctx.member_ids
+        if not member_frame_is_complete(
             published_run_root, model_id, member_var_id(ctx.base_var, member), fh,
         )
-        for member in ctx.member_ids
-    )
+    ]
 
 
 def _iter_expected_stats_frames(
@@ -186,11 +203,47 @@ def _iter_expected_stats_frames(
                 yield var_id, fh
 
 
+def _stats_frame_is_complete(
+    run_root: Path,
+    model_id: str,
+    var_id: str,
+    fh: int,
+) -> bool:
+    """Stats outputs require bin, grid meta, and the atomic frame sidecar."""
+    if not member_frame_is_complete(run_root, model_id, var_id, fh):
+        return False
+    return (run_root / var_id / f"fh{int(fh):03d}.json").is_file()
+
+
 def stats_pass_pending(*, plugin: Any, model_id: str, run_id: str, data_root: Path) -> bool:
     staging_run_root = data_root / "staging" / model_id / run_id
     for var_id, fh in _iter_expected_stats_frames(plugin, model_id, run_id, data_root=data_root):
-        if not member_frame_is_complete(staging_run_root, model_id, var_id, fh):
+        if not _stats_frame_is_complete(staging_run_root, model_id, var_id, fh):
             return True
+
+    # A stable partial roster needs health-only passes even when all currently
+    # computable stats frames are caught up. Stop probing after the alert
+    # threshold; recovery makes the normal full-roster path pending again.
+    plan = build_stats_plan(plugin, model_id, run_id, region="")
+    if plan is None:
+        return False
+    health = load_ensemble_stats_health(data_root, model_id, run_id) or {}
+    observed_passes = {
+        (str(unit.get("base_var") or ""), int(unit.get("forecast_hour") or 0)):
+            int(unit.get("consecutive_passes") or 0)
+        for unit in health.get("units", [])
+        if isinstance(unit, dict)
+    }
+    published_run_root = data_root / "published" / model_id / run_id
+    for base_var, ctx in plan.contexts.items():
+        for fh in plan.fhs_by_var[base_var]:
+            missing_members = _missing_roster_members(
+                published_run_root, model_id, ctx, fh,
+            )
+            if not missing_members or len(missing_members) == len(ctx.member_ids):
+                continue
+            if observed_passes.get((base_var, int(fh)), 0) < ENSEMBLE_STATS_ALERT_AFTER_PASSES:
+                return True
     return False
 
 
@@ -198,9 +251,9 @@ def stats_promote_pending(*, plugin: Any, model_id: str, run_id: str, data_root:
     staging_run_root = data_root / "staging" / model_id / run_id
     published_run_root = data_root / "published" / model_id / run_id
     for var_id, fh in _iter_expected_stats_frames(plugin, model_id, run_id, data_root=data_root):
-        if member_frame_is_complete(
+        if _stats_frame_is_complete(
             staging_run_root, model_id, var_id, fh,
-        ) and not member_frame_is_complete(published_run_root, model_id, var_id, fh):
+        ) and not _stats_frame_is_complete(published_run_root, model_id, var_id, fh):
             return True
     return False
 
@@ -215,6 +268,8 @@ class StatsPassSummary:
     wall_s: float = 0.0
     rss_peak_mb: float = 0.0
     preempted: bool = False
+    incomplete_units: list[dict[str, Any]] = field(default_factory=list)
+    failed_units: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
@@ -243,13 +298,15 @@ def _process_stats_unit(
     data_root: Path,
     staging_run_root: Path,
     record: Callable[[str], None],
+    record_incomplete: Callable[[str, int, list[str]], None],
+    record_failure: Callable[[str, int, str], None],
 ) -> None:
-    from .stats_math import prob_exceedance, sorted_nanpercentile
+    from .stats_math import prob_exceedance, prob_non_exceedance, sorted_nanpercentile
 
     product_ids = list(ctx.products.items())
     missing = [
         (key, var_id) for key, var_id in product_ids
-        if not member_frame_is_complete(staging_run_root, plan.model_id, var_id, fh)
+        if not _stats_frame_is_complete(staging_run_root, plan.model_id, var_id, fh)
     ]
     for _ in range(len(product_ids) - len(missing)):
         record(STATUS_RESUMED)
@@ -257,9 +314,16 @@ def _process_stats_unit(
         return
 
     published_run_root = data_root / "published" / plan.model_id / plan.run_id
-    if not _roster_complete(published_run_root, plan.model_id, ctx, fh):
+    missing_members = _missing_roster_members(
+        published_run_root, plan.model_id, ctx, fh,
+    )
+    if missing_members:
         # Hard completeness gate (plan §3.3): a partial member set must never
         # produce a stat. Retried once the roster is published.
+        # A wholly absent roster is normal future work. Only persist partial
+        # rosters, which are the signal that one or more members may be wedged.
+        if len(missing_members) < len(ctx.member_ids):
+            record_incomplete(ctx.base_var, fh, missing_members)
         for _ in missing:
             record(STATUS_SKIPPED_INCOMPLETE)
         return
@@ -279,6 +343,7 @@ def _process_stats_unit(
 
         percentile_values = sorted_nanpercentile(stack, ctx.percentiles)
         prob_values = prob_exceedance(stack, ctx.thresholds)
+        prob_lt_values = prob_non_exceedance(stack, ctx.lt_thresholds)
         by_key: dict[str, np.ndarray] = {}
         for i, q in enumerate(ctx.percentiles):
             by_key[f"p{q:02d}"] = percentile_values[i]
@@ -290,6 +355,10 @@ def _process_stats_unit(
                 ) < 1e-9
             )
             by_key[key] = prob_values[i]
+        for i, threshold in enumerate(ctx.lt_thresholds):
+            # Same token grammar as ensemble_stats_product_ids, so the key
+            # always exists in ctx.products.
+            by_key[f"prob_lt_{format_prob_threshold(threshold)}"] = prob_lt_values[i]
 
         prob_colormap = get_color_map_spec(PROBABILITY_COLOR_MAP_ID)
         for key, var_id in missing:
@@ -308,6 +377,7 @@ def _process_stats_unit(
                     plan.model_id, var_id, fh,
                 )
                 record(STATUS_GATE_FAILED)
+                record_failure(ctx.base_var, fh, STATUS_GATE_FAILED)
                 continue
             write_grid_frames_for_run_root(
                 run_root=staging_run_root,
@@ -346,6 +416,7 @@ def _process_stats_unit(
         logger.exception(
             "Stats unit failed: %s/%s/fh%03d", plan.model_id, ctx.base_var, fh,
         )
+        record_failure(ctx.base_var, fh, STATUS_ERROR)
         for key, _var_id in missing:
             record(STATUS_ERROR)
 
@@ -384,6 +455,35 @@ def run_stats_pass(
     def _record(status: str) -> None:
         summary.counts[status] = summary.counts.get(status, 0) + 1
 
+    def _record_incomplete(
+        base_var: str, forecast_hour: int, missing_members: list[str],
+    ) -> None:
+        summary.incomplete_units.append(
+            {
+                "base_var": str(base_var),
+                "forecast_hour": int(forecast_hour),
+                "missing_members": sorted(str(member) for member in missing_members),
+            }
+        )
+
+    def _record_failure(base_var: str, forecast_hour: int, status: str) -> None:
+        key = (str(base_var), int(forecast_hour))
+        for unit in summary.failed_units:
+            if (unit["base_var"], unit["forecast_hour"]) != key:
+                continue
+            statuses = unit["failure_statuses"]
+            if status not in statuses:
+                statuses.append(status)
+                statuses.sort()
+            return
+        summary.failed_units.append(
+            {
+                "base_var": key[0],
+                "forecast_hour": key[1],
+                "failure_statuses": [str(status)],
+            }
+        )
+
     for base_var, ctx in plan.contexts.items():
         for fh in plan.fhs_by_var[base_var]:
             if stop():
@@ -396,7 +496,10 @@ def run_stats_pass(
             before = dict(summary.counts)
             _process_stats_unit(
                 plan=plan, ctx=ctx, fh=fh, data_root=data_root,
-                staging_run_root=staging_run_root, record=_record,
+                staging_run_root=staging_run_root,
+                record=_record,
+                record_incomplete=_record_incomplete,
+                record_failure=_record_failure,
             )
             wrote = summary.counts.get(STATUS_WRITTEN, 0) - before.get(STATUS_WRITTEN, 0)
             if wrote > 0:
@@ -406,6 +509,41 @@ def run_stats_pass(
 
     summary.wall_s = time.perf_counter() - started
     summary.rss_peak_mb = _rss_peak_mb()
+    health = None
+    try:
+        health = update_ensemble_stats_health(
+            data_root=data_root,
+            model_id=model_id,
+            run_id=run_id,
+            incomplete_units=[*summary.incomplete_units, *summary.failed_units],
+            pass_complete=not summary.preempted,
+        )
+    except Exception:
+        # Observability must fail open: stats frames already written during
+        # this pass still need to reach the promotion path.
+        logger.exception(
+            "Stats health persistence failed: run=%s model=%s",
+            run_id,
+            model_id,
+        )
+    alerting_units = [
+        unit
+        for unit in (health or {}).get("units", [])
+        if isinstance(unit, dict) and unit.get("alerting") is True
+    ]
+    if alerting_units:
+        logger.warning(
+            "Persistent incomplete ensemble stats units: run=%s model=%s units=%s",
+            run_id,
+            model_id,
+            ",".join(
+                f"{unit.get('base_var')}/fh{int(unit.get('forecast_hour') or 0):03d}"
+                f"/passes={int(unit.get('consecutive_passes') or 0)}"
+                f"/missing={'+'.join(str(item) for item in unit.get('missing_members', []))}"
+                f"/failures={'+'.join(str(item) for item in unit.get('failure_statuses', []))}"
+                for unit in alerting_units
+            ),
+        )
     logger.info(
         "Stats pass summary: run=%s model=%s %s wall=%.1fs unit_mean=%.2fs rss_peak_mb=%.0f complete=%s preempted=%s",
         run_id,

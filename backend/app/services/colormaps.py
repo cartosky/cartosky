@@ -1408,6 +1408,10 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "Base Reflectivity",
         "legend_title": "MRMS Reflectivity (dBZ)",
         "transparent_below_min": True,
+        # No-coverage/no-echo sentinels are masked to NaN at decode, so a
+        # typical frame is legitimately >95% nodata (echo covers only a few
+        # percent of the grid); relax the pre-encode nodata-ratio gate.
+        "allow_sparse_frame": True,
         # MRMS is displayed as a smoothed visual field even though sampling
         # remains on the unsmoothed value raster.
         "display_resampling_override": "bilinear",

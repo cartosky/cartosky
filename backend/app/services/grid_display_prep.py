@@ -17,6 +17,16 @@ class GridDisplayPrepConfig:
     support_coverage_threshold: float = 1e-3
     categorical_nearest: bool = False
     render_categorical_nearest: bool | None = None
+    # Most prepped variables are physically non-negative (precip/snow totals,
+    # palette indices), so negatives are numeric noise and get zeroed. Set
+    # False for variables where negative values are real signal (dBZ).
+    clamp_negative: bool = True
+    # Render hint (values untouched): the viewer interpolates toward
+    # edge_fill_value where the bilinear kernel is partially nodata, so echo
+    # boundaries render as smooth iso-contours instead of hard texel boxes.
+    # Use for sparse fields whose nodata means "no signal" (radar echo
+    # edges), not for dense fields whose nodata is the domain boundary.
+    render_edge_fade: bool = False
 
 
 _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = {
@@ -81,10 +91,16 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         preserve_zero_support=True,
     ),
     ("mrms", "reflectivity"): GridDisplayPrepConfig(
-        id="mrms_reflectivity_display_v1",
+        id="mrms_reflectivity_display_v2",
         upscale_factor=1,
         smooth_sigma=0.45,
         preserve_zero_support=False,
+        # Real echo can be negative dBZ (observed down to ~-18); include it in
+        # the smoothing support and keep it out of the negative-noise clamp.
+        # Sentinels (-999/-99) arrive here already masked to NaN upstream.
+        support_min_value=-35.0,
+        clamp_negative=False,
+        render_edge_fade=True,
     ),
     ("hrrr", "radar_ptype"): GridDisplayPrepConfig(
         id="hrrr_radar_ptype_display_v3",
@@ -328,7 +344,8 @@ def prepare_grid_display_values(
         prepared = np.where(positive_support, prepared, 0.0).astype(np.float32, copy=False)
 
     prepared[~finite_mask] = np.nan
-    prepared[np.isfinite(prepared) & (prepared < 0.0)] = 0.0
+    if config.clamp_negative:
+        prepared[np.isfinite(prepared) & (prepared < 0.0)] = 0.0
 
     prep_meta = {
         "id": config.id,
@@ -348,4 +365,10 @@ def prepare_grid_display_values(
     )
     if render_categorical_nearest:
         prep_meta["categorical_nearest"] = True
+    if config.render_edge_fade:
+        prep_meta["edge_fade"] = True
+        # 0.0 dBZ sits below the reflectivity color floor (5 dBZ), matching
+        # the valid-0 skirt legacy frames carried, so the rendered contour
+        # position is identical to the pre-masking display.
+        prep_meta["edge_fill_value"] = 0.0
     return prepared, prep_meta

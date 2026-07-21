@@ -882,6 +882,20 @@ function roadHaloLineWidthExpression(roadClass: "major" | "primary_secondary" | 
   return ["interpolate", ["linear"], ["zoom"], 10, 0.8, 12, 1, 14, 1.2] as const;
 }
 
+// Roads fade in with zoom so county boundaries stay dominant at synoptic zooms.
+function roadLineOpacityExpression(
+  roadClass: "major" | "primary_secondary" | "local",
+  baseOpacity: number
+) {
+  if (roadClass === "major") {
+    return ["interpolate", ["linear"], ["zoom"], 6, baseOpacity * 0.35, 8, baseOpacity * 0.7, 9, baseOpacity];
+  }
+  if (roadClass === "primary_secondary") {
+    return ["interpolate", ["linear"], ["zoom"], 8, baseOpacity * 0.5, 10, baseOpacity];
+  }
+  return baseOpacity;
+}
+
 function buildRoadLayers(variable?: string, opacity = 1, basemapMode: BasemapMode = "light"): LayerSpecification[] {
   const profile = getRoadVisualProfile(variable, basemapMode, opacity);
   const specs: Array<{
@@ -896,7 +910,7 @@ function buildRoadLayers(variable?: string, opacity = 1, basemapMode: BasemapMod
       haloId: ROAD_MAJOR_HALO_LAYER_ID,
       lineId: ROAD_MAJOR_LAYER_ID,
       roadClass: "major",
-      minzoom: 5,
+      minzoom: 6,
       haloOpacity: profile.haloOpacity.major,
       lineOpacity: profile.lineOpacity.major,
     },
@@ -935,7 +949,7 @@ function buildRoadLayers(variable?: string, opacity = 1, basemapMode: BasemapMod
         },
         paint: {
           "line-color": profile.haloColor,
-          "line-opacity": spec.haloOpacity,
+          "line-opacity": roadLineOpacityExpression(spec.roadClass, spec.haloOpacity) as any,
           "line-width": haloWidthExpression as any,
         },
       } as LayerSpecification,
@@ -952,7 +966,7 @@ function buildRoadLayers(variable?: string, opacity = 1, basemapMode: BasemapMod
         },
         paint: {
           "line-color": profile.lineColor,
-          "line-opacity": spec.lineOpacity,
+          "line-opacity": roadLineOpacityExpression(spec.roadClass, spec.lineOpacity) as any,
           "line-width": widthExpression as any,
         },
       } as LayerSpecification,
@@ -962,21 +976,21 @@ function buildRoadLayers(variable?: string, opacity = 1, basemapMode: BasemapMod
 
 function applyRoadLayerStyle(map: maplibregl.Map, variable: string | undefined, opacity: number, basemapMode: BasemapMode): void {
   const profile = getRoadVisualProfile(variable, basemapMode, opacity);
-  const layerPaint: Array<[string, number, string, number]> = [
-    [ROAD_MAJOR_HALO_LAYER_ID, profile.haloOpacity.major, profile.haloColor, profile.lineOpacity.major],
-    [ROAD_PRIMARY_SECONDARY_HALO_LAYER_ID, profile.haloOpacity.primarySecondary, profile.haloColor, profile.lineOpacity.primarySecondary],
-    [ROAD_LOCAL_HALO_LAYER_ID, profile.haloOpacity.local, profile.haloColor, profile.lineOpacity.local],
+  const layerPaint: Array<["major" | "primary_secondary" | "local", string, number, string, number]> = [
+    ["major", ROAD_MAJOR_HALO_LAYER_ID, profile.haloOpacity.major, profile.haloColor, profile.lineOpacity.major],
+    ["primary_secondary", ROAD_PRIMARY_SECONDARY_HALO_LAYER_ID, profile.haloOpacity.primarySecondary, profile.haloColor, profile.lineOpacity.primarySecondary],
+    ["local", ROAD_LOCAL_HALO_LAYER_ID, profile.haloOpacity.local, profile.haloColor, profile.lineOpacity.local],
   ];
 
-  for (const [haloLayerId, haloOpacity, haloColor, lineOpacity] of layerPaint) {
+  for (const [roadClass, haloLayerId, haloOpacity, haloColor, lineOpacity] of layerPaint) {
     if (map.getLayer(haloLayerId)) {
       map.setPaintProperty(haloLayerId, "line-color", haloColor);
-      map.setPaintProperty(haloLayerId, "line-opacity", haloOpacity);
+      map.setPaintProperty(haloLayerId, "line-opacity", roadLineOpacityExpression(roadClass, haloOpacity));
     }
     const lineLayerId = haloLayerId.replace("-halo", "");
     if (map.getLayer(lineLayerId)) {
       map.setPaintProperty(lineLayerId, "line-color", profile.lineColor);
-      map.setPaintProperty(lineLayerId, "line-opacity", lineOpacity);
+      map.setPaintProperty(lineLayerId, "line-opacity", roadLineOpacityExpression(roadClass, lineOpacity));
     }
   }
 }
@@ -1202,13 +1216,14 @@ export function buildMapStyle(
         filter: ["==", "kind", "county"],
         layout: {
           "line-join": "round",
-          "line-cap": "round",
+          // Butt caps keep the dash gaps open; round caps would fill them in.
+          "line-cap": "butt",
         },
         paint: {
           "line-color": boundaryLineColor,
           "line-opacity": ["interpolate", ["linear"], ["zoom"], 5, 0.68, 6, 0.66, 7, 0.64, 8, 0.62, 10, 0.58],
           "line-width": ["interpolate", ["linear"], ["zoom"], 5, 0.58, 6, 0.72, 8, 0.88, 10, 1],
-          "line-blur": ["interpolate", ["linear"], ["zoom"], 5, 0.12, 7, 0.08, 10, 0.02],
+          "line-dasharray": [4, 2],
         },
       },
       {

@@ -106,3 +106,29 @@ def test_enforce_manifest_retention_noops_below_keep_count(tmp_path: Path) -> No
     scheduler_module._enforce_manifest_retention(tmp_path / "manifests" / "missing-model", keep_runs=3)
 
     assert sorted(p.name for p in root.iterdir()) == ["20260707_12z.json"]
+
+
+def test_enforce_stats_health_retention_prunes_runs_absent_from_published(
+    tmp_path: Path,
+) -> None:
+    published_root = tmp_path / "published" / "gefs"
+    for run_id in ("20260707_06z", "20260707_12z"):
+        (published_root / run_id).mkdir(parents=True)
+
+    health_root = tmp_path / "status" / "ensemble_stats" / "gefs"
+    health_root.mkdir(parents=True)
+    for run_id in ("20260707_00z", "20260707_06z", "20260707_12z"):
+        (health_root / f"{run_id}.json").write_text("{}")
+    (health_root / "notes.json").write_text("{}")
+
+    retention = getattr(
+        scheduler_module, "_enforce_ensemble_stats_health_retention", None,
+    )
+    assert callable(retention), "stats health retention helper is missing"
+    retention(health_root, published_root)
+
+    assert sorted(path.name for path in health_root.iterdir()) == [
+        "20260707_06z.json",
+        "20260707_12z.json",
+        "notes.json",
+    ]

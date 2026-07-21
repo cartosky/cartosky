@@ -44,7 +44,7 @@ class _Plugin:
             selectors=SimpleNamespace(
                 search=search,
                 filter_by_keys={},
-                hints={},
+                hints={"probability_units": "fraction"} if str(var_key) == "csnow" else {},
             )
         )
 

@@ -24,7 +24,7 @@ from rasterio.enums import Resampling
 
 from app.models.registry import MODEL_REGISTRY
 from app.config import (
-    binary_sampling_models,
+    binary_sampling_enabled,
     grid_build_enabled,
     member_publish_models,
     stats_publish_models,
@@ -644,15 +644,15 @@ def _frame_primary_artifact_path(
 ) -> Path:
     """The artifact whose presence marks a frame as built.
 
-    Normally the staging value COG. Binary-sampling models
-    (``CARTOSKY_BINARY_SAMPLING_MODELS``) no longer write value COGs, so the
+    Binary-sampling models (every model unless opted out via
+    ``CARTOSKY_COG_SAMPLING_MODELS``) do not write value COGs, so the
     equivalent completion marker is the grid frame's metadata sidecar — the
     last artifact ``write_grid_frame_for_run_root`` writes, so its presence
     implies the frame bytes are present too. Without this substitution the
     build frontier would treat every binary-only frame as forever-missing and
     runs would never promote.
     """
-    if str(model).strip().lower() in binary_sampling_models():
+    if binary_sampling_enabled(str(model)):
         plugin = MODEL_REGISTRY.get(model)
         runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
         del region
@@ -798,6 +798,11 @@ def _component_precheck_available(
     fh: int,
     var_key: str,
 ) -> bool:
+    # The raw internal model id must never reach the fetch layer: plugins like
+    # eps/ecmwf map to a different Herbie model id ("ifs"), and passing the
+    # internal id caused the July 6 eps/ifs readiness outage. Fetches below use
+    # request.model from plugin.herbie_request() instead.
+    del model_id
     spec = plugin.get_var(var_key) if hasattr(plugin, "get_var") else None
     selectors = getattr(spec, "selectors", None)
     search_patterns = list(getattr(selectors, "search", []) or [])
@@ -815,7 +820,7 @@ def _component_precheck_available(
                 search_pattern=str(pattern),
             )
             fetch_variable(
-                model_id=model_id,
+                model_id=request.model,
                 product=request.product,
                 search_pattern=str(pattern),
                 run_date=run_dt,
@@ -1594,6 +1599,37 @@ def _enforce_manifest_retention(root: Path, keep_runs: int) -> None:
             old_manifest.unlink()
         except OSError:
             logger.warning("Failed removing old run manifest: %s", old_manifest)
+
+
+def _enforce_ensemble_stats_health_retention(
+    health_root: Path,
+    published_root: Path,
+) -> None:
+    """Remove stats-health files whose published run has been retained out."""
+    if not health_root.is_dir() or not published_root.is_dir():
+        return
+
+    kept_run_ids = {
+        child.name
+        for child in published_root.iterdir()
+        if child.is_dir()
+        and not child.name.startswith(".")
+        and _parse_run_id_datetime(child.name) is not None
+    }
+    for child in health_root.iterdir():
+        if (
+            not child.is_file()
+            or child.name.startswith(".")
+            or child.suffix != ".json"
+            or _parse_run_id_datetime(child.stem) is None
+            or child.stem in kept_run_ids
+        ):
+            continue
+        logger.info("Removing orphaned ensemble stats health file: %s", child)
+        try:
+            child.unlink()
+        except OSError:
+            logger.warning("Failed removing ensemble stats health file: %s", child)
 
 
 def _scheduler_product_category(plugin: Any | None) -> str:
@@ -2568,9 +2604,15 @@ def _process_run(
             built_ok_at_last_publish = available
 
     effective_keep_runs = _resolved_keep_runs_for_scheduler_plugin(plugin, keep_runs)
-    _enforce_run_retention(data_root / "staging" / model_id, effective_keep_runs)
-    _enforce_run_retention(data_root / "published" / model_id, effective_keep_runs)
+    staging_model_root = data_root / "staging" / model_id
+    published_model_root = data_root / "published" / model_id
+    _enforce_run_retention(staging_model_root, effective_keep_runs)
+    _enforce_run_retention(published_model_root, effective_keep_runs)
     _enforce_manifest_retention(data_root / "manifests" / model_id, effective_keep_runs)
+    _enforce_ensemble_stats_health_retention(
+        data_root / "status" / "ensemble_stats" / model_id,
+        published_model_root,
+    )
     herbie_save_dir_raw = _env_value(ENV_HERBIE_SAVE_DIR).strip()
     if herbie_save_dir_raw:
         herbie_model_id = model_id

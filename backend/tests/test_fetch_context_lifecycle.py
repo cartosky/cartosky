@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from rasterio.crs import CRS
 from rasterio.transform import Affine
 
@@ -62,6 +63,70 @@ def test_prune_fetch_context_after_frame_keeps_only_current_fh_entries() -> None
     assert {int(key[3]) for key in ctx.resolved_apcp_cache} == {6}
     assert {int(key[3]) for key in ctx.ptype_family_cache} == {6}
     assert {int(key[3]) for key in getattr(ctx, "kuchera_cumulative_cache")} == {6}
+
+
+@pytest.mark.parametrize(
+    "derive_kind",
+    [
+        # The strategies the old allowlist silently skipped — including the two
+        # heaviest cumulative ones from the EPS memory audit (2.4).
+        "precip_total_cumulative",
+        "snowfall_total_10to1_cumulative",
+        "ptype_intensity_component",
+        "ptype_intensity_component_ecmwf",
+        "radar_ptype_component",
+        "anomaly_departure",
+        "precip_accum_anomaly_departure",
+    ],
+)
+def test_prune_fetch_context_after_frame_covers_previously_unpruned_strategies(derive_kind: str) -> None:
+    ctx = derive_module.FetchContext(coverage="conus")
+    arr = np.ones((2, 2), dtype=np.float32)
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+
+    ctx.fetch_cache[("gfs", "pgrb2.0p25", "2026-04-14T00:00:00+00:00", 3, "apcp_step", "sel", "conus", "conus")] = (arr, crs, transform)
+    ctx.fetch_cache[("gfs", "pgrb2.0p25", "2026-04-14T00:00:00+00:00", 6, "apcp_step", "sel", "conus", "conus")] = (arr, crs, transform)
+    ctx.warp_cache[("gfs", "pgrb2.0p25", "2026-04-14T00:00:00+00:00", 3, "apcp_step", "sel", "grid", "bilinear")] = (arr, crs, transform)
+    ctx.warp_cache[("gfs", "pgrb2.0p25", "2026-04-14T00:00:00+00:00", 6, "apcp_step", "sel", "grid", "bilinear")] = (arr, crs, transform)
+    setattr(
+        ctx,
+        "kuchera_cumulative_cache",
+        {
+            ("gfs", "20260414_00z", "precip_total", 3, "grid"): (arr, crs, transform, {}),
+            ("gfs", "20260414_00z", "precip_total", 6, "grid"): (arr, crs, transform, {}),
+        },
+    )
+
+    removed = derive_module.prune_fetch_context_after_frame(
+        ctx=ctx,
+        var_spec_model=SimpleNamespace(derive=derive_kind),
+        fh=6,
+    )
+
+    assert removed.get("fetch") == 1
+    assert removed.get("warp") == 1
+    assert removed.get("kuchera") == 1
+    assert {int(key[3]) for key in ctx.fetch_cache} == {6}
+    assert {int(key[3]) for key in ctx.warp_cache} == {6}
+    assert {int(key[3]) for key in getattr(ctx, "kuchera_cumulative_cache")} == {6}
+
+
+def test_prune_fetch_context_after_frame_noops_without_derive_kind() -> None:
+    ctx = derive_module.FetchContext(coverage="conus")
+    arr = np.ones((2, 2), dtype=np.float32)
+    crs = CRS.from_epsg(4326)
+    transform = Affine.identity()
+    ctx.fetch_cache[("gfs", "pgrb2.0p25", "2026-04-14T00:00:00+00:00", 3, "tmp2m", "sel", "conus", "conus")] = (arr, crs, transform)
+
+    removed = derive_module.prune_fetch_context_after_frame(
+        ctx=ctx,
+        var_spec_model=SimpleNamespace(derive=""),
+        fh=6,
+    )
+
+    assert removed == {}
+    assert len(ctx.fetch_cache) == 1
 
 
 def test_destroy_fetch_context_clears_all_runtime_caches() -> None:

@@ -115,8 +115,16 @@ def test_derive_bundle_reuses_fetch_and_warp_cache(monkeypatch) -> None:
         warp_calls.append(token_to_key[token])
         return data.astype(np.float32, copy=False), transform
 
+    def _fake_inventory_lines(*, model_id, product, run_date, fh, search_pattern):
+        del model_id, product, run_date, search_pattern
+        return {
+            1: [":APCP:surface:0-1 hour acc fcst:"],
+            2: [":APCP:surface:0-2 hour acc fcst:"],
+        }.get(int(fh), [])
+
     monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
     monkeypatch.setattr(derive_module, "warp_to_target_grid", _fake_warp_to_target_grid)
+    monkeypatch.setattr(derive_module, "_kuchera_inventory_lines", _fake_inventory_lines)
 
     precip_spec = SimpleNamespace(
         derive="precip_total_cumulative",
@@ -277,8 +285,16 @@ def test_derive_bundle_reuses_apcp_warp_cache_with_kuchera(monkeypatch) -> None:
         warp_calls.append(token_to_key[token])
         return data.astype(np.float32, copy=False), transform
 
+    def _fake_inventory_lines(*, model_id, product, run_date, fh, search_pattern):
+        del model_id, product, run_date, search_pattern
+        return {
+            1: [":APCP:surface:0-1 hour acc fcst:"],
+            2: [":APCP:surface:0-2 hour acc fcst:"],
+        }.get(int(fh), [])
+
     monkeypatch.setattr(derive_module, "fetch_variable", _fake_fetch_variable)
     monkeypatch.setattr(derive_module, "warp_to_target_grid", _fake_warp_to_target_grid)
+    monkeypatch.setattr(derive_module, "_kuchera_inventory_lines", _fake_inventory_lines)
 
     snowfall_10to1_spec = SimpleNamespace(
         derive="snowfall_total_10to1_cumulative",

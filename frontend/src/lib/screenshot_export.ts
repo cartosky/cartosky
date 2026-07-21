@@ -248,9 +248,12 @@ function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayloa
   }
 
   if (state.timeAxisMode === "observed") {
+    // Observed products show only the frame's valid time — the run (ingest)
+    // time can legitimately differ by an hour+ on accumulation products and
+    // two adjacent unlabeled timestamps read as a contradiction.
     const observedLabel = formatObservedValidTime(state.validTimeISO) ?? formatObservedCompactTime(state.validTimeISO) ?? "Observed time n/a";
     const statusSuffix = state.sourceStatusLabel ? ` • ${state.sourceStatusLabel}` : "";
-    return [`${model} • ${run} • ${observedLabel}${statusSuffix}`, variableLabel];
+    return [`${model} • ${observedLabel}${statusSuffix}`, variableLabel];
   }
   // Line 1: {run} {model} • {frame label} • {local valid time}, line 2: variable.
   // Compare screenshots override the {run} {model} prefix with a per-side

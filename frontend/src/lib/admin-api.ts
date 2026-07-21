@@ -157,6 +157,24 @@ export type StatusResult = {
   unreadable_artifact_count: number;
   incomplete_variable_count: number;
   incomplete_variables: string[];
+  accum_step_gap_variable_count?: number;
+  accum_step_gap_max_affected_pixel_percentage?: number;
+  accum_step_gap_samples?: Array<{
+    variable_id: string;
+    forecast_hour: number;
+    affected_pixel_percentage: number;
+  }>;
+  stats_incomplete_alert_count?: number;
+  stats_incomplete_units?: Array<{
+    base_var: string;
+    forecast_hour: number;
+    missing_members: string[];
+    failure_statuses?: string[];
+    consecutive_passes: number;
+    first_seen_at: number;
+    last_seen_at: number;
+    alerting: boolean;
+  }>;
   sample_paths: Array<{
     variable_id: string;
     forecast_hour: number;
@@ -168,6 +186,41 @@ export type StatusResult = {
   }>;
 };
 
+export function formatStatsIncompleteUnitCause(unit: {
+  missing_members?: string[];
+  failure_statuses?: string[];
+}): string {
+  const statuses = new Set(unit.failure_statuses ?? []);
+  if (statuses.has("error")) return "Processing error";
+  if (statuses.has("gate_failed")) return "Pre-encode sanity gate failed";
+  if (statuses.size > 0) return `Failed: ${Array.from(statuses).sort().join(", ")}`;
+  const missingMembers = (unit.missing_members ?? []).filter(Boolean);
+  return missingMembers.length > 0
+    ? `Missing ${missingMembers.join(", ")}`
+    : "Incomplete member roster";
+}
+
+export type Frames404Sample = {
+  ts_iso: string;
+  endpoint: string;
+  model: string | null;
+  run_requested: string | null;
+  run_resolved: string | null;
+  var: string | null;
+  filename_or_fh: string | null;
+  reason: string;
+  seconds_since_publish: number | null;
+};
+
+export type Frames404Summary = {
+  since: string | null;
+  totals_by_reason: Record<string, number>;
+  today: Record<string, number>;
+  last_7_days: Record<string, number>;
+  recency_buckets: Record<string, { lt1s: number; lt5s: number; gte5s: number }>;
+  recent: Frames404Sample[];
+};
+
 export type StatusResultsResponse = {
   window: string;
   filters: {
@@ -175,6 +228,7 @@ export type StatusResultsResponse = {
     status: string | null;
   };
   results: StatusResult[];
+  frames_404?: Frames404Summary;
 };
 
 export type StatusRunDetailResponse = {

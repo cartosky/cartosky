@@ -34,7 +34,7 @@ from typing import Any
 import numpy as np
 import rasterio
 
-from app.config import binary_sampling_models, grid_build_enabled
+from app.config import binary_sampling_enabled, grid_build_enabled
 from app.services.builder.cog_writer import (
     _gdal,
     compute_transform_and_shape,
@@ -388,7 +388,7 @@ def _build_contour_metadata_for_variable(
             "label": contour_label,
         }
     }
-    return metadata, contours_dir
+    return metadata, contour_path
 
 
 def _center_kind_from_contour_key(contour_key: str) -> str | None:
@@ -734,6 +734,7 @@ def _check_value_array_sanity(
     allow_dry_frame = bool(var_spec.get("allow_dry_frame", False)) or bool(
         capability_frontend.get("allow_dry_frame") if isinstance(capability_frontend, dict) else False
     )
+    allow_sparse_frame = bool(var_spec.get("allow_sparse_frame", False))
     skip_physical_range_checks = is_non_physical_kind or is_non_physical_units or is_non_physical_flag
     is_categorical_ptype = spec_type in {"discrete", "indexed"} and bool(var_spec.get("ptype_breaks"))
 
@@ -766,6 +767,15 @@ def _check_value_array_sanity(
         if is_categorical_ptype and finite_count == 0:
             logger.warning(
                 "Dry categorical ptype frame allowed: nodata ratio %.1f%% (%s)",
+                nodata_ratio * 100,
+                label,
+            )
+        elif allow_sparse_frame and finite_count > 0:
+            # Sparse-by-nature products (e.g. observed radar with no-coverage/
+            # no-echo masked to NaN) are legitimately almost-all-nodata; a
+            # fully empty frame is still rejected as an empty-fetch signal.
+            logger.info(
+                "Sparse frame allowed: nodata ratio %.1f%% (%s)",
                 nodata_ratio * 100,
                 label,
             )
@@ -974,6 +984,15 @@ def validate_grid_binary_frame(
 # ---------------------------------------------------------------------------
 # Sidecar JSON metadata
 # ---------------------------------------------------------------------------
+
+
+def _derive_quality_sidecar_metadata(quality_meta: dict[str, Any]) -> dict[str, Any]:
+    raw_metadata = quality_meta.get("sidecar_metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    quality_flag_details = quality_meta.get("quality_flag_details")
+    if isinstance(quality_flag_details, dict) and quality_flag_details:
+        metadata["quality_flag_details"] = dict(quality_flag_details)
+    return metadata
 
 
 def build_sidecar_json(
@@ -1797,7 +1816,7 @@ def build_frame(
         # The pre-encode sanity gate is therefore ENFORCED for these models —
         # a failure rejects the frame exactly like check_value_sanity does on
         # the COG path. For everything else it stays a Phase C shadow gate.
-        binary_only = model.strip().lower() in binary_sampling_models()
+        binary_only = binary_sampling_enabled(model)
         if binary_only:
             # No try/except: an unexpected gate error propagates to the outer
             # handler (cleanup + "failed"), matching how a check_value_sanity
@@ -1902,11 +1921,7 @@ def build_frame(
             ensemble_view=ensemble_view,
         )
 
-        sidecar_extra_metadata = quality_meta.get("sidecar_metadata") if isinstance(quality_meta, dict) else None
-        if isinstance(sidecar_extra_metadata, dict):
-            sidecar_extra_metadata = dict(sidecar_extra_metadata)
-        else:
-            sidecar_extra_metadata = {}
+        sidecar_extra_metadata = _derive_quality_sidecar_metadata(quality_meta)
         try:
             pressure_center_meta = _build_pressure_center_metadata_for_variable(
                 model=model,

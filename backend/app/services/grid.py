@@ -1579,7 +1579,7 @@ def ensure_grid_brotli_sidecar(
 # (zero-padded 2-digit), {var}__control, and — Tier 2 (stats design §6) —
 # percentile grids {var}__p{NN} (member pipeline plan Section 4.1).
 _MEMBER_PACK_SUFFIX_RE = re.compile(r"^(?P<base>.+)__(?:m\d{2}|control|p\d{2})$")
-_PROB_PACK_SUFFIX_RE = re.compile(r"^.+__prob_gt_\d+p\d+$")
+_PROB_PACK_SUFFIX_RE = re.compile(r"^.+__prob_(?:gt|lt)_\d+p\d+$")
 
 # Probability-of-exceedance packing band (stats design §6, plan §3.4 LOCKED):
 # dimensionless %, 0.1% precision, uint16. Entries are generated per
