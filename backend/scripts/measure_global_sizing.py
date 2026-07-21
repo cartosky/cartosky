@@ -116,7 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--dev-root",
-        default="/opt/cartosky/dev",
+        default="/opt/cartosky-dev",
         help="Confinement root. data root, herbie dir and reports all live here.",
     )
     parser.add_argument(
