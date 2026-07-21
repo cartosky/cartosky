@@ -6,6 +6,7 @@ import RouterApp from "./RouterApp";
 import { RoutePrefetchBridge } from "./components/RoutePrefetchBridge";
 import { AnalyticsBridge } from "./components/AnalyticsBridge";
 import { ClerkAuthTokenBridge } from "./components/ClerkAuthTokenBridge";
+import { ClerkLoadFailureReporter } from "./components/ClerkLoadFailureReporter";
 import { initAnalytics } from "./lib/analytics";
 import { FeedbackProvider } from "./lib/feedback-context";
 import { initRumTelemetry } from "./lib/rum";
@@ -35,6 +36,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <EnvClerkProvider afterSignOutUrl="/" appearance={clerkAppearance}>
       <ClerkAuthTokenBridge />
+      <ClerkLoadFailureReporter />
       <BrowserRouter>
         <BootstrapProvider>
           <RoutePrefetchBridge />

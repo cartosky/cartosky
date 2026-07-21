@@ -30,6 +30,7 @@ const ALLOWED_EVENT_NAMES = new Set([
   "animation_started",
   "legend_opened",
   "share_clicked",
+  "auth_load_failed",
 ]);
 
 const ALLOWED_INTERNAL_EVENT_NAMES = new Set([

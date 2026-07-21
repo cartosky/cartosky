@@ -13,7 +13,8 @@ export type AnalyticsEventName =
   | "region_selected"
   | "animation_started"
   | "legend_opened"
-  | "share_clicked";
+  | "share_clicked"
+  | "auth_load_failed";
 
 export type AnalyticsEventProperties = Record<
   string,

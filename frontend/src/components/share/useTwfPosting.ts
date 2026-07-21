@@ -41,6 +41,8 @@ import {
   type TwfTopic,
 } from "@/components/share/share-utils";
 
+const TWF_STATUS_TIMEOUT_MS = 15_000;
+
 export type UseTwfPostingParams = {
   open: boolean;
   onClose: () => void;
@@ -83,6 +85,7 @@ export function useTwfPosting({
   const [statusLoading, setStatusLoading] = useState(false);
   const [statusResolved, setStatusResolved] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusAttempt, setStatusAttempt] = useState(0);
   const [connectBusy, setConnectBusy] = useState(false);
 
   const [selectedForumId, setSelectedForumId] = useState<number>(() => forumIdFromPrefs(initialSharePrefs));
@@ -147,6 +150,12 @@ export function useTwfPosting({
       setConnectBusy(false);
     }
   }, [clerkLoaded, isSignedIn, twfFetch]);
+
+  const handleRetryStatus = useCallback(() => {
+    setStatusError(null);
+    setStatusResolved(false);
+    setStatusAttempt((attempt) => attempt + 1);
+  }, []);
 
   const getTopicCacheEntry = (forumId: number): TopicCacheEntry | null => {
     const inMemory = topicCacheRef.current.get(forumId);
@@ -287,33 +296,62 @@ export function useTwfPosting({
     setStatusLoading(true);
     setStatusError(null);
 
-    twfFetch(`${API_ORIGIN}/auth/twf/status`, {
+    // A hung request would otherwise leave "Checking your TWF connection..."
+    // spinning forever. The race (rather than aborting alone) also covers a
+    // hung token fetch inside twfFetch, which the abort signal can't reach.
+    let timedOut = false;
+    let timeoutTimer: number | null = null;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutTimer = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        reject(new Error("TWF status check timed out."));
+      }, TWF_STATUS_TIMEOUT_MS);
+    });
+    const statusRequest = twfFetch(`${API_ORIGIN}/auth/twf/status`, {
       method: "GET",
       signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          const apiError = await readApiError(response);
-          throw new Error(apiError?.message || `Status request failed (${response.status})`);
-        }
-        return response.json() as Promise<unknown>;
-      })
+    }).then(async (response) => {
+      if (!response.ok) {
+        const apiError = await readApiError(response);
+        throw new Error(apiError?.message || `Status request failed (${response.status})`);
+      }
+      return response.json() as Promise<unknown>;
+    });
+
+    Promise.race([statusRequest, timeout])
       .then((value) => {
         setTwfStatus(normalizeTwfStatus(value));
         setStatusResolved(true);
       })
       .catch((error: unknown) => {
-        if ((error as { name?: string } | undefined)?.name === "AbortError") {
+        if (!timedOut && (error as { name?: string } | undefined)?.name === "AbortError") {
           return;
         }
         setTwfStatus({ linked: false });
         setStatusResolved(true);
-        setStatusError((error as Error).message || "Failed to load TWF account status.");
+        setStatusError(
+          timedOut
+            ? "Checking your TWF connection timed out."
+            : (error as Error).message || "Failed to load TWF account status."
+        );
       })
-      .finally(() => setStatusLoading(false));
+      .finally(() => {
+        if (timeoutTimer !== null) {
+          window.clearTimeout(timeoutTimer);
+        }
+        setStatusLoading(false);
+      });
 
-    return () => controller.abort();
-  }, [clerkLoaded, isSignedIn, open, twfFetch]);
+    return () => {
+      controller.abort();
+      if (timeoutTimer !== null) {
+        window.clearTimeout(timeoutTimer);
+      }
+    };
+    // statusAttempt re-runs the check when handleRetryStatus bumps it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clerkLoaded, isSignedIn, open, statusAttempt, twfFetch]);
 
   useEffect(() => {
     if (!open || topicsLoading || topicsForumId !== selectedForumId) {
@@ -736,6 +774,7 @@ export function useTwfPosting({
     showDestinationEditor,
     destinationSaved,
     handleConnectTwf,
+    handleRetryStatus,
     handleSubmitPost,
     handleMessageChange,
     handleTopicSelectionChange,

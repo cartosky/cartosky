@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import * as SliderPrimitive from "@radix-ui/react-slider";
 import { useAuth } from "@clerk/react";
-import { CheckCircle2, Copy, Download, ExternalLink, Film, Link2, Loader2, Play, RefreshCw, Share2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, Download, ExternalLink, Film, Link2, Loader2, Play, RefreshCw, Share2, X } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { HexSignalRing } from "@/components/HexSignalRing";
@@ -35,6 +35,7 @@ import {
 } from "@/components/share/useGifExport";
 import { useScreenshotCapture } from "@/components/share/useScreenshotCapture";
 import { useTwfPosting } from "@/components/share/useTwfPosting";
+import { useClerkLoadState } from "@/hooks/useClerkLoadState";
 
 export type { SharePayload } from "@/components/share/share-utils";
 
@@ -84,6 +85,11 @@ export function ShareModal({
   gifFrameDriver,
 }: ShareModalProps) {
   const { getToken, isLoaded: clerkLoaded, isSignedIn } = useAuth();
+  // ClerkJS can fail to load entirely (ad/content blockers, network) — in
+  // that case isLoaded stays false forever, so surface a real message
+  // instead of an infinite "Checking CartoSky sign-in status..." spinner.
+  const clerkLoadState = useClerkLoadState();
+  const authUnavailable = clerkLoadState.state === "failed";
 
   const twfFetch = useCallback(
     async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
@@ -536,7 +542,7 @@ export function ShareModal({
 
   const isPosted = Boolean(posting.submitSuccess || posting.submitTopicSuccess);
   const signedOutLoginUrl = loginRouteForCurrentPage();
-  const checkingShareAccess = !clerkLoaded || (isSignedIn && !posting.statusResolved);
+  const checkingShareAccess = (!clerkLoaded && !authUnavailable) || (isSignedIn && !posting.statusResolved);
   const destinationLabel = posting.selectedTopicTitle
     ? `${posting.selectedForumLabel} › ${posting.selectedTopicTitle}`
     : posting.selectedForumLabel;
@@ -759,11 +765,15 @@ export function ShareModal({
                       <div className="flex min-w-0 items-center gap-2">
                         {checkingShareAccess ? (
                           <Loader2 className="h-4 w-4 shrink-0 animate-spin text-cyan-200" />
+                        ) : authUnavailable ? (
+                          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-300" />
                         ) : (
                           <ExternalLink className="h-4 w-4 shrink-0 text-cyan-200" />
                         )}
                         <span className="min-w-0 leading-snug">
-                          {!clerkLoaded
+                          {authUnavailable
+                            ? "We couldn't reach CartoSky's sign-in service, so posting to TWF is unavailable. Try refreshing the page or disabling ad/content blockers — image download and copy still work."
+                            : !clerkLoaded
                             ? "Checking CartoSky sign-in status..."
                             : !isSignedIn
                               ? "Post directly to TWF threads — sign in to connect your account."
@@ -772,7 +782,15 @@ export function ShareModal({
                                 : "Post directly to TWF threads — connect your account."}
                         </span>
                       </div>
-                      {!clerkLoaded || (isSignedIn && !posting.statusResolved) ? null : !isSignedIn ? (
+                      {authUnavailable ? (
+                        <button
+                          type="button"
+                          onClick={() => window.location.reload()}
+                          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18"
+                        >
+                          Refresh page
+                        </button>
+                      ) : !clerkLoaded || (isSignedIn && !posting.statusResolved) ? null : !isSignedIn ? (
                         <Link
                           to={signedOutLoginUrl}
                           className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18"
@@ -792,8 +810,17 @@ export function ShareModal({
                       )}
                     </div>
                     {isSignedIn && (posting.statusError || posting.submitError) && (
-                      <div className="mt-2 rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
-                        {posting.statusError ?? posting.submitError?.message}
+                      <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+                        <span className="min-w-0">{posting.statusError ?? posting.submitError?.message}</span>
+                        {posting.statusError && (
+                          <button
+                            type="button"
+                            onClick={posting.handleRetryStatus}
+                            className="inline-flex h-7 shrink-0 items-center justify-center rounded-md border border-red-300/30 bg-red-400/10 px-2.5 font-semibold text-red-50 transition-colors hover:bg-red-400/20"
+                          >
+                            Retry
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
