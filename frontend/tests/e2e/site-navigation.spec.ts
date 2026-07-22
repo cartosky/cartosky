@@ -10,6 +10,9 @@ test.describe("marketing navigation", () => {
 
     await expect(viewer).not.toHaveClass(/text-slate-950/);
     await expect(viewer).toHaveClass(/border-transparent/);
+    await page.addStyleTag({ content: "header a { transition-duration: 0s !important; }" });
+    await viewer.hover();
+    await expect(viewer).toHaveCSS("border-bottom-color", "rgb(103, 232, 249)");
     await expect(forecast).toHaveAttribute("aria-current", "page");
     await expect(forecast).toHaveClass(/border-cyan-300/);
   });
@@ -25,7 +28,8 @@ test.describe("marketing navigation", () => {
     await expect(productNavigation).not.toContainText("Feedback");
     await expect(productNavigation).not.toContainText("Login");
     await expect(header.locator(".nav-utility-divider")).toHaveClass(/h-7/);
-    await expect(header.locator(".nav-utility-divider")).toHaveClass(/mx-2/);
+    await expect(header.locator(".nav-utility-divider")).toHaveCSS("margin-left", "4px");
+    await expect(header.locator(".nav-utility-divider")).toHaveCSS("margin-right", "4px");
     await expect(accountUtilities.getByRole("button", { name: "Send feedback" })).toBeVisible();
     await expect(accountUtilities.getByRole("link", { name: "Login" })).toBeVisible();
   });

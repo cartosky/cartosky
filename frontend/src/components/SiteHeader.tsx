@@ -17,9 +17,17 @@ type NavItemProps = {
   onClick?: () => void;
   className?: string;
   activeStyle?: "pill" | "underline";
+  accentUnderlineOnHover?: boolean;
 };
 
-function NavItem({ to, label, onClick, className, activeStyle = "pill" }: NavItemProps) {
+function NavItem({
+  to,
+  label,
+  onClick,
+  className,
+  activeStyle = "pill",
+  accentUnderlineOnHover = false,
+}: NavItemProps) {
   return (
     <NavLink
       to={to}
@@ -31,7 +39,7 @@ function NavItem({ to, label, onClick, className, activeStyle = "pill" }: NavIte
             "inline-flex items-center border-b-2 px-3 py-2 text-sm font-medium transition",
             isActive
               ? "border-cyan-300 text-cyan-300"
-              : "border-transparent text-white/70 hover:border-white/30 hover:text-white",
+              : `border-transparent text-white/70 ${accentUnderlineOnHover ? "hover:border-cyan-300" : "hover:border-white/30"} hover:text-white`,
             className ?? "",
           ].join(" ")
           : [
@@ -149,18 +157,18 @@ export default function SiteHeader({ variant }: { variant: "marketing" | "app" }
 
         {isMarketingVariant ? (
           <nav aria-label="Product navigation" className="ml-auto hidden items-center gap-1 md:flex">
-            <NavItem to="/viewer" label="Viewer" activeStyle="underline" />
-            <NavItem to="/forecast" label="Forecast" activeStyle="underline" />
-            <NavItem to="/climate" label="Climate" activeStyle="underline" />
-            {showPricingNav ? <NavItem to="/pricing" label="Pricing" activeStyle="underline" /> : null}
-            {adminEnabled ? <NavItem to="/admin" label="Admin" activeStyle="underline" /> : null}
+            <NavItem to="/viewer" label="Viewer" activeStyle="underline" accentUnderlineOnHover />
+            <NavItem to="/forecast" label="Forecast" activeStyle="underline" accentUnderlineOnHover />
+            <NavItem to="/climate" label="Climate" activeStyle="underline" accentUnderlineOnHover />
+            {showPricingNav ? <NavItem to="/pricing" label="Pricing" activeStyle="underline" accentUnderlineOnHover /> : null}
+            {adminEnabled ? <NavItem to="/admin" label="Admin" activeStyle="underline" accentUnderlineOnHover /> : null}
           </nav>
         ) : null}
 
         {isMarketingVariant ? (
           <span
             aria-hidden="true"
-            className="nav-utility-divider mx-2 hidden h-7 w-px shrink-0 bg-white/10 md:block"
+            className="nav-utility-divider mx-1 hidden h-7 w-px shrink-0 bg-white/10 md:block"
           />
         ) : null}
 
