@@ -475,6 +475,61 @@ def _priority_normalized(priority: str) -> str:
     return str(priority).strip().lower()
 
 
+AIGFS_AWS_SOURCE_ROOT = "https://noaa-nws-graphcastgfs-pds.s3.amazonaws.com"
+
+_HERBIE_TEMPLATE_PATCH_LOCK = threading.Lock()
+_HERBIE_AIGFS_AWS_PATCH_ATTEMPTED = False
+
+
+def _ensure_herbie_aigfs_aws_source() -> None:
+    """Inject an "aws" source into Herbie's aigfs model template.
+
+    Installed Herbie releases (2024.x through 2026.3) define only "nomads"
+    for aigfs, but the NOAA EAGLE bucket (noaa-nws-graphcastgfs-pds) mirrors
+    the identical path layout with .idx sidecars. The mirror lags NOMADS by
+    hours, so priority lists must keep "nomads" as a fallback for realtime.
+    """
+    global _HERBIE_AIGFS_AWS_PATCH_ATTEMPTED
+    if _HERBIE_AIGFS_AWS_PATCH_ATTEMPTED:
+        return
+    with _HERBIE_TEMPLATE_PATCH_LOCK:
+        if _HERBIE_AIGFS_AWS_PATCH_ATTEMPTED:
+            return
+        _HERBIE_AIGFS_AWS_PATCH_ATTEMPTED = True
+        try:
+            import importlib
+
+            # herbie.models does `from .gfs import *`, so the package
+            # attribute "gfs" is the class, not the submodule.
+            herbie_gfs_models = importlib.import_module("herbie.models.gfs")
+            original_template = herbie_gfs_models.aigfs.template
+        except (ImportError, AttributeError) as exc:
+            # Missing "aws" only disables the mirror; priority falls back to
+            # sources the template does define, so degrade instead of raising.
+            logger.warning("Herbie aigfs template patch skipped: %s", exc)
+            return
+
+        def _aigfs_template_with_aws(self):
+            original_template(self)
+            post_root = (
+                f"aigfs.{self.date:%Y%m%d/%H}/model/atmos/grib2/"
+                f"aigfs.t{self.date:%H}z.{self.product}.f{self.fxx:03d}"
+            )
+            self.SOURCES = {
+                "aws": f"{AIGFS_AWS_SOURCE_ROOT}/{post_root}.grib2",
+                **self.SOURCES,
+            }
+
+        herbie_gfs_models.aigfs.template = _aigfs_template_with_aws
+
+
+def _import_herbie():
+    from herbie.core import Herbie  # lazy — not always installed
+
+    _ensure_herbie_aigfs_aws_source()
+    return Herbie
+
+
 def _quiet_herbie_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     quiet_kwargs = dict(kwargs)
     quiet_kwargs.setdefault("verbose", False)
@@ -2635,7 +2690,7 @@ def _fetch_ecmwf_pf_mean_variable(
     bundle_fetch_cache: BundleFetchCache | None,
     return_meta: bool,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]:
-    from herbie.core import Herbie
+    Herbie = _import_herbie()
 
     kwargs: dict[str, Any] = {
         "model": model_id,
@@ -3043,7 +3098,7 @@ def _fetch_ecmwf_direct_mean_variable(
     return_meta: bool,
     fallback_to_pf_mean: bool = False,
 ) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine, dict[str, Any]]:
-    from herbie.core import Herbie
+    Herbie = _import_herbie()
 
     kwargs: dict[str, Any] = {
         "model": model_id,
@@ -3303,7 +3358,7 @@ def inventory_lines_for_pattern(
     herbie_kwargs: dict[str, Any] | None = None,
 ) -> list[str]:
     """Return inventory lines for a pattern with process-local cache/dedupe."""
-    from herbie.core import Herbie
+    Herbie = _import_herbie()
 
     _reject_internal_model_id(model_id)
     kwargs = {
@@ -3407,7 +3462,7 @@ def product_hour_has_any_idx(
     search_pattern: str | None = None,
 ) -> bool:
     """Cheap run-hour readiness probe using IDX, with optional GRIB fallback."""
-    from herbie.core import Herbie
+    Herbie = _import_herbie()
 
     _reject_internal_model_id(model_id)
     kwargs = {
@@ -4582,7 +4637,7 @@ def fetch_variable(
     RuntimeError
         If the GRIB download fails or produces no data.
     """
-    from herbie.core import Herbie  # lazy — not always installed
+    Herbie = _import_herbie()
 
     _reject_internal_model_id(model_id)
     raw_herbie_kwargs = dict(herbie_kwargs or {})

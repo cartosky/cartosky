@@ -21,7 +21,7 @@ def test_aigfs_run_discovery_invariants() -> None:
         "probe_attempts": 4,
         "cycle_cadence_hours": 6,
         "fallback_lag_hours": 6,
-        "source_priority": ["nomads"],
+        "source_priority": ["aws", "nomads"],
     }
 
 
@@ -75,32 +75,32 @@ def test_aigfs_alias_and_herbie_request_invariants() -> None:
     request = AIGFS_MODEL.herbie_request(product="sfc", var_key="tmp2m")
     assert request.model == "aigfs"
     assert request.product == "sfc"
-    assert request.herbie_kwargs["priority"] == ["nomads"]
+    assert request.herbie_kwargs["priority"] == ["aws", "nomads"]
 
     tmp850_request = AIGFS_MODEL.herbie_request(product="sfc", var_key="tmp850")
     assert tmp850_request.model == "aigfs"
     assert tmp850_request.product == "pres"
-    assert tmp850_request.herbie_kwargs["priority"] == ["nomads"]
+    assert tmp850_request.herbie_kwargs["priority"] == ["aws", "nomads"]
 
     tmp850_anom_request = AIGFS_MODEL.herbie_request(product="sfc", var_key="tmp850_anom")
     assert tmp850_anom_request.model == "aigfs"
     assert tmp850_anom_request.product == "pres"
-    assert tmp850_anom_request.herbie_kwargs["priority"] == ["nomads"]
+    assert tmp850_anom_request.herbie_kwargs["priority"] == ["aws", "nomads"]
 
     wspd850_request = AIGFS_MODEL.herbie_request(product="sfc", var_key="wspd850")
     assert wspd850_request.model == "aigfs"
     assert wspd850_request.product == "pres"
-    assert wspd850_request.herbie_kwargs["priority"] == ["nomads"]
+    assert wspd850_request.herbie_kwargs["priority"] == ["aws", "nomads"]
 
     wspd300_request = AIGFS_MODEL.herbie_request(product="sfc", var_key="wspd300")
     assert wspd300_request.model == "aigfs"
     assert wspd300_request.product == "pres"
-    assert wspd300_request.herbie_kwargs["priority"] == ["nomads"]
+    assert wspd300_request.herbie_kwargs["priority"] == ["aws", "nomads"]
 
     vort500_request = AIGFS_MODEL.herbie_request(product="sfc", var_key="vort500")
     assert vort500_request.model == "aigfs"
     assert vort500_request.product == "pres"
-    assert vort500_request.herbie_kwargs["priority"] == ["nomads"]
+    assert vort500_request.herbie_kwargs["priority"] == ["aws", "nomads"]
 
 
 def test_aigfs_buildable_var_set_and_defaults_invariants() -> None:

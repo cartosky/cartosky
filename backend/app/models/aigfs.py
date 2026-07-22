@@ -415,7 +415,10 @@ AIGFS_CAPABILITIES = ModelCapabilities(
         "probe_attempts": 4,
         "cycle_cadence_hours": 6,
         "fallback_lag_hours": 6,
-        "source_priority": ["nomads"],
+        # EAGLE mirror (fetch.py injects the "aws" source into Herbie's
+        # aigfs template); it lags NOMADS by hours, so realtime run tails
+        # still resolve via the nomads fallback.
+        "source_priority": ["aws", "nomads"],
     },
     ui_defaults={
         "default_var_key": "tmp2m",
