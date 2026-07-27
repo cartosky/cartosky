@@ -334,6 +334,7 @@ def test_run_scheduler_restarts_enabled_models_after_successful_run_completion(
     plugin.id = model_id
     cleanup_calls: list[tuple[str, str]] = []
     duration_calls: list[dict[str, object]] = []
+    lifecycle_events: list[str] = []
 
     monkeypatch.setattr(scheduler_module, "_resolve_model", lambda model: plugin)
     monkeypatch.setattr(scheduler_module, "_resolve_run_dt", lambda run_arg, *, plugin, probe_var: datetime(2026, 6, 8, 0, tzinfo=timezone.utc))
@@ -342,6 +343,21 @@ def test_run_scheduler_restarts_enabled_models_after_successful_run_completion(
     monkeypatch.setattr(scheduler_module, "_process_run", lambda **kwargs: ("20260608_00z", 4, 4))
     monkeypatch.setattr(scheduler_module, "_perform_successful_run_memory_cleanup", lambda *, run_id, model_id: cleanup_calls.append((run_id, model_id)))
     monkeypatch.setattr(scheduler_module, "record_build_duration", lambda **kwargs: duration_calls.append(kwargs))
+    monkeypatch.setattr(
+        scheduler_module,
+        "_export_fetch_runtime_metrics",
+        lambda **kwargs: lifecycle_events.append("export"),
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "_maybe_run_member_pass",
+        lambda **kwargs: lifecycle_events.append("members"),
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "_maybe_run_stats_pass",
+        lambda **kwargs: lifecycle_events.append("stats"),
+    )
     monkeypatch.setattr(scheduler_module, "_scheduler_model_lock", lambda data_root, model: contextlib.nullcontext())
     monkeypatch.setattr(scheduler_module.time, "sleep", lambda seconds: pytest.fail(f"sleep should not be called before {model_id} restart, got {seconds}"))
 
@@ -371,6 +387,7 @@ def test_run_scheduler_restarts_enabled_models_after_successful_run_completion(
     assert rc == 0
     assert cleanup_calls == [("20260608_00z", model_id)]
     assert len(duration_calls) == 1
+    assert lifecycle_events[-3:] == ["members", "stats", "export"]
 
 
 @pytest.mark.parametrize("model_id", ["gfs", "hrrr", "eps", "gefs", "ecmwf"])

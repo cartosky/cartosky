@@ -443,6 +443,7 @@ _EPS_STATISTICS_INVENTORY_CACHE: OrderedDict[tuple[str, str, str, int, str], Any
 _FETCH_RUNTIME_COUNTERS: dict[str, int] = {}
 _FETCH_RUNTIME_TIMERS_MS: dict[str, _TimerAggregate] = {}
 _FETCH_RUNTIME_METRICS_LOCK = threading.Lock()
+_FETCH_RUNTIME_PROCESS_TOKEN = f"{os.getpid()}-{time.time_ns()}"
 
 
 def _env_value(name: str | tuple[str, ...], default: str = "") -> str:
@@ -781,8 +782,8 @@ def _metric_observe_ms(name: str, elapsed_ms: float) -> None:
         aggregate.max_ms = max(aggregate.max_ms, elapsed)
 
 
-def get_herbie_runtime_metrics_for_tests() -> dict[str, Any]:
-    """Return process-local Herbie fetch metrics (tests only)."""
+def get_herbie_runtime_metrics() -> dict[str, Any]:
+    """Return a thread-safe snapshot of process-local Herbie fetch metrics."""
     with _FETCH_RUNTIME_METRICS_LOCK:
         counters = {key: int(value) for key, value in _FETCH_RUNTIME_COUNTERS.items()}
         timers = {
@@ -794,7 +795,16 @@ def get_herbie_runtime_metrics_for_tests() -> dict[str, Any]:
             }
             for key, value in _FETCH_RUNTIME_TIMERS_MS.items()
         }
-    return {"counters": counters, "timers_ms": timers}
+    return {
+        "process_token": _FETCH_RUNTIME_PROCESS_TOKEN,
+        "counters": counters,
+        "timers_ms": timers,
+    }
+
+
+def get_herbie_runtime_metrics_for_tests() -> dict[str, Any]:
+    """Backward-compatible test accessor for process-local fetch metrics."""
+    return get_herbie_runtime_metrics()
 
 
 def _run_herbie_call_with_deadline(

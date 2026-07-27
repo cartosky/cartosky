@@ -5,14 +5,25 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
+User=cartosky
+Group=cartosky
+UMask=0027
+LimitNOFILE=65536
 EnvironmentFile=/etc/cartosky/scheduler-satellite-rgb.env
+Environment=PATH=/opt/cartosky/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 # Bound the GDAL raster block cache (MB). Matches the cap operators set on the
 # live scheduler units 2026-07 (EPS memory audit); without it GDAL defaults to
 # 5% of RAM per process.
 Environment=GDAL_CACHEMAX=256
 WorkingDirectory=/opt/cartosky/backend
 ExecStart=/opt/cartosky/.venv/bin/python -m app.services.goes_rgb_poller
+Nice=10
+CPUWeight=50
+IOWeight=50
+# Conservative guard for the currently masked service. Before unmasking,
+# measure a one-cycle canary and resize only if the observed peak requires it.
+MemoryHigh=4G
+MemoryMax=6G
 Restart=on-failure
 RestartSec=30
 StandardOutput=journal

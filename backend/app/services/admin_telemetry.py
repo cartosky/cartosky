@@ -28,6 +28,8 @@ TELEMETRY_DB_PATH = Path(
 MRMS_RUNTIME_ARTIFACTS_PENDING_KEY = "runtime_artifacts_pending"
 RUNTIME_ARTIFACT_PENDING_GRACE_SECONDS = 300
 DEFAULT_STALLED_RUN_IDLE_MINUTES = 90
+FETCH_RUNTIME_SNAPSHOT_SCHEMA_VERSION = 1
+DEFAULT_FETCH_RUNTIME_SNAPSHOT_MAX_AGE_SECONDS = 24 * 60 * 60
 CUMULATIVE_DERIVE_STRATEGIES = frozenset(
     {
         "precip_total_cumulative",
@@ -37,6 +39,179 @@ CUMULATIVE_DERIVE_STRATEGIES = frozenset(
         "ptype_accumulation_ecmwf",
     }
 )
+
+
+def _fetch_runtime_snapshot_dir(data_root: Path) -> Path:
+    return Path(data_root) / "status" / "fetch_runtime"
+
+
+def _normalize_fetch_runtime_metric_name(value: Any) -> str | None:
+    token = str(value or "").strip().lower()
+    if not token or re.fullmatch(r"[a-z0-9_]+", token) is None:
+        return None
+    return token
+
+
+def _normalized_fetch_runtime_metrics(metrics: dict[str, Any]) -> tuple[dict[str, int], dict[str, dict[str, float | int]]]:
+    raw_counters = metrics.get("counters")
+    counters: dict[str, int] = {}
+    if isinstance(raw_counters, dict):
+        for raw_name, raw_value in raw_counters.items():
+            name = _normalize_fetch_runtime_metric_name(raw_name)
+            if name is None:
+                continue
+            try:
+                value = int(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if value >= 0:
+                counters[name] = value
+
+    raw_timers = metrics.get("timers_ms")
+    timers: dict[str, dict[str, float | int]] = {}
+    if isinstance(raw_timers, dict):
+        for raw_name, raw_value in raw_timers.items():
+            name = _normalize_fetch_runtime_metric_name(raw_name)
+            if name is None or not isinstance(raw_value, dict):
+                continue
+            try:
+                count = max(0, int(raw_value.get("count", 0)))
+                sum_ms = max(0.0, float(raw_value.get("sum_ms", 0.0)))
+                max_ms = max(0.0, float(raw_value.get("max_ms", 0.0)))
+            except (TypeError, ValueError):
+                continue
+            timers[name] = {
+                "count": count,
+                "sum_ms": sum_ms,
+                "avg_ms": float(sum_ms / count) if count > 0 else 0.0,
+                "max_ms": max_ms,
+            }
+    return counters, timers
+
+
+def _merge_fetch_runtime_metrics(
+    completed_metrics: dict[str, Any],
+    process_metrics: dict[str, Any],
+) -> tuple[dict[str, int], dict[str, dict[str, float | int]]]:
+    completed_counters, completed_timers = _normalized_fetch_runtime_metrics(completed_metrics)
+    process_counters, process_timers = _normalized_fetch_runtime_metrics(process_metrics)
+    counters = dict(completed_counters)
+    for name, value in process_counters.items():
+        counters[name] = counters.get(name, 0) + value
+
+    timers = dict(completed_timers)
+    for name, value in process_timers.items():
+        previous = timers.get(name, {})
+        count = int(previous.get("count", 0)) + int(value["count"])
+        sum_ms = float(previous.get("sum_ms", 0.0)) + float(value["sum_ms"])
+        timers[name] = {
+            "count": count,
+            "sum_ms": sum_ms,
+            "avg_ms": float(sum_ms / count) if count > 0 else 0.0,
+            "max_ms": max(float(previous.get("max_ms", 0.0)), float(value["max_ms"])),
+        }
+    return counters, timers
+
+
+def write_fetch_runtime_snapshot(
+    *,
+    data_root: Path,
+    model_id: str,
+    metrics: dict[str, Any],
+    recorded_at: float | None = None,
+    process_id: int | None = None,
+) -> Path:
+    normalized_model_id = _normalize_fetch_runtime_metric_name(model_id)
+    if normalized_model_id is None:
+        raise ValueError(f"Invalid scheduler model id: {model_id!r}")
+    resolved_process_id = int(os.getpid() if process_id is None else process_id)
+    process_token = str(metrics.get("process_token") or resolved_process_id)
+    process_counters, process_timers = _normalized_fetch_runtime_metrics(metrics)
+    completed_metrics: dict[str, Any] = {}
+    snapshot_dir = _fetch_runtime_snapshot_dir(data_root)
+    target = snapshot_dir / f"{normalized_model_id}.json"
+    try:
+        previous = json.loads(target.read_text())
+        if isinstance(previous, dict):
+            if str(previous.get("process_token") or previous.get("process_id")) == process_token:
+                completed_metrics = {
+                    "counters": previous.get("completed_counters"),
+                    "timers_ms": previous.get("completed_timers_ms"),
+                }
+            else:
+                completed_metrics = {
+                    "counters": previous.get("counters"),
+                    "timers_ms": previous.get("timers_ms"),
+                }
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        pass
+    completed_counters, completed_timers = _normalized_fetch_runtime_metrics(completed_metrics)
+    counters, timers = _merge_fetch_runtime_metrics(
+        {"counters": completed_counters, "timers_ms": completed_timers},
+        {"counters": process_counters, "timers_ms": process_timers},
+    )
+    payload = {
+        "schema_version": FETCH_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+        "model_id": normalized_model_id,
+        "process_id": resolved_process_id,
+        "process_token": process_token,
+        "recorded_at": float(time.time() if recorded_at is None else recorded_at),
+        "completed_counters": completed_counters,
+        "completed_timers_ms": completed_timers,
+        "process_counters": process_counters,
+        "process_timers_ms": process_timers,
+        "counters": counters,
+        "timers_ms": timers,
+    }
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    temporary = snapshot_dir / f".{normalized_model_id}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        temporary.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        os.replace(temporary, target)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+    return target
+
+
+def load_fetch_runtime_snapshots(
+    *,
+    data_root: Path,
+    now: float | None = None,
+    max_age_seconds: float = DEFAULT_FETCH_RUNTIME_SNAPSHOT_MAX_AGE_SECONDS,
+) -> list[dict[str, Any]]:
+    current_time = float(time.time() if now is None else now)
+    rows: list[dict[str, Any]] = []
+    for path in sorted(_fetch_runtime_snapshot_dir(data_root).glob("*.json")):
+        try:
+            payload = json.loads(path.read_text())
+            if not isinstance(payload, dict):
+                continue
+            if int(payload.get("schema_version", 0)) != FETCH_RUNTIME_SNAPSHOT_SCHEMA_VERSION:
+                continue
+            model_id = _normalize_fetch_runtime_metric_name(payload.get("model_id"))
+            recorded_at = float(payload.get("recorded_at"))
+            process_id = int(payload.get("process_id"))
+            if model_id is None or model_id != path.stem:
+                continue
+            if recorded_at > current_time + 60 or current_time - recorded_at > max(0.0, float(max_age_seconds)):
+                continue
+            counters, timers = _normalized_fetch_runtime_metrics(payload)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        rows.append(
+            {
+                "schema_version": FETCH_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+                "model_id": model_id,
+                "process_id": process_id,
+                "recorded_at": recorded_at,
+                "counters": counters,
+                "timers_ms": timers,
+            }
+        )
+    return rows
 
 ALLOWED_PERF_EVENT_NAMES = {
     "viewer_first_frame",

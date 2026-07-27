@@ -1,38 +1,5 @@
 # Max Week Execution Plan — 2026-07-27
 
-**Revision 3** (2026-07-27, same day). Supersedes revisions 1 and 2 in place.
-
-Revision 3 changes, all execution clarifications rather than structural: the Cloudflare gate now requires a recorded first response plus a `HIT` on an identical second request rather than `HIT` "cold and warm" (a cold `MISS` is legitimate); the GOES RGB service item is corrected — **the template is checked into `deployment/systemd` (verified in source)**, so the task is to fix and deploy it, plus diff the live prod unit against it; Phase 2B now states explicitly that `domain=global` is tested against synthetic fixtures because no global artifacts exist until Phase 3; and G3 now carries an explicit pass/fail decision rule requiring operator signoff on material regression.
-**Window:** ~7 days of elevated Claude Max usage.
-**Status:** **Conditional go.** Phase 0 and the Phase 1 inventory are authorized to start now. Phase 2 implementation is **not** authorized until the artifact-domain contract below is designed and reviewed.
-
----
-
-## Revision 2 — retractions
-
-Revision 1 contained a load-bearing factual error, corrected here rather than appended to.
-
-> **RETRACTED:** Revision 1 stated that CartoSky "already has region-aware scheduler paths / manifests / latest pointers / sampling / publication" and scoped Phase 2 as a one-day frontend domain/camera split.
->
-> **This is false.** The interfaces are region-shaped; the implementations discard the argument. Verified directly in source:
->
-> - `backend/app/services/scheduler.py:369` — `_build_regions_for_var` returns `[default_region]` unconditionally; it never returns more than the canonical build region.
-> - `backend/app/services/scheduler.py:604` — `_frame_sidecar_path` accepts `region` and executes a literal `del region`.
-> - `backend/app/services/scheduler.py` — `_frame_value_path` has the same `del region`.
-> - `backend/app/services/grid.py:1261` — `grid_dir(data_root, model, run, var, *, region=None)` executes `del region` at line 1262.
-> - `backend/app/services/sampling.py` — `del region` at lines 430, 588, 608, 637, and 778, covering `sample_member_values_seek`, `_resolve_val_cog`, `_resolve_sidecar`, `_resolve_binary_grid_frame`, and `run_has_member_data`.
-> - `backend/app/main.py:2781` — same pattern reported for API latest pointers, manifests, run resolution, published directories, grid manifests, and URLs (not independently verified in this session).
->
-> **Consequence:** publishing a global run today would land in the same paths as the NA run. Global and NA artifacts would collide or be indistinguishable. Phase 2 is now split into a backend contract phase (2A) and a frontend phase (2B), and the week's success target is revised downward accordingly.
-
-> **RETRACTED:** Revision 1 stated the per-model disk split was unavailable and estimated GFS+AIGFS "below ~50%." The split is in the sizing document. The correct GFS+AIGFS figure is **~55%**; full table below.
-
-> **RETRACTED:** Revision 1's antimeridian gate implied values at 179°E and 179°W should agree. They are two degrees apart and can legitimately differ. Corrected oracle in G1.
-
-> **RETRACTED:** Revision 1 asserted "sub-100ms frame loads" as a gate without defining device, network, cache state, LOD, measurement boundaries, or percentile, and tied it to seam-crossing zoom levels. The viewer downloads an entire selected LOD frame rather than a viewport subset, so seam position is not a payload-timing variable. Corrected contract in G3.
-
----
-
 ## TLDR
 
 One deep spine, one measured parallel spike.
@@ -150,8 +117,19 @@ Verified after **every** phase, not just the ones that look related.
 
 ## Phase 0 — Operational gate — **½ day, hard timebox** (S)
 
-1. **Finish or isolate the current MRMS work.** The worktree has uncommitted MRMS and frontend changes overlapping files Phase 1 touches. Commit or stash to a branch.
+**DONE** ~~1. **Finish or isolate the current MRMS work.** The worktree has uncommitted MRMS and frontend changes overlapping files Phase 1 touches. Commit or stash to a branch.~~
 2. **Memory regression** (`docs/MEMORY_REGIME_SHIFT_INVESTIGATION_2026-07-26.md:23`): the 1.5–2× scheduler RSS step is an **efficiency issue, not a leak**, and is not a reason to block the week. Ship the thread-per-Herbie-call fix if it is a small diff; otherwise export the timeout/runtime counters as production metrics and move on.
+
+   **Decision recorded 2026-07-27:** the thread lifecycle is not a small safe
+   revert. The deadline wrapper protects build slots from uncancellable Herbie
+   calls, and the isolated download path protects canonical artifacts from late
+   writers. Take the metrics branch: export the existing process-local counters
+   and timers through scheduler snapshots and the API's Prometheus surface.
+
+   **Local implementation complete; deployment pending.** Snapshots are
+   atomically written per model, retain cumulative totals across scheduler
+   process restarts, refresh after member/stat post-processing, and are exposed
+   through the existing API `/metrics` scrape.
 3. **Define and start the arena canary.** Not "set `MALLOC_ARENA_MAX=2` and see what happens." Specify before starting:
    - The **single** scheduler unit under test (do not apply fleet-wide and call it a canary).
    - Control and treatment periods, and whether the unit restarts between them.
@@ -163,7 +141,42 @@ Verified after **every** phase, not just the ones that look related.
 
    **Before deploying, diff the live unit on prod against the repo template.** Prior context indicated a hand-placed copy under `/etc/systemd/system`. If a drifted copy is running, editing the repo template alone changes nothing on prod — and a silent divergence between the checked-in template and the live unit is itself the more serious finding. Record the diff result either way.
 
-**Stop-and-verify:** baselines recorded, worktree clean, canary defined and running on one unit, RGB service unit corrected and committed.
+### Phase 0 production record — 2026-07-27
+
+- `/opt/cartosky-dev` was at `5450cde` when inspected.
+- `csky-satellite-rgb-scheduler.service` is **masked and inactive**. There is
+  no active live unit or process to diff or measure; `MainPID=0`, memory and
+  CPU/IO accounting are unset, and effective memory limits are infinity. Keep
+  the service masked during this week.
+- Host point sample: 62 GiB RAM total, 11 GiB used, 51 GiB available; swap
+  4.0/8.0 GiB used. This is a host baseline only, not the required
+  per-scheduler build baseline.
+
+### Arena canary protocol — locked 2026-07-27
+
+- **Treatment unit:** `csky-gfs-scheduler.service` only. GFS showed the
+  clearest post-regression RSS increase and naturally restarts after successful
+  builds, making process-lifetime comparisons less ambiguous.
+- **Control:** the immediately preceding 48 hours, requiring eight completed
+  GFS cycles at the current worker count and memory caps.
+- **Treatment:** add `MALLOC_ARENA_MAX=2` to the checked-in GFS unit template
+  in a dedicated commit, deploy through the normal workflow, then observe the
+  next 48 hours / eight completed cycles. Do not bundle any other memory
+  setting with that deploy.
+- **Restart:** one intentional `daemon-reload` and GFS restart at the treatment
+  boundary; natural post-success restarts continue in both periods.
+- **Metrics:** per-process RSS p50/p95/peak, anonymous mapping count, host swap
+  used/peak, build duration by cycle, Herbie timeout counts, and scheduler
+  failures. Record concurrent scheduler load for both windows.
+- **Rollback:** immediately for a start failure, OOM kill, or two consecutive
+  attributable build failures; also roll back if two consecutive completed
+  treatment cycles regress build duration by more than 25% versus their
+  control comparison without an upstream-delay explanation. Revert the
+  dedicated canary commit on Mac, push, pull on prod, run
+  `sudo systemctl daemon-reload`, and restart only
+  `csky-gfs-scheduler.service`.
+
+**Stop-and-verify:** baselines recorded, working tree clean, canary defined and running on one unit, RGB service unit corrected and committed.
 
 ---
 
@@ -454,8 +467,14 @@ Paste into a fresh context. Each assumes the agent reads relevant source before 
 
 ## Verification provenance
 
-Directly verified in source during this session: `scheduler.py` (`_build_regions_for_var`, `_frame_sidecar_path`, `_frame_value_path`, `_default_build_region`, `CANONICAL_COVERAGE`), `grid.py:1261–1262`, and `sampling.py` lines 430, 588, 608, 637, 778.
-
-Reported but **not** independently verified in this session — spot-check before relying on any as load-bearing: `backend/app/main.py:2781`, `frontend/src/App.tsx:746`, `frontend/src/pages/compare.tsx:794`, `docs/MEMORY_REGIME_SHIFT_INVESTIGATION_2026-07-26.md:23`, `docs/GLOBAL_MODEL_SIZING_SPIKE_2026-07-22.md:93` (including the 390.7 / 58.8 GiB per-model figures), and `deployment/systemd/csky-satellite-rgb-scheduler.service:1`.
+Directly verified in source during this session: `scheduler.py`
+(`_build_regions_for_var`, `_frame_sidecar_path`, `_frame_value_path`,
+`_default_build_region`, `CANONICAL_COVERAGE`), `grid.py:1261–1262`,
+`sampling.py` lines 430, 588, 608, 637, 778, `backend/app/main.py:2781`,
+`frontend/src/App.tsx:746`, `frontend/src/pages/compare.tsx:794`,
+`docs/MEMORY_REGIME_SHIFT_INVESTIGATION_2026-07-26.md`,
+`docs/GLOBAL_MODEL_SIZING_SPIKE_2026-07-22.md:78-83` (including the
+390.7 / 58.8 GiB per-model figures), and
+`deployment/systemd/csky-satellite-rgb-scheduler.service`.
 
 Disk figures were measured directly on prod and supersede all prior estimates.

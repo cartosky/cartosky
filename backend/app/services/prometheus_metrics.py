@@ -96,6 +96,41 @@ FRAMES_404_TOTAL = Counter(
     registry=_REGISTRY,
 )
 
+HERBIE_RUNTIME_COUNTER = Gauge(
+    "cartosky_herbie_runtime_counter",
+    "Cumulative Herbie fetch counter snapshot retained across scheduler process restarts.",
+    labelnames=("model_id", "metric"),
+    registry=_REGISTRY,
+)
+
+HERBIE_RUNTIME_TIMER_COUNT = Gauge(
+    "cartosky_herbie_runtime_timer_count",
+    "Cumulative Herbie timer observation count retained across scheduler process restarts.",
+    labelnames=("model_id", "metric"),
+    registry=_REGISTRY,
+)
+
+HERBIE_RUNTIME_TIMER_SUM_MILLISECONDS = Gauge(
+    "cartosky_herbie_runtime_timer_sum_milliseconds",
+    "Cumulative Herbie timer milliseconds retained across scheduler process restarts.",
+    labelnames=("model_id", "metric"),
+    registry=_REGISTRY,
+)
+
+HERBIE_RUNTIME_TIMER_MAX_MILLISECONDS = Gauge(
+    "cartosky_herbie_runtime_timer_max_milliseconds",
+    "Current process-local Herbie timer maximum milliseconds.",
+    labelnames=("model_id", "metric"),
+    registry=_REGISTRY,
+)
+
+HERBIE_RUNTIME_SNAPSHOT_TIMESTAMP_SECONDS = Gauge(
+    "cartosky_herbie_runtime_snapshot_timestamp_seconds",
+    "Unix timestamp of the scheduler's latest Herbie runtime snapshot.",
+    labelnames=("model_id",),
+    registry=_REGISTRY,
+)
+
 
 def prometheus_enabled() -> bool:
     raw = os.getenv("CARTOSKY_PROMETHEUS_ENABLED", "").strip().lower()
@@ -148,6 +183,46 @@ def record_frames_404(*, endpoint: str, reason: str) -> None:
     endpoint_label = str(endpoint).strip() or "unknown"
     reason_label = str(reason).strip() or "unknown"
     FRAMES_404_TOTAL.labels(endpoint=endpoint_label, reason=reason_label).inc()
+
+
+def replace_herbie_runtime_metrics(rows: list[dict[str, Any]]) -> None:
+    HERBIE_RUNTIME_COUNTER.clear()
+    HERBIE_RUNTIME_TIMER_COUNT.clear()
+    HERBIE_RUNTIME_TIMER_SUM_MILLISECONDS.clear()
+    HERBIE_RUNTIME_TIMER_MAX_MILLISECONDS.clear()
+    HERBIE_RUNTIME_SNAPSHOT_TIMESTAMP_SECONDS.clear()
+    for row in rows:
+        model_id = str(row.get("model_id") or "").strip().lower()
+        if not model_id:
+            continue
+        HERBIE_RUNTIME_SNAPSHOT_TIMESTAMP_SECONDS.labels(model_id=model_id).set(
+            max(0.0, float(row.get("recorded_at") or 0.0))
+        )
+        counters = row.get("counters")
+        if isinstance(counters, dict):
+            for metric, value in counters.items():
+                HERBIE_RUNTIME_COUNTER.labels(
+                    model_id=model_id,
+                    metric=str(metric),
+                ).set(max(0, int(value)))
+        timers = row.get("timers_ms")
+        if isinstance(timers, dict):
+            for metric, aggregate in timers.items():
+                if not isinstance(aggregate, dict):
+                    continue
+                labels = {
+                    "model_id": model_id,
+                    "metric": str(metric),
+                }
+                HERBIE_RUNTIME_TIMER_COUNT.labels(**labels).set(
+                    max(0, int(aggregate.get("count", 0)))
+                )
+                HERBIE_RUNTIME_TIMER_SUM_MILLISECONDS.labels(**labels).set(
+                    max(0.0, float(aggregate.get("sum_ms", 0.0)))
+                )
+                HERBIE_RUNTIME_TIMER_MAX_MILLISECONDS.labels(**labels).set(
+                    max(0.0, float(aggregate.get("max_ms", 0.0)))
+                )
 
 
 def set_sample_cache_entries(*, endpoint: str, entries: int) -> None:
@@ -307,3 +382,8 @@ def reset_metrics_for_tests() -> None:
     BUILD_DURATION_SECONDS.clear()
     SCREENSHOT_PHASE_DURATION_SECONDS.clear()
     SCREENSHOT_REQUESTS_TOTAL.clear()
+    HERBIE_RUNTIME_COUNTER.clear()
+    HERBIE_RUNTIME_TIMER_COUNT.clear()
+    HERBIE_RUNTIME_TIMER_SUM_MILLISECONDS.clear()
+    HERBIE_RUNTIME_TIMER_MAX_MILLISECONDS.clear()
+    HERBIE_RUNTIME_SNAPSHOT_TIMESTAMP_SECONDS.clear()

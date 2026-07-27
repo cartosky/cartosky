@@ -32,7 +32,7 @@ from app.config import (
 from app.services import climatology
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder import fetch as builder_fetch
-from app.services.admin_telemetry import record_build_duration
+from app.services.admin_telemetry import record_build_duration, write_fetch_runtime_snapshot
 from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable, product_hour_has_any_idx
 from app.services.builder.derive import FetchContext, destroy_fetch_context
 from app.services.builder.pipeline import build_frame, build_frame_bundle
@@ -1755,6 +1755,21 @@ def _log_runtime_cache_prune(*, run_id: str, model_id: str, reason: str) -> None
     )
 
 
+def _export_fetch_runtime_metrics(*, data_root: Path, model_id: str) -> None:
+    try:
+        write_fetch_runtime_snapshot(
+            data_root=data_root,
+            model_id=model_id,
+            metrics=builder_fetch.get_herbie_runtime_metrics(),
+        )
+    except Exception:
+        logger.warning(
+            "Failed to export fetch runtime metrics: model=%s",
+            model_id,
+            exc_info=True,
+        )
+
+
 def _perform_successful_run_memory_cleanup(*, run_id: str, model_id: str) -> None:
     logger.info("Run completed successfully; performing memory cleanup.")
     current_rss_before_gc_bytes = current_rss_bytes()
@@ -3103,6 +3118,7 @@ def run_scheduler(
                     data_root=data_root,
                     probe_var=resolved_probe_var,
                 )
+                _export_fetch_runtime_metrics(data_root=data_root, model_id=model)
                 logger.info("No new run yet (latest=%s complete); sleeping %ss", run_id, poll_seconds)
                 time.sleep(poll_seconds)
                 continue
@@ -3137,7 +3153,9 @@ def run_scheduler(
                     _log_runtime_cache_prune(run_id=run_id, model_id=model, reason="process_run_exception")
                 except Exception:
                     logger.exception("scheduler runtime cache prune failed during process_run_exception")
+                _export_fetch_runtime_metrics(data_root=data_root, model_id=model)
                 raise
+            _export_fetch_runtime_metrics(data_root=data_root, model_id=model)
             run_now_complete = total > 0 and available >= total
             if run_now_complete and _current_build_start is not None:
                 _build_duration = time.monotonic() - _current_build_start
@@ -3166,24 +3184,27 @@ def run_scheduler(
             # process restart / one-shot return below so --once/--run modes
             # include member work; interrupted passes resume on later polls.
             if run_now_complete:
-                _maybe_run_member_pass(
-                    plugin=plugin,
-                    model_id=model,
-                    run_id=processed_run_id,
-                    data_root=data_root,
-                    probe_var=resolved_probe_var,
-                    pinned_run=bool(run_arg),
-                )
-                # Stats stage (Phase 6): consumes the members the pass above
-                # just promoted; no-op when the model isn't stats-enabled.
-                _maybe_run_stats_pass(
-                    plugin=plugin,
-                    model_id=model,
-                    run_id=processed_run_id,
-                    data_root=data_root,
-                    probe_var=resolved_probe_var,
-                    pinned_run=bool(run_arg),
-                )
+                try:
+                    _maybe_run_member_pass(
+                        plugin=plugin,
+                        model_id=model,
+                        run_id=processed_run_id,
+                        data_root=data_root,
+                        probe_var=resolved_probe_var,
+                        pinned_run=bool(run_arg),
+                    )
+                    # Stats stage (Phase 6): consumes the members the pass above
+                    # just promoted; no-op when the model isn't stats-enabled.
+                    _maybe_run_stats_pass(
+                        plugin=plugin,
+                        model_id=model,
+                        run_id=processed_run_id,
+                        data_root=data_root,
+                        probe_var=resolved_probe_var,
+                        pinned_run=bool(run_arg),
+                    )
+                finally:
+                    _export_fetch_runtime_metrics(data_root=data_root, model_id=model)
 
             if run_now_complete and not run_was_complete_before_processing:
                 _perform_successful_run_memory_cleanup(run_id=processed_run_id, model_id=model)

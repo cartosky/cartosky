@@ -3144,6 +3144,9 @@ def _refresh_prometheus_gauges() -> None:
         active_entries = sum(1 for expires_at, _ in _sample_cache.values() if expires_at > time.monotonic())
     prometheus_metrics.set_sample_cache_entries(endpoint="all", entries=active_entries)
     prometheus_metrics.replace_published_run_health(_published_run_observability_rows())
+    prometheus_metrics.replace_herbie_runtime_metrics(
+        admin_telemetry.load_fetch_runtime_snapshots(data_root=DATA_ROOT)
+    )
     try:
         for _row in get_latest_build_durations():
             prometheus_metrics.observe_build_duration(

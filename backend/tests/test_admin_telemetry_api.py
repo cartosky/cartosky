@@ -717,9 +717,29 @@ async def test_admin_network_diagnostics_summary_groups_by_cache_model_and_devic
     assert expand_metric["by_payload_size_bucket"][0]["key"] == "256KB-1MB"
 
 
-async def test_metrics_endpoint_exposes_prometheus_families_when_enabled(client: httpx.AsyncClient) -> None:
+async def test_metrics_endpoint_exposes_prometheus_families_when_enabled(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     os.environ["CARTOSKY_PROMETHEUS_ENABLED"] = "1"
     main_module.app.dependency_overrides[main_module.require_clerk_user] = _fake_clerk_user
+    monkeypatch.setattr(main_module, "DATA_ROOT", tmp_path)
+    admin_telemetry.write_fetch_runtime_snapshot(
+        data_root=tmp_path,
+        model_id="gfs",
+        metrics={
+            "counters": {"herbie_call_timeout": 2},
+            "timers_ms": {
+                "herbie_call_ms": {
+                    "count": 3,
+                    "sum_ms": 900.0,
+                    "avg_ms": 300.0,
+                    "max_ms": 500.0,
+                },
+            },
+        },
+    )
 
     response = await client.get("/auth/twf/status")
     assert response.status_code == 200
@@ -732,6 +752,8 @@ async def test_metrics_endpoint_exposes_prometheus_families_when_enabled(client:
     assert "cartosky_http_request_duration_seconds_bucket" in payload
     assert "cartosky_sample_cache_result_total" in payload
     assert "cartosky_published_run_age_hours" in payload
+    assert 'cartosky_herbie_runtime_counter{metric="herbie_call_timeout",model_id="gfs"} 2.0' in payload
+    assert 'cartosky_herbie_runtime_timer_count{metric="herbie_call_ms",model_id="gfs"} 3.0' in payload
 
 
 async def test_metrics_endpoint_returns_404_when_disabled(client: httpx.AsyncClient) -> None:
