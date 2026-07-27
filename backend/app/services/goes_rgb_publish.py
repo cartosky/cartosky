@@ -58,33 +58,36 @@ class GOESRGBPublishResult:
     frame_count: int
 
 
-def load_latest_published_rgb_frames(
-    data_root: Path,
-) -> tuple[str | None, list[GOESRGBPublishedFrame]]:
+def latest_rgb_pointer_run_id(data_root: Path) -> str | None:
+    """Return the run_id recorded in LATEST_RGB.json, if present."""
     latest_path = data_root / "published" / GOES_EAST_MODEL_ID / GOES_EAST_RGB_LATEST_FILENAME
     if not latest_path.is_file():
-        return None, []
+        return None
     try:
         latest_payload = json.loads(latest_path.read_text())
     except (OSError, json.JSONDecodeError):
-        return None, []
+        return None
     run_id = str(latest_payload.get("run_id") or "").strip()
-    if not run_id:
-        return None, []
+    return run_id or None
 
+
+def _true_color_frames_from_run(
+    data_root: Path,
+    run_id: str,
+) -> list[GOESRGBPublishedFrame]:
     manifest_path = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{run_id}.json"
     if not manifest_path.is_file():
-        return run_id, []
+        return []
     try:
         manifest = json.loads(manifest_path.read_text())
     except (OSError, json.JSONDecodeError):
-        return run_id, []
+        return []
 
     variables = manifest.get("variables") if isinstance(manifest, dict) else None
     var_entry = variables.get(TRUE_COLOR_VARIABLE_ID) if isinstance(variables, dict) else None
     frames_payload = var_entry.get("frames") if isinstance(var_entry, dict) else None
     if not isinstance(frames_payload, list):
-        return run_id, []
+        return []
 
     var_dir = data_root / "published" / GOES_EAST_MODEL_ID / run_id / TRUE_COLOR_VARIABLE_ID
     frames: list[GOESRGBPublishedFrame] = []
@@ -113,7 +116,50 @@ def load_latest_published_rgb_frames(
             )
         )
     frames.sort(key=lambda item: item.slot_time)
-    return run_id, frames
+    return frames
+
+
+def _find_latest_true_color_run_id(data_root: Path) -> str | None:
+    """Newest published goes-east run that still has true_color frames on disk."""
+    from app.services.run_ids import parse_run_id_datetime
+
+    published_root = data_root / "published" / GOES_EAST_MODEL_ID
+    manifests_root = data_root / "manifests" / GOES_EAST_MODEL_ID
+    if not published_root.is_dir() or not manifests_root.is_dir():
+        return None
+
+    candidates: list[tuple[datetime, str]] = []
+    for manifest_path in manifests_root.glob("*.json"):
+        run_id = manifest_path.stem
+        run_dt = parse_run_id_datetime(run_id)
+        if run_dt is None:
+            continue
+        if not (published_root / run_id).is_dir():
+            continue
+        if _true_color_frames_from_run(data_root, run_id):
+            candidates.append((run_dt, run_id))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def load_latest_published_rgb_frames(
+    data_root: Path,
+) -> tuple[str | None, list[GOESRGBPublishedFrame]]:
+    run_id = latest_rgb_pointer_run_id(data_root)
+    if run_id:
+        frames = _true_color_frames_from_run(data_root, run_id)
+        if frames:
+            return run_id, frames
+
+    # Band retention shares published/goes-east and can delete the dusk RGB run
+    # while LATEST_RGB still points at it. Fall back to the newest run that still
+    # carries seeded true_color frames so overnight reload/reuse stays intact.
+    fallback_run_id = _find_latest_true_color_run_id(data_root)
+    if not fallback_run_id:
+        return run_id, []
+    return fallback_run_id, _true_color_frames_from_run(data_root, fallback_run_id)
 
 
 def publish_goes_rgb_bundle(

@@ -2869,22 +2869,44 @@ def _manifest_has_true_color_frames(manifest: dict[str, Any]) -> bool:
     return isinstance(frames, list) and bool(frames)
 
 
+def _true_color_frames_exist_on_disk(model: str, run_id: str) -> bool:
+    var_dir = PUBLISHED_ROOT / model / run_id / "true_color"
+    if not var_dir.is_dir():
+        return False
+    return any(path.is_file() and path.suffix.lower() == ".webp" for path in var_dir.iterdir())
+
+
+def _find_latest_true_color_run(model: str) -> str | None:
+    """Newest goes-east run with true_color frames still present on disk."""
+    if model != GOES_EAST_MODEL_ID:
+        return None
+    for run_id in reversed(_scan_manifest_runs(model)):
+        manifest = _load_manifest(model, run_id)
+        if manifest is None or not _manifest_has_true_color_frames(manifest):
+            continue
+        if _true_color_frames_exist_on_disk(model, run_id):
+            return run_id
+    return None
+
+
 def _resolve_true_color_run(model: str, run: str) -> str | None:
     if model != GOES_EAST_MODEL_ID:
         return _resolve_run(model, run, region=None)
 
     rgb_latest = _latest_rgb_run_from_pointer(model)
     if run == "latest":
-        return rgb_latest
+        # Band retention can delete the LATEST_RGB target overnight. Fall back to
+        # the newest seeded true_color run so /rgb-manifest?run=latest keeps working.
+        return rgb_latest or _find_latest_true_color_run(model)
 
     resolved = _resolve_run(model, run, region=None)
     if resolved is None:
-        return rgb_latest
+        return rgb_latest or _find_latest_true_color_run(model)
 
     manifest = _load_manifest(model, resolved)
     if manifest is not None and _manifest_has_true_color_frames(manifest):
         return resolved
-    return rgb_latest
+    return rgb_latest or _find_latest_true_color_run(model)
 
 
 def _scan_manifest_runs(model: str, *, region: str | None = None) -> list[str]:

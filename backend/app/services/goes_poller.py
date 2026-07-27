@@ -35,6 +35,7 @@ from app.services.goes_publish import (
     publish_goes_bundle,
 )
 from app.services.observed_bundle_health import parse_iso_datetime
+from app.services.goes_rgb_publish import latest_rgb_pointer_run_id
 from app.services.publish_utils import enforce_run_artifact_retention, write_latest_pointer
 
 logger = logging.getLogger(__name__)
@@ -419,9 +420,29 @@ def _latest_variable_scan_valid_time(var_entry: object) -> datetime | None:
 
 
 def _enforce_retention(config: GOESPollerConfig) -> None:
-    enforce_run_artifact_retention(config.data_root / "staging" / "goes-east", config.keep_runs)
-    enforce_run_artifact_retention(config.data_root / "published" / "goes-east", config.keep_runs)
-    enforce_run_artifact_retention(config.data_root / "manifests" / "goes-east", config.keep_runs)
+    # Band and RGB pollers share published/goes-east. Protect the LATEST_RGB
+    # target so overnight band retention cannot delete the last true_color run
+    # while the pointer still references it.
+    protected = {
+        run_id
+        for run_id in (latest_rgb_pointer_run_id(config.data_root),)
+        if run_id
+    }
+    enforce_run_artifact_retention(
+        config.data_root / "staging" / "goes-east",
+        config.keep_runs,
+        protect_run_ids=protected,
+    )
+    enforce_run_artifact_retention(
+        config.data_root / "published" / "goes-east",
+        config.keep_runs,
+        protect_run_ids=protected,
+    )
+    enforce_run_artifact_retention(
+        config.data_root / "manifests" / "goes-east",
+        config.keep_runs,
+        protect_run_ids=protected,
+    )
 
 
 def _cleanup_cache_dir(cache_dir: Path) -> None:

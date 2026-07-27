@@ -156,9 +156,20 @@ def write_run_manifest(
     write_json_atomic(manifest_path, payload)
 
 
-def enforce_run_artifact_retention(root: Path, keep_runs: int) -> None:
+def enforce_run_artifact_retention(
+    root: Path,
+    keep_runs: int,
+    *,
+    protect_run_ids: Iterable[str] | None = None,
+) -> None:
     if keep_runs < 1 or not root.exists():
         return
+
+    protected = {
+        str(run_id).strip()
+        for run_id in (protect_run_ids or ())
+        if str(run_id).strip()
+    }
 
     run_entries: list[tuple[datetime, Path]] = []
     for child in root.iterdir():
@@ -175,6 +186,10 @@ def enforce_run_artifact_retention(root: Path, keep_runs: int) -> None:
 
     run_entries.sort(key=lambda pair: pair[0], reverse=True)
     for _, old_path in run_entries[keep_runs:]:
+        run_id = old_path.stem if old_path.is_file() else old_path.name
+        if run_id in protected:
+            logger.info("Skipping retention for protected run artifact: %s", old_path)
+            continue
         logger.info("Removing old run artifact: %s", old_path)
         if old_path.is_dir():
             shutil.rmtree(old_path, ignore_errors=True)

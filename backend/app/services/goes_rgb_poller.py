@@ -27,6 +27,7 @@ from app.services.goes_rgb_publish import (
     GOESRGBBundleFrame,
     GOESRGBPublishedFrame,
     GOESRGBPublishResult,
+    latest_rgb_pointer_run_id,
     load_latest_published_rgb_frames,
     publish_goes_rgb_bundle,
 )
@@ -339,9 +340,26 @@ def _publish_goes_rgb_bundle_with_quality(
 
 
 def _enforce_retention(config: GOESRGBPollerConfig) -> None:
-    enforce_run_artifact_retention(config.data_root / "staging" / "goes-east", config.keep_runs)
-    enforce_run_artifact_retention(config.data_root / "published" / "goes-east", config.keep_runs)
-    enforce_run_artifact_retention(config.data_root / "manifests" / "goes-east", config.keep_runs)
+    protected = {
+        run_id
+        for run_id in (latest_rgb_pointer_run_id(config.data_root),)
+        if run_id
+    }
+    enforce_run_artifact_retention(
+        config.data_root / "staging" / "goes-east",
+        config.keep_runs,
+        protect_run_ids=protected,
+    )
+    enforce_run_artifact_retention(
+        config.data_root / "published" / "goes-east",
+        config.keep_runs,
+        protect_run_ids=protected,
+    )
+    enforce_run_artifact_retention(
+        config.data_root / "manifests" / "goes-east",
+        config.keep_runs,
+        protect_run_ids=protected,
+    )
 
 
 def _cleanup_cache_dir(cache_dir: Path) -> None:
