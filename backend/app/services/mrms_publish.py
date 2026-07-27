@@ -64,6 +64,7 @@ MRMS_RECENT_PRECIP_COLOR_MAP_IDS: dict[str, str] = {
     "mrms_recent_precip_72h": "mrms_recent_precip_72h",
 }
 MRMS_RUNTIME_ARTIFACTS_PENDING_KEY = "runtime_artifacts_pending"
+MRMS_PENDING_SUPPLEMENTAL_VARIABLES_KEY = "pending_supplemental_variables"
 
 
 def _pre_encode_gate_allows(
@@ -345,6 +346,9 @@ def publish_mrms_bundle(
     expected_frame_count: int | None = None,
     supplemental_variable_frames: dict[str, list[MRMSSupplementalFrame]] | None = None,
     supplemental_expected_frame_counts: dict[str, int] | None = None,
+    carry_forward_supplemental_from_run_id: str | None = None,
+    carry_forward_supplemental_manifest_entries: dict[str, dict[str, Any]] | None = None,
+    pending_supplemental_variables: tuple[str, ...] = (),
     build_grid_artifacts: bool = True,
 ) -> MRMSPublishResult:
     if not frames and not previous_frames:
@@ -378,6 +382,34 @@ def publish_mrms_bundle(
         raise ValueError("MRMS bundle publish resolved to an empty rolling window")
 
     _prepare_stage_run_dir(data_root=data_root, run_id=run_id)
+
+    carried_supplemental_targets: dict[str, list[tuple[str, int]]] = {}
+    if carry_forward_supplemental_from_run_id:
+        source_run_root = data_root / "published" / MRMS_MODEL_ID / carry_forward_supplemental_from_run_id
+        target_run_root = data_root / "staging" / MRMS_MODEL_ID / run_id
+        for var_id, manifest_entry in sorted((carry_forward_supplemental_manifest_entries or {}).items()):
+            if var_id not in MRMS_RECENT_PRECIP_COLOR_MAP_IDS or var_id in (supplemental_variable_frames or {}):
+                continue
+            frame_hours = _manifest_frame_hours(manifest_entry)
+            if not frame_hours or not published_mrms_variable_artifacts_exist(
+                data_root,
+                run_id=carry_forward_supplemental_from_run_id,
+                var_id=var_id,
+                manifest_entry=manifest_entry,
+            ):
+                logger.warning(
+                    "MRMS supplemental carry-forward skipped source_run=%s target_run=%s var=%s reason=incomplete_artifacts",
+                    carry_forward_supplemental_from_run_id,
+                    run_id,
+                    var_id,
+                )
+                continue
+            _copy_variable_artifacts_between_run_roots(
+                source_run_root=source_run_root,
+                target_run_root=target_run_root,
+                var_id=var_id,
+            )
+            carried_supplemental_targets[var_id] = [(var_id, fh) for fh in frame_hours]
 
     build_primary_grid_artifacts = bool(grid_build_enabled())
     build_supplemental_grid_artifacts = bool(build_grid_artifacts and grid_build_enabled())
@@ -487,6 +519,10 @@ def publish_mrms_bundle(
         target
         for var_targets in supplemental_targets.values()
         for target in var_targets
+    ] + [
+        target
+        for var_targets in carried_supplemental_targets.values()
+        for target in var_targets
     ]
 
     ordered_valid_times = [
@@ -502,7 +538,14 @@ def publish_mrms_bundle(
         if expected_frame_count is not None
         else len(ordered_valid_times)
     )
-    runtime_artifacts_pending = False
+    normalized_pending_supplemental_variables = tuple(
+        dict.fromkeys(
+            var_id
+            for var_id in pending_supplemental_variables
+            if var_id in MRMS_RECENT_PRECIP_COLOR_MAP_IDS
+        )
+    )
+    runtime_artifacts_pending = bool(normalized_pending_supplemental_variables)
 
     if build_primary_grid_artifacts:
         grid_variables = [MRMS_VARIABLE_ID]
@@ -520,6 +563,24 @@ def publish_mrms_bundle(
             logger.info("MRMS grid manifest build: run=%s manifests=%d", run_id, manifest_ok)
         except Exception:
             logger.exception("MRMS grid manifest build failed: run=%s", run_id)
+
+        carried_grid_variables = tuple(
+            var_id
+            for var_id, var_targets in carried_supplemental_targets.items()
+            if var_targets
+        )
+        if carried_grid_variables:
+            carried_manifest_ok = build_grid_manifests_for_run_root(
+                run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
+                model=MRMS_MODEL_ID,
+                run=run_id,
+                variables=carried_grid_variables,
+            )
+            if carried_manifest_ok != len(carried_grid_variables):
+                raise RuntimeError(
+                    "MRMS carried supplemental grid manifest build incomplete: "
+                    f"run={run_id} expected={len(carried_grid_variables)} built={carried_manifest_ok}"
+                )
 
     promote_run(data_root=data_root, model=MRMS_MODEL_ID, run_id=run_id)
 
@@ -551,6 +612,10 @@ def publish_mrms_bundle(
                 if fh < len(ordered_source_valid_times)
             ],
         }
+    for var_id in carried_supplemental_targets:
+        previous_entry = (carry_forward_supplemental_manifest_entries or {}).get(var_id)
+        if isinstance(previous_entry, dict):
+            manifest_variables[var_id] = json.loads(json.dumps(previous_entry))
     for var_id, var_targets in supplemental_targets.items():
         ordered_frames = sorted(
             supplemental_variable_frames.get(var_id, []),
@@ -588,6 +653,7 @@ def publish_mrms_bundle(
             manifest_last_updated=publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
             now_utc=publish_dt,
             runtime_artifacts_pending=runtime_artifacts_pending,
+            pending_supplemental_variables=normalized_pending_supplemental_variables,
         ),
     )
     write_latest_pointer(data_root=data_root, model=MRMS_MODEL_ID, run_id=run_id, source="mrms_publish_v1")
@@ -1545,38 +1611,28 @@ def finalize_mrms_published_run(
         )
         changed_supplemental_vars.add(var_id)
 
-    manifest_last_updated = manifest.get("last_updated")
-    metadata_before = manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else {}
-    should_rewrite_manifest = manifest_variables != manifest.get("variables") or bool(metadata_before.get(MRMS_RUNTIME_ARTIFACTS_PENDING_KEY))
-
-    if should_rewrite_manifest:
-        manifest["variables"] = manifest_variables
-        manifest["metadata"] = _mrms_manifest_metadata(
-            run_id=run_id,
-            manifest_variables=manifest_variables,
-            manifest_last_updated=manifest_last_updated,
-            now_utc=datetime.now(timezone.utc),
-            runtime_artifacts_pending=False,
-        )
-        write_json_atomic(manifest_path, manifest)
-
+    # Complete the changed variables' grid manifests before the run manifest
+    # announces their new frame lists. If this fails, callers retain the
+    # carried last-known-good run-manifest entries and pending state.
     if build_grid_artifacts and grid_build_enabled():
         if changed_supplemental_vars:
-            # Grid frames were written inline (or hardlinked by
-            # _copy_published_variable_artifacts) above — only the per-var
-            # grid manifests still need building for the changed variables.
             grid_variables = [
                 var_id
                 for var_id in MRMS_RECENT_PRECIP_VARIABLE_IDS
                 if var_id in changed_supplemental_vars and (published_run_root / var_id).is_dir()
             ]
             if grid_variables:
-                build_grid_manifests_for_run_root(
+                manifest_ok = build_grid_manifests_for_run_root(
                     run_root=published_run_root,
                     model=MRMS_MODEL_ID,
                     run=run_id,
                     variables=tuple(dict.fromkeys(grid_variables)),
                 )
+                if manifest_ok != len(grid_variables):
+                    raise RuntimeError(
+                        "MRMS supplemental grid manifest build incomplete: "
+                        f"run={run_id} expected={len(grid_variables)} built={manifest_ok}"
+                    )
         else:
             grid_variables = [MRMS_VARIABLE_ID]
             if (published_run_root / MRMS_RADAR_PTYPE_VARIABLE_ID).is_dir():
@@ -1591,6 +1647,35 @@ def finalize_mrms_published_run(
                 run_id=run_id,
                 variables=tuple(dict.fromkeys(grid_variables)),
             )
+
+    manifest_last_updated = manifest.get("last_updated")
+    metadata_before = manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else {}
+    pending_before_raw = metadata_before.get(MRMS_PENDING_SUPPLEMENTAL_VARIABLES_KEY)
+    pending_before = [
+        str(var_id)
+        for var_id in pending_before_raw
+        if str(var_id) in MRMS_RECENT_PRECIP_COLOR_MAP_IDS
+    ] if isinstance(pending_before_raw, list) else []
+    pending_after = [var_id for var_id in pending_before if var_id not in changed_supplemental_vars]
+    should_rewrite_manifest = (
+        manifest_variables != manifest.get("variables")
+        or pending_after != pending_before
+        or bool(metadata_before.get(MRMS_RUNTIME_ARTIFACTS_PENDING_KEY)) != bool(pending_after)
+    )
+
+    if should_rewrite_manifest:
+        manifest["variables"] = manifest_variables
+        manifest["metadata"] = _mrms_manifest_metadata(
+            run_id=run_id,
+            manifest_variables=manifest_variables,
+            manifest_last_updated=manifest_last_updated,
+            now_utc=datetime.now(timezone.utc),
+            runtime_artifacts_pending=bool(pending_after),
+            pending_supplemental_variables=tuple(pending_after),
+        )
+        write_json_atomic(manifest_path, manifest)
+
+
 def _supplemental_manifest_entry(
     *,
     frame_items: list[tuple[int, MRMSSupplementalFrame]],
@@ -1620,6 +1705,7 @@ def _mrms_manifest_metadata(
     manifest_last_updated: str | None,
     now_utc: datetime,
     runtime_artifacts_pending: bool,
+    pending_supplemental_variables: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     last_updated = str(manifest_last_updated or now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")).strip()
     metadata = build_observed_bundle_health(
@@ -1633,7 +1719,78 @@ def _mrms_manifest_metadata(
     )
     if runtime_artifacts_pending:
         metadata[MRMS_RUNTIME_ARTIFACTS_PENDING_KEY] = True
+    if pending_supplemental_variables:
+        metadata[MRMS_PENDING_SUPPLEMENTAL_VARIABLES_KEY] = list(pending_supplemental_variables)
     return metadata
+
+
+def _manifest_frame_hours(manifest_entry: dict[str, Any] | None) -> list[int]:
+    frames = manifest_entry.get("frames") if isinstance(manifest_entry, dict) else None
+    if not isinstance(frames, list):
+        return []
+    frame_hours: list[int] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        try:
+            fh = int(frame.get("fh"))
+        except (TypeError, ValueError):
+            continue
+        if fh >= 0 and fh not in frame_hours:
+            frame_hours.append(fh)
+    return sorted(frame_hours)
+
+
+def published_mrms_variable_artifacts_exist(
+    data_root: Path,
+    *,
+    run_id: str,
+    var_id: str,
+    manifest_entry: dict[str, Any] | None = None,
+) -> bool:
+    run_root = data_root / "published" / MRMS_MODEL_ID / run_id
+    var_dir = run_root / var_id
+    if not var_dir.is_dir():
+        return False
+
+    frame_hours = _manifest_frame_hours(manifest_entry)
+    if not frame_hours:
+        frame_hours = sorted(
+            fh
+            for sidecar_path in var_dir.glob("fh*.json")
+            if (fh := _forecast_hour_from_artifact_name(sidecar_path)) is not None
+        )
+    if not frame_hours:
+        return False
+
+    return all(
+        (var_dir / f"fh{fh:03d}.json").is_file()
+        and (
+            (var_dir / f"fh{fh:03d}.val.cog.tif").is_file()
+            or _published_grid_meta_exists(run_root, var_id, fh)
+        )
+        for fh in frame_hours
+    )
+
+
+def _copy_variable_artifacts_between_run_roots(
+    *,
+    source_run_root: Path,
+    target_run_root: Path,
+    var_id: str,
+) -> None:
+    source_dir = source_run_root / var_id
+    if not source_dir.is_dir():
+        raise ValueError(f"Cannot reuse missing MRMS supplemental directory: {source_dir}")
+
+    target_dir = target_run_root / var_id
+    if target_dir.exists():
+        shutil.rmtree(target_dir, ignore_errors=True)
+    shutil.copytree(
+        source_dir,
+        target_dir,
+        copy_function=lambda src, dst: _link_or_copy(Path(src), Path(dst)),
+    )
 
 
 def _copy_published_variable_artifacts(
@@ -1643,29 +1800,11 @@ def _copy_published_variable_artifacts(
     target_run_id: str,
     var_id: str,
 ) -> None:
-    source_dir = data_root / "published" / MRMS_MODEL_ID / source_run_id / var_id
-    if not source_dir.is_dir():
-        raise ValueError(f"Cannot reuse missing MRMS supplemental directory: {source_dir}")
-
-    target_dir = data_root / "published" / MRMS_MODEL_ID / target_run_id / var_id
-    if target_dir.exists():
-        shutil.rmtree(target_dir, ignore_errors=True)
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    for source_path in sorted(source_dir.glob("fh*")):
-        if source_path.is_dir() or source_path.name.startswith("grid"):
-            continue
-        _link_or_copy(source_path, target_dir / source_path.name)
-
-    # Carry the grid artifacts too — post value-COG cutover they are the only
-    # samplable substrate, and the old COG-read rebuild that used to recreate
-    # them cannot run without COGs.
-    source_grid_dir = resolved_grid_dir_for_run_root(data_root / "published" / MRMS_MODEL_ID / source_run_id, var_id)
-    if source_grid_dir.is_dir():
-        target_grid_dir = target_dir / "grid"
-        for source_path in sorted(source_grid_dir.iterdir()):
-            if source_path.is_file():
-                _link_or_copy(source_path, target_grid_dir / source_path.name)
+    _copy_variable_artifacts_between_run_roots(
+        source_run_root=data_root / "published" / MRMS_MODEL_ID / source_run_id,
+        target_run_root=data_root / "published" / MRMS_MODEL_ID / target_run_id,
+        var_id=var_id,
+    )
 
 
 def _build_published_run_grid_artifacts(

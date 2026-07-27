@@ -364,6 +364,84 @@ def test_publish_mrms_bundle_writes_recent_precip_supplemental_variables(
     assert precip_sidecar["source_filename"] == "qpe06.grib2.gz"
 
 
+def test_publish_mrms_bundle_carries_recent_precip_before_latest_advances(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_small_grid(monkeypatch)
+
+    base_time = datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc)
+    radar_values = np.array([[10.0, 12.0, 14.0], [16.0, 18.0, 20.0]], dtype=np.float32)
+    precip_values = np.array([[0.25, 0.5, 0.75], [1.0, 1.25, 1.5]], dtype=np.float32)
+    first = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=[mrms_publish.MRMSBundleFrame(valid_time=base_time, values=radar_values)],
+        supplemental_variable_frames={
+            "mrms_recent_precip_6h": [
+                mrms_publish.MRMSSupplementalFrame(
+                    valid_time=base_time,
+                    source_valid_time=base_time,
+                    values=precip_values,
+                    source_filename="qpe06.grib2.gz",
+                )
+            ],
+        },
+        supplemental_expected_frame_counts={"mrms_recent_precip_6h": 1},
+        publish_time=base_time + timedelta(minutes=6),
+    )
+    previous_manifest = json.loads(first.manifest_path.read_text())
+    previous_entry = previous_manifest["variables"]["mrms_recent_precip_6h"]
+
+    second = mrms_publish.publish_mrms_bundle(
+        data_root=tmp_path,
+        frames=[
+            mrms_publish.MRMSBundleFrame(
+                valid_time=base_time + timedelta(minutes=5),
+                values=radar_values + np.float32(1.0),
+            )
+        ],
+        carry_forward_supplemental_from_run_id=first.run_id,
+        carry_forward_supplemental_manifest_entries={
+            "mrms_recent_precip_6h": previous_entry,
+        },
+        pending_supplemental_variables=(
+            "mrms_recent_precip_6h",
+            "mrms_recent_precip_24h",
+            "mrms_recent_precip_72h",
+        ),
+        publish_time=base_time + timedelta(minutes=11),
+    )
+
+    latest = json.loads((tmp_path / "published" / "mrms" / "LATEST.json").read_text())
+    manifest = json.loads(second.manifest_path.read_text())
+    assert latest["run_id"] == second.run_id
+    assert manifest["variables"]["mrms_recent_precip_6h"]["frames"] == previous_entry["frames"]
+    assert manifest["metadata"][mrms_publish.MRMS_RUNTIME_ARTIFACTS_PENDING_KEY] is True
+    assert manifest["metadata"][mrms_publish.MRMS_PENDING_SUPPLEMENTAL_VARIABLES_KEY] == [
+        "mrms_recent_precip_6h",
+        "mrms_recent_precip_24h",
+        "mrms_recent_precip_72h",
+    ]
+    carried_dir = second.published_run_dir / "mrms_recent_precip_6h"
+    assert (carried_dir / "fh000.json").is_file()
+    assert (carried_dir / "grid" / "manifest.json").is_file()
+    carried_grid_manifest = json.loads((carried_dir / "grid" / "manifest.json").read_text())
+    assert carried_grid_manifest["run"] == second.run_id
+
+    mrms_publish.finalize_mrms_published_run(
+        data_root=tmp_path,
+        run_id=second.run_id,
+        reused_supplemental_from_run_id=first.run_id,
+        reused_supplemental_manifest_entries={"mrms_recent_precip_6h": previous_entry},
+    )
+    finalized = json.loads(second.manifest_path.read_text())
+    assert finalized["metadata"][mrms_publish.MRMS_RUNTIME_ARTIFACTS_PENDING_KEY] is True
+    assert finalized["metadata"][mrms_publish.MRMS_PENDING_SUPPLEMENTAL_VARIABLES_KEY] == [
+        "mrms_recent_precip_24h",
+        "mrms_recent_precip_72h",
+    ]
+
+
 def test_publish_mrms_bundle_writes_primary_grid_artifacts_when_supplemental_grid_deferred(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

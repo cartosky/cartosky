@@ -42,6 +42,37 @@ test('formats persistent stats health causes for the admin dashboard', async ({ 
   ]);
 });
 
+test('MRMS capability variables remain visible during a radar-only latest manifest', async ({ page }) => {
+  await page.goto('/src/lib/app-utils.ts');
+  const variableIds = await page.evaluate(async () => {
+    const modulePath = '/src/lib/app-utils.ts';
+    const appUtils = await import(/* @vite-ignore */ modulePath);
+    const capabilityVars = [
+      { id: 'reflectivity', buildable: true, renderSubstrates: ['grid'] },
+      { id: 'mrms_radar_ptype', buildable: true, renderSubstrates: ['grid'] },
+      { id: 'mrms_recent_precip_6h', buildable: true, renderSubstrates: ['grid'] },
+      { id: 'mrms_recent_precip_24h', buildable: true, renderSubstrates: ['grid'] },
+      { id: 'mrms_recent_precip_72h', buildable: true, renderSubstrates: ['grid'] },
+    ];
+    return appUtils.capabilityVarsForManifest(
+      {
+        reflectivity: { frames: [{ fh: 0 }] },
+        mrms_radar_ptype: { frames: [{ fh: 0 }] },
+      },
+      capabilityVars,
+      { modelId: 'mrms' },
+    ).map((entry: { id: string }) => entry.id);
+  });
+
+  expect(variableIds).toEqual([
+    'reflectivity',
+    'mrms_radar_ptype',
+    'mrms_recent_precip_6h',
+    'mrms_recent_precip_24h',
+    'mrms_recent_precip_72h',
+  ]);
+});
+
 function nearestFrame(frames: number[], current: number): number {
   if (frames.length === 0) return 0;
   if (frames.includes(current)) return current;

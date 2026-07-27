@@ -41,6 +41,7 @@ from app.services.mrms_publish import (
     MRMSSupplementalFrame,
     finalize_mrms_published_run,
     load_latest_published_mrms_frames,
+    published_mrms_variable_artifacts_exist,
     publish_mrms_bundle,
 )
 from app.services.observed_bundle_health import parse_iso_datetime
@@ -246,6 +247,22 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
         previous_run_id=latest_run_id,
         previous_manifest=previous_manifest,
     )
+    carry_forward_supplemental_manifest_entries: dict[str, dict[str, Any]] = {}
+    previous_variables = previous_manifest.get("variables") if isinstance(previous_manifest, dict) else None
+    if latest_run_id and isinstance(previous_variables, dict):
+        for var_id, (default_listing_url, _file_re) in MRMS_RECENT_PRECIP_PRODUCTS.items():
+            if not _recent_precip_listing_url(config, var_id, default_listing_url):
+                continue
+            previous_entry = previous_variables.get(var_id)
+            if not isinstance(previous_entry, dict):
+                continue
+            if published_mrms_variable_artifacts_exist(
+                config.data_root,
+                run_id=latest_run_id,
+                var_id=var_id,
+                manifest_entry=previous_entry,
+            ):
+                carry_forward_supplemental_manifest_entries[var_id] = json.loads(json.dumps(previous_entry))
     _log_mrms_memory_checkpoint(
         "before_build",
         new_frames=len(frames),
@@ -333,6 +350,13 @@ def run_once(config: MRMSPollerConfig) -> MRMSPollerCycleResult:
             previous_frames=previous_frames,
             target_frame_count=len(frozen),
             expected_frame_count=len(frozen),
+            carry_forward_supplemental_from_run_id=(
+                latest_run_id if carry_forward_supplemental_manifest_entries else None
+            ),
+            carry_forward_supplemental_manifest_entries=carry_forward_supplemental_manifest_entries,
+            pending_supplemental_variables=tuple(
+                plan.var_id for plan in supplemental_plans if plan.frozen_scans
+            ),
             build_grid_artifacts=False,
         )
         _log_mrms_memory_checkpoint(
@@ -639,10 +663,11 @@ def _run_postprocess_request(request: MRMSPostprocessRequest) -> None:
                 plan.mode == "reuse"
                 and request.previous_run_id is not None
                 and plan.previous_manifest_entry is not None
-                and _published_variable_artifacts_exist(
+                and published_mrms_variable_artifacts_exist(
                     request.data_root,
                     run_id=request.previous_run_id,
                     var_id=plan.var_id,
+                    manifest_entry=plan.previous_manifest_entry,
                 )
             )
             if can_reuse:
@@ -685,13 +710,6 @@ def _run_postprocess_request(request: MRMSPostprocessRequest) -> None:
             decode_cache.clear()
             gc.collect()
     logger.info("MRMS postprocess complete run=%s", request.run_id)
-
-
-def _published_variable_artifacts_exist(data_root: Path, *, run_id: str, var_id: str) -> bool:
-    var_dir = data_root / "published" / MRMS_MODEL_ID / run_id / var_id
-    if not var_dir.is_dir():
-        return False
-    return any(var_dir.glob("fh*.json")) and any(var_dir.glob("fh*.val.cog.tif"))
 
 
 def _enforce_retention(config: MRMSPollerConfig) -> None:

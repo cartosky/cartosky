@@ -1,0 +1,461 @@
+# Max Week Execution Plan — 2026-07-27
+
+**Revision 3** (2026-07-27, same day). Supersedes revisions 1 and 2 in place.
+
+Revision 3 changes, all execution clarifications rather than structural: the Cloudflare gate now requires a recorded first response plus a `HIT` on an identical second request rather than `HIT` "cold and warm" (a cold `MISS` is legitimate); the GOES RGB service item is corrected — **the template is checked into `deployment/systemd` (verified in source)**, so the task is to fix and deploy it, plus diff the live prod unit against it; Phase 2B now states explicitly that `domain=global` is tested against synthetic fixtures because no global artifacts exist until Phase 3; and G3 now carries an explicit pass/fail decision rule requiring operator signoff on material regression.
+**Window:** ~7 days of elevated Claude Max usage.
+**Status:** **Conditional go.** Phase 0 and the Phase 1 inventory are authorized to start now. Phase 2 implementation is **not** authorized until the artifact-domain contract below is designed and reviewed.
+
+---
+
+## Revision 2 — retractions
+
+Revision 1 contained a load-bearing factual error, corrected here rather than appended to.
+
+> **RETRACTED:** Revision 1 stated that CartoSky "already has region-aware scheduler paths / manifests / latest pointers / sampling / publication" and scoped Phase 2 as a one-day frontend domain/camera split.
+>
+> **This is false.** The interfaces are region-shaped; the implementations discard the argument. Verified directly in source:
+>
+> - `backend/app/services/scheduler.py:369` — `_build_regions_for_var` returns `[default_region]` unconditionally; it never returns more than the canonical build region.
+> - `backend/app/services/scheduler.py:604` — `_frame_sidecar_path` accepts `region` and executes a literal `del region`.
+> - `backend/app/services/scheduler.py` — `_frame_value_path` has the same `del region`.
+> - `backend/app/services/grid.py:1261` — `grid_dir(data_root, model, run, var, *, region=None)` executes `del region` at line 1262.
+> - `backend/app/services/sampling.py` — `del region` at lines 430, 588, 608, 637, and 778, covering `sample_member_values_seek`, `_resolve_val_cog`, `_resolve_sidecar`, `_resolve_binary_grid_frame`, and `run_has_member_data`.
+> - `backend/app/main.py:2781` — same pattern reported for API latest pointers, manifests, run resolution, published directories, grid manifests, and URLs (not independently verified in this session).
+>
+> **Consequence:** publishing a global run today would land in the same paths as the NA run. Global and NA artifacts would collide or be indistinguishable. Phase 2 is now split into a backend contract phase (2A) and a frontend phase (2B), and the week's success target is revised downward accordingly.
+
+> **RETRACTED:** Revision 1 stated the per-model disk split was unavailable and estimated GFS+AIGFS "below ~50%." The split is in the sizing document. The correct GFS+AIGFS figure is **~55%**; full table below.
+
+> **RETRACTED:** Revision 1's antimeridian gate implied values at 179°E and 179°W should agree. They are two degrees apart and can legitimately differ. Corrected oracle in G1.
+
+> **RETRACTED:** Revision 1 asserted "sub-100ms frame loads" as a gate without defining device, network, cache state, LOD, measurement boundaries, or percentile, and tied it to seam-crossing zoom levels. The viewer downloads an entire selected LOD frame rather than a viewport subset, so seam position is not a payload-timing variable. Corrected contract in G3.
+
+---
+
+## TLDR
+
+One deep spine, one measured parallel spike.
+
+**Spine:** operational gate → legacy value-COG removal → **backend artifact-domain contract** → frontend domain/camera split → global GFS.
+**Parallel:** Skew-T data-contract spike (backend only, one model, no UI).
+**Stretch:** AIGFS global, then OISST absolute SST.
+
+**Revised success target:** operational gate complete, legacy value-COG removal complete, region-scoped backend artifact contract implemented and tested, and **global GFS working end-to-end**. AIGFS is the next-model target if time remains. AIFS and ECMWF are almost certainly out of scope this week and should be planned as dark-wired follow-ups.
+
+A correct domain namespace plus one solid global model is a successful week. Skipping that foundation to hit a four-model schedule is not — it would leave a collision hazard in the publication path going into busy season.
+
+---
+
+## Disk: capacity is green, production readiness is not
+
+Measured on prod, 2026-07-27:
+
+```
+/dev/vda4       2.0T  584G  1.4T  31% /
+/opt/cartosky/data/published    528G
+```
+
+This retires the ~878 GB figure from earlier planning context; that number was stale and anything derived from it is void.
+
+Per-model 25 km global additions (`docs/GLOBAL_MODEL_SIZING_SPIKE_2026-07-22.md:93`):
+
+| Milestone | Added | Cumulative used | vda4 |
+|---|---|---|---|
+| Today | — | 584 GiB | 31% |
+| + GFS global | 390.7 GiB | ~975 GiB | ~52% |
+| + AIGFS global | 58.8 GiB | ~1034 GiB | **~55%** |
+| + AIFS + ECMWF | ~132 GiB | ~1166 GiB | **~62%** |
+| + Tier 1 NA ensemble members (signed off) | ~98 GiB | ~1264 GiB | **~67%** |
+
+> [!IMPORTANT]
+> The sizing spike's headline ~46% assumed global artifacts **replace** NA artifacts. This plan keeps both — the NA viewer must never fetch a global binary and crop client-side — so storage is additive and the planning number is ~62%, or ~67% with ensembles.
+
+**Storage capacity is green for all four models.** That is a capacity statement only; production readiness per model remains conditional on the gates below.
+
+Note the asymmetry: **GFS global alone is 390.7 GiB — roughly two-thirds of the entire four-model addition.** If retention or variable scope ever needs trimming, GFS global is the lever, not the smaller models. It is also the first model to ship, so the ~52% checkpoint arrives early and is the most informative one.
+
+No new block storage for this rollout. The entire data root stays on vda4 so staging and publish targets remain on one filesystem (atomic rename constraint).
+
+---
+
+## Cross-cutting acceptance gates
+
+### G1 — Antimeridian (global phases only) — **highest schedule risk**
+
+Going global breaks seam handling in four independent places: WebGL layer wrap in `GridWebglLayerController`, MapLibre world-copy rendering continuity, point sampling at ±180°, and contour polygon generation across the seam.
+
+**Oracle — corrected.** Do not assert equality between 179°E and 179°W; they are distinct locations. Instead:
+
+- Each sampled point (179°E, 179°W, 0°, and a spread of near-seam longitudes) must agree with the corresponding source/warped reference value **within packing tolerance**.
+- Contours: no globe-spanning erroneous segments or polygons; correct termination or wrapping at the boundary.
+- Rendering: visually continuous world-copy behavior where intended, no tearing or duplicated features.
+
+Budget explicit time. No day-table in any revision of this plan has accounted for this, and it remains the item most likely to consume the week.
+
+### G2 — Cloudflare cache
+
+For every new artifact path (global grid binaries, global contour GeoJSON): record the **first** response status, then issue an **identical second request** and require `CF-Cache-Status: HIT`.
+
+A genuinely cold first request may legitimately return `MISS` — that is expected and is not a failure. What is a bug is `DYNAMIC` on a binary at any point, or a second identical request that fails to return `HIT`. Verify per model, per artifact type. Confirm `/contours/` rules cover the new paths.
+
+### G3 — Performance contract (replaces the undefined "sub-100ms" gate)
+
+The 5.5× figure from the sizing spike is a **total converted-footprint multiplier across the artifact set**, not a per-request multiplier. For ECMWF/AIFS moving from 9 km NA to 25 km global, per-request bytes over a comparable view may go *down*. Do not reason from the aggregate.
+
+The viewer downloads an entire selected LOD frame, not a viewport subset. Seam position therefore affects rendering and GPU behavior (tested under G1) but **not** payload timing, except insofar as zoom selects an LOD.
+
+Define the contract before measuring:
+
+- **Devices:** one named desktop and one named mobile device.
+- **Network:** fixed, stated conditions.
+- **Cache:** warm Cloudflare p50 and p95 reported separately; cold-cache observations reported separately, not blended into the percentiles.
+- **Variables:** one representative small, one medium, one large.
+- **Timings:** transfer, decode, GPU upload, and first-visible-frame, each measured separately with stated start/end boundaries.
+- **Baseline:** compared against the equivalent NA LOD, not against an absolute number in isolation.
+
+**Decision rule.** Measurement without a pass/fail rule is just data collection. Before measuring, agree what counts as a material regression against the NA/LOD baseline (a stated percentage on first-visible-frame at warm p95 is the simplest usable form). Then:
+
+- **Within the agreed threshold** → proceed.
+- **Materially regressed** → rollout is **blocked pending explicit operator signoff**. Brian decides to accept the regression, apply a lever, or hold the model dark. Recording the numbers and shipping anyway is not an outcome.
+
+This applies per model. A regression accepted for GFS does not pre-authorize the same regression for the next model.
+
+If the contract fails, the available levers are LOD policy, tiling, variable scope, compression, and resolution. Revision 1's claim that "the fix is LOD/tiling, not resolution" was too absolute and is withdrawn. Preference ordering when evidence permits a choice: LOD/compression first, variable scope second, resolution last — but resolution is a legitimate lever if evidence requires it. What is **not** negotiable is pixel-accurate point sampling; do not trade that for frame timing.
+
+### G4 — Screenshot / share / export
+
+Verified after **every** phase, not just the ones that look related.
+
+- Deterministic mocked data and tiles; do not gate on live upstream.
+- Pixel-diff with an explicit threshold — **not** byte equality. GPU output, tile timing, and metadata make byte comparison flaky, and a flaky gate here is worse than no gate.
+- Map/overlay geometry assertions.
+- Explicit presence checks: visible weather pixels, legend, attribution, correct bounds.
+- Dual-boolean readiness gate intact: MapLibre `idle` + `onGridFrameReady`.
+- Both capture paths exercised: live-canvas WYSIWYG and server-side Playwright.
+- GIF export (forecast-hour progression and run-over-run) still produces correct frames.
+
+### G5 — Scheduler memory
+
+**Do not raise `MemoryHigh` preemptively.** Start every global build at current caps with frame work serialized. Raise a cap only when a measured canary shows legitimate pressure, per-unit, with justification recorded. EPS remains the tight unit (~2.5–2.6 GB against a 3 GB cap); global work must not push it.
+
+### G6 — Model heterogeneity
+
+- **ECMWF cycle-length asymmetry** — 06z/18z short-horizon, 00z/12z full-horizon. GFS, AIFS, and AIGFS do not share this. Test both cycle types per model.
+- Forecast hours, variables, cadence, and availability differ per model and per region. Never generalize.
+- **Global anomaly products excluded** — ERA5 baselines are NA-scoped. Exclude anomaly variables from the global capability contract explicitly, not via a runtime check that could silently pass.
+- **Global-aware scientific sanity ranges** — thresholds tuned on NA will fire constantly on Antarctic temperatures and tropical PWAT. False alarms train you to ignore the gate.
+
+---
+
+## Phase 0 — Operational gate — **½ day, hard timebox** (S)
+
+1. **Finish or isolate the current MRMS work.** The worktree has uncommitted MRMS and frontend changes overlapping files Phase 1 touches. Commit or stash to a branch.
+2. **Memory regression** (`docs/MEMORY_REGIME_SHIFT_INVESTIGATION_2026-07-26.md:23`): the 1.5–2× scheduler RSS step is an **efficiency issue, not a leak**, and is not a reason to block the week. Ship the thread-per-Herbie-call fix if it is a small diff; otherwise export the timeout/runtime counters as production metrics and move on.
+3. **Define and start the arena canary.** Not "set `MALLOC_ARENA_MAX=2` and see what happens." Specify before starting:
+   - The **single** scheduler unit under test (do not apply fleet-wide and call it a canary).
+   - Control and treatment periods, and whether the unit restarts between them.
+   - Metrics: RSS, swap, build latency.
+   - Minimum observation duration.
+   - Rollback condition and the exact rollback command.
+4. **Capture post-upgrade baselines at current caps:** scheduler RSS per unit, swap, build latency, simultaneous-scheduler load. These are the comparison point for every global build.
+5. **Correct and deploy `deployment/systemd/csky-satellite-rgb-scheduler.service`.** The template **is** checked into the deployment repo (verified). Its problems are `User=root` and the absence of any cgroup memory cap — it sets `GDAL_CACHEMAX=256` but has no `MemoryHigh` / `MemoryMax`. Fix the checked-in template, then deploy it through the normal workflow. ~20 minutes.
+
+   **Before deploying, diff the live unit on prod against the repo template.** Prior context indicated a hand-placed copy under `/etc/systemd/system`. If a drifted copy is running, editing the repo template alone changes nothing on prod — and a silent divergence between the checked-in template and the live unit is itself the more serious finding. Record the diff result either way.
+
+**Stop-and-verify:** baselines recorded, worktree clean, canary defined and running on one unit, RGB service unit corrected and committed.
+
+---
+
+## Phase 1 — Legacy value-COG removal — **1–2 days** (M)
+
+Framing matters: this is **"remove legacy value-COG paths *and* extract still-live raster utilities,"** not "delete COG." The short framing produces either a left-behind emergency fallback or gutted raster code.
+
+**Sequencing note:** `_resolve_val_cog` (`sampling.py:579`) is one of the functions carrying the discarded-`region` pattern. Deleting it in Phase 1 shrinks the surface Phase 2A must plumb. Doing COG removal before the domain contract is deliberate, not incidental.
+
+### Remove
+- Value-COG writers and the emergency COG sampling/write fallback
+- Conditional COG branches in sample endpoints and meteogram paths
+- COG-aware scheduler and telemetry logic
+- Resolution helpers, endpoint resolvers, migration flags, canary tooling
+- Obsolete sampling-source cache-key branches
+- COG-only tests and migration fixtures
+- Standalone publishers still importing `write_value_cog` (easy to miss with a naive grep of the main pipeline)
+
+### Preserve and extract
+- Warping, grid geometry, and RGBA-writing functions currently inside `cog_writer.py` — load-bearing for visualization and contour generation
+- All raster code still used for visualization, contour generation, source decoding, or warping
+- **"COG removal" must not become "remove rasterio."**
+
+### Rename / split
+`cog_writer.py` now holds non-COG responsibilities. Split the live helpers into an accurately named module rather than leaving a misleading filename.
+
+**Stop-and-verify:** backend suite green, `ruff` clean on `backend/app backend/tests backend/scripts`, Playwright green, G4 green, and manual confirmation that sampling, meteograms, city values, observed products, and binary quality gates all work.
+
+---
+
+## Phase 2A — Backend artifact-domain contract — **the new blocker phase** (L)
+
+**This did not exist in revision 1 and is the reason Phase 2 implementation is not yet authorized.**
+
+Today the region argument is accepted and discarded throughout the artifact path. A global run would land in the same directories as the NA run. Before any global publication, the following must be genuinely region-scoped:
+
+- Staging and published run roots
+- Manifests and latest pointers (`LATEST`)
+- Grid manifests and frame URLs
+- Sampling and meteogram resolution
+- Promotion, retention, pruning, telemetry, and admin status
+- Scheduler build targets (`_build_regions_for_var` must be able to return more than the canonical region)
+- Canonical-region backward compatibility
+
+### Design decision to lock **before** implementation
+
+The physical directory layout is load-bearing and must not be delegated implicitly to the implementing agent. The safest shape: **preserve today's canonical paths byte-for-byte, and place non-canonical domains in an explicit namespace.** Decide and record the exact layout, then write tests that prove:
+
+- [ ] Existing NA/CONUS URLs are unchanged
+- [ ] Global and canonical builds of the same model/run/variable coexist without collision
+- [ ] `LATEST`, manifests, retention, and pruning **cannot cross domains**
+- [ ] Promotion remains an atomic same-filesystem rename
+- [ ] An absent `domain=` resolves exactly as today
+
+### Type the domain correctly
+
+**Do not hardcode a `na | global` union.** `_default_build_region` reads `capabilities.canonical_region` and falls back to `CANONICAL_COVERAGE = "conus"`. Several models use `conus` or another ID as their canonical build region. The generic concept is **"published build-region ID,"** capability-driven per model, even though the four global models will initially offer only their canonical region plus `global`.
+
+A universal `na | global` union would regress HRRR, NAM, NBM, MRMS, and observed products.
+
+**Stop-and-verify:** the coexistence and non-crossing tests above pass; no existing NA behavior changes; nothing is published globally yet.
+
+---
+
+## Phase 2B — Frontend data-domain / camera-preset split — **1 day** (M)
+
+Only after 2A lands.
+
+| Concept | Meaning | URL key |
+|---|---|---|
+| **Data domain** | Which artifacts are fetched — published build-region ID | `domain=` (new) |
+| **Camera preset** | Viewport only — `conus`, `midwest`, `northwest`, `global`, … | `region=` (unchanged) |
+
+`frontend/src/App.tsx:746` deliberately keys data requests to the model's canonical `dataRegion` while `region` changes only the viewport. That was a recent, deliberate fix. **Extend it; do not revert it.**
+
+Permalink compatibility is non-negotiable — TWF has shared links in the wild. Links without `domain=` resolve to the model's canonical domain, identically to today.
+
+### Compare — decision made, not deferred
+
+Revision 1 left this as "independently or explicitly constrained," which was an unresolved product decision dressed up as an acceptance criterion. `frontend/src/pages/compare.tsx:794` currently feeds a shared `conus` region to both data loaders.
+
+**v1 decision:**
+- One **shared** data domain across both panes.
+- Only offer a domain supported by **both** selected model/variable pairs.
+- Camera stays shared and independent of domain.
+- **No NA-versus-global pane comparisons this week.**
+
+Independent per-pane domains would introduce regridding, diff semantics, unequal extents, and a much larger test surface. Not this week.
+
+> [!NOTE]
+> **No global artifacts exist until Phase 3.** Every `domain=global` assertion in this phase is tested against **mocked/synthetic region-scoped fixtures** built on the Phase 2A layout. Phase 2B proves the selector, request keying, and permalink behavior are correct; it does not and cannot prove real global data renders.
+
+**Stop-and-verify:** real TWF permalinks resolve to identical data and viewport; `domain=global` routes requests to the correct region-scoped paths **against synthetic fixtures** without altering camera behavior; `region=` alone still changes only the viewport; Compare enforces the shared-domain rule and degrades cleanly when one model lacks a domain; G4 green on fixed URLs.
+
+---
+
+## Phase 3 — Global rollout at 25 km (L)
+
+NA stays at current resolutions. Global lands at 25 km, with the tier as a config value so a later step is a flip rather than a rewrite. **Nothing above 25 km ships this week.**
+
+Rationale for 25 km: close to the native resolution of the open ECMWF/AIFS source; keeps vda4 at ~62% (~67% with ensembles); the 9 km scenario drives the volume to ~88% with multi-hour ECMWF/AIFS bursts and observed live-service interference during the sizing run.
+
+**Order: GFS → AIGFS → AIFS → ECMWF.** GFS first — cleanest global GRIB, and it surfaces the antimeridian bugs before the pattern is repeated. ECMWF last — cycle-length asymmetry and longest burst build.
+
+Per model: global retention, publication, manifest, and latest-pointer behavior; global sampling; admin visibility for build duration, disk usage, incomplete runs, and per-region publication status; rollout control so a model can be wired but left dark.
+
+**Per-model stop-and-verify — all required before the next model:**
+
+- [ ] Manifest correct against the model's **actual** global availability, not assumed from NA
+- [ ] G1 antimeridian oracle passes (reference agreement within packing tolerance; contour termination correct)
+- [ ] G2 Cloudflare: first response recorded, second identical request returns `HIT`, no `DYNAMIC` on any binary
+- [ ] G3 performance contract measured against the NA LOD baseline; if materially regressed, operator signoff obtained before rollout
+- [ ] G4 screenshot and GIF export verified for the new domain, both capture paths
+- [ ] G5 ran within existing caps; RSS compared against Phase 0 baselines
+- [ ] G6 both cycle types tested; anomaly variables absent from global capabilities; sanity ranges global-aware
+- [ ] Domain isolation holds under load: no `LATEST`/retention/pruning crossover observed
+- [ ] Disk utilization checkpoint recorded
+- [ ] Mobile: viewer usable and performant at global extent on a real device
+
+**Realistic expectation: GFS ships this week; AIGFS is the stretch.** If AIFS/ECMWF cannot clear gates, leave them wired behind rollout controls and dark. Two solid global models beat four shaky ones going into October.
+
+---
+
+## Parallel track — Skew-T data-contract spike (backend only) (M)
+
+**A spike, not a committed architecture.** On-demand Herbie extraction with a rounded-coordinate cache is a candidate, not the decision.
+
+The question most likely to force the answer: **what happens when a run exists in CartoSky's published tree but has aged out upstream?** You retain runs Herbie can no longer fetch. If that gap is material, compact published profile artifacts win over on-demand extraction — a different pipeline decision entirely.
+
+Scope — GFS only:
+
+1. Validated sounding JSON for one run / one forecast hour / one location, using `metpy.calc`.
+2. **Validate against a known RAOB** or an independent calculation. Accuracy gate first.
+3. Measure: upstream call count, latency under repeated interactive clicking, throttling behavior, payload size, MetPy CPU cost, cache cardinality for arbitrary coordinates.
+4. Determine which models and pressure levels reliably supply all required fields.
+5. Written comparison: bounded on-demand extraction vs. compact published profile artifacts, with a recommendation.
+6. Define failure behavior: hard timeout and a graceful "sounding unavailable" state, never a hung request.
+
+**No frontend work this week.** No endpoint architecture commitment until the spike reports.
+
+MetPy is a justified dependency — nothing in rasterio/pyproj does parcel paths, CAPE/CIN, or layer thermodynamics, and hand-rolling those against CartoSky's accuracy bar is a bad trade. `metpy.calc` only; `metpy.plots.SkewT` produces static matplotlib and has no place here. The eventual frontend is a native Canvas/SVG React component.
+
+This track is not fully independent — it touches model fetching, API contracts, dependencies, and production operations. Hold it behind Phase 2A's most invasive backend changes.
+
+---
+
+## Stretch — OISST absolute SST (M, only if global is genuinely green)
+
+- **OISST as the single source** for SST and eventual anomalies; source consistency matters more than freshness.
+- Preliminary data first, replaced by final when available.
+- **Standalone daily global layer**, not tied to a forecast-model run.
+- **Absolute SST only.** Anomaly is a separate release gate requiring a same-source climatology baseline.
+- Geo-Polar offers fresher, higher-resolution absolute SST, but mixing it with an OISST climatology produces a dataset-bias artifact that will look like signal. Evaluate later.
+
+---
+
+## Explicitly deferred
+
+| Item | Why not this week |
+|---|---|
+| **RRFS** | Upstream parallel data not available until 2026-08-11; NAM replacement pushed to early October. At most, a source-contract checklist after Aug 11. |
+| **AIFS Ensembles** | Needs its own sizing/access/retention spike. Ensembles consume capacity far faster than deterministic global expansion. |
+| **NEXRAD Level II** | A separate ingestion/decoding/tiling/retention/operations program, not a map-variable addition. |
+| **GOES GLM** | Always-on event-stream pipeline with unexamined scheduler cadence risk and its own aggregation and visualization decisions. |
+| **GDPS / RDPS / HRDPS** | GDPS is the right *next* model after global infrastructure settles — it benefits directly from Phase 2A. Do not onboard several Canadian models at once. |
+| **RAP** | Low marginal value while HRRR exists and the RRFS transition approaches. |
+| **Animated wind barbs** | Touches `GridWebglLayerController` and the screenshot path — the same files global work is churning. Fails its own isolation criterion. |
+| **Climate / Forecast / meteogram chart additions** | Valuable but incremental. Ordinary usage, not the expensive week. |
+| **True Color RGB** | Fix the service unit (Phase 0); do not launch the product. |
+| **SEO, marketing, sharing targets, mobile polish** | Phase 4 polish/freeze period. |
+| **Monetization, R2 migration, AI integrations** | Post-busy-season or too undefined. |
+
+---
+
+## Operating discipline
+
+- **Deploy workflow, no exceptions:** edit on Mac → `git push` → `sudo git pull` on prod → confirm the commit landed → restart services. Never direct server edits.
+- **Prod execution model:** Claude Code writes and commits scripts on Mac through version control; Brian executes on prod under `/opt/cartosky-dev` and pastes results back. Agents do not execute on prod.
+- **Production Python:** `/opt/cartosky/.venv/bin/python3` (system `python3` lacks rasterio and pipeline deps).
+- **Spike runs on prod:** `systemd-run` with `MemoryHigh=4G` / `MemoryMax=6G`, `CPUWeight=50` / `IOWeight=50`, one model block at a time.
+- **Context separation:** separate agent contexts for investigation, implementation, and adversarial review. Expensive model time is worth most on deletion safety, dependency tracing, operational contracts, and independent verification.
+- **Every large cross-cutting prompt ends with an explicit test/canary gate.**
+- **The ordering below is an ordering, not a schedule.** Gates govern progression.
+
+| Order | Work |
+|---|---|
+| 1 | Phase 0 operational gate |
+| 2–3 | Phase 1 legacy COG removal + raster utility extraction |
+| 3–5 | Phase 2A backend artifact-domain contract (design → review → implement) |
+| 5 | Phase 2B frontend domain/camera split |
+| 6–7 | Phase 3 global GFS end-to-end |
+| If time | Phase 3 AIGFS |
+| Parallel | Skew-T spike |
+| Stretch | OISST absolute SST |
+
+---
+
+## Agent kickoff prompts
+
+Paste into a fresh context. Each assumes the agent reads relevant source before writing.
+
+### Phase 1 — COG removal
+
+> You are working in the CartoSky repo. The COG-to-binary-sampling migration is complete across all products; binary grids are the single artifact for both WebGL rendering and point/meteogram sampling.
+>
+> Task: remove all **legacy value-COG** machinery while preserving raster code that is still live.
+>
+> Before changing anything, produce an inventory with file:line citations of: value-COG writers; the emergency COG sampling/write fallback; conditional COG branches in sample endpoints and meteogram paths; COG-aware scheduler and telemetry logic; resolution helpers, endpoint resolvers, migration flags, and canary tooling; obsolete sampling-source cache-key branches; COG-only tests and fixtures; and any standalone publisher importing `write_value_cog`. Note that `_resolve_val_cog` at `backend/app/services/sampling.py:579` is in scope for deletion.
+>
+> Separately inventory what must be **preserved**: warping, grid geometry, and RGBA-writing functions inside `cog_writer.py`, plus any raster code used for visualization, contour generation, source decoding, or warping. This task must not become "remove rasterio."
+>
+> Stop after the inventory and wait for review. In a second pass, remove the dead paths and extract the live helpers into an accurately named module, leaving `cog_writer.py` either deleted or accurately scoped.
+>
+> Acceptance: backend suite green, `ruff` clean on `backend/app backend/tests backend/scripts`, Playwright green, and sampling, meteograms, city values, screenshots, GIF export, observed products, and binary quality gates verified working. Minimal diff. Flag any scope change before making it.
+
+### Phase 2A — Backend artifact-domain contract (design pass)
+
+> In CartoSky's backend, many artifact-path functions accept a `region` argument and then discard it. Confirmed examples: `backend/app/services/scheduler.py:369` (`_build_regions_for_var` always returns only the canonical region), `scheduler.py:604` (`_frame_sidecar_path` executes `del region`), `backend/app/services/grid.py:1261` (`grid_dir` executes `del region` at 1262), and `backend/app/services/sampling.py` lines 430, 588, 608, 637, 778.
+>
+> CartoSky needs to publish global artifacts alongside existing canonical-region artifacts without collision. **This is a design task. Produce a written design; write no implementation code.**
+>
+> Deliver:
+>
+> 1. A complete inventory, with file:line citations, of every place the region argument is accepted and discarded, and every artifact path that would collide if a global run were published today. Cover staging and published run roots, manifests, latest pointers, grid manifests, frame URLs, sampling, meteograms, promotion, retention, pruning, telemetry, admin status, and scheduler build targets.
+> 2. A proposed physical directory layout that preserves today's canonical paths **byte-for-byte** and places non-canonical domains in an explicit namespace. State the exact path shapes.
+> 3. Confirmation that promotion remains an atomic same-filesystem rename under the proposed layout.
+> 4. The type/enum design for the domain concept. Do **not** hardcode a `na | global` union — `_default_build_region` reads `capabilities.canonical_region` with a fallback to `CANONICAL_COVERAGE = "conus"`, and models including HRRR, NAM, NBM, MRMS, and observed products use their own canonical region IDs. The concept is a capability-driven "published build-region ID."
+> 5. The test list proving: existing NA/CONUS URLs unchanged; global and canonical builds of the same model/run/variable coexist; `LATEST`, manifests, retention, and pruning cannot cross domains; absent `domain=` resolves exactly as today.
+>
+> Stop and wait for review before implementing.
+
+### Phase 2B — Frontend domain / camera split
+
+> In the CartoSky frontend, `region` currently serves two conflated purposes. `frontend/src/App.tsx:746` deliberately keys data requests to the model's canonical `dataRegion` while `region` changes only the viewport — correct, and must be preserved.
+>
+> Task: introduce **data domain** (a capability-driven published build-region ID, not a hardcoded `na | global` union) as a concept separate from **camera preset**. The backend artifact-domain contract from Phase 2A has already landed; build against it.
+>
+> Permalinks: `region=` keeps its current meaning. Add `domain=`. A link with no `domain=` must resolve to the model's canonical domain, identically to today. Real TWF links depend on this.
+>
+> Compare (`frontend/src/pages/compare.tsx:794` currently feeds a shared `conus` region to both loaders): v1 uses **one shared data domain across both panes**, offering only domains supported by both selected model/variable pairs, with the camera shared and independent. Do not implement independent per-pane domains.
+>
+> First produce a plan with file:line citations of every place the two concepts are conflated, and stop for review.
+>
+> No global artifacts exist yet — they arrive in Phase 3. Build mocked/synthetic region-scoped fixtures on the Phase 2A layout and test `domain=global` against those. Do not attempt to fetch real global data, and do not treat the absence of it as a failure.
+>
+> Acceptance: supplied real permalinks resolve to identical data and viewport; `domain=global` routes to the correct region-scoped paths against synthetic fixtures without altering camera behavior; Compare enforces the shared-domain rule and degrades cleanly when one model lacks a domain; screenshot output passes pixel-diff threshold on fixed URLs.
+
+### Phase 3 — Global model (repeat per model)
+
+> Task: add global 25 km support for **{MODEL}** in CartoSky, on top of the Phase 2A artifact-domain contract. NA artifacts and resolution are unchanged — global artifacts are **additive and region-scoped**. The NA viewer must never fetch a global binary and crop it client-side.
+>
+> Read the existing canonical-region publication path for this model before proposing anything. Do not assume this model shares forecast hours, cadence, variables, or cycle structure with any other model. {If ECMWF: this model has a cycle-length asymmetry — 06z/18z short-horizon, 00z/12z full-horizon. Test both.}
+>
+> Deliver: global retention, publication, manifest, and latest-pointer behavior; global sampling; admin visibility for build duration, disk usage, incomplete runs, and per-region publication status; a rollout control so this model can be wired but left dark.
+>
+> Exclude anomaly variables from the global capability contract explicitly — ERA5 baselines are NA-scoped. Make scientific sanity ranges global-aware so Antarctic and tropical extremes do not generate false warnings.
+>
+> Do not raise any scheduler `MemoryHigh` cap. Run within current caps with frame work serialized and report measured RSS against the Phase 0 baseline.
+>
+> Acceptance, all required: manifest correct against actual global availability; sampled points at 179°E, 179°W, 0°, and a spread of near-seam longitudes each agree with the source/warped reference within packing tolerance (do **not** assert 179°E equals 179°W — they are distinct locations); contours terminate or wrap correctly at the boundary with no globe-spanning polygons; world-copy rendering visually continuous; for global binaries and contour GeoJSON, the first response status recorded and a second identical request returning `CF-Cache-Status: HIT`, with no `DYNAMIC` on any binary (a cold first `MISS` is expected and is not a failure); performance contract measured per the plan's G3 definition against the NA LOD baseline, with rollout blocked pending operator signoff if materially regressed; screenshot and GIF export verified via both live-canvas and Playwright paths; no `LATEST`/retention/pruning crossover between domains; disk utilization checkpoint recorded.
+
+### Parallel — Skew-T spike
+
+> This is an **architecture spike**, not an implementation task. Do not build a frontend component and do not commit to an endpoint design.
+>
+> Target: GFS only. Produce validated Skew-T sounding JSON for one run, one forecast hour, one location, using `metpy.calc`. Do not use `metpy.plots.SkewT`.
+>
+> Validate the output against a known RAOB or an independent calculation and report the comparison explicitly. Accuracy is the first gate.
+>
+> Then measure and report: upstream call count and latency under repeated interactive clicking; source throttling behavior; payload size; CPU cost of the MetPy calculations; cache cardinality implications for arbitrary coordinates; and which models and pressure levels reliably supply all required fields.
+>
+> Answer specifically: what happens when a run exists in CartoSky's published tree but has aged out upstream? CartoSky retains runs Herbie can no longer fetch.
+>
+> Conclude with a written comparison of bounded on-demand Herbie extraction versus compact published profile artifacts, plus a recommendation and proposed failure behavior (hard timeout, graceful "sounding unavailable" state, never a hung request).
+
+---
+
+## Open items to record as the week progresses
+
+- Disk checkpoint after each global publish, against the per-model table above
+- Whether `MALLOC_ARENA_MAX=2` shows measurable benefit on the single canary unit
+- Skew-T spike verdict: on-demand vs. published profile artifacts
+- Any scheduler that required a cap increase, and the justification
+- Measured G3 numbers per variable — these become the baseline for any future resolution-tier argument
+- The locked Phase 2A directory layout, recorded here once decided
+
+---
+
+## Verification provenance
+
+Directly verified in source during this session: `scheduler.py` (`_build_regions_for_var`, `_frame_sidecar_path`, `_frame_value_path`, `_default_build_region`, `CANONICAL_COVERAGE`), `grid.py:1261–1262`, and `sampling.py` lines 430, 588, 608, 637, 778.
+
+Reported but **not** independently verified in this session — spot-check before relying on any as load-bearing: `backend/app/main.py:2781`, `frontend/src/App.tsx:746`, `frontend/src/pages/compare.tsx:794`, `docs/MEMORY_REGIME_SHIFT_INVESTIGATION_2026-07-26.md:23`, `docs/GLOBAL_MODEL_SIZING_SPIKE_2026-07-22.md:93` (including the 390.7 / 58.8 GiB per-model figures), and `deployment/systemd/csky-satellite-rgb-scheduler.service:1`.
+
+Disk figures were measured directly on prod and supersede all prior estimates.

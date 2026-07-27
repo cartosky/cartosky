@@ -471,6 +471,23 @@ def test_plan_recent_precip_postprocess_reuses_unchanged_upstream_timestamps(
 
 def test_run_once_fast_publishes_and_queues_postprocess(tmp_path: Path, monkeypatch) -> None:
     config = _config_with_recent_precip(tmp_path)
+    previous_run_id = "20260327_1158z"
+    previous_entry = {
+        "expected_frames": 1,
+        "available_frames": 1,
+        "frames": [{"fh": 0, "valid_time": "2026-03-27T11:00:00Z"}],
+    }
+    previous_var_dir = tmp_path / "published" / "mrms" / previous_run_id / "mrms_recent_precip_6h"
+    previous_grid_dir = previous_var_dir / "grid"
+    previous_grid_dir.mkdir(parents=True)
+    (previous_var_dir / "fh000.json").write_text("{}")
+    (previous_grid_dir / "fh000.l0.meta.json").write_text("{}")
+    (tmp_path / "published" / "mrms" / "LATEST.json").write_text(json.dumps({"run_id": previous_run_id}))
+    manifest_dir = tmp_path / "manifests" / "mrms"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / f"{previous_run_id}.json").write_text(
+        json.dumps({"variables": {"mrms_recent_precip_6h": previous_entry}})
+    )
     radar_scans = [
         MRMSScanRef(
             valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
@@ -531,6 +548,11 @@ def test_run_once_fast_publishes_and_queues_postprocess(tmp_path: Path, monkeypa
     assert result.action == "published"
     assert published["build_grid_artifacts"] is False
     assert published.get("supplemental_variable_frames") is None
+    assert published["pending_supplemental_variables"] == ("mrms_recent_precip_6h",)
+    assert published["carry_forward_supplemental_from_run_id"] == previous_run_id
+    assert published["carry_forward_supplemental_manifest_entries"] == {
+        "mrms_recent_precip_6h": previous_entry,
+    }
     assert len(queued) == 1
     assert queued[0].run_id == "20260327_1204z"
     assert len(queued[0].supplemental_plans) == 1
@@ -546,7 +568,9 @@ def test_run_postprocess_request_reuses_existing_supplemental_artifacts(tmp_path
     source_dir = tmp_path / "published" / "mrms" / previous_run_id / "mrms_recent_precip_6h"
     source_dir.mkdir(parents=True, exist_ok=True)
     (source_dir / "fh000.json").write_text("{}")
-    (source_dir / "fh000.val.cog.tif").write_bytes(b"cog")
+    grid_dir = source_dir / "grid"
+    grid_dir.mkdir()
+    (grid_dir / "fh000.l0.meta.json").write_text("{}")
 
     current_run_dir = tmp_path / "published" / "mrms" / current_run_id
     current_run_dir.mkdir(parents=True, exist_ok=True)

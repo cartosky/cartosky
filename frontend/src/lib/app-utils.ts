@@ -935,7 +935,11 @@ export function capabilityVarsForManifest(
   capabilityVars: VariableEntry[],
   options?: { modelId?: string | null },
 ): VariableEntry[] {
-  if (options?.modelId === "goes-east") {
+  // MRMS advances LATEST as soon as the fast radar phase publishes, while
+  // hourly recent-precip products refresh asynchronously. Keep its stable
+  // capability catalog visible during that transition; the grid loader can
+  // resolve a carried-forward/previous usable run for the selected variable.
+  if (options?.modelId === "goes-east" || options?.modelId === "mrms") {
     return capabilityVars;
   }
   if (!manifestVars) {
