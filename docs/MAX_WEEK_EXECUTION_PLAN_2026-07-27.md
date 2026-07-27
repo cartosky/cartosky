@@ -126,10 +126,11 @@ Verified after **every** phase, not just the ones that look related.
    writers. Take the metrics branch: export the existing process-local counters
    and timers through scheduler snapshots and the API's Prometheus surface.
 
-   **Local implementation complete; deployment pending.** Snapshots are
+   **Implemented and observed on production.** Snapshots are
    atomically written per model, retain cumulative totals across scheduler
    process restarts, refresh after member/stat post-processing, and are exposed
-   through the existing API `/metrics` scrape.
+   through the existing API `/metrics` scrape. Production verification is
+   recorded below.
 3. **Define and start the arena canary.** Not "set `MALLOC_ARENA_MAX=2` and see what happens." Specify before starting:
    - The **single** scheduler unit under test (do not apply fleet-wide and call it a canary).
    - Control and treatment periods, and whether the unit restarts between them.
@@ -143,14 +144,58 @@ Verified after **every** phase, not just the ones that look related.
 
 ### Phase 0 production record — 2026-07-27
 
-- `/opt/cartosky-dev` was at `5450cde` when inspected.
+- Pre-deploy, `/opt/cartosky-dev` was at `5450cde`. The production checkout
+  `/opt/cartosky` was subsequently observed at deployed commit `5749d2c5`.
 - `csky-satellite-rgb-scheduler.service` is **masked and inactive**. There is
   no active live unit or process to diff or measure; `MainPID=0`, memory and
   CPU/IO accounting are unset, and effective memory limits are infinity. Keep
-  the service masked during this week.
-- Host point sample: 62 GiB RAM total, 11 GiB used, 51 GiB available; swap
-  4.0/8.0 GiB used. This is a host baseline only, not the required
-  per-scheduler build baseline.
+  the service masked during this week. The corrected template is committed and
+  present in the production checkout, but the submitted evidence does not show
+  that a live `/etc/systemd/system` copy was replaced; that distinction is
+  non-blocking while the unit remains masked.
+- The Herbie runtime bridge is live. Atomic snapshots existed for all nine
+  model schedulers (`aifs`, `aigfs`, `ecmwf`, `eps`, `gefs`, `gfs`, `hrrr`,
+  `nam`, and `nbm`), owned by `cartosky:cartosky`. The API scrape exposed all
+  five expected families: counter, timer count, timer sum, timer max, and
+  snapshot timestamp. No timeout-named counter was present in this first
+  scrape.
+- Initial maximum observed `herbie_call_ms` by model was: AIFS 2885 ms, AIGFS
+  2299 ms, ECMWF 3949 ms, EPS 2829 ms, GEFS 3452 ms, GFS 1449 ms, HRRR
+  1941 ms, NAM 176 ms, and NBM 1114 ms. These are post-deploy startup/poll
+  observations, not cycle-level build-latency measurements.
+- All running scheduler services reported
+  `ActiveEnterTimestamp=2026-07-27 16:13:59 CDT` and `NRestarts=0` in the
+  sample taken about five minutes later.
+  This synchronized post-deploy restart makes the following a clean point
+  baseline, but not the required 48-hour/eight-cycle control.
+
+| Unit | cgroup current | cgroup peak | `MemoryHigh` / `MemoryMax` | process RSS | Threads |
+|---|---:|---:|---:|---:|---:|
+| AIFS | 127 MiB | 130 MiB | 2.0 / 2.44 GiB | 199 MiB | 47 |
+| AIGFS | 122 MiB | 126 MiB | 2.44 / 3.0 GiB | 196 MiB | 47 |
+| CPC | 264 MiB | 602 MiB | 600 / 800 MiB | 283 MiB | 16 |
+| ECMWF | 132 MiB | 144 MiB | 8.0 / 9.0 GiB | 204 MiB | 47 |
+| EPS | 163 MiB | 163 MiB | 3.0 / 4.0 GiB | 228 MiB | 47 |
+| GEFS | 147 MiB | 174 MiB | 3.0 / 3.42 GiB | 208 MiB | 47 |
+| GFS | 131 MiB | 154 MiB | 8.0 / 9.0 GiB | 201 MiB | 47 |
+| HRRR | 1.15 GiB | 1.60 GiB | 4.0 / 5.0 GiB | 693 MiB | 47 |
+| NAM | 124 MiB | 135 MiB | 7.0 / 8.0 GiB | 197 MiB | 47 |
+| NBM | 119 MiB | 121 MiB | 3.42 / 4.0 GiB | 194 MiB | 48 |
+| NDFD | 88 MiB | 232 MiB | 1.95 / 2.44 GiB | 141 MiB | 31 |
+| NWS hazards | 424 MiB | 902 MiB | 900 MiB / 1.17 GiB | 265 MiB | 16 |
+| Radar | 838 MiB | 1.87 GiB | 2.0 / 3.0 GiB | 540 MiB | 32 |
+| RTMA-RU | 116 MiB | 116 MiB | 1.17 / 1.46 GiB | 186 MiB | 47 |
+| Satellite | 112 MiB | 1.00 GiB | 1.0 / 2.0 GiB | 167 MiB | 47 |
+| SPC | 24 MiB | 24 MiB | 150 / 200 MiB | 44 MiB | 16 |
+| WPC | 110 MiB | 267 MiB | 600 / 800 MiB | 168 MiB | 31 |
+
+- Host point samples:
+  - Pre-deploy: 62 GiB RAM total, 11 GiB used, 51 GiB available; swap
+    4.0/8.0 GiB used.
+  - About five minutes after the synchronized restart: 62 GiB total, 8.5 GiB
+    used, 54 GiB available; swap 808.5 MiB/8.0 GiB used.
+  - The lower second sample is recorded but must not be attributed to the
+    metrics change or allocator behavior from two point observations.
 
 ### Arena canary protocol — locked 2026-07-27
 
@@ -158,7 +203,10 @@ Verified after **every** phase, not just the ones that look related.
   clearest post-regression RSS increase and naturally restarts after successful
   builds, making process-lifetime comparisons less ambiguous.
 - **Control:** the immediately preceding 48 hours, requiring eight completed
-  GFS cycles at the current worker count and memory caps.
+  GFS cycles at the current worker count and memory caps. The clean control
+  window starts from the synchronized deployment restart at
+  `2026-07-27 16:13:59 CDT`; do not begin treatment before both 48 hours and
+  eight completed GFS cycles have elapsed.
 - **Treatment:** add `MALLOC_ARENA_MAX=2` to the checked-in GFS unit template
   in a dedicated commit, deploy through the normal workflow, then observe the
   next 48 hours / eight completed cycles. Do not bundle any other memory
@@ -175,6 +223,21 @@ Verified after **every** phase, not just the ones that look related.
   dedicated canary commit on Mac, push, pull on prod, run
   `sudo systemctl daemon-reload`, and restart only
   `csky-gfs-scheduler.service`.
+
+### Phase 0 gate status after the production deployment
+
+- **Complete:** the runtime metrics path is deployed and returning live data
+  for all nine model schedulers.
+- **Complete:** the RGB template correction is committed in the deployed
+  checkout; the service remains deliberately masked and inactive.
+- **Recorded:** a post-deploy per-unit memory/cap point sample and two host
+  memory/swap point samples.
+- **In progress:** the GFS arena canary is in its control phase. No
+  `MALLOC_ARENA_MAX` treatment has been applied.
+- **Still required before treatment:** 48 hours and eight completed GFS cycles,
+  including cycle build durations, RSS p50/p95/peak, anonymous-map counts, host
+  swap peak, failures/upstream-delay notes, Herbie timeout counts, and
+  concurrent-load context.
 
 **Stop-and-verify:** baselines recorded, working tree clean, canary defined and running on one unit, RGB service unit corrected and committed.
 
