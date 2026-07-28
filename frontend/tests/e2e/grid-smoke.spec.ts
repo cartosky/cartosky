@@ -1027,6 +1027,98 @@ test.describe('Grid-only smoke', () => {
     )).toBeLessThanOrEqual(1);
   });
 
+  test('real Share capture preserves the map container aspect and synthetic edge markers', async ({ page }) => {
+    test.skip(test.info().project.name !== 'chromium', 'The export baseline is pinned to desktop Chromium.');
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.addInitScript(() => {
+      localStorage.setItem('csky_viewer_tour_v1', 'completed');
+      const originalToDataUrl = HTMLCanvasElement.prototype.toDataURL;
+      HTMLCanvasElement.prototype.toDataURL = function patchedToDataUrl(
+        type?: string,
+        quality?: number,
+      ): string {
+        if (this.classList.contains('maplibregl-canvas') && type === 'image/png') {
+          const fixture = document.createElement('canvas');
+          fixture.width = this.width;
+          fixture.height = this.height;
+          const context = fixture.getContext('2d');
+          if (!context) {
+            return originalToDataUrl.call(this, type, quality);
+          }
+          const edge = Math.max(4, Math.round(Math.min(fixture.width, fixture.height) * 0.02));
+          context.fillStyle = 'rgb(9, 23, 37)';
+          context.fillRect(0, 0, fixture.width, fixture.height);
+          context.fillStyle = 'rgb(241, 17, 31)';
+          context.fillRect(0, 0, fixture.width, edge);
+          context.fillStyle = 'rgb(43, 89, 233)';
+          context.fillRect(0, fixture.height - edge, fixture.width, edge);
+          context.fillStyle = 'rgb(251, 197, 23)';
+          context.fillRect(0, 0, edge, fixture.height);
+          context.fillStyle = 'rgb(37, 211, 71)';
+          context.fillRect(fixture.width - edge, 0, edge, fixture.height);
+          return originalToDataUrl.call(fixture, type, quality);
+        }
+        return originalToDataUrl.call(this, type, quality);
+      };
+    });
+    await stubViewerGridRoutes(page);
+    await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
+    await expect(page.getByText('Product', { exact: true })).toBeVisible();
+
+    const map = page.locator('div[role="img"][aria-label="Weather map"]').first();
+    const mapDimensions = await map.evaluate((element) => ({
+      width: element.clientWidth,
+      height: element.clientHeight,
+    }));
+
+    await page.getByRole('button', { name: 'Share', exact: true }).first().click();
+    const preview = page.getByRole('dialog', { name: 'Share' })
+      .getByRole('img', { name: 'Screenshot preview' });
+    await expect(preview).toBeVisible({ timeout: 15_000 });
+    const previewSource = await preview.getAttribute('src');
+    expect(previewSource).toBeTruthy();
+
+    const captured = await page.evaluate(async (source) => {
+      if (!source) {
+        throw new Error('Screenshot preview source is unavailable.');
+      }
+      const response = await fetch(source);
+      const bitmap = await createImageBitmap(await response.blob());
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) {
+        bitmap.close();
+        throw new Error('Unable to decode screenshot preview.');
+      }
+      context.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      const pixel = (x: number, y: number) =>
+        Array.from(context.getImageData(x, y, 1, 1).data);
+      return {
+        width: canvas.width,
+        height: canvas.height,
+        edges: {
+          top: pixel(Math.floor(canvas.width / 2), 0),
+          right: pixel(canvas.width - 1, Math.floor(canvas.height / 2)),
+          bottom: pixel(Math.floor(canvas.width / 2), canvas.height - 1),
+          left: pixel(0, Math.floor(canvas.height / 2)),
+        },
+      };
+    }, previewSource);
+
+    expect(captured.width).toBe(2560);
+    expect(captured.height).toBe(Math.round(1280 / (mapDimensions.width / mapDimensions.height)) * 2);
+    expect(captured.edges).toEqual({
+      top: [241, 17, 31, 255],
+      right: [37, 211, 71, 255],
+      bottom: [43, 89, 233, 255],
+      left: [251, 197, 23, 255],
+    });
+  });
+
   test('desktop share dialog opens centered and can be dragged by its header', async ({ page }) => {
     test.skip(/Mobile/.test(test.info().project.name), 'Desktop-only dialog interaction.');
 
@@ -1111,6 +1203,7 @@ test.describe('Grid-only smoke', () => {
           restore: (token: unknown) => void;
         };
         __gifTrendRunAttempts?: string[];
+        __gifTrendCurrentRun?: string;
       };
       const driver = probeWindow.__cartoskyGifDriver;
       if (!driver) {
@@ -1131,19 +1224,23 @@ test.describe('Grid-only smoke', () => {
         if (runId.endsWith('_06z') || runId.endsWith('_18z')) {
           return { shown: false, fh: null, validTimeISO: null };
         }
+        probeWindow.__gifTrendCurrentRun = runId;
         const fh = runId.endsWith('_12z') ? 168 : 180;
         return { shown: true, fh, validTimeISO: '2026-07-27T12:00:00.000Z' };
       };
       driver.captureFrame = async () => {
         const canvas = document.createElement('canvas');
-        canvas.width = 64;
-        canvas.height = 36;
+        canvas.width = 720;
+        canvas.height = 405;
         const context = canvas.getContext('2d');
         if (!context) {
           return null;
         }
-        context.fillStyle = '#2563eb';
-        context.fillRect(0, 0, canvas.width, canvas.height);
+        const newestRun = probeWindow.__gifTrendCurrentRun?.endsWith('_12z') ?? false;
+        context.fillStyle = newestRun ? 'rgb(225, 74, 51)' : 'rgb(21, 96, 189)';
+        context.fillRect(0, 0, canvas.width / 2, canvas.height);
+        context.fillStyle = newestRun ? 'rgb(21, 96, 189)' : 'rgb(225, 74, 51)';
+        context.fillRect(canvas.width / 2, 0, canvas.width / 2, canvas.height);
         return canvas;
       };
       driver.restore = () => {};
@@ -1165,6 +1262,67 @@ test.describe('Grid-only smoke', () => {
       '20260720_06z',
       '20260720_00z',
     ]);
+
+    const gifSource = await dialog.getByRole('img', { name: 'Animated GIF preview' }).getAttribute('src');
+    expect(gifSource).toBeTruthy();
+    const decodedGif = await page.evaluate(async (source) => {
+      if (!source) {
+        throw new Error('GIF preview source is unavailable.');
+      }
+      const bytes = new Uint8Array(await (await fetch(source)).arrayBuffer());
+      const ImageDecoderCtor = (window as typeof window & {
+        ImageDecoder?: new (init: { data: Uint8Array; type: string }) => {
+          tracks: {
+            ready: Promise<void>;
+            selectedTrack?: { frameCount: number };
+          };
+          decode: (options: { frameIndex: number; completeFramesOnly: boolean }) => Promise<{ image: CanvasImageSource & { close?: () => void } }>;
+          close: () => void;
+        };
+      }).ImageDecoder;
+      if (!ImageDecoderCtor) {
+        throw new Error('Chromium ImageDecoder is unavailable.');
+      }
+      const decoder = new ImageDecoderCtor({ data: bytes, type: 'image/gif' });
+      await decoder.tracks.ready;
+      const frameCount = decoder.tracks.selectedTrack?.frameCount ?? 0;
+      const sampleFrame = async (frameIndex: number) => {
+        const decoded = await decoder.decode({ frameIndex, completeFramesOnly: true });
+        const canvas = document.createElement('canvas');
+        canvas.width = 720;
+        canvas.height = 405;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (!context) {
+          decoded.image.close?.();
+          throw new Error('Unable to sample decoded GIF frame.');
+        }
+        context.drawImage(decoded.image, 0, 0);
+        decoded.image.close?.();
+        return Array.from(context.getImageData(180, 220, 1, 1).data);
+      };
+      const firstFrameSample = await sampleFrame(0);
+      const secondFrameSample = await sampleFrame(1);
+      decoder.close();
+      return {
+        header: String.fromCharCode(...bytes.slice(0, 6)),
+        width: bytes[6] | (bytes[7] << 8),
+        height: bytes[8] | (bytes[9] << 8),
+        trailer: bytes.at(-1),
+        frameCount,
+        firstFrameSample,
+        secondFrameSample,
+      };
+    }, gifSource);
+
+    expect(decodedGif).toMatchObject({
+      header: 'GIF89a',
+      width: 720,
+      height: 405,
+      trailer: 0x3b,
+      frameCount: 2,
+    });
+    expect(decodedGif.firstFrameSample[2]).toBeGreaterThan(decodedGif.firstFrameSample[0]);
+    expect(decodedGif.secondFrameSample[0]).toBeGreaterThan(decodedGif.secondFrameSample[2]);
   });
 
   test('mobile share dialog remains a fixed bottom sheet', async ({ page }) => {
