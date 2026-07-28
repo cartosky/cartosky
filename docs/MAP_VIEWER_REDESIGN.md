@@ -648,6 +648,27 @@ proves Product opens while the frame is blocked, only the map center hit-tests t
 `firstWeatherFramePainted` / `onGridFrameReady` / MapLibre idle / screenshot readiness untouched.
 Local built-bundle probe under the recorded Fast 4G / 4× CPU profile paints the shell at 236–264 ms
 FCP. Production FCP re-measured 2026-07-28 (pre-deploy prod build): GFS 364 ms / HRRR 348 ms median.
+Phase 2 production gate passed 2026-07-28.
+
+**Phase 3 static ramp: implementation complete 2026-07-28 — pending verification.** Not done until
+the production gate closes. Static ramp only; auto-range was not needed and remains unauthorized
+without its own plan. The approved Candidate A spectral warm band replaces
+`TMP2M_F_COLOR_ANCHORS` (cold end −60→49 °F unchanged); dew point is decoupled onto a verbatim
+copy (`DP2M_F_COLOR_ANCHORS`) and pinned by test. Perceptual gate
+`backend/tests/test_tmp2m_ramp_gate.py` enforces sliding-min ΔE ≥ 18 across every 10 °F pair in
+70–95 (old ramp failed at 13.4, 70v80; new minimum 23.6) plus an L* span ≥ 20 floor and a
+frontend-fixture cross-pin. `buildLegendLut` was extracted byte-identically into exported
+`src/lib/grid-lut.ts`. `tests/e2e/viewer-colormap.spec.ts` proves: exact LUT faithfulness through
+the exported seam; distinct band rendering on the live map; the **real Share export** (dialog →
+composed preview) carrying the same cells plus baked-legend probe colors that cannot come from map
+data; both **Compare pane canvases** sampled pixel-for-pixel distinct and agreeing cell-for-cell;
+and an **exact fetch pin** — precisely one grid-binary request per fixture frame, held through a
+pixel-confirmed FH1 render (each fixture frame shifts +2 °F so the step is observable). Sidecars
+bake legends at publish, so the new ramp appears only on runs built after deploy; old runs age out
+on the old ramp (tmp850_anom precedent). Export regression and Phase 2 suites green; no
+fetch/cache, exporter-legend, diff-mode, or readiness-gate code changed. **The first HRRR run
+published after deploy opens the production verification window; Brian's visual check against the
+§4 gate closes it.**
 
 ---
 
