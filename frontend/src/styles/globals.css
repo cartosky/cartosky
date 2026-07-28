@@ -607,7 +607,7 @@
     --destructive-foreground: 0 0% 98%;
     --border: 220 14% 86%;
     --input: 220 14% 86%;
-    --ring: 162 21% 22%;
+    --ring: 187 92% 69%;
     --radius: 0.375rem;
     --toolbar: 220 20% 100%;
   }
@@ -631,7 +631,7 @@
     --destructive-foreground: 0 0% 98%;
     --border: 222 16% 20%;
     --input: 222 16% 20%;
-    --ring: 162 21% 22%;
+    --ring: 187 92% 69%;
     --toolbar: 222 22% 11%;
   }
 
@@ -680,7 +680,7 @@
 
   /* Offset zoom control below the fixed viewer toolbar. */
   .maplibregl-ctrl-top-left .maplibregl-ctrl {
-    margin: calc(4.5rem + 10px) 0 0 0.75rem;
+    margin: calc(4.5rem + 10px + var(--viewer-header-extra, 0px)) 0 0 0.75rem;
   }
 
   .maplibregl-ctrl-top-left .maplibregl-ctrl-group button {
@@ -728,7 +728,7 @@
 
   @media (min-width: 640px) {
     .maplibregl-ctrl-top-left .maplibregl-ctrl {
-      margin: calc(4.5rem + 10px) 0 0 1rem;
+      margin: calc(4.5rem + 10px + var(--viewer-header-extra, 0px)) 0 0 1rem;
     }
 
     .maplibregl-ctrl-bottom-left .maplibregl-ctrl-attrib {
@@ -817,4 +817,18 @@
   to {
     left: 100%;
   }
+}
+
+/* Designed focus ring (map viewer redesign Phase 4, §2.5): one keyboard-focus
+   token for every interactive element — 2px cyan at ≥3:1 on the dark chrome
+   (#67e8f9 on #04101e ≈ 10:1). The :is() list carries a[href] specificity
+   (0,2,1 with :focus-visible), so it deliberately overrides per-component
+   `focus:outline-none` utilities (0,2,0). Mouse focus (:focus without
+   :focus-visible) shows nothing. */
+:is(button, [role="button"], [role="slider"], [role="tab"], [role="combobox"], [role="option"], [role="menuitem"], a[href], input, select, textarea):focus-visible {
+  outline: 2px solid rgba(103, 232, 249, 0.9);
+  outline-offset: 1px;
+  /* `transition-all` on several controls would animate outline-width from 0,
+     making the ring fade in (and race the audit). Snap it on instantly. */
+  transition: none;
 }

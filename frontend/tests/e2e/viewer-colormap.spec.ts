@@ -270,7 +270,10 @@ test.describe('Viewer colormap (Phase 3)', () => {
 
     // Step to FH1 and confirm it RENDERED (the fixture shifts each frame by
     // +2 °F, so the sampled cells change when — and only when — FH1 paints).
-    await page.locator('[data-tour-target="forecast-scrubber"] [role="slider"]').first().click();
+    // Focus (not click) the thumb: since the Phase 4 hit-area enlargement a
+    // click can commit a track jump of its own; keyboard-only stepping keeps
+    // the FH transition deterministic at 0 -> 1.
+    await page.locator('[data-tour-target="forecast-scrubber"] [role="slider"]').first().focus();
     await page.keyboard.press('ArrowRight');
     await expect.poll(() => new URL(page.url()).searchParams.get('fh'), { timeout: 15_000 }).toBe('1');
     await expect

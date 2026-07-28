@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { ChevronDown, Search, Star, X } from "lucide-react";
 
 import type { LegendPayload } from "@/components/map-legend";
+import { VIEWER_FIELD_TRIGGER_CHEVRON_CLASSNAME, viewerFieldTriggerClassName } from "@/components/ui/viewer-field-trigger";
 import { useVariableFavorites } from "@/lib/use-variable-favorites";
 import { cn } from "@/lib/utils";
 
@@ -422,7 +423,7 @@ export function VariablePicker({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search variables…"
-          className={cn("min-w-0 flex-1 bg-transparent text-[12px] font-medium text-white outline-none placeholder:text-white/34", inlinePanel && "min-h-11")}
+          className={cn("min-w-0 flex-1 bg-transparent text-[12px] font-medium text-white outline-none placeholder:text-white/34", inlinePanel ? "min-h-11" : "min-h-8 pointer-coarse:min-h-11")}
         />
         {query ? (
           <button
@@ -431,7 +432,7 @@ export function VariablePicker({
               setQuery("");
               searchInputRef.current?.focus({ preventScroll: true });
             }}
-            className={cn("inline-flex items-center justify-center rounded-md text-white/42 transition-colors hover:bg-white/[0.07] hover:text-white/78", inlinePanel ? "h-11 w-11" : "h-6 w-6")}
+            className={cn("inline-flex items-center justify-center rounded-md text-white/42 transition-colors hover:bg-white/[0.07] hover:text-white/78", inlinePanel ? "h-11 w-11" : "h-8 w-8 pointer-coarse:h-11 pointer-coarse:w-11")}
             aria-label="Clear variable search"
           >
             <X className="h-3.5 w-3.5" />
@@ -452,7 +453,7 @@ export function VariablePicker({
                     onClick={() => setCpcActivePeriod(pair.periodKey)}
                     className={cn(
                       "flex w-full items-center gap-2 rounded-lg border-l-2 px-2 text-left text-[11px] font-semibold transition-colors",
-                      inlinePanel ? "h-11" : "h-8",
+                      inlinePanel ? "h-11" : "h-8 pointer-coarse:h-11",
                       active
                         ? "border-l-[#185FA5] bg-cyan-300/[0.10] text-cyan-50"
                         : "border-l-transparent text-white/62 hover:bg-white/[0.055] hover:text-white/86"
@@ -481,7 +482,7 @@ export function VariablePicker({
                       data-variable-index={index}
                       className={cn(
                         "group flex items-center gap-1.5 rounded-lg px-1.5 transition-colors",
-                        inlinePanel ? "h-11" : "h-8",
+                        inlinePanel ? "h-11" : "h-8 pointer-coarse:h-11",
                         selected
                           ? "bg-[#185FA5]/20 text-cyan-100"
                           : highlighted
@@ -499,7 +500,7 @@ export function VariablePicker({
                         }}
                         className={cn(
                           "inline-flex shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
-                          inlinePanel ? "h-11 w-11" : "h-6 w-6",
+                          inlinePanel ? "h-11 w-11" : "h-8 w-8 pointer-coarse:h-11 pointer-coarse:w-11",
                           favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-50 hover:text-white/55"
                         )}
                         aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
@@ -511,12 +512,12 @@ export function VariablePicker({
                         disabled={!supported}
                         onClick={() => chooseVariable(option.value)}
                         onMouseEnter={() => setHighlightedIndex(index)}
-                        className={cn("flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-not-allowed", inlinePanel && "h-full")}
+                        className={cn("flex min-w-0 flex-1 items-center gap-2 self-stretch text-left disabled:cursor-not-allowed", inlinePanel && "h-full")}
                         title={supported ? option.label : `${option.label} is not available for this model`}
                       >
                         <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
                         {option.hasStats ? (
-                          <span className="shrink-0 rounded-md border border-cyan-300/25 bg-cyan-300/[0.10] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-cyan-200/80">
+                          <span className="shrink-0 rounded-md border border-cyan-300/25 bg-cyan-300/[0.10] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cyan-200/80">
                             stats
                           </span>
                         ) : null}
@@ -539,14 +540,14 @@ export function VariablePicker({
                     onClick={() => setActiveCategory(category.id)}
                     className={cn(
                       "flex w-full items-center justify-between gap-2 rounded-lg border-l-2 px-2 text-left text-[11px] font-semibold transition-colors",
-                      inlinePanel ? "h-11" : "h-8",
+                      inlinePanel ? "h-11" : "h-8 pointer-coarse:h-11",
                       active
                         ? "border-l-[#185FA5] bg-cyan-300/[0.10] text-cyan-50"
                         : "border-l-transparent text-white/62 hover:bg-white/[0.055] hover:text-white/86"
                     )}
                   >
                     <span className="min-w-0 truncate">{category.label}</span>
-                    <span className="rounded-md border border-white/8 bg-white/[0.055] px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium text-white/44">
+                    <span className="rounded-md border border-white/8 bg-white/[0.055] px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[11px] font-medium text-white/44">
                       {category.count}
                     </span>
                   </button>
@@ -574,7 +575,7 @@ export function VariablePicker({
                   return (
                     <Fragment key={option.value}>
                       {showAnomalyHeading ? (
-                        <div className="px-1.5 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-100/62">
+                        <div className="px-1.5 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-100/62">
                           Anomalies
                         </div>
                       ) : null}
@@ -582,7 +583,7 @@ export function VariablePicker({
                         data-variable-index={index}
                         className={cn(
                           "group flex items-center gap-1.5 rounded-lg px-1.5 transition-colors",
-                          inlinePanel ? "h-11" : "h-8",
+                          inlinePanel ? "h-11" : "h-8 pointer-coarse:h-11",
                           selected
                             ? "bg-[#185FA5]/20 text-cyan-100"
                             : highlighted
@@ -600,7 +601,7 @@ export function VariablePicker({
                           }}
                           className={cn(
                             "inline-flex shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
-                            inlinePanel ? "h-11 w-11" : "h-6 w-6",
+                            inlinePanel ? "h-11 w-11" : "h-8 w-8 pointer-coarse:h-11 pointer-coarse:w-11",
                             favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-50 hover:text-white/55"
                           )}
                           aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
@@ -612,17 +613,17 @@ export function VariablePicker({
                           disabled={!supported}
                           onClick={() => chooseVariable(option.value)}
                           onMouseEnter={() => setHighlightedIndex(index)}
-                          className={cn("flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-not-allowed", inlinePanel && "h-full")}
+                          className={cn("flex min-w-0 flex-1 items-center gap-2 self-stretch text-left disabled:cursor-not-allowed", inlinePanel && "h-full")}
                           title={supported ? option.label : `${option.label} is not available for this model`}
                         >
                           <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
                           {option.hasStats ? (
-                            <span className="shrink-0 rounded-md border border-cyan-300/25 bg-cyan-300/[0.10] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-cyan-200/80">
+                            <span className="shrink-0 rounded-md border border-cyan-300/25 bg-cyan-300/[0.10] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cyan-200/80">
                               stats
                             </span>
                           ) : null}
                           {hasSearch ? (
-                            <span className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-white/38">
+                            <span className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/38">
                               {categoryLabel}
                             </span>
                           ) : null}
@@ -651,15 +652,14 @@ export function VariablePicker({
         onClick={() => setOpenState(!open)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className={cn(
-          "inline-flex w-auto items-center justify-between gap-2 rounded-xl border border-white/[0.09] bg-white/[0.05] px-3 text-[12px] font-medium text-white/82 shadow-none transition-all duration-150 hover:border-white/18 hover:bg-white/[0.09] hover:text-white focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
-          inlinePanel ? "h-11" : "h-8",
-          minWidth,
-          open ? "border-cyan-300/25 bg-cyan-300/[0.08] text-cyan-100" : ""
-        )}
+        className={viewerFieldTriggerClassName({
+          size: inlinePanel ? "inline" : "desktop",
+          open,
+          className: minWidth,
+        })}
       >
         <span className="min-w-0 truncate whitespace-nowrap">{selectedLabel}</span>
-        <ChevronDown className={cn("h-4 w-4 shrink-0 opacity-50 transition-transform", open ? "rotate-180" : "")} />
+        <ChevronDown className={cn(VIEWER_FIELD_TRIGGER_CHEVRON_CLASSNAME, open ? "rotate-180" : "")} />
       </button>
       {panel}
     </div>

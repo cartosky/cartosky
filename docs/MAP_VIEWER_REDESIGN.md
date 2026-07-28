@@ -670,6 +670,25 @@ on the old ramp (tmp850_anom precedent). Export regression and Phase 2 suites gr
 fetch/cache, exporter-legend, diff-mode, or readiness-gate code changed. Older runs published
 before the deploy retain the previous ramp until retention ages them out — expected, not a defect.
 
+**Phase 4: implementation complete 2026-07-28 — pending verification.** Tokens: a `pointer-coarse`
+Tailwind variant (§2.1 sizing: 32px fine / 44px coarse floors applied across header icons,
+triggers, picker internals, zoom, play/speed, slider thumb, Share dialog, display panel,
+attribution chips); one designed `:focus-visible` outline token (2px cyan, ~10:1 on the dark
+chrome, `--ring` recolored to match) applied globally with per-component focus killers removed
+from the audited chrome; the viewer-chrome type floor swept (no text <11px; operational labels
+≥12px; field captions tightened tracking, not font); the §11.1 `viewerFieldTriggerClassName`
+primitive consumed by Product, Variable, Statistic, and Run so the four read as one field family;
+and a measured `--viewer-header-extra` contract (ResizeObserver) so a coarse-pointer wrapped
+header moves the map padding, scrim, zoom stack, and panels together — unwrapped layouts are
+pixel-identical to before. Audit suite `tests/e2e/viewer-design-tokens.spec.ts` (10 tests, stable
+2×): 9-surface interaction matrix plus a touchscreen-desktop state, both pointer regimes,
+identity-keyed exhaustive Tab-walk focus audit, trigger-family computed-style equality,
+wrapped-header geometry at tablet sizes, compare coarse smoke, mobile-layout pass, and a
+slider-dot geometry pin (the enlarged thumb hit area provably does not move the visual dot).
+Verified through two adversarial review rounds; export regression, first-paint, colormap, and
+compare suites green. Known scope note: tablet-touch has no display-settings surface (the panel
+is desktop-only and the controls button is hidden there) — recorded for Phases 6/8.
+
 ---
 
 ## 11. Resolved repository decisions

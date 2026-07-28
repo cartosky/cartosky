@@ -255,6 +255,15 @@ function capabilityPayload() {
             constraints: {},
             derived: false,
             derive_strategy_id: null,
+            // Declared so the Statistic trigger/popover renders for the
+            // Phase 4 design-tokens audit; the audit opens the popover but
+            // never selects p90, so no p90 grid routes are needed.
+            ensemble: {
+              products: [
+                { key: 'mean', label: 'Mean' },
+                { key: 'p90', label: '90th %ile', var_id: 'tmp2m_p90' },
+              ],
+            },
           },
         },
       },
@@ -287,6 +296,14 @@ function manifestPayload() {
     variables: {
       [COLORMAP_VARIABLE]: {
         display_name: 'Temperature 2m',
+        kind: 'continuous',
+        units: 'F',
+        frames: FRAME_HOURS.map((fh) => ({ fh, valid_time: validTime(fh) })),
+      },
+      // Makes productAvailability.p90 true so the Statistic control shows
+      // both options (the trigger renders only with >1 available product).
+      tmp2m_p90: {
+        display_name: 'Temperature 2m · 90th %ile',
         kind: 'continuous',
         units: 'F',
         frames: FRAME_HOURS.map((fh) => ({ fh, valid_time: validTime(fh) })),

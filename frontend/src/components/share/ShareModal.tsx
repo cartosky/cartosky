@@ -62,16 +62,16 @@ const DESKTOP_DIALOG_MEDIA = "(min-width: 640px)";
 const DIALOG_VIEWPORT_PADDING = 16;
 
 const secondaryButtonClass =
-  "inline-flex h-8 items-center rounded-md bg-white/[0.08] px-2.5 text-xs font-medium text-white/86 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-colors hover:bg-white/[0.12]";
+  "inline-flex h-8 items-center rounded-md bg-white/[0.08] px-2.5 text-xs font-medium text-white/86 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-colors hover:bg-white/[0.12] pointer-coarse:h-11";
 
 const primaryButtonClass =
   "inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-cyan-200/30 bg-[linear-gradient(135deg,#102438_0%,#1a4f68_52%,#6ab7d4_100%)] px-4 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(17,68,92,0.34)] transition-all hover:brightness-110 disabled:opacity-60 disabled:hover:brightness-100";
 
 const fieldClass =
-  "viewer-mobile-field h-8 w-full rounded-md px-2 text-xs text-white";
+  "viewer-mobile-field h-8 w-full rounded-md px-2 text-xs text-white pointer-coarse:h-11";
 
 const previewActionButtonClass =
-  "flex items-center justify-center rounded-xl border border-white/20 bg-black/50 p-1.5 text-white backdrop-blur-sm transition-opacity hover:bg-black/65";
+  "flex h-8 w-8 items-center justify-center rounded-xl border border-white/20 bg-black/50 text-white backdrop-blur-sm transition-opacity hover:bg-black/65 pointer-coarse:h-11 pointer-coarse:w-11";
 
 export function ShareModal({
   open,
@@ -603,7 +603,7 @@ export function ShareModal({
                                 type="button"
                                 onClick={() => posting.setShareMode(mode)}
                                 className={[
-                                  "inline-flex h-7 items-center rounded-md px-2.5 text-xs font-medium transition-colors",
+                                  "inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium transition-colors pointer-coarse:h-11",
                                   posting.shareMode === mode
                                     ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
                                     : "bg-white/[0.07] text-white/70 hover:bg-white/[0.11]",
@@ -624,7 +624,7 @@ export function ShareModal({
                                 type="button"
                                 onClick={() => { posting.setSelectedForumId(forum.id); posting.setShowOtherForums(false); }}
                                 className={[
-                                  "inline-flex h-7 items-center rounded-md px-2.5 text-xs font-medium transition-colors",
+                                  "inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium transition-colors pointer-coarse:h-11",
                                   posting.selectedForumId === forum.id && !posting.showOtherForums
                                     ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
                                     : "bg-white/[0.07] text-white/70 hover:bg-white/[0.11]",
@@ -637,7 +637,7 @@ export function ShareModal({
                               type="button"
                               onClick={() => posting.setShowOtherForums(!posting.showOtherForums)}
                               className={[
-                                "inline-flex h-7 items-center rounded-md px-2.5 text-xs font-medium transition-colors",
+                                "inline-flex h-8 items-center rounded-md px-2.5 text-xs font-medium transition-colors pointer-coarse:h-11",
                                 posting.showOtherForums
                                   ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
                                   : "bg-white/[0.07] text-white/70 hover:bg-white/[0.11]",
@@ -786,14 +786,14 @@ export function ShareModal({
                         <button
                           type="button"
                           onClick={() => window.location.reload()}
-                          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18"
+                          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18 pointer-coarse:h-11"
                         >
                           Refresh page
                         </button>
                       ) : !clerkLoaded || (isSignedIn && !posting.statusResolved) ? null : !isSignedIn ? (
                         <Link
                           to={signedOutLoginUrl}
-                          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18"
+                          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18 pointer-coarse:h-11"
                           onClick={onClose}
                         >
                           Sign in
@@ -803,7 +803,7 @@ export function ShareModal({
                           type="button"
                           onClick={posting.handleConnectTwf}
                           disabled={posting.connectBusy}
-                          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18 disabled:cursor-wait disabled:opacity-70"
+                          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-cyan-200/30 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/18 disabled:cursor-wait disabled:opacity-70 pointer-coarse:h-11"
                         >
                           {posting.connectBusy ? "Connecting..." : "Connect TWF"}
                         </button>
@@ -816,7 +816,7 @@ export function ShareModal({
                           <button
                             type="button"
                             onClick={posting.handleRetryStatus}
-                            className="inline-flex h-7 shrink-0 items-center justify-center rounded-md border border-red-300/30 bg-red-400/10 px-2.5 font-semibold text-red-50 transition-colors hover:bg-red-400/20"
+                            className="inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-red-300/30 bg-red-400/10 px-2.5 font-semibold text-red-50 transition-colors hover:bg-red-400/20 pointer-coarse:h-11"
                           >
                             Retry
                           </button>
@@ -885,7 +885,7 @@ export function ShareModal({
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md bg-white/[0.08] text-white/70 transition-colors hover:bg-white/[0.12]"
+              className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md bg-white/[0.08] text-white/70 transition-colors hover:bg-white/[0.12] pointer-coarse:h-11 pointer-coarse:w-11"
               aria-label="Close"
             >
               <X className="h-4 w-4" />
@@ -904,7 +904,7 @@ export function ShareModal({
                 aria-selected={activeTab === tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={[
-                  "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                  "flex min-h-8 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors pointer-coarse:min-h-11",
                   activeTab === tab.id
                     ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
                     : "text-white/60 hover:bg-white/[0.07] hover:text-white/85",
@@ -1214,7 +1214,7 @@ export function ShareModal({
                                 type="button"
                                 onClick={() => handleGifModeChange(mode.id)}
                                 className={[
-                                  "inline-flex h-7 flex-1 items-center justify-center rounded-md px-2.5 text-xs font-medium transition-colors",
+                                  "inline-flex h-8 flex-1 items-center justify-center rounded-md px-2.5 text-xs font-medium transition-colors pointer-coarse:h-11",
                                   gif.settings.mode === mode.id
                                     ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
                                     : "bg-white/[0.07] text-white/70 hover:bg-white/[0.11]",
@@ -1258,7 +1258,7 @@ export function ShareModal({
                                     type="button"
                                     onClick={() => gif.updateSettings({ trendRunCount: count })}
                                     className={[
-                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md px-2 text-xs font-medium transition-colors",
+                                      "inline-flex h-8 flex-1 items-center justify-center rounded-md px-2 text-xs font-medium transition-colors pointer-coarse:h-11",
                                       gifTrendRunCount === count
                                         ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
                                         : "bg-white/[0.07] text-white/70 hover:bg-white/[0.11]",
@@ -1310,7 +1310,7 @@ export function ShareModal({
                               type="button"
                               onClick={() => gif.updateSettings({ delayMs: preset.delayMs })}
                               className={[
-                                "inline-flex h-7 flex-1 items-center justify-center rounded-md px-2.5 text-xs font-medium transition-colors",
+                                "inline-flex h-8 flex-1 items-center justify-center rounded-md px-2.5 text-xs font-medium transition-colors pointer-coarse:h-11",
                                 gif.settings.delayMs === preset.delayMs
                                   ? "bg-cyan-300/18 text-cyan-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.22)]"
                                   : "bg-white/[0.07] text-white/70 hover:bg-white/[0.11]",

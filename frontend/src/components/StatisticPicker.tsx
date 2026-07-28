@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@radix-ui/react-popover";
 import { ChevronDown } from "lucide-react";
+import { VIEWER_FIELD_TRIGGER_CHEVRON_CLASSNAME, viewerFieldTriggerClassName } from "@/components/ui/viewer-field-trigger";
 import { cn } from "@/lib/utils";
 
 export type StatisticOption = {
@@ -72,14 +73,10 @@ export function StatisticPicker({
         <button
           type="button"
           disabled={disabled}
-          className={cn(
-            "inline-flex h-8 items-center justify-between gap-2 rounded-xl border border-white/[0.09] bg-white/[0.05] px-3 text-[12px] font-medium text-white/82 shadow-none transition-all duration-150 hover:border-white/18 hover:bg-white/[0.09] hover:text-white focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
-            minWidth,
-            open ? "border-cyan-300/25 bg-cyan-300/[0.08] text-cyan-100" : "",
-          )}
+          className={viewerFieldTriggerClassName({ open, className: minWidth })}
         >
           <span className="whitespace-nowrap">{selectedLabel}</span>
-          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 opacity-50 transition-transform", open ? "rotate-180" : "")} />
+          <ChevronDown className={cn(VIEWER_FIELD_TRIGGER_CHEVRON_CLASSNAME, open ? "rotate-180" : "")} />
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -101,7 +98,7 @@ export function StatisticPicker({
                 setActiveTab(tab.kind);
               }}
               className={cn(
-                "flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors",
+                "flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors min-h-8 pointer-coarse:min-h-11",
                 activeTab === tab.kind
                   ? "bg-cyan-300/[0.14] text-cyan-100"
                   : "text-white/56 hover:bg-white/[0.06] hover:text-white/82",
@@ -124,7 +121,7 @@ export function StatisticPicker({
                     setOpen(false);
                   }}
                   className={cn(
-                    "rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors",
+                    "min-h-8 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors pointer-coarse:min-h-11",
                     selected
                       ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-100"
                       : "border-white/[0.09] bg-white/[0.03] text-white/72 hover:border-white/18 hover:bg-white/[0.07] hover:text-white",

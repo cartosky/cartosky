@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { ChevronDown, LockKeyhole, Search, Star, X } from "lucide-react";
 
 import type { GroupedOption } from "@/lib/app-utils";
+import { VIEWER_FIELD_TRIGGER_CHEVRON_CLASSNAME, viewerFieldTriggerClassName } from "@/components/ui/viewer-field-trigger";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
 import { useEntitlements } from "@/lib/entitlements";
 import { useModelFavorites } from "@/lib/use-model-favorites";
@@ -318,7 +319,7 @@ export function ModelPicker({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search models…"
-          className={cn("min-w-0 flex-1 bg-transparent text-[12px] font-medium text-white outline-none placeholder:text-white/34", inlinePanel && "min-h-11")}
+          className={cn("min-w-0 flex-1 bg-transparent text-[12px] font-medium text-white outline-none placeholder:text-white/34", inlinePanel ? "min-h-11" : "min-h-8 pointer-coarse:min-h-11")}
         />
         {query ? (
           <button
@@ -327,7 +328,7 @@ export function ModelPicker({
               setQuery("");
               searchInputRef.current?.focus({ preventScroll: true });
             }}
-            className={cn("inline-flex items-center justify-center rounded-md text-white/42 transition-colors hover:bg-white/[0.07] hover:text-white/78", inlinePanel ? "h-11 w-11" : "h-6 w-6")}
+            className={cn("inline-flex items-center justify-center rounded-md text-white/42 transition-colors hover:bg-white/[0.07] hover:text-white/78", inlinePanel ? "h-11 w-11" : "h-8 w-8 pointer-coarse:h-11 pointer-coarse:w-11")}
             aria-label="Clear model search"
           >
             <X className="h-3.5 w-3.5" />
@@ -346,14 +347,14 @@ export function ModelPicker({
                 onClick={() => setActiveCategory(category.id)}
                 className={cn(
                   "flex w-full items-center justify-between gap-2 rounded-lg border-l-2 px-2 text-left text-[11px] font-semibold transition-colors",
-                  inlinePanel ? "h-11" : "h-8",
+                  inlinePanel ? "h-11" : "h-8 pointer-coarse:h-11",
                   active
                     ? "border-l-[#185FA5] bg-cyan-300/[0.10] text-cyan-50"
                     : "border-l-transparent text-white/62 hover:bg-white/[0.055] hover:text-white/86"
                 )}
               >
                 <span className="min-w-0 truncate">{category.label}</span>
-                <span className="rounded-md border border-white/8 bg-white/[0.055] px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium text-white/44">
+                <span className="rounded-md border border-white/8 bg-white/[0.055] px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[11px] font-medium text-white/44">
                   {category.count}
                 </span>
               </button>
@@ -379,7 +380,7 @@ export function ModelPicker({
                 data-model-index={index}
                 className={cn(
                   "group flex items-center gap-1.5 rounded-lg px-1.5 transition-colors",
-                  inlinePanel ? "h-11" : "h-8",
+                  inlinePanel ? "h-11" : "h-8 pointer-coarse:h-11",
                   selected
                     ? "bg-[#185FA5]/20 text-cyan-100"
                     : highlighted
@@ -395,7 +396,7 @@ export function ModelPicker({
                   }}
                   className={cn(
                     "inline-flex shrink-0 items-center justify-center rounded-md transition-all hover:bg-white/[0.08]",
-                    inlinePanel ? "h-11 w-11" : "h-6 w-6",
+                    inlinePanel ? "h-11 w-11" : "h-8 w-8 pointer-coarse:h-11 pointer-coarse:w-11",
                     favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-50 hover:text-white/55"
                   )}
                   aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
@@ -409,20 +410,20 @@ export function ModelPicker({
                   aria-disabled={locked}
                   title={lockedReason ?? undefined}
                   className={cn(
-                    "flex min-w-0 flex-1 items-center gap-2 text-left",
+                    "flex min-w-0 flex-1 items-center gap-2 self-stretch text-left",
                     inlinePanel ? "h-full" : "",
                     locked ? "cursor-pointer text-white/56" : ""
                   )}
                 >
                   <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", selected ? "text-cyan-100" : "")}>{option.label}</span>
                   {locked ? (
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-cyan-200/12 bg-white/[0.055] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-cyan-100/70">
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-cyan-200/12 bg-white/[0.055] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cyan-100/70">
                       <LockKeyhole className="h-3 w-3" />
                       Pro
                     </span>
                   ) : null}
                   {hasSearch ? (
-                    <span className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-white/38">
+                    <span className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/38">
                       {categoryLabel}
                     </span>
                   ) : null}
@@ -447,15 +448,14 @@ export function ModelPicker({
         onClick={() => setOpenState(!open)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className={cn(
-          "inline-flex w-auto items-center justify-between gap-2 rounded-xl border border-white/[0.09] bg-white/[0.05] px-3 text-[12px] font-medium text-white/82 shadow-none transition-all duration-150 hover:border-white/18 hover:bg-white/[0.09] hover:text-white focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
-          inlinePanel ? "h-11" : "h-8",
-          minWidth,
-          open ? "border-cyan-300/25 bg-cyan-300/[0.08] text-cyan-100" : ""
-        )}
+        className={viewerFieldTriggerClassName({
+          size: inlinePanel ? "inline" : "desktop",
+          open,
+          className: minWidth,
+        })}
       >
         <span className="min-w-0 truncate whitespace-nowrap">{selectedLabel}</span>
-        <ChevronDown className={cn("h-4 w-4 shrink-0 opacity-50 transition-transform", open ? "rotate-180" : "")} />
+        <ChevronDown className={cn(VIEWER_FIELD_TRIGGER_CHEVRON_CLASSNAME, open ? "rotate-180" : "")} />
       </button>
       {panel}
     </div>

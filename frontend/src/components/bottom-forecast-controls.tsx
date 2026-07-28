@@ -540,21 +540,21 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                     <div>
                       <div className="flex items-center gap-1.5">
                         {runDateTimeISO ? (
-                          <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[9px] font-semibold uppercase tracking-[0.18em] text-cyan-300/55">
+                          <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[12px] font-semibold uppercase tracking-[0.18em] text-cyan-300/55">
                             {`${new Date(runDateTimeISO).getUTCHours()}z`}
                           </span>
                         ) : null}
                         {runDateTimeISO && modelLabel ? (
-                          <span className="text-[9px] text-cyan-300/30">·</span>
+                          <span className="text-[12px] text-cyan-300/30">·</span>
                         ) : null}
                         {modelLabel ? (
-                          <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[9px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
+                          <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[12px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
                             {modelLabel}
                           </span>
                         ) : null}
                       </div>
                       {variableLabel ? (
-                        <span className="block min-w-0 truncate text-[10px] font-medium text-cyan-200/70 mt-0.5">
+                        <span className="block min-w-0 truncate text-[11px] font-medium text-cyan-200/70 mt-0.5">
                           {variableLabel}
                         </span>
                       ) : null}
@@ -567,7 +567,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                     data-tour-target={!isDesktopLayout ? "freshness-indicator" : undefined}
                     title={sourceStatusDescription ?? sourceStatusLabel}
                     className={cn(
-                      "rounded-md border px-2 py-1 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.2em]",
+                      "rounded-md border px-2 py-1 font-['IBM_Plex_Mono',monospace] text-[12px] font-medium uppercase tracking-[0.2em]",
                       statusBadgeClass(sourceStatusTone)
                     )}
                   >
@@ -578,7 +578,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                     data-tour-target={!isDesktopLayout ? "freshness-indicator" : undefined}
                     title={runIncompleteDescription ?? runIncompleteLabel}
                     className={cn(
-                      "rounded-md border px-2 py-1 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.2em]",
+                      "rounded-md border px-2 py-1 font-['IBM_Plex_Mono',monospace] text-[12px] font-medium uppercase tracking-[0.2em]",
                       statusBadgeClass(runIncompleteTone)
                     )}
                   >
@@ -631,7 +631,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
             </div>
 
             {transientStatus ? (
-              <div className="mb-2 flex items-center gap-1 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[9px] text-amber-100">
+              <div className="mb-2 flex items-center gap-1 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[12px] text-amber-100">
                 <AlertCircle className="h-3 w-3" />
                 {transientStatus}
               </div>
@@ -673,7 +673,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                     </span>
                   </div>
                   {validTime ? (
-                    <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium tracking-[0.06em] text-white/50">
+                    <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[12px] font-medium tracking-[0.06em] text-white/50">
                       {validTime.shortDate}
                       {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
                         <span className="ml-1.5 text-white/32">· {validTime.secondary}</span>
@@ -751,7 +751,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                     </div>
                   </div>
                   {validTime ? (
-                    <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[9px] font-medium tracking-[0.06em] text-white/50">
+                    <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[12px] font-medium tracking-[0.06em] text-white/50">
                       {validTime.shortDate}
                       {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
                         <span className="ml-1.5 text-white/32">· {validTime.secondary}</span>
@@ -765,7 +765,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
             {showFreshnessStrip && freshnessTotal !== null ? (
               <>
                 <div className="mt-2 border-t border-white/[0.08]" />
-                <div className="flex items-center gap-2 px-0.5 pt-2 font-['IBM_Plex_Mono',monospace] text-[9px] font-medium text-white/55">
+                <div className="flex items-center gap-2 px-0.5 pt-2 font-['IBM_Plex_Mono',monospace] text-[12px] font-medium text-white/55">
                   <span
                     aria-hidden="true"
                     className={cn(
@@ -802,7 +802,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                       disabled={disabled || !hasFrames || playDisabled || staticSnapshotLabel !== null}
                       aria-label={isPlaying ? "Pause animation" : "Play animation"}
                       className={cn(
-                        "flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-150 disabled:opacity-50",
+                        "flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-150 disabled:opacity-50 pointer-coarse:h-11 pointer-coarse:w-11",
                         isPlaying
                           ? "bg-cyan-300/10 text-cyan-200 border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
                           : "bg-white/[0.06] text-white/70 border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:text-white hover:bg-white/[0.1]"
@@ -890,7 +890,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                       </div>
                     </div>
                     {showDesktopBuildingStrip && freshnessTotal !== null ? (
-                      <div className="pointer-events-none absolute inset-x-0.5 top-full flex items-center gap-1.5 pt-0.5 text-[10px] font-medium leading-none">
+                      <div className="pointer-events-none absolute inset-x-0.5 top-full flex items-center gap-1.5 pt-0.5 text-[11px] font-medium leading-none">
                         <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
                         <span className="shrink-0 text-amber-300/90">Building</span>
                         <span className="shrink-0 tabular-nums text-white/50">
@@ -909,7 +909,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                     data-tour-target={isDesktopLayout ? "freshness-indicator" : undefined}
                     title={sourceStatusDescription ?? sourceStatusLabel}
                     className={cn(
-                      "flex h-9 shrink-0 items-center rounded-xl border px-2.5 font-['IBM_Plex_Mono',monospace] text-[10px] font-medium uppercase tracking-[0.16em]",
+                      "flex h-9 shrink-0 items-center rounded-xl border px-2.5 font-['IBM_Plex_Mono',monospace] text-[11px] font-medium uppercase tracking-[0.16em]",
                       statusBadgeClass(sourceStatusTone)
                     )}
                   >
@@ -923,7 +923,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                     data-tour-target={isDesktopLayout ? "freshness-indicator" : undefined}
                     title={runIncompleteDescription ?? runIncompleteLabel}
                     className={cn(
-                      "flex h-9 shrink-0 items-center rounded-xl border px-2.5 font-['IBM_Plex_Mono',monospace] text-[10px] font-medium uppercase tracking-[0.16em]",
+                      "flex h-9 shrink-0 items-center rounded-xl border px-2.5 font-['IBM_Plex_Mono',monospace] text-[11px] font-medium uppercase tracking-[0.16em]",
                       statusBadgeClass(runIncompleteTone)
                     )}
                   >
@@ -938,7 +938,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
 
               <div className="flex shrink-0 flex-col items-end gap-0.5 pl-3 sm:min-w-[160px]">
                 {transientStatus ? (
-                  <div className="flex items-center gap-1.5 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[10px] text-amber-100">
+                  <div className="flex items-center gap-1.5 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[11px] text-amber-100">
                     <AlertCircle className="h-3 w-3" />
                     {transientStatus}
                   </div>
@@ -949,7 +949,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                       {validTime.primary}
                     </span>
                     {validTime.secondary ? (
-                      <span className="text-[10px] font-medium text-cyan-200/80 transition-all duration-200">
+                      <span className="text-[11px] font-medium text-cyan-200/80 transition-all duration-200">
                         {validTime.secondary}
                       </span>
                     ) : null}
@@ -957,7 +957,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                 ) : (
                   <div className="flex items-center gap-1.5">
                     <AlertCircle className="h-3 w-3 text-white/50" />
-                    <span className="text-[10px] text-white/50">
+                    <span className="text-[11px] text-white/50">
                       {timeAxisMode === "observed" ? "Observed time unavailable" : "Valid time unavailable"}
                     </span>
                   </div>

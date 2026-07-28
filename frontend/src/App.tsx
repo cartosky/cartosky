@@ -5897,7 +5897,10 @@ export default function App() {
         <ViewerSiteHeader />
       </Suspense>
 
-      <div className="relative flex-1 min-h-0 overflow-hidden pt-14">
+      <div
+        className="relative flex-1 min-h-0 overflow-hidden"
+        style={{ paddingTop: "calc(3.5rem + var(--viewer-header-extra, 0px))" }}
+      >
         <MapCanvas
           productId={model}
           selectionKey={selectionKey}

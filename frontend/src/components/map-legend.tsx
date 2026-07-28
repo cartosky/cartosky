@@ -237,7 +237,7 @@ function HorizontalGradientLegend({ entries }: { entries: LegendEntry[] }) {
                 transform: isFirst ? "none" : isLast ? "translateX(-100%)" : "translateX(-50%)",
               }}
             >
-              <span className="font-mono text-[10px] font-semibold leading-none tabular-nums tracking-tight text-foreground/95 whitespace-nowrap">
+              <span className="font-mono text-[11px] font-semibold leading-none tabular-nums tracking-tight text-foreground/95 whitespace-nowrap">
                 {formatDenseTickValue(entry.value)}
               </span>
             </div>
@@ -263,8 +263,8 @@ function CategoricalLegendEntries({ entries }: { entries: LegendEntry[] }) {
           <span
             className={
               entry.label
-                ? "text-[10px] font-medium leading-none tracking-tight text-foreground/95"
-                : "font-mono text-[10px] font-medium leading-none tabular-nums tracking-tight text-foreground/95"
+                ? "text-[11px] font-medium leading-none tracking-tight text-foreground/95"
+                : "font-mono text-[11px] font-medium leading-none tabular-nums tracking-tight text-foreground/95"
             }
           >
             {entry.label?.trim() || formatValue(entry.value)}
@@ -396,7 +396,7 @@ function RadarGradientRows({ groups }: { groups: RadarLegendGroup[] }) {
     <div className="space-y-2">
       {rows.map((row, index) => (
         <div key={`${row.label}-${index}`} className={cn(index > 0 ? "border-t border-border/18 pt-2" : "")}>
-          <div className="mb-1 px-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-foreground/78">
+          <div className="mb-1 px-0.5 text-[12px] font-semibold uppercase tracking-[0.12em] text-foreground/78">
             {row.label}
           </div>
           <div className="rounded-lg bg-black/16 p-[3px] ring-1 ring-inset ring-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
@@ -409,7 +409,7 @@ function RadarGradientRows({ groups }: { groups: RadarLegendGroup[] }) {
               }}
             />
           </div>
-          <div className="mt-1 flex items-center justify-between px-0.5 font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-foreground/58">
+          <div className="mt-1 flex items-center justify-between px-0.5 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-foreground/58">
             <span>Light</span>
             <span>Heavy</span>
           </div>
@@ -517,7 +517,7 @@ export function MapLegend({
           })
         }
         className={cn(
-          "flex w-full items-center justify-between gap-1.5 px-1.5 py-1 text-left transition-all duration-150 hover:bg-secondary/25 active:bg-secondary/45",
+          "flex min-h-8 w-full items-center justify-between gap-1.5 px-1.5 py-1 text-left transition-all duration-150 hover:bg-secondary/25 active:bg-secondary/45 pointer-coarse:min-h-11",
           collapsed ? "border-b border-transparent" : "border-b border-border/25"
         )}
         aria-expanded={!collapsed}
@@ -548,10 +548,10 @@ export function MapLegend({
                       className={cn(rowIndex > 0 ? "mt-2 border-t border-border/20 pt-2" : "")}
                     >
                       <div className="mb-1 flex items-center justify-between gap-2 px-0.5">
-                        <span className="text-[9px] font-medium uppercase tracking-wide text-foreground/62">
+                        <span className="text-[12px] font-medium uppercase tracking-wide text-foreground/62">
                           {row.label}
                         </span>
-                        <span className="font-mono text-[9px] font-medium tabular-nums text-foreground/90">
+                        <span className="font-mono text-[11px] font-medium tabular-nums text-foreground/90">
                           {formatValue(row.min)}-{formatValue(row.max)} {legend.units ?? ""}
                         </span>
                       </div>
@@ -569,7 +569,7 @@ export function MapLegend({
             </div>
 
             {legend.note ? (
-              <p className="border-t border-border/25 pt-1 text-[9px] font-medium leading-snug text-foreground/68">
+              <p className="border-t border-border/25 pt-1 text-[12px] font-medium leading-snug text-foreground/68">
                 {legend.note}
               </p>
             ) : null}

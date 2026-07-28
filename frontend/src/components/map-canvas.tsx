@@ -3807,13 +3807,17 @@ export function MapCanvas({
       {(showZoomControls || legendButtonVisible) && (
         <div
           className="pointer-events-none fixed left-4 z-50 flex flex-col gap-2"
-          style={{ top: isDesktopLayout ? "calc(4.5rem + 10px)" : "calc(3.5rem + 1rem)" }}
+          style={{
+            top: isDesktopLayout
+              ? "calc(4.5rem + 10px + var(--viewer-header-extra, 0px))"
+              : "calc(3.5rem + 1rem + var(--viewer-header-extra, 0px))",
+          }}
         >
           {showZoomControls && (
             <div className="glass pointer-events-auto overflow-hidden rounded-xl">
               <button
                 type="button"
-                className={cn("flex items-center justify-center text-lg font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", isDesktopLayout ? "h-[34px] w-[34px]" : "h-11 w-11")}
+                className={cn("flex items-center justify-center text-lg font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", isDesktopLayout ? "h-[34px] w-[34px] pointer-coarse:h-11 pointer-coarse:w-11" : "h-11 w-11")}
                 onClick={handleZoomIn}
                 aria-label="Zoom in"
                 title="Zoom in"
@@ -3822,7 +3826,7 @@ export function MapCanvas({
               </button>
               <button
                 type="button"
-                className={cn("flex items-center justify-center border-t border-[#1a3a5c]/60 text-xl font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", isDesktopLayout ? "h-[34px] w-[34px]" : "h-11 w-11")}
+                className={cn("flex items-center justify-center border-t border-[#1a3a5c]/60 text-xl font-semibold text-white/90 transition-colors hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", isDesktopLayout ? "h-[34px] w-[34px] pointer-coarse:h-11 pointer-coarse:w-11" : "h-11 w-11")}
                 onClick={handleZoomOut}
                 aria-label="Zoom out"
                 title="Zoom out"
@@ -3837,7 +3841,7 @@ export function MapCanvas({
                 type="button"
                 className={cn(
                   "flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-                  isDesktopLayout ? "h-[34px] w-[34px]" : "h-11 w-11",
+                  isDesktopLayout ? "h-[34px] w-[34px] pointer-coarse:h-11 pointer-coarse:w-11" : "h-11 w-11",
                   legendButtonActive ? "bg-white/[0.12] text-white" : "text-white/60 hover:bg-white/[0.07] hover:text-white/90",
                 )}
                 onClick={onLegendButtonClick}

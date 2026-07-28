@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 
 import { HexSignalRing } from "@/components/HexSignalRing";
+import { viewerFieldTriggerClassName } from "@/components/ui/viewer-field-trigger";
 import { MapLegend } from "@/components/map-legend";
 import { ModelPicker } from "@/components/ModelPicker";
 import { StatisticPicker } from "@/components/StatisticPicker";
@@ -73,7 +74,7 @@ const DESKTOP_TOPBAR_POPOVER_OFFSET = 10;
 const DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP = 74;
 const DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME = "data-[side=bottom]:translate-y-0";
 const DESKTOP_ICON_CLUSTER_CLASSNAME = "flex items-center gap-px rounded-[7px] border-[0.5px] border-white/[0.11] bg-white/[0.06] p-0.5";
-const DESKTOP_ICON_BUTTON_CLASSNAME = "inline-flex h-7 w-8 shrink-0 items-center justify-center rounded-[5px] border border-transparent bg-transparent px-0 text-white/50 shadow-none transition-[background,color] duration-100 hover:bg-white/10 hover:text-white/90 focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50";
+const DESKTOP_ICON_BUTTON_CLASSNAME = "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[5px] border border-transparent bg-transparent px-0 text-white/50 shadow-none transition-[background,color] duration-100 hover:bg-white/10 hover:text-white/90 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-11 pointer-coarse:w-11";
 const DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME = "bg-cyan-300/[0.12] text-cyan-200 hover:bg-cyan-300/[0.12] hover:text-cyan-200";
 const DESKTOP_ICON_CLUSTER_SEPARATOR_CLASSNAME = "mx-px h-4 w-[2px] shrink-0 rounded-full bg-cyan-300/35";
 
@@ -285,7 +286,7 @@ function NavbarSelect(props: {
       <>
         {ordered.map((g) => (
           <SelectGroup key={g}>
-            <SelectLabel className="px-2 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/60">
+            <SelectLabel className="px-2 pt-1.5 pb-0.5 text-[11px] font-semibold uppercase tracking-wider text-white/60">
               {g}
             </SelectLabel>
             {groups.get(g)!.map((opt) => (
@@ -337,13 +338,15 @@ function NavbarSelect(props: {
       disabled={disabled || options.length === 0}
     >
       <SelectTrigger
-        className={cn(
-          "h-8 w-auto gap-2 rounded-xl border-white/[0.09] bg-white/[0.05] px-3 text-[12px] font-medium text-white/82 shadow-none transition-all duration-150 hover:border-white/18 hover:bg-white/[0.09] hover:text-white focus:ring-0 [&>span]:line-clamp-none",
-          minWidth,
-          highlightState
-            ? "border-cyan-300/25 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.12]"
-            : ""
-        )}
+        className={viewerFieldTriggerClassName({
+          className: cn(
+            "focus:ring-0 focus:ring-offset-0 [&>span]:line-clamp-none data-[state=open]:border-cyan-300/25 data-[state=open]:bg-cyan-300/[0.08] data-[state=open]:text-cyan-100",
+            minWidth,
+            highlightState
+              ? "border-cyan-300/25 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/[0.12]"
+              : ""
+          ),
+        })}
       >
         <span className="whitespace-nowrap">{selectedLabel}</span>
       </SelectTrigger>
@@ -365,7 +368,7 @@ function HeaderSelectField({
 }) {
   return (
     <div className="flex flex-col gap-1" {...(tourTarget ? { "data-tour-target": tourTarget } : {})}>
-      <span className="flex items-center gap-1.5 pl-1 text-[9px] font-medium uppercase tracking-[0.18em] text-white/44">
+      <span className="flex items-center gap-1.5 pl-1 text-[12px] font-medium uppercase tracking-[0.1em] text-white/44">
         <Icon className="h-3 w-3" />
         {label}
       </span>
@@ -392,7 +395,7 @@ function DisplayRow({
       onClick={onToggle}
       aria-pressed={checked}
       className={cn(
-        "flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-all duration-150",
+        "flex min-h-8 w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-all duration-150 pointer-coarse:min-h-11",
         checked
           ? "border-cyan-300/20 bg-cyan-300/[0.07] text-white hover:bg-cyan-300/[0.11]"
           : "border-white/10 bg-white/[0.04] text-white/82 hover:bg-white/[0.07]"
@@ -402,7 +405,7 @@ function DisplayRow({
         <Icon className="h-4 w-4 text-white/72" />
         {label}
       </div>
-      <span className={cn("font-['IBM_Plex_Mono',monospace] text-[10px] font-medium", checked ? "text-cyan-300/90" : "text-white/38")}>
+      <span className={cn("font-['IBM_Plex_Mono',monospace] text-[11px] font-medium", checked ? "text-cyan-300/90" : "text-white/38")}>
         {checked ? "On" : "Off"}
       </span>
     </button>
@@ -731,7 +734,7 @@ function RegionUtilitySelect({
             enterKeyHint="search"
             type="search"
             className={cn(
-              "viewer-touch-input w-full min-w-0 bg-transparent text-white outline-none placeholder:text-white/35",
+              "viewer-touch-input w-full min-w-0 bg-transparent text-white outline-none placeholder:text-white/35 min-h-8 pointer-coarse:min-h-11",
               inlinePanel ? "text-base" : "text-sm"
             )}
           />
@@ -759,7 +762,7 @@ function RegionUtilitySelect({
           <>
             {favorites.length > 0 ? (
               <>
-                <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/52">
+                <div className="px-2 pb-1 pt-0.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/52">
                   Favorites
                 </div>
                 <div className="mb-2 space-y-0.5">
@@ -768,7 +771,7 @@ function RegionUtilitySelect({
                       <button
                         type="button"
                         onClick={() => handleLocationResultSelect(location)}
-                        className={cn("min-w-0 flex-1 rounded-md py-1.5 pl-3 pr-1 text-left text-xs font-medium text-white/86 outline-none transition-colors group-hover:text-cyan-50", inlinePanel && "min-h-11")}
+                        className={cn("min-w-0 flex-1 rounded-md py-1.5 pl-3 pr-1 text-left text-xs font-medium text-white/86 outline-none transition-colors group-hover:text-cyan-50 min-h-8 pointer-coarse:min-h-11", inlinePanel && "min-h-11")}
                       >
                         <span className="block truncate">{location.display_name}</span>
                         {secondaryLocationLabel(location) ? (
@@ -801,7 +804,7 @@ function RegionUtilitySelect({
                     className={cn("min-w-0 flex-1 text-left", inlinePanel && "min-h-11")}
                   >
                     <span className="block truncate text-xs font-medium text-white/88">{currentLocation.display_name}</span>
-                    <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-100/55">Selected location</span>
+                    <span className="mt-0.5 block text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-100/55">Selected location</span>
                   </button>
                   <button
                     type="button"
@@ -816,7 +819,7 @@ function RegionUtilitySelect({
               </div>
             ) : null}
 
-            <div className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/52">
+            <div className="px-2 pb-1 pt-0.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/52">
               Region
             </div>
             <div className="space-y-0.5">
@@ -832,7 +835,7 @@ function RegionUtilitySelect({
                       clearInlineError();
                     }}
                     className={cn(
-                      "relative flex w-full items-center rounded-md py-1.5 pl-8 pr-2 text-left text-xs font-medium text-white/86 outline-none transition-colors hover:bg-cyan-300/15 hover:text-cyan-50",
+                      "relative flex w-full items-center rounded-md py-1.5 pl-8 pr-2 text-left text-xs font-medium text-white/86 outline-none transition-colors hover:bg-cyan-300/15 hover:text-cyan-50 min-h-8 pointer-coarse:min-h-11",
                       inlinePanel && "min-h-11",
                       selected && "bg-cyan-300/14 text-cyan-50"
                     )}
@@ -914,7 +917,7 @@ function RegionUtilitySelect({
         <button
           type="button"
           onClick={handleUseMyLocation}
-          className={cn("flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors hover:bg-cyan-300/12", inlinePanel && "min-h-11")}
+          className={cn("flex min-h-8 w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors hover:bg-cyan-300/12 pointer-coarse:min-h-11", inlinePanel && "min-h-11")}
         >
           <span className="flex items-center gap-2 text-sm font-medium text-white/88">
             <MapPin className="h-3.5 w-3.5 text-cyan-200/85" />
@@ -1266,7 +1269,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
               {/* Panel header */}
               <div className="flex items-center justify-between border-b border-[#1a3a5c]/50 px-4 py-3">
                 <div>
-                  <div className="font-['IBM_Plex_Mono',monospace] text-[9px] font-medium uppercase tracking-[0.22em] text-cyan-300/60">
+                  <div className="font-['IBM_Plex_Mono',monospace] text-[12px] font-medium uppercase tracking-[0.14em] text-cyan-300/60">
                     Display
                   </div>
                   <div className="mt-0.5 text-[11px] text-white/52">Map overlays &amp; reference aids</div>
@@ -1274,7 +1277,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
                 <button
                   type="button"
                   onClick={() => onDisplayPanelOpenChange(false)}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-white/32 transition-colors hover:text-white/72"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-white/32 transition-colors hover:text-white/72 pointer-coarse:h-11 pointer-coarse:w-11"
                   aria-label="Close display panel"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -1305,7 +1308,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
                 <button
                   type="button"
                   onClick={() => onBasemapModeChange(basemapMode === "dark" ? "light" : "dark")}
-                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left transition-all duration-150 hover:bg-white/[0.07]"
+                  className="flex min-h-8 w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left transition-all duration-150 hover:bg-white/[0.07] pointer-coarse:min-h-11"
                 >
                   <div className="flex items-center gap-2 text-sm font-semibold text-white">
                     {basemapMode === "dark"
@@ -1313,7 +1316,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
                       : <Sun className="h-4 w-4 text-white/60" />}
                     Basemap
                   </div>
-                  <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium text-cyan-300/80">
+                  <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium text-cyan-300/80">
                     {basemapMode === "dark" ? "Dark" : "Light"}
                   </span>
                 </button>
@@ -1321,7 +1324,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
                 <div className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2">
                   <div className="mb-2 flex items-center justify-between">
                     <span className="text-sm font-semibold text-white">Opacity</span>
-                    <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium text-cyan-300/80">
+                    <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium text-cyan-300/80">
                       {Math.round(opacity * 100)}%
                     </span>
                   </div>
@@ -1342,20 +1345,20 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
                       toolbar.onReplayTour?.();
                       onDisplayPanelOpenChange(false);
                     }}
-                    className="flex w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left transition-all duration-150 hover:bg-white/[0.07]"
+                    className="flex min-h-8 w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left transition-all duration-150 hover:bg-white/[0.07] pointer-coarse:min-h-11"
                   >
                     <span className="text-sm font-semibold text-white">Replay Tour</span>
-                    <span className="font-['IBM_Plex_Mono',monospace] text-[10px] font-medium text-cyan-300/70">?</span>
+                    <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium text-cyan-300/70">?</span>
                   </button>
                 ) : null}
 
-                <div className="border-t border-white/8 pt-2 text-[10px] leading-relaxed text-white/32">
+                <div className="flex flex-wrap items-center gap-1 border-t border-white/8 pt-2 text-[11px] leading-relaxed text-white/32">
                   Maps:{" "}
-                  <a href="https://www.maplibre.org/" target="_blank" rel="noreferrer" className="underline underline-offset-2 transition-colors hover:text-white/60">MapLibre</a>
+                  <a href="https://www.maplibre.org/" target="_blank" rel="noreferrer" className="inline-flex min-h-8 items-center justify-center rounded-md px-1.5 underline underline-offset-2 transition-colors hover:text-white/60 pointer-coarse:min-h-11 pointer-coarse:min-w-11">MapLibre</a>
                   {" "}·{" "}
-                  <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline underline-offset-2 transition-colors hover:text-white/60">OSM</a>
+                  <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="inline-flex min-h-8 items-center justify-center rounded-md px-1.5 underline underline-offset-2 transition-colors hover:text-white/60 pointer-coarse:min-h-11 pointer-coarse:min-w-11">OSM</a>
                   {" "}·{" "}
-                  <a href="https://carto.com/attributions" target="_blank" rel="noreferrer" className="underline underline-offset-2 transition-colors hover:text-white/60">CARTO</a>
+                  <a href="https://carto.com/attributions" target="_blank" rel="noreferrer" className="inline-flex min-h-8 items-center justify-center rounded-md px-1.5 underline underline-offset-2 transition-colors hover:text-white/60 pointer-coarse:min-h-11 pointer-coarse:min-w-11">CARTO</a>
                 </div>
               </div>
             </div>
@@ -1491,7 +1494,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
       <div className="flex h-full min-h-0 flex-col gap-3">
         <div data-tour-target="mobile-product-variable-run" className={cn("flex flex-col gap-3", mobileRegionPickerOpen ? "hidden" : "")}>
           <div className={cn("space-y-1.5", mobileModelPickerOpen ? "min-h-0 flex-1" : "") }>
-            <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.16em] text-white/44">
               <Boxes className="h-3 w-3" /> Product
             </span>
             <ModelPicker
@@ -1522,7 +1525,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           </div>
 
           <div className={cn("space-y-1.5", mobileModelPickerOpen ? "hidden" : mobileVariablePickerOpen ? "min-h-0 flex-1" : "") }>
-            <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.16em] text-white/44">
               <Layers className="h-3 w-3" /> Variable
             </span>
             <VariablePicker
@@ -1558,7 +1561,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
 
           {showProductSelect ? (
             <div className={cn("space-y-1.5", mobilePickerOpen ? "hidden" : "") }>
-              <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+              <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.16em] text-white/44">
                 <Percent className="h-3 w-3" /> Statistic
               </span>
               <StatisticPicker
@@ -1571,7 +1574,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             </div>
           ) : null}
           <div className={cn("space-y-1.5", mobilePickerOpen ? "hidden" : "") }>
-            <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.16em] text-white/44">
               <CalendarClock className="h-3 w-3" /> Run Time
             </span>
             <NavbarSelect
@@ -1606,7 +1609,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             mobilePickerOpen && !mobileRegionPickerOpen ? "hidden" : ""
           )}
         >
-          <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-white/44">
+          <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.16em] text-white/44">
             <MapPinSearch className="h-3 w-3" /> Region
           </span>
           <RegionUtilitySelect
@@ -1688,7 +1691,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
       <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] px-3.5 py-3">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-sm font-semibold text-white">Opacity</span>
-          <span className="font-mono text-[10px] text-white/62">{Math.round(opacity * 100)}%</span>
+          <span className="font-mono text-[11px] text-white/62">{Math.round(opacity * 100)}%</span>
         </div>
         <Slider
           value={[Math.round(opacity * 100)]}
@@ -1746,7 +1749,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             className={cn(
               "viewer-mobile-surface fixed z-[66] flex max-w-full flex-col overflow-x-hidden overflow-y-hidden",
               isTabletTouchLayout
-                ? "right-3 top-[4.5rem] max-h-[calc(100svh-5.5rem)] w-[min(19rem,56vw)] rounded-[1.4rem]"
+                ? "right-3 top-[calc(4.5rem+var(--viewer-header-extra,0px))] max-h-[calc(100svh-5.5rem)] w-[min(19rem,56vw)] rounded-[1.4rem]"
                 : "bottom-0 left-0 right-0 rounded-t-[1.5rem] [border-left:none] [border-right:none] [border-bottom:none] pb-[env(safe-area-inset-bottom)]"
             )}
           >
@@ -1834,7 +1837,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
             onClick={() => onLegendPopoverOpenChange(false)}
             aria-hidden="true"
           />
-          <div className="fixed left-[58px] top-[calc(3.5rem+1rem)] z-[55] w-[220px] max-h-[calc(100svh-6rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
+          <div className="fixed left-[58px] top-[calc(3.5rem+1rem+var(--viewer-header-extra,0px))] z-[55] w-[220px] max-h-[calc(100svh-6rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
             <MapLegend
               legend={legend}
               defaultExpanded={true}
@@ -1856,9 +1859,32 @@ export default function ViewerSiteHeader() {
     || toolbar?.layoutMode === undefined
   );
   const isViewerMobile = !isViewerDesktop;
+  const headerRef = useRef<HTMLElement>(null);
+
+  // Measured header-height contract (Phase 4): under a coarse pointer the
+  // 44px triggers can wrap the header taller than its layout baseline
+  // (desktop 4.5rem, otherwise 3.5rem). Publish only the growth beyond the
+  // baseline so default layouts stay pixel-identical; map padding, the
+  // scrim, the zoom stack, and header panels consume the variable.
+  useEffect(() => {
+    const element = headerRef.current;
+    if (!element) return undefined;
+    const baseline = isViewerDesktop ? 72 : 56;
+    const apply = () => {
+      const extra = Math.max(0, Math.round(element.getBoundingClientRect().height - baseline));
+      document.documentElement.style.setProperty("--viewer-header-extra", `${extra}px`);
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty("--viewer-header-extra");
+    };
+  }, [isViewerDesktop]);
 
   return (
-    <header className="fixed inset-x-0 top-0 z-[80]">
+    <header ref={headerRef} className="fixed inset-x-0 top-0 z-[80]">
       <div
         aria-hidden="true"
         className="absolute inset-0 border-b border-[#1a3a5c]/60 bg-[#030e1a]/[0.85] shadow-[0_2px_16px_rgba(0,0,0,0.4),inset_0_-1px_0_rgba(100,180,255,0.06)] backdrop-blur-md"

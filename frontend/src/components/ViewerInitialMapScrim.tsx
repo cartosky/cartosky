@@ -24,7 +24,8 @@ export function ViewerInitialMapScrim({ visible, stageLabel, buildProgress }: Vi
       role="status"
       aria-live="polite"
       aria-label={stageLabel}
-      className="absolute inset-0 z-[55] flex items-center justify-center bg-[#040d18]/58 pt-14 text-white backdrop-blur-[2px]"
+      className="absolute inset-0 z-[55] flex items-center justify-center bg-[#040d18]/58 text-white backdrop-blur-[2px]"
+      style={{ paddingTop: "calc(3.5rem + var(--viewer-header-extra, 0px))" }}
     >
       <div className="flex flex-col items-center gap-3">
         <HexSignalRing />
@@ -32,7 +33,7 @@ export function ViewerInitialMapScrim({ visible, stageLabel, buildProgress }: Vi
           {stageLabel}
         </div>
         {buildProgress ? (
-          <div className="flex items-center gap-1.5 text-[10px] font-medium leading-none">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium leading-none">
             <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
             <span className="shrink-0 text-amber-300/90">Building</span>
             <span className="shrink-0 tabular-nums text-white/50">
