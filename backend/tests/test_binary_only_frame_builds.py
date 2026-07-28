@@ -896,7 +896,4 @@ def test_frame_has_cog_reports_binary_frame_for_allowlisted_model(
     main_module._manifest_cache.clear()
 
     # Only the grid binary is published (no value COG, as post-cutover).
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     assert main_module._frame_has_cog("gfs", run_id, "tmp2m", 0) is True
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs")
-    assert main_module._frame_has_cog("gfs", run_id, "tmp2m", 0) is False

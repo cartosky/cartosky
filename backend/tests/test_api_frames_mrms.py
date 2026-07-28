@@ -9,7 +9,6 @@ from pathlib import Path
 import httpx
 import numpy as np
 import pytest
-import rasterio
 from rasterio.transform import from_origin
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +27,7 @@ os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app import main as main_module
+from app.services import grid as grid_module  # noqa: E402
 
 pytestmark = pytest.mark.anyio
 
@@ -52,6 +52,15 @@ def _reset_main_caches() -> None:
 
 
 def _write_value_raster(path: Path) -> None:
+    """Write the grid binary frames a published run would contain.
+
+    ``path`` keeps the historical ``<published>/<model>/<run>/<var>/fhNNN...``
+    shape so model/var/fh stay derivable from a single argument.
+    """
+    var = path.parent.name
+    run_root = path.parent.parent
+    model = run_root.parent.name
+    fh = int(path.name.split(".")[0].removeprefix("fh"))
     path.parent.mkdir(parents=True, exist_ok=True)
     data = np.array(
         [
@@ -61,19 +70,15 @@ def _write_value_raster(path: Path) -> None:
         ],
         dtype=np.float32,
     )
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=data.shape[0],
-        width=data.shape[1],
-        count=1,
-        dtype="float32",
-        crs="EPSG:4326",
+    grid_module.write_grid_frames_for_run_root(
+        run_root=run_root,
+        model=model,
+        var=var,
+        fh=fh,
+        values=data,
         transform=from_origin(-101.0, 46.0, 1.0, 1.0),
-        nodata=float("nan"),
-    ) as ds:
-        ds.write(data, 1)
+        projection="EPSG:4326",
+    )
 
 
 @pytest.fixture
@@ -81,10 +86,6 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     data_root = tmp_path / "data" / "v3"
     manifests_root = data_root / "manifests"
     published_root = data_root / "published"
-
-    # The fixture publishes COG-only frames: opt the model out of the (now
-    # default) binary-only substrate.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "mrms")
 
     model = "mrms"
     run_id = "20260327_1206z"
@@ -183,7 +184,10 @@ async def test_mrms_sampling_uses_minute_run_ids_after_loop_cutover(client: http
     assert sample_response.status_code == 200
     assert sample_response.json()["run"] == "20260327_1206z"
     assert sample_response.json()["valid_time"] == "2026-03-27T12:00:00Z"
-    assert sample_response.json()["value"] == 10.0
+    # Published binary frames bake in mrms_reflectivity_display_v2 (Gaussian
+    # smoothing), so the sampled corner value is the smoothed display grid,
+    # not the raw 10.0.
+    assert sample_response.json()["value"] == 13.0
 
 
 async def test_mrms_recent_precip_frames_resolve(client: httpx.AsyncClient) -> None:

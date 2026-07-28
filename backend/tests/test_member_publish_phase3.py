@@ -6,7 +6,6 @@ Synthetic arrays only — no network. See ENSEMBLE_MEMBER_SCHEDULER_DESIGN.md.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np
@@ -939,18 +938,11 @@ def test_meteogram_probe_requires_allowlist_and_descriptor(monkeypatch) -> None:
     # Phase 5 backend is live: the payload can serve member series.
     assert forecast_page._MEMBER_SERIES_PAYLOAD_SUPPORTED is True
 
-    # Binary sampling is the zero-config default, so a model with a member
-    # descriptor is supported out of the box.
-    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS", raising=False)
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
+    # Grid binaries are the sole substrate: a model with a member descriptor
+    # is supported out of the box.
     assert forecast_page._model_supports_members("gefs") is True
     assert forecast_page._model_supports_members("gfs") is False   # no descriptor
     assert forecast_page._model_supports_members("hrrr") is False  # no descriptor
-
-    # A COG opt-out removes the binary substrate member frames live on ->
-    # unsupported even with a descriptor.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gefs")
-    assert forecast_page._model_supports_members("gefs") is False
 
 
 # ── Phase 5: seek sampler equality with the full-read sampler ─────────
