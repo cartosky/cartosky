@@ -362,7 +362,7 @@ def inject_global_region(plugin: Any, model: str) -> float:
         bbox_wgs84=GLOBAL_BBOX_WGS84,
         clip=False,
     )
-    # (2) module bbox table (cog_writer)
+    # (2) module bbox table (raster_grid)
     raster_grid.REGION_BBOX_3857[GLOBAL_REGION_ID] = GLOBAL_BBOX_3857
     raster_grid.REGION_BBOX_4326[GLOBAL_REGION_ID] = GLOBAL_BBOX_WGS84
     # (3) grid resolution — capabilities (authoritative) + legacy fallback

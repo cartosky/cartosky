@@ -3232,8 +3232,7 @@ def _bootstrap_frames_state_token(
         if not isinstance(fh, int):
             continue
         sidecar_path = var_dir / f"fh{fh:03d}.json"
-        cog_path = var_dir / f"fh{fh:03d}.val.cog.tif"
-        frame_state.append((fh, _path_mtime_ns(sidecar_path), _path_mtime_ns(cog_path)))
+        frame_state.append((fh, _path_mtime_ns(sidecar_path)))
     return _make_etag_from_parts(frame_state) if frame_state else ""
 
 
