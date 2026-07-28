@@ -51,7 +51,7 @@ from app.services.builder.fetch import (
     product_hour_has_any_idx,
 )
 from app.services.colormaps import get_color_map_spec
-from app.services.domains import canonical_domain, domain_scoped_model_root
+from app.services.domains import canonical_domain, domain_scoped_model_root, is_reserved_domain_id
 from app.services.climatology import DEFAULT_BASELINE_SOURCE, get_baseline_grid_params, normalize_baseline_source
 from app.services.grid import (
     GRID_FRAME_FORMAT_VERSION,
@@ -1459,6 +1459,19 @@ def build_frame(
         _log_fetch_cache_stats_once()
         return _result(None, "failed")
 
+    # `region` IS the artifact domain and becomes a staging path segment, so it
+    # is validated before any work: `domains` would collide with the namespace
+    # segment, a run-id-shaped id would be indistinguishable from a run dir, and
+    # anything outside the safe segment grammar could traverse out of the tree.
+    build_canonical_domain = canonical_domain(resolved_plugin)
+    build_domain = str(region or "").strip().lower() or build_canonical_domain
+    if is_reserved_domain_id(build_domain):
+        _log_fetch_cache_stats_once()
+        raise ValueError(
+            f"Refusing to build into reserved artifact domain {build_domain!r} "
+            f"(model={model}, run={run_id})"
+        )
+
     logger.info("Building frame: %s/%s/%s/%s (coverage=%s)", model, run_id, var_id, fh_str, region)
 
     # --- Resolve specs ---
@@ -1517,11 +1530,10 @@ def build_frame(
     # writes under `staging/{model}/domains/{d}/{run}/{var}`. Canonical comes
     # from the plugin actually driving this build — the same object whose
     # `get_region` validated `region` above.
-    build_canonical_domain = canonical_domain(resolved_plugin)
     staging_run_root = domain_scoped_model_root(
         data_root / "staging",
         model,
-        str(region or "").strip().lower() or build_canonical_domain,
+        build_domain,
         canonical=build_canonical_domain,
     ) / run_id
     staging_dir = staging_run_root / var_key

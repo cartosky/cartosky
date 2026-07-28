@@ -640,6 +640,70 @@ async def test_domain_contour_and_vector_routes_are_isolated(
         assert missing.status_code == 404
 
 
+async def test_canonical_artifact_routes_ignore_a_domain_query(
+    client: httpx.AsyncClient, api_roots: Path, declared_global: None
+) -> None:
+    """§5.23 / locked decision #5 — `domain=` never isolates artifact bodies.
+
+    Canonical grid/contour/vector routes serve immutable bodies under
+    `max-age=31536000, immutable` (and a 24h edge s-maxage for vectors).
+    Isolation there is structural — the `domains/`-prefixed path routes — so
+    the canonical routes must not accept a `domain` query at all: a stray one
+    is an unrecognized param with no effect on the response.
+    """
+    _publish_fixture(api_roots, value=32.0)
+    _publish_fixture(api_roots, domain=GLOBAL, value=99.0)
+    _clear_main_caches()
+
+    canonical_paths = (
+        f"/api/v4/grid/{MODEL}/{RUN_ID}/{VAR}/fh000.l0.u16.bin",
+        f"/api/v4/grid/v1/{MODEL}/{RUN_ID}/{VAR}/fh000.l0.u16.bin",
+        f"/api/v4/{MODEL}/{RUN_ID}/{VAR}/0/contours/freezing",
+        f"/api/v4/{MODEL}/{RUN_ID}/{VAR}/0/vectors/barbs",
+    )
+    for path in canonical_paths:
+        plain = await client.get(path)
+        with_domain = await client.get(f"{path}?domain={GLOBAL}")
+        assert plain.status_code == 200, path
+        assert with_domain.status_code == 200, path
+        assert with_domain.content == plain.content, path
+
+    # The bytes served are the CANONICAL ones, not the global tree's.
+    canonical_frame = (
+        _published_model_root(api_roots, MODEL, None) / RUN_ID / VAR / "grid" / "fh000.l0.u16.bin"
+    )
+    global_frame = (
+        _published_model_root(api_roots, MODEL, GLOBAL) / RUN_ID / VAR / "grid" / "fh000.l0.u16.bin"
+    )
+    assert canonical_frame.read_bytes() != global_frame.read_bytes()
+    served = await client.get(f"{canonical_paths[0]}?domain={GLOBAL}")
+    assert served.content == canonical_frame.read_bytes()
+    assert "immutable" in served.headers.get("cache-control", "")
+
+    for family in ("contours/freezing", "vectors/barbs"):
+        response = await client.get(f"/api/v4/{MODEL}/{RUN_ID}/{VAR}/0/{family}?domain={GLOBAL}")
+        assert response.json()["domain_probe"] == "canonical", family
+
+
+def test_canonical_artifact_routes_declare_no_domain_query_param() -> None:
+    """Locked decision #5 — enforced in the signature, not just in behaviour."""
+    artifact_routes = {
+        "/api/v4/grid/{model}/{run}/{var}/{filename}",
+        "/api/v4/grid/v1/{model}/{run}/{var}/{filename}",
+        "/api/v4/{model}/{run}/{var}/{fh:int}/contours/{key}",
+        "/api/v4/{model}/{run}/{var}/{fh:int}/vectors/{key}",
+    }
+    seen: set[str] = set()
+    for route in main_module.app.routes:
+        path = getattr(route, "path", "")
+        if path not in artifact_routes:
+            continue
+        seen.add(path)
+        params = set(getattr(route, "endpoint").__code__.co_varnames)
+        assert "domain" not in params, f"{path} exposes a domain query param"
+    assert seen == artifact_routes
+
+
 # ── D. promotion atomicity (§5.14–16) ──────────────────────────────────────
 
 
@@ -832,7 +896,7 @@ async def test_unknown_domain_returns_the_existing_404_bodies(
     assert batch.text == '{"error": "val.cog.tif not found"}'
 
     grid_file = await client.get(
-        f"/api/v4/grid/{MODEL}/{RUN_ID}/{VAR}/fh000.l0.u16.bin?domain=atlantis"
+        f"/api/v4/grid/domains/atlantis/{MODEL}/{RUN_ID}/{VAR}/fh000.l0.u16.bin"
     )
     assert grid_file.status_code == 404
     assert grid_file.json() == {"detail": "Run not found"}
@@ -1064,3 +1128,47 @@ def test_domain_routes_are_declared_before_the_parameterized_canonical_routes() 
     assert _index("/api/v4/domains/{domain}/{model}/{run}/{var}/{fh:int}/vectors/{key}") < _index(
         "/api/v4/{model}/{run}/{var}/{fh:int}/vectors/{key}"
     )
+
+
+def test_build_frame_refuses_a_reserved_artifact_domain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reserved/traversing region id must never reach the staging path."""
+    from app.services.builder import pipeline as pipeline_module
+
+    plugin = MODEL_REGISTRY[MODEL]
+    monkeypatch.setattr(
+        pipeline_module, "_resolve_model_plugin", lambda model: plugin,
+    )
+
+    class _AnyRegionPlugin:
+        """Accepts every region id, so only the reserved-word guard can stop it."""
+
+        id = MODEL
+        capabilities = plugin.capabilities
+
+        def get_region(self, region_id: str):
+            return RegionSpec(id=region_id, name=region_id)
+
+        def normalize_var_id(self, var_id: str) -> str:
+            return str(var_id)
+
+        def get_var(self, var_id: str):
+            return plugin.get_var(var_id)
+
+        def get_var_capability(self, var_key: str):
+            return plugin.get_var_capability(var_key)
+
+    for bad in ("domains", "20260330_12z", "../../etc"):
+        with pytest.raises(ValueError, match="reserved artifact domain"):
+            pipeline_module.build_frame(
+                model=MODEL,
+                region=bad,
+                var_id=VAR,
+                fh=0,
+                run_date=datetime(2026, 3, 30, 12),
+                data_root=tmp_path,
+                product="sfc",
+                model_plugin=_AnyRegionPlugin(),
+            )
+    assert not (tmp_path / "staging" / MODEL / "domains").exists()

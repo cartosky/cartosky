@@ -5807,10 +5807,14 @@ def get_grid_file(
     var: str,
     filename: str,
     region: str | None = Query(None, description="Optional region preset ID"),
-    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
-    return _get_grid_file(model, run, var, filename, domain=domain, principal=principal)
+    # Locked decision #5: `domain=` must NEVER isolate an immutable artifact
+    # body. These canonical routes serve canonical bytes under
+    # `immutable` / a 24h edge s-maxage; non-canonical access goes only
+    # through the `domains/`-prefixed path routes above, so a stray
+    # `?domain=` is an unrecognized param with no effect on the response.
+    return _get_grid_file(model, run, var, filename, domain=None, principal=principal)
 
 
 @app.get("/api/v4/grid/v1/{model}/{run}/{var}/{filename}")
@@ -5820,10 +5824,14 @@ def get_grid_file_compat(
     var: str,
     filename: str,
     region: str | None = Query(None, description="Optional region preset ID"),
-    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
-    return _get_grid_file(model, run, var, filename, domain=domain, principal=principal)
+    # Locked decision #5: `domain=` must NEVER isolate an immutable artifact
+    # body. These canonical routes serve canonical bytes under
+    # `immutable` / a 24h edge s-maxage; non-canonical access goes only
+    # through the `domains/`-prefixed path routes above, so a stray
+    # `?domain=` is an unrecognized param with no effect on the response.
+    return _get_grid_file(model, run, var, filename, domain=None, principal=principal)
 
 
 @app.get("/api/v4/sample")
@@ -6199,10 +6207,14 @@ def get_contour_geojson(
     fh: int,
     key: str,
     region: str | None = Query(None, description="Optional region preset ID"),
-    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
-    return _get_contour_geojson(model, run, var, fh, key, domain=domain, principal=principal)
+    # Locked decision #5: `domain=` must NEVER isolate an immutable artifact
+    # body. These canonical routes serve canonical bytes under
+    # `immutable` / a 24h edge s-maxage; non-canonical access goes only
+    # through the `domains/`-prefixed path routes above, so a stray
+    # `?domain=` is an unrecognized param with no effect on the response.
+    return _get_contour_geojson(model, run, var, fh, key, domain=None, principal=principal)
 
 
 def _get_contour_geojson(
@@ -6303,10 +6315,14 @@ def get_vector_geojson(
     fh: int,
     key: str,
     region: str | None = Query(None, description="Optional region preset ID"),
-    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
-    return _get_vector_geojson(model, run, var, fh, key, domain=domain, principal=principal)
+    # Locked decision #5: `domain=` must NEVER isolate an immutable artifact
+    # body. These canonical routes serve canonical bytes under
+    # `immutable` / a 24h edge s-maxage; non-canonical access goes only
+    # through the `domains/`-prefixed path routes above, so a stray
+    # `?domain=` is an unrecognized param with no effect on the response.
+    return _get_vector_geojson(model, run, var, fh, key, domain=None, principal=principal)
 
 
 def _get_vector_geojson(
