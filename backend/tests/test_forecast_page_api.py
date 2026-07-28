@@ -1318,10 +1318,10 @@ async def test_fetch_observed_precip_mrms_samples_grid_binaries(monkeypatch: pyt
         "mrms_recent_precip_72h": 1.62,
     }
 
-    def fake_resolve_latest_complete_run(model: str, variables: list[str], *, region: str | None = None) -> str | None:
+    def fake_resolve_latest_complete_run(model: str, variables: list[str], *, domain: str | None = None) -> str | None:
         assert model == "mrms"
         assert variables == ["mrms_recent_precip_6h", "mrms_recent_precip_24h", "mrms_recent_precip_72h"]
-        assert region == "conus"
+        assert domain == "conus"
         return "20260701_1438z"
 
     def fake_sample_value(
@@ -1332,14 +1332,14 @@ async def test_fetch_observed_precip_mrms_samples_grid_binaries(monkeypatch: pyt
         *,
         lat: float,
         lon: float,
-        region: str | None = None,
+        domain: str | None = None,
     ) -> tuple[bool, float | None]:
         assert model == "mrms"
         assert run_id == "20260701_1438z"
         assert fh == 0
         assert lat == 43.55
         assert lon == -96.73
-        assert region == "conus"
+        assert domain == "conus"
         return True, values[var]
 
     monkeypatch.setattr(forecast_page_service.sampling, "resolve_latest_complete_run", fake_resolve_latest_complete_run)

@@ -299,7 +299,7 @@ def test_build_grid_manifests_writes_regioned_manifest_and_frame(tmp_path: Path)
 
     assert manifest_ok == 1
 
-    artifacts_dir = grid_dir(data_root, model, run_id, var, region="na")
+    artifacts_dir = grid_dir(data_root, model, run_id, var, domain="na")
     assert artifacts_dir == data_root / "published" / model / run_id / var / "grid"
     assert (artifacts_dir / "fh000.l0.u16.bin").is_file()
     assert (artifacts_dir / "manifest.json").is_file()

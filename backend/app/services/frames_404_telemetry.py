@@ -164,6 +164,7 @@ def record_frames_404(
     var: str | None = None,
     filename_or_fh: str | None = None,
     seconds_since_publish: float | None = None,
+    domain: str | None = None,
 ) -> None:
     """Record one classified frames/grid 404. Best-effort; never raises."""
     endpoint = str(endpoint).strip() or "unknown"
@@ -192,6 +193,7 @@ def record_frames_404(
                 "run_requested": run_requested,
                 "run_resolved": run_resolved,
                 "var": var,
+                "domain": domain,
                 "filename_or_fh": filename_or_fh,
                 "reason": reason,
                 "seconds_since_publish": (

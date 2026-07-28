@@ -304,13 +304,13 @@ def sample_binary_value_seek(
     *,
     lat: float,
     lon: float,
-    region: str | None = None,
+    domain: str | None = None,
 ) -> tuple[bool, float | None]:
     """Seek-read twin of :func:`sample_binary_value`: same ``(present, value)``
     shape and rounding, resolved through the same runtime-var path, but reads
     one pixel instead of the whole frame. Used by the meteogram member
     fan-out."""
-    resolved = _resolve_binary_grid_frame(model, run_id, var, fh, region=region)
+    resolved = _resolve_binary_grid_frame(model, run_id, var, fh, domain=domain)
     if resolved is None:
         return (False, None)
     frame_path, meta_path, runtime_var = resolved
@@ -337,7 +337,7 @@ def sample_member_values_seek(
     *,
     lat: float,
     lon: float,
-    region: str | None = None,
+    domain: str | None = None,
 ) -> dict[tuple[str, int], tuple[bool, float | None]]:
     """Batch seek-sampler for the meteogram member fan-out.
 
@@ -351,16 +351,15 @@ def sample_member_values_seek(
     ~10k samples; the per-sample primitive spends most of its time
     re-resolving these invariants.
     """
-    del region
     from .. import main as _main
 
     out: dict[tuple[str, int], tuple[bool, float | None]] = {}
-    resolved_run = _main._resolve_run(model, run_id) or run_id
+    resolved_run = _main._resolve_run(model, run_id, domain=domain) or run_id
 
     for member_var in member_vars:
         try:
             runtime_var = _main._runtime_var_id_for_request(model, member_var, None)
-            var_dir = _main._published_var_dir(model, resolved_run, runtime_var)
+            var_dir = _main._published_var_dir(model, resolved_run, runtime_var, domain=domain)
             run_root = var_dir.parent
             resolved_dtype, encoded_dtype = _binary_encoded_dtype(model, runtime_var)
         except Exception:
@@ -508,14 +507,13 @@ def _resolve_sidecar(
     fh: int,
     *,
     ensemble_view: str | None = None,
-    region: str | None = None,
+    domain: str | None = None,
 ) -> dict | None:
-    del region
     from .. import main as _main
 
-    resolved = _main._resolve_run(model, run) or run
+    resolved = _main._resolve_run(model, run, domain=domain) or run
     runtime_var = _main._runtime_var_id_for_request(model, var, ensemble_view)
-    candidate = _main._published_var_dir(model, resolved, runtime_var) / f"fh{fh:03d}.json"
+    candidate = _main._published_var_dir(model, resolved, runtime_var, domain=domain) / f"fh{fh:03d}.json"
     if candidate.is_file():
         return _main._load_json_cached(candidate, _main._sidecar_cache)
     return None
@@ -528,7 +526,7 @@ def _resolve_binary_grid_frame(
     fh: int,
     *,
     ensemble_view: str | None = None,
-    region: str | None = None,
+    domain: str | None = None,
 ) -> tuple[Path, Path, str] | None:
     """Resolve a published grid binary frame to ``(frame_path, meta_path,
     runtime_var)``, or ``None`` when absent.
@@ -539,12 +537,11 @@ def _resolve_binary_grid_frame(
     that located the frame; deriving it independently at the decode site is how
     the path id and packing id can silently diverge.
     """
-    del region
     from .. import main as _main
 
-    resolved = _main._resolve_run(model, run) or run
+    resolved = _main._resolve_run(model, run, domain=domain) or run
     runtime_var = _main._runtime_var_id_for_request(model, var, ensemble_view)
-    var_dir = _main._published_var_dir(model, resolved, runtime_var)
+    var_dir = _main._published_var_dir(model, resolved, runtime_var, domain=domain)
     meta_path = resolved_grid_frame_meta_path_for_run_root(var_dir.parent, runtime_var, fh)
     if not meta_path.is_file():
         return None
@@ -565,11 +562,11 @@ def _resolve_binary_grid_frame(
 # ── Meteogram-facing helpers ──────────────────────────────────────────────
 # Higher-level helpers used by ``get_forecast_meteogram`` so that the service
 # layer never imports ``app.main`` directly.
-def resolve_run(model: str, run: str, *, region: str | None = None) -> str | None:
+def resolve_run(model: str, run: str, *, domain: str | None = None) -> str | None:
     """Resolve a requested run (or ``"latest"``) to a concrete run id."""
     from .. import main as _main
 
-    return _main._resolve_run(model, run, region=region)
+    return _main._resolve_run(model, run, domain=domain)
 
 
 def _scheduled_frame_count(plugin: Any, var: str, run_id: str) -> int | None:
@@ -647,7 +644,7 @@ def run_complete_for_variables(
     run_id: str,
     variables: list[str],
     *,
-    region: str | None = None,
+    domain: str | None = None,
 ) -> bool:
     """Whether a specific ``run_id`` is complete/usable for the variables.
 
@@ -657,7 +654,7 @@ def run_complete_for_variables(
     from .. import main as _main
     from ..models.registry import get_model
 
-    manifest = _main._load_manifest(model, run_id, region=region)
+    manifest = _main._load_manifest(model, run_id, domain=domain)
     if not isinstance(manifest, dict):
         return False
     variables_map = manifest.get("variables")
@@ -671,7 +668,7 @@ def run_complete_for_variables(
 
 
 def run_has_member_data(
-    model: str, run_id: str, canonical_vars: list[str], *, region: str | None = None,
+    model: str, run_id: str, canonical_vars: list[str], *, domain: str | None = None,
 ) -> bool:
     """Does this run publish per-member frames for every listed canonical var?
 
@@ -680,11 +677,10 @@ def run_has_member_data(
     published tree is the "members are ready" signal (m01 exists in every
     roster — GEFS and EPS alike).
     """
-    del region
     from .. import main as _main
 
     for var in canonical_vars:
-        var_dir = _main._published_var_dir(model, run_id, f"{var}__m01")
+        var_dir = _main._published_var_dir(model, run_id, f"{var}__m01", domain=domain)
         if not (var_dir / "grid" / "manifest.json").is_file():
             return False
     return True
@@ -694,7 +690,7 @@ def resolve_latest_complete_run(
     model: str,
     variables: list[str],
     *,
-    region: str | None = None,
+    domain: str | None = None,
     member_data_vars: list[str] | None = None,
 ) -> str | None:
     """Newest published run that is *complete* for the requested variable(s).
@@ -716,7 +712,7 @@ def resolve_latest_complete_run(
     from ..models.registry import get_model
 
     try:
-        candidates = _main._scan_manifest_runs(model, region=region)
+        candidates = _main._scan_manifest_runs(model, domain=domain)
     except Exception:
         logger.exception("Meteogram run scan failed for %s", model)
         return None
@@ -729,7 +725,7 @@ def resolve_latest_complete_run(
         plugin = None
 
     for run_id in candidates:
-        manifest = _main._load_manifest(model, run_id, region=region)
+        manifest = _main._load_manifest(model, run_id, domain=domain)
         if not isinstance(manifest, dict):
             continue
         variables_map = manifest.get("variables")
@@ -738,7 +734,7 @@ def resolve_latest_complete_run(
         if not _run_manifest_complete(plugin, variables_map, variables, run_id):
             continue
         if member_data_vars and not run_has_member_data(
-            model, run_id, member_data_vars, region=region,
+            model, run_id, member_data_vars, domain=domain,
         ):
             continue
         return run_id
@@ -747,7 +743,7 @@ def resolve_latest_complete_run(
 
 
 def manifest_frame_entries(
-    model: str, run: str, var: str, *, region: str | None = None
+    model: str, run: str, var: str, *, domain: str | None = None
 ) -> tuple[list[tuple[int, str | None]], str | None]:
     """Return ``([(fh, valid_time), ...], units)`` for ``var`` in ``run``.
 
@@ -759,7 +755,7 @@ def manifest_frame_entries(
     from .. import main as _main
     from ..models.registry import get_model
 
-    manifest = _main._load_manifest(model, run, region=region)
+    manifest = _main._load_manifest(model, run, domain=domain)
     if not isinstance(manifest, dict):
         return [], None
     variables = manifest.get("variables")
@@ -796,13 +792,13 @@ def manifest_frame_entries(
     return sorted(by_fh.items()), units
 
 
-def manifest_frame_hours(model: str, run: str, var: str, *, region: str | None = None) -> list[int]:
+def manifest_frame_hours(model: str, run: str, var: str, *, domain: str | None = None) -> list[int]:
     """Return the sorted forecast hours published for ``var`` in ``run``.
 
     Mirrors the frame source used by ``/api/v4/{model}/{run}/{var}/frames``:
     the manifest ``variables[<canonical_var>].frames[].fh`` list.
     """
-    entries, _units = manifest_frame_entries(model, run, var, region=region)
+    entries, _units = manifest_frame_entries(model, run, var, domain=domain)
     return [fh for fh, _vt in entries]
 
 
@@ -823,7 +819,7 @@ def sample_binary_value(
     *,
     lat: float,
     lon: float,
-    region: str | None = None,
+    domain: str | None = None,
 ) -> tuple[bool, float | None]:
     """Sample one frame's grid binary.
 
@@ -836,7 +832,7 @@ def sample_binary_value(
     returned by :func:`_resolve_binary_grid_frame`, so the packing config always
     matches the bytes on disk.
     """
-    resolved = _resolve_binary_grid_frame(model, run_id, var, fh, region=region)
+    resolved = _resolve_binary_grid_frame(model, run_id, var, fh, domain=domain)
     if resolved is None:
         return (False, None)
     frame_path, meta_path, runtime_var = resolved
@@ -859,7 +855,7 @@ def sample_binary_value(
 
 
 def read_frame_valid_times(
-    tasks: list[SampleTask], *, region: str | None = None
+    tasks: list[SampleTask], *, domain: str | None = None
 ) -> list[str | None]:
     """Sidecar ``valid_time`` per task, in input order.
 
@@ -868,7 +864,7 @@ def read_frame_valid_times(
     manifest carries valid_time, so this is called with an empty/short list.
     """
     def _one(t: SampleTask) -> str | None:
-        sidecar = _resolve_sidecar(t[0], t[1], t[2], t[3], region=region)
+        sidecar = _resolve_sidecar(t[0], t[1], t[2], t[3], domain=domain)
         vt = sidecar.get("valid_time") if isinstance(sidecar, dict) else None
         return vt if isinstance(vt, str) and vt else None
 

@@ -27,6 +27,12 @@ from app.config import (
 )
 from app.services import climatology
 from app.services.builder import fetch as builder_fetch
+from app.services.domains import (
+    canonical_domain,
+    declared_domains_for_var,
+    model_root_for_domain,
+    normalize_domain,
+)
 from app.services.admin_telemetry import record_build_duration, write_fetch_runtime_snapshot
 from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable, product_hour_has_any_idx
 from app.services.builder.derive import FetchContext, destroy_fetch_context
@@ -350,18 +356,22 @@ def _resolve_vars_to_schedule(plugin, requested: list[str]) -> list[str]:
 
 
 def _default_build_region(plugin: Any) -> str:
-    capabilities = getattr(plugin, "capabilities", None)
-    configured = str(getattr(capabilities, "canonical_region", "") or "").strip().lower()
-    return configured or CANONICAL_COVERAGE
+    """The model's canonical artifact domain (see ``services.domains``)."""
+    return canonical_domain(plugin)
 
 
 def _build_regions_for_var(plugin: Any, var_id: str) -> list[str]:
+    """Artifact domains this variable builds for — canonical first.
+
+    Extras come from ``VariableCapability.supported_build_regions``; with none
+    declared (the Phase 2A shipping state) this is exactly ``[canonical]``.
+    """
     default_region = _default_build_region(plugin)
     if hasattr(plugin, "get_region") and plugin.get_region(default_region) is None:
         raise SchedulerConfigError(
             f"Model {getattr(plugin, 'id', 'unknown')!r} does not define default build region {default_region!r}"
         )
-    return [default_region]
+    return list(declared_domains_for_var(plugin, var_id))
 
 
 def _companion_vars_for_var(plugin: Any, var_id: str) -> list[str]:
@@ -586,6 +596,16 @@ def _scheduled_targets_for_cycle(plugin, vars_to_build: list[str], cycle_hour: i
     return targets
 
 
+def _staging_run_root(data_root: Path, model: str, run_id: str, region: str | None = None) -> Path:
+    """Domain-scoped staging run root.
+
+    ``region`` here IS the artifact domain (build targets are already
+    ``(region, var, fh)``): the canonical domain resolves to today's literal
+    ``staging/{model}/{run}``, anything else to ``staging/{model}/domains/{d}/{run}``.
+    """
+    return model_root_for_domain(Path(data_root) / "staging", model, region) / run_id
+
+
 def _frame_sidecar_path(
     data_root: Path,
     model: str,
@@ -593,12 +613,11 @@ def _frame_sidecar_path(
     var_id: str,
     fh: int,
     *,
-    region: str = CANONICAL_COVERAGE,
+    region: str | None = None,
 ) -> Path:
     plugin = MODEL_REGISTRY.get(model)
     runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
-    del region
-    return data_root / "staging" / model / run_id / runtime_var_id / f"fh{fh:03d}.json"
+    return _staging_run_root(data_root, model, run_id, region) / runtime_var_id / f"fh{fh:03d}.json"
 
 
 def _frame_primary_artifact_path(
@@ -608,7 +627,7 @@ def _frame_primary_artifact_path(
     var_id: str,
     fh: int,
     *,
-    region: str = CANONICAL_COVERAGE,
+    region: str | None = None,
 ) -> Path:
     """The artifact whose presence marks a frame as built.
 
@@ -618,9 +637,8 @@ def _frame_primary_artifact_path(
     """
     plugin = MODEL_REGISTRY.get(model)
     runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
-    del region
     return grid_frame_meta_path_for_run_root(
-        data_root / "staging" / model / run_id, runtime_var_id, fh
+        _staging_run_root(data_root, model, run_id, region), runtime_var_id, fh
     )
 
 
@@ -631,7 +649,7 @@ def _frame_artifacts_exist(
     var_id: str,
     fh: int,
     *,
-    region: str = CANONICAL_COVERAGE,
+    region: str | None = None,
 ) -> bool:
     val = _frame_primary_artifact_path(data_root, model, run_id, var_id, fh, region=region)
     side = _frame_sidecar_path(data_root, model, run_id, var_id, fh, region=region)
@@ -653,7 +671,7 @@ def _sidecar_quality(
     var_id: str,
     fh: int,
     *,
-    region: str = CANONICAL_COVERAGE,
+    region: str | None = None,
 ) -> tuple[str, list[str]]:
     sidecar_path = _frame_sidecar_path(data_root, model, run_id, var_id, fh, region=region)
     if not sidecar_path.exists():
@@ -1041,19 +1059,16 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
     tmp.replace(path)
 
 
-def _normalized_publish_region(region: str | None) -> str:
-    normalized = str(region or "").strip().lower()
-    return normalized or CANONICAL_COVERAGE
+def _published_model_root(data_root: Path, model: str, region: str | None = None) -> Path:
+    return model_root_for_domain(Path(data_root) / "published", model, region)
 
 
 def _latest_pointer_path(data_root: Path, model: str, *, region: str | None = None) -> Path:
-    del region
-    return data_root / "published" / model / "LATEST.json"
+    return _published_model_root(data_root, model, region) / "LATEST.json"
 
 
 def _manifest_path(data_root: Path, model: str, run_id: str, *, region: str | None = None) -> Path:
-    del region
-    return data_root / "manifests" / model / f"{run_id}.json"
+    return model_root_for_domain(Path(data_root) / "manifests", model, region) / f"{run_id}.json"
 
 
 def _copy_or_link_file(src: str, dst: str) -> str:
@@ -1110,11 +1125,11 @@ def _promotion_copy_ignore(directory: str, names: list[str]) -> set[str]:
     return ignored
 
 
-def _write_latest_pointer(data_root: Path, model: str, run_id: str, *, region: str = CANONICAL_COVERAGE) -> None:
+def _write_latest_pointer(data_root: Path, model: str, run_id: str, *, region: str | None = None) -> None:
     run_dt = _parse_run_id_datetime(run_id)
     if run_dt is None:
         raise SchedulerConfigError(f"Cannot write LATEST.json for invalid run_id={run_id!r}")
-    normalized_region = _normalized_publish_region(region)
+    normalized_region = normalize_domain(model, region)
     payload = {
         "run_id": run_id,
         "cycle_utc": run_dt.strftime("%Y-%m-%dT%H:00:00Z"),
@@ -1158,7 +1173,15 @@ def _should_promote(
     primary_vars: list[str],
     promotion_fhs: Iterable[int],
 ) -> bool:
-    return bool(_promotion_ready_regions(data_root, model, run_id, primary_vars, promotion_fhs))
+    """Whether the CANONICAL domain is promotable.
+
+    Gated on canonical readiness specifically, never on ``bool(ready)``: once
+    domains probe distinct paths, an only-a-non-canonical-domain-is-ready run
+    must not trigger a canonical promote or a canonical LATEST pointing at an
+    unready run (design §4.2 / review blocker B1).
+    """
+    ready = _promotion_ready_regions(data_root, model, run_id, primary_vars, promotion_fhs)
+    return canonical_domain(model) in ready
 
 
 def _resolve_promotion_fhs(plugin: Any, primary_vars: list[str], cycle_hour: int) -> tuple[int, ...]:
@@ -1294,12 +1317,14 @@ def _resolve_loop_prewarm_fhs(plugin: Any, var_id: str, cycle_hour: int, *, limi
     return tuple(scheduled[backfill_start:pivot_index] + forward)
 
 
-def _promote_run(data_root: Path, model: str, run_id: str) -> None:
-    stage_run = data_root / "staging" / model / run_id
+def _promote_run(data_root: Path, model: str, run_id: str, *, domain: str | None = None) -> None:
+    stage_run = _staging_run_root(data_root, model, run_id, domain)
     if not stage_run.is_dir():
         raise SchedulerConfigError(f"Cannot promote missing staging run dir: {stage_run}")
 
-    published_model = data_root / "published" / model
+    # tmp / trash / final are siblings inside this one directory, so the
+    # two-rename swap stays atomic (single-directory renames) per domain.
+    published_model = _published_model_root(data_root, model, domain)
     published_model.mkdir(parents=True, exist_ok=True)
 
     published_run = published_model / run_id
@@ -1402,6 +1427,18 @@ def _available_target_count(
     return available
 
 
+def _target_domains(targets: list[BuildTarget], canonical: str) -> list[str]:
+    """Distinct artifact domains present in a target list, canonical first."""
+    domains: list[str] = [canonical]
+    for target in targets:
+        if len(target) != 3:
+            continue
+        domain = str(target[0] or "").strip().lower()
+        if domain and domain not in domains:
+            domains.append(domain)
+    return domains
+
+
 def _write_run_manifest(
     *,
     data_root: Path,
@@ -1409,25 +1446,34 @@ def _write_run_manifest(
     run_id: str,
     targets: list[BuildTarget],
     plugin: Any | None = None,
-    region: str = CANONICAL_COVERAGE,
+    region: str | None = None,
 ) -> None:
     run_dt = _parse_run_id_datetime(run_id)
     if run_dt is None:
         raise SchedulerConfigError(f"Invalid run id for manifest: {run_id}")
 
-    manifest_region = _normalized_publish_region(region)
+    manifest_region = normalize_domain(model, region)
+    canonical_region = canonical_domain(model)
 
+    # Targets are filtered to THIS domain: a domain's manifest must cover only
+    # the variables that domain declares, otherwise it inherits the union of
+    # every domain's expected variables and never reads complete (review M3).
+    # Domain-less (2-tuple) targets belong to the canonical domain.
     expected_by_var: dict[str, list[int]] = {}
     for target in targets:
         if len(target) == 3:
-            _target_region, var_id, fh = target
+            target_region, var_id, fh = target
+            if normalize_domain(model, target_region) != manifest_region:
+                continue
         elif len(target) == 2:
             var_id, fh = target
+            if manifest_region != canonical_region:
+                continue
         else:
             raise SchedulerConfigError(f"Invalid manifest target: {target!r}")
         expected_by_var.setdefault(str(var_id), []).append(int(fh))
 
-    manifest_path = _manifest_path(data_root, model, run_id)
+    manifest_path = _manifest_path(data_root, model, run_id, region=manifest_region)
     variables: dict[str, dict] = {}
     if manifest_path.exists():
         try:
@@ -1999,13 +2045,11 @@ def _process_run(
 
     _log_process_cache_stats(stage="run_start")
 
-    def _publish_run_snapshot(*, reason: str, pregenerate_loops: bool) -> None:
-        del pregenerate_loops
-        ready_regions = _promotion_ready_regions(data_root, model_id, run_id, primary_vars, promotion_fhs)
+    def _publish_one_domain(*, domain: str, reason: str, ready_regions: list[str]) -> None:
         if grid_build_enabled():
             try:
                 manifest_ok = build_grid_manifests_for_run_root(
-                    run_root=data_root / "staging" / model_id / run_id,
+                    run_root=_staging_run_root(data_root, model_id, run_id, domain),
                     model=model_id,
                     run=run_id,
                 )
@@ -2018,18 +2062,46 @@ def _process_run(
                 )
             except Exception:
                 logger.exception("grid manifest build failed: run=%s model=%s reason=%s", run_id, model_id, reason)
-        _promote_run(data_root, model_id, run_id)
-        canonical_region = _default_build_region(plugin)
+        _promote_run(data_root, model_id, run_id, domain=domain)
         _write_run_manifest(
             data_root=data_root,
             model=model_id,
             run_id=run_id,
             targets=targets,
             plugin=plugin,
-            region=canonical_region,
+            region=domain,
         )
-        if ready_regions:
-            _write_latest_pointer(data_root, model_id, run_id, region=canonical_region)
+        if domain in ready_regions:
+            _write_latest_pointer(data_root, model_id, run_id, region=domain)
+
+    def _publish_run_snapshot(*, reason: str, pregenerate_loops: bool) -> None:
+        del pregenerate_loops
+        ready_regions = _promotion_ready_regions(data_root, model_id, run_id, primary_vars, promotion_fhs)
+        canonical_region = _default_build_region(plugin)
+
+        # Canonical publishes FIRST, and its LATEST pointer is gated on
+        # canonical readiness specifically — never on bool(ready_regions) (B1).
+        # Reaching this function at all already required `_should_promote`,
+        # which is itself canonical-specific. Each non-canonical domain is
+        # independently wrapped so an ENOSPC on a large global tree cannot
+        # abort canonical publication, the catch-up loop, or the retention
+        # tail (B2).
+        _publish_one_domain(domain=canonical_region, reason=reason, ready_regions=ready_regions)
+
+        for domain in _target_domains(targets, canonical_region):
+            if domain == canonical_region or domain not in ready_regions:
+                continue
+            try:
+                _publish_one_domain(domain=domain, reason=reason, ready_regions=ready_regions)
+            except Exception:
+                logger.exception(
+                    "Domain publish failed: run=%s model=%s domain=%s reason=%s",
+                    run_id,
+                    model_id,
+                    domain,
+                    reason,
+                )
+
         logger.info(
             "Published run snapshot: run=%s model=%s reason=%s built=%d/%d ready_regions=%s canonical_region=%s",
             run_id,
@@ -2590,6 +2662,28 @@ def _process_run(
         data_root / "status" / "ensemble_stats" / model_id,
         published_model_root,
     )
+    # Retention is per-domain against domain-scoped roots. The canonical calls
+    # above are untouched and provably skip `domains/` (it never parses as a
+    # run id), so no domain tree can be evicted by canonical retention or
+    # vice versa.
+    canonical_region = _default_build_region(plugin)
+    for domain in _target_domains(targets, canonical_region):
+        if domain == canonical_region:
+            continue
+        try:
+            _enforce_run_retention(
+                model_root_for_domain(data_root / "staging", model_id, domain), effective_keep_runs,
+            )
+            _enforce_run_retention(
+                model_root_for_domain(data_root / "published", model_id, domain), effective_keep_runs,
+            )
+            _enforce_manifest_retention(
+                model_root_for_domain(data_root / "manifests", model_id, domain), effective_keep_runs,
+            )
+        except Exception:
+            logger.exception(
+                "Domain retention failed: model=%s domain=%s", model_id, domain,
+            )
     herbie_save_dir_raw = _env_value(ENV_HERBIE_SAVE_DIR).strip()
     if herbie_save_dir_raw:
         herbie_model_id = model_id

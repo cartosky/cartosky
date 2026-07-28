@@ -28,6 +28,7 @@ import httpx
 from ..models.base import classify_ensemble_var_id
 from . import nws as nws_service
 from . import sampling
+from .domains import canonical_domain
 from .run_ids import parse_run_id_datetime
 
 logger = logging.getLogger(__name__)
@@ -1356,7 +1357,7 @@ async def _fetch_observed_precip_mrms(lat: float, lon: float) -> dict[str, Any] 
             sampling.resolve_latest_complete_run,
             "mrms",
             variables,
-            region="conus",
+            domain=canonical_domain("mrms"),
         )
     except Exception:
         logger.exception("MRMS observed precip run resolution failed for lat=%.4f lon=%.4f", lat, lon)
@@ -1378,7 +1379,7 @@ async def _fetch_observed_precip_mrms(lat: float, lon: float) -> dict[str, Any] 
             0,
             lat=lat,
             lon=lon,
-            region="conus",
+            domain=canonical_domain("mrms"),
         )
         results[key] = value if present else None
     return results
@@ -3094,7 +3095,7 @@ def _member_series_for_model_var(
     *,
     lat: float,
     lon: float,
-    region: str | None,
+    domain: str | None,
     mean_result: dict[str, Any],
 ) -> dict[str, Any] | None:
     """``variables[var]["members"]`` block per the Model Guidance Section 7
@@ -3141,7 +3142,7 @@ def _member_series_for_model_var(
     sampled = sampling.sample_member_values_seek(
         model, run_id, list(member_vars.values()),
         [fh for fh, _vt in candidate_frames],
-        lat=lat, lon=lon, region=region,
+        lat=lat, lon=lon, domain=domain,
     )
     members_block: dict[str, Any] = {"mean": {"points": mean_result.get("points")}}
     for member, member_var in member_vars.items():
@@ -3179,7 +3180,7 @@ def get_forecast_meteogram(
     run_policy: dict[str, Any] | None = None,
     pinned_runs: dict[str, str] | None = None,
     include_members: bool = False,
-    region: str | None = None,
+    domain: str | None = None,
     entitled: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
     """Fan out point samples across models/variables and return one payload.
@@ -3254,25 +3255,25 @@ def get_forecast_meteogram(
             plain_latest_known = False
             pinned_run = pinned.get(model)
             if pinned_run:
-                concrete = sampling.resolve_run(model, pinned_run, region=region)
+                concrete = sampling.resolve_run(model, pinned_run, domain=domain)
                 if concrete and sampling.run_complete_for_variables(
-                    model, concrete, pin_validation_vars, region=region
+                    model, concrete, pin_validation_vars, domain=domain
                 ):
                     resolved = concrete
             if resolved is None and include_members and _model_supports_members(model):
                 member_vars = _member_descriptor_vars(model, norm_vars)
                 if member_vars:
                     resolved = sampling.resolve_latest_complete_run(
-                        model, norm_vars, region=region, member_data_vars=member_vars,
+                        model, norm_vars, domain=domain, member_data_vars=member_vars,
                     )
             if resolved is None:
-                resolved = sampling.resolve_latest_complete_run(model, norm_vars, region=region)
+                resolved = sampling.resolve_latest_complete_run(model, norm_vars, domain=domain)
                 plain_latest = resolved
                 plain_latest_known = True
             run_ids[model] = resolved
             if not plain_latest_known:
                 plain_latest = sampling.resolve_latest_complete_run(
-                    model, norm_vars, region=region,
+                    model, norm_vars, domain=domain,
                 )
             latest_complete_ids[model] = plain_latest
         except Exception:
@@ -3317,7 +3318,7 @@ def get_forecast_meteogram(
         attach_members = include_members and _model_supports_members(model)
         for var in norm_vars:
             result = _sample_variable_series_binary(
-                model, run_id, var, lat=lat, lon=lon, region=region
+                model, run_id, var, lat=lat, lon=lon, domain=domain
             )
             points = result.get("points")
             if points and any(p["value"] is not None for p in points):
@@ -3327,7 +3328,7 @@ def get_forecast_meteogram(
             if attach_members and points:
                 members_block = _member_series_for_model_var(
                     model, run_id, var,
-                    lat=lat, lon=lon, region=region, mean_result=result,
+                    lat=lat, lon=lon, domain=domain, mean_result=result,
                 )
                 if members_block is not None:
                     result["members"] = members_block
@@ -3367,7 +3368,7 @@ def _sample_variable_series_binary(
     *,
     lat: float,
     lon: float,
-    region: str | None = None,
+    domain: str | None = None,
 ) -> dict[str, Any]:
     """Grid-binary counterpart of the per-variable series assembly inside
     :func:`get_forecast_meteogram`.
@@ -3384,11 +3385,11 @@ def _sample_variable_series_binary(
 
     Called from ``get_forecast_meteogram`` for every model.
     """
-    frames, units = sampling.manifest_frame_entries(model, run_id, var, region=region)
+    frames, units = sampling.manifest_frame_entries(model, run_id, var, domain=domain)
     value_by_fh: dict[int, float | None] = {}
     for fh, _vt in frames:
         present, value = sampling.sample_binary_value(
-            model, run_id, var, fh, lat=lat, lon=lon, region=region
+            model, run_id, var, fh, lat=lat, lon=lon, domain=domain
         )
         if present:
             value_by_fh[fh] = value
@@ -3399,7 +3400,7 @@ def _sample_variable_series_binary(
     vt_by_fh: dict[int, str | None] = {}
     if vt_fallback_tasks:
         for task, vt in zip(
-            vt_fallback_tasks, sampling.read_frame_valid_times(vt_fallback_tasks, region=region)
+            vt_fallback_tasks, sampling.read_frame_valid_times(vt_fallback_tasks, domain=domain)
         ):
             vt_by_fh[task[3]] = vt
 

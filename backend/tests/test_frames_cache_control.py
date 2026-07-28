@@ -479,7 +479,7 @@ async def test_bootstrap_if_none_match_short_circuits_payload_and_frame_build(
 
 
 def test_bootstrap_state_etag_for_fixed_run_ignores_dynamic_capabilities_state() -> None:
-    run_manifest = main_module._load_manifest("hrrr", "20260224_14z", region="conus")
+    run_manifest = main_module._load_manifest("hrrr", "20260224_14z")
     selection_state = {
         "selected_model": "hrrr",
         "selected_run": "20260224_14z",

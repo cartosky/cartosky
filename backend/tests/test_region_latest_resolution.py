@@ -93,7 +93,7 @@ def test_resolve_sidecar_uses_canonical_published_var_dir(
 
     (var_dir / "fh000.json").write_text(json.dumps({"fh": 0, "source_region": "na"}))
 
-    sidecar = main_module._resolve_sidecar(model, run_id, "tmp2m", 0, region="conus")
+    sidecar = main_module._resolve_sidecar(model, run_id, "tmp2m", 0)
 
     assert sidecar is not None
     assert sidecar["source_region"] == "na"

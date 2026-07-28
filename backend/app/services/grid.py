@@ -15,6 +15,7 @@ from scipy.ndimage import zoom as ndimage_zoom
 
 from ..config import grid_supported_pair
 from .colormaps import RADAR_PTYPE_BREAKS, RADAR_PTYPE_ORDER, get_color_map_spec
+from .domains import model_root_for_domain
 from .grid_display_prep import prepare_grid_display_values
 from .render_resampling import resampling_name_for_kind, variable_color_map_id
 
@@ -1255,13 +1256,13 @@ def _iter_grid_variable_run_roots(run_root: Path, model: str) -> list[tuple[Path
     return discovered
 
 
-def grid_dir(data_root: Path, model: str, run: str, var: str, *, region: str | None = None) -> Path:
-    del region
-    return resolved_grid_dir_for_run_root(data_root / "published" / model / run, var)
+def grid_dir(data_root: Path, model: str, run: str, var: str, *, domain: str | None = None) -> Path:
+    published_model_root = model_root_for_domain(Path(data_root) / "published", model, domain)
+    return resolved_grid_dir_for_run_root(published_model_root / run, var)
 
 
-def grid_manifest_path(data_root: Path, model: str, run: str, var: str, *, region: str | None = None) -> Path:
-    return grid_dir(data_root, model, run, var, region=region) / "manifest.json"
+def grid_manifest_path(data_root: Path, model: str, run: str, var: str, *, domain: str | None = None) -> Path:
+    return grid_dir(data_root, model, run, var, domain=domain) / "manifest.json"
 
 
 def grid_manifest_path_for_run_root(run_root: Path, var: str) -> Path:
@@ -1314,11 +1315,11 @@ def grid_frame_path(
     var: str,
     fh: int,
     *,
-    region: str | None = None,
+    domain: str | None = None,
     level: int = GRID_LEVEL,
     dtype: str = GRID_DTYPE,
 ) -> Path:
-    return grid_dir(data_root, model, run, var, region=region) / grid_frame_filename(fh, level=level, dtype=dtype)
+    return grid_dir(data_root, model, run, var, domain=domain) / grid_frame_filename(fh, level=level, dtype=dtype)
 
 
 def grid_frame_path_for_run_root(
@@ -1340,8 +1341,17 @@ def contour_grid_frame_meta_filename(fh: int, key: str, *, level: int = GRID_LEV
     return f"fh{int(fh):03d}.contour-{_safe_contour_key(key)}.l{int(level)}.meta.json"
 
 
-def grid_frame_meta_path(data_root: Path, model: str, run: str, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:
-    return grid_dir(data_root, model, run, var) / grid_frame_meta_filename(fh, level=level)
+def grid_frame_meta_path(
+    data_root: Path,
+    model: str,
+    run: str,
+    var: str,
+    fh: int,
+    *,
+    domain: str | None = None,
+    level: int = GRID_LEVEL,
+) -> Path:
+    return grid_dir(data_root, model, run, var, domain=domain) / grid_frame_meta_filename(fh, level=level)
 
 
 def grid_frame_meta_path_for_run_root(run_root: Path, var: str, fh: int, *, level: int = GRID_LEVEL) -> Path:

@@ -1179,8 +1179,8 @@ def test_process_run_publishes_early_then_refreshes_after_more_progress(
         del args, kwargs
         return [scheduler_module.CANONICAL_COVERAGE] if ("tmp2m", 2) in built else []
 
-    def fake_promote_run(data_root: Path, model: str, run_id: str) -> None:
-        del data_root, model, run_id
+    def fake_promote_run(data_root: Path, model: str, run_id: str, *, domain: str | None = None) -> None:
+        del data_root, model, run_id, domain
         publish_promote_snapshots.append(sorted(fh for var_id, fh in built if var_id == "tmp2m"))
 
     def fake_write_run_manifest(*args: object, **kwargs: object) -> None:
@@ -1443,8 +1443,8 @@ def test_process_run_republishes_progress_during_long_catchup(
         del args, kwargs
         return ("tmp2m", 1) in built
 
-    def fake_promote_run(data_root: Path, model: str, run_id: str) -> None:
-        del data_root, model, run_id
+    def fake_promote_run(data_root: Path, model: str, run_id: str, *, domain: str | None = None) -> None:
+        del data_root, model, run_id, domain
         publish_promote_snapshots.append(sorted(fh for var_id, fh in built if var_id == "tmp2m"))
 
     monkeypatch.setenv("CARTOSKY_PROGRESS_PUBLISH_MIN_NEW_FRAMES", "1")

@@ -51,6 +51,7 @@ from app.services.builder.fetch import (
     product_hour_has_any_idx,
 )
 from app.services.colormaps import get_color_map_spec
+from app.services.domains import canonical_domain, domain_scoped_model_root
 from app.services.climatology import DEFAULT_BASELINE_SOURCE, get_baseline_grid_params, normalize_baseline_source
 from app.services.grid import (
     GRID_FRAME_FORMAT_VERSION,
@@ -1511,7 +1512,19 @@ def build_frame(
     )
 
     # --- Staging directory ---
-    staging_dir = data_root / "staging" / model / run_id / var_key
+    # Domain-scoped: `region` IS the artifact domain, so the canonical domain
+    # keeps today's literal `staging/{model}/{run}/{var}` and any other domain
+    # writes under `staging/{model}/domains/{d}/{run}/{var}`. Canonical comes
+    # from the plugin actually driving this build — the same object whose
+    # `get_region` validated `region` above.
+    build_canonical_domain = canonical_domain(resolved_plugin)
+    staging_run_root = domain_scoped_model_root(
+        data_root / "staging",
+        model,
+        str(region or "").strip().lower() or build_canonical_domain,
+        canonical=build_canonical_domain,
+    ) / run_id
+    staging_dir = staging_run_root / var_key
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     # Retired value-COG staging path: never written anymore, but kept in the
@@ -1776,7 +1789,6 @@ def build_frame(
         _write_json_atomic(sidecar_path, sidecar)
 
         if grid_build_enabled():
-            staging_run_root = data_root / "staging" / model / run_id
             grid_frame_path = grid_frame_path_for_run_root(staging_run_root, var_key, fh)
             grid_frame_meta_path = grid_frame_meta_path_for_run_root(staging_run_root, var_key, fh)
             write_grid_frame_for_run_root(

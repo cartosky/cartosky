@@ -66,6 +66,14 @@ from .services.grid import (
     grid_manifest_path,
     grid_supported,
 )
+from .services.domains import (  # noqa: E402 - module-level load_dotenv above forces late imports
+    canonical_domain,
+    domain_url_prefix,
+    is_canonical,
+    model_root_for_domain,
+    normalize_domain,
+    validate_requested_domain,
+)
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
 from .services.sampling import (
     _load_binary_frame_meta,
@@ -2598,6 +2606,7 @@ class SampleBatchIn(BaseModel):
     run: str = Field(..., min_length=1, max_length=32)
     variable: str = Field(..., min_length=1, max_length=128)
     region: str | None = Field(default=None, max_length=32)
+    domain: str | None = Field(default=None, max_length=32)
     ensemble_view: str | None = Field(default=None, max_length=64)
     forecast_hour: int = Field(..., ge=0)
     points: list[SampleBatchPointIn] = Field(..., min_length=1, max_length=500)
@@ -2727,35 +2736,35 @@ def _load_json_cached(path: Path, cache: dict[str, dict[str, Any]]) -> dict | No
     return payload
 
 
+def _request_domain_or_404(model: str, domain: str | None) -> str | None:
+    """Normalize an API-supplied ``domain=`` for ``model``.
+
+    Returns the normalized domain (the canonical one when absent, so
+    resolution is byte-for-byte today's), or ``None`` when the model does not
+    publish that domain — callers return their existing 404 body verbatim.
+    """
+    return validate_requested_domain(model, domain)
+
+
 def _latest_run_from_pointer(model: str) -> str | None:
-    return _latest_run_from_pointer_for_region(model, region=None)
+    return _latest_run_from_pointer_for_region(model, domain=None)
 
 
-def _canonical_region_for_model(model: str) -> str:
-    capability = list_model_capabilities().get(model)
-    return _model_canonical_region(capability)
+def _published_model_root(model: str, domain: str | None = None) -> Path:
+    """Domain-scoped published model root (canonical == today's literal path)."""
+    return model_root_for_domain(PUBLISHED_ROOT, model, domain)
 
 
-def _normalized_request_region(model: str, region: str | None) -> str:
-    normalized = str(region or "").strip().lower()
-    if normalized is not None:
-        if normalized:
-            return normalized
-    return _canonical_region_for_model(model)
+def _latest_pointer_path(model: str, *, domain: str | None = None) -> Path:
+    return _published_model_root(model, domain) / "LATEST.json"
 
 
-def _latest_pointer_path(model: str, *, region: str | None = None) -> Path:
-    del region
-    return PUBLISHED_ROOT / model / "LATEST.json"
+def _manifest_path(model: str, run: str, *, domain: str | None = None) -> Path:
+    return model_root_for_domain(MANIFESTS_ROOT, model, domain) / f"{run}.json"
 
 
-def _manifest_path(model: str, run: str, *, region: str | None = None) -> Path:
-    del region
-    return MANIFESTS_ROOT / model / f"{run}.json"
-
-
-def _latest_run_from_pointer_for_region(model: str, *, region: str | None = None) -> str | None:
-    latest_path = _latest_pointer_path(model, region=region)
+def _latest_run_from_pointer_for_region(model: str, *, domain: str | None = None) -> str | None:
+    latest_path = _latest_pointer_path(model, domain=domain)
     if not latest_path.is_file():
         return None
     try:
@@ -2772,8 +2781,8 @@ def _latest_run_from_pointer_for_region(model: str, *, region: str | None = None
         logger.warning("LATEST.json points to out-of-cycle run for %s: %s", model, run_id)
         return None
 
-    run_dir = PUBLISHED_ROOT / model / run_id
-    manifest_path = _manifest_path(model, run_id)
+    run_dir = _published_model_root(model, domain) / run_id
+    manifest_path = _manifest_path(model, run_id, domain=domain)
     if not run_dir.is_dir() or not manifest_path.is_file():
         logger.warning("LATEST.json points to incomplete run state for %s/%s", model, run_id)
         return None
@@ -2837,13 +2846,13 @@ def _manifest_has_true_color_frames(manifest: dict[str, Any]) -> bool:
 
 def _resolve_true_color_run(model: str, run: str) -> str | None:
     if model != GOES_EAST_MODEL_ID:
-        return _resolve_run(model, run, region=None)
+        return _resolve_run(model, run, domain=None)
 
     rgb_latest = _latest_rgb_run_from_pointer(model)
     if run == "latest":
         return rgb_latest
 
-    resolved = _resolve_run(model, run, region=None)
+    resolved = _resolve_run(model, run, domain=None)
     if resolved is None:
         return rgb_latest
 
@@ -2853,9 +2862,12 @@ def _resolve_true_color_run(model: str, run: str) -> str | None:
     return rgb_latest
 
 
-def _scan_manifest_runs(model: str, *, region: str | None = None) -> list[str]:
-    del region
-    model_manifest_dir = MANIFESTS_ROOT / model
+def _scan_manifest_runs(model: str, *, domain: str | None = None) -> list[str]:
+    # A domain scan must re-root BOTH the manifest dir and the published-tree
+    # cross-check, or it would list a domain's manifests against the canonical
+    # published tree (design §4.3 internal-drop table).
+    model_manifest_dir = model_root_for_domain(MANIFESTS_ROOT, model, domain)
+    published_model_root = _published_model_root(model, domain)
     if not model_manifest_dir.is_dir():
         return []
     runs: list[str] = []
@@ -2865,7 +2877,7 @@ def _scan_manifest_runs(model: str, *, region: str | None = None) -> list[str]:
             continue
         if not _run_matches_model_cycle(model, run_id):
             continue
-        if not (PUBLISHED_ROOT / model / run_id).is_dir():
+        if not (published_model_root / run_id).is_dir():
             continue
         runs.append(run_id)
     return sorted(
@@ -2897,11 +2909,11 @@ def _manifest_var_available_frames(var_entry: dict[str, Any]) -> int:
 
 
 def _var_has_grid_runtime_ready(model_id: str, run_id: str, var_key: str) -> bool:
-    return _var_has_grid_runtime_ready_for_region(model_id, run_id, var_key, region=None)
+    return _var_has_grid_runtime_ready_for_region(model_id, run_id, var_key, domain=None)
 
 
-def _var_has_grid_runtime_ready_for_region(model_id: str, run_id: str, var_key: str, *, region: str | None = None) -> bool:
-    manifest = _load_grid_manifest(model_id, run_id, var_key, region=region)
+def _var_has_grid_runtime_ready_for_region(model_id: str, run_id: str, var_key: str, *, domain: str | None = None) -> bool:
+    manifest = _load_grid_manifest(model_id, run_id, var_key, domain=domain)
     if not isinstance(manifest, dict):
         return False
     lods = manifest.get("lods")
@@ -2921,9 +2933,9 @@ def _ready_runtime_state_for_run(
     run_id: str,
     *,
     model_capability: Any | None,
-    region: str | None = None,
+    domain: str | None = None,
 ) -> tuple[list[str], int]:
-    manifest = _load_manifest(model_id, run_id, region=region)
+    manifest = _load_manifest(model_id, run_id, domain=domain)
     if not isinstance(manifest, dict):
         return [], 0
 
@@ -2951,7 +2963,7 @@ def _ready_runtime_state_for_run(
         available_frames = _manifest_var_available_frames(var_entry)
         if available_frames <= 0:
             continue
-        if grid_supported(model_id, var_key) and not _var_has_grid_runtime_ready_for_region(model_id, run_id, var_key, region=region):
+        if grid_supported(model_id, var_key) and not _var_has_grid_runtime_ready_for_region(model_id, run_id, var_key, domain=domain):
             continue
         ready_vars.append(var_key)
         ready_frame_count += available_frames
@@ -2965,7 +2977,7 @@ def _latest_run_readiness(
     latest_run: str | None,
     *,
     model_capability: Any | None,
-    region: str | None = None,
+    domain: str | None = None,
 ) -> tuple[bool, list[str], int]:
     if latest_run is None:
         return False, [], 0
@@ -2973,7 +2985,7 @@ def _latest_run_readiness(
         model_id,
         latest_run,
         model_capability=model_capability,
-        region=region,
+        domain=domain,
     )
     return bool(ready_vars), ready_vars, ready_frame_count
 
@@ -3194,10 +3206,7 @@ def _model_default_var(model_capability: Any | None) -> str:
 
 
 def _model_canonical_region(model_capability: Any | None) -> str:
-    if model_capability is None:
-        return "conus"
-    canonical_region = str(getattr(model_capability, "canonical_region", "") or "").strip().lower()
-    return canonical_region or "conus"
+    return canonical_domain(model_capability)
 
 
 def _path_mtime_ns(path: Path) -> int:
@@ -3214,7 +3223,7 @@ def _bootstrap_frames_state_token(
     manifest: dict[str, Any] | None,
     *,
     ensemble_view: str | None = None,
-    region: str | None = None,
+    domain: str | None = None,
 ) -> str:
     variables = manifest.get("variables") if isinstance(manifest, dict) else None
     var_entry = variables.get(var) if isinstance(variables, dict) else None
@@ -3223,7 +3232,7 @@ def _bootstrap_frames_state_token(
         return ""
 
     runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
-    var_dir = _published_var_dir(model, run, runtime_var, region=region)
+    var_dir = _published_var_dir(model, run, runtime_var, domain=domain)
     frame_state: list[tuple[int, int, int]] = []
     for item in frame_entries:
         if not isinstance(item, dict):
@@ -3243,6 +3252,7 @@ def _bootstrap_selection_state(
     var: str | None,
     ensemble_view: str | None,
     region: str | None,
+    domain: str | None = None,
     capabilities_by_model: dict[str, Any],
 ) -> dict[str, Any]:
     supported_models = sorted(capabilities_by_model.keys())
@@ -3259,21 +3269,25 @@ def _bootstrap_selection_state(
 
     model_capability = capabilities_by_model.get(selected_model) if selected_model else None
 
-    default_region = "conus"
+    # `region` here is a VIEWPORT PRESET (midwest / pnw / ...), never an
+    # artifact domain: it must not reach any data resolver, or every regional
+    # permalink would blank out (review blocker B3). Artifact selection uses
+    # `domain` only, which is None unless an explicit `domain=` was supplied.
+    default_viewport_preset = "conus"
     canonical_region = _model_canonical_region(model_capability)
-    requested_region = (region or "").strip().lower()
-    if requested_region in REGION_PRESETS:
-        selected_region = requested_region
+    requested_viewport_preset = (region or "").strip().lower()
+    if requested_viewport_preset in REGION_PRESETS:
+        selected_viewport_preset = requested_viewport_preset
     elif canonical_region in REGION_PRESETS:
-        selected_region = canonical_region
+        selected_viewport_preset = canonical_region
     else:
-        selected_region = default_region
+        selected_viewport_preset = default_viewport_preset
 
     if selected_model:
         manifest_started_at = time.perf_counter()
-        selected_run = _resolve_run(selected_model, run, region=selected_region) or _resolve_latest_run(selected_model, region=selected_region)
+        selected_run = _resolve_run(selected_model, run, domain=domain) or _resolve_latest_run(selected_model, domain=domain)
         if selected_run:
-            run_manifest = _load_manifest(selected_model, selected_run, region=selected_region)
+            run_manifest = _load_manifest(selected_model, selected_run, domain=domain)
         manifest_load_ms = (time.perf_counter() - manifest_started_at) * 1000.0
 
         requested_var = (var or "").strip()
@@ -3299,7 +3313,8 @@ def _bootstrap_selection_state(
         "selected_run": selected_run,
         "selected_var": selected_var,
         "selected_ensemble_view": selected_ensemble_view,
-        "selected_region": selected_region,
+        "selected_region": selected_viewport_preset,
+        "selected_domain": domain,
         "run_manifest": run_manifest,
         "model_capability": model_capability,
         "manifest_load_ms": manifest_load_ms,
@@ -3316,9 +3331,10 @@ def _bootstrap_state_etag(
     selected_var = str(selection_state.get("selected_var") or "")
     selected_ensemble_view = str(selection_state.get("selected_ensemble_view") or "")
     selected_region = str(selection_state.get("selected_region") or "")
+    selected_domain = selection_state.get("selected_domain")
     run_manifest = selection_state.get("run_manifest")
     manifest_token = (
-        _run_version_token(selected_model, selected_run, region=selected_region)
+        _run_version_token(selected_model, selected_run, domain=selected_domain)
         if selected_model and selected_run
         else ""
     )
@@ -3329,7 +3345,7 @@ def _bootstrap_state_etag(
             selected_var,
             run_manifest,
             ensemble_view=selected_ensemble_view,
-            region=selected_region,
+            domain=selected_domain,
         )
         if selected_model and selected_run and selected_var
         else ""
@@ -3369,48 +3385,47 @@ def _ordered_manifest_var_keys(model: str, manifest_vars: dict[str, Any]) -> lis
     return known + unknown
 
 
-def _resolve_latest_run(model: str, *, region: str | None = None) -> str | None:
+def _resolve_latest_run(model: str, *, domain: str | None = None) -> str | None:
     model_capability = list_model_capabilities().get(model)
-    pointed = _latest_run_from_pointer_for_region(model, region=region)
+    pointed = _latest_run_from_pointer_for_region(model, domain=domain)
     if pointed is not None:
         ready_vars, _ready_frame_count = _ready_runtime_state_for_run(
             model,
             pointed,
             model_capability=model_capability,
-            region=region,
+            domain=domain,
         )
         if ready_vars:
             return pointed
-    runs = _scan_manifest_runs(model, region=region)
+    runs = _scan_manifest_runs(model, domain=domain)
     for run_id in runs:
         ready_vars, _ready_frame_count = _ready_runtime_state_for_run(
             model,
             run_id,
             model_capability=model_capability,
-            region=region,
+            domain=domain,
         )
         if ready_vars:
             return run_id
     return runs[0] if runs else None
 
 
-def _resolve_run(model: str, run: str, *, region: str | None = None) -> str | None:
-    del region
+def _resolve_run(model: str, run: str, *, domain: str | None = None) -> str | None:
     if run == "latest":
-        return _resolve_latest_run(model)
+        return _resolve_latest_run(model, domain=domain)
     if not RUN_ID_RE.match(run):
         return None
     if not _run_matches_model_cycle(model, run):
         return None
-    run_dir = PUBLISHED_ROOT / model / run
-    manifest_path = _manifest_path(model, run)
+    run_dir = _published_model_root(model, domain) / run
+    manifest_path = _manifest_path(model, run, domain=domain)
     if run_dir.is_dir() and manifest_path.is_file():
         return run
     return None
 
 
-def _load_manifest(model: str, run: str, *, region: str | None = None) -> dict | None:
-    path = _manifest_path(model, run, region=region)
+def _load_manifest(model: str, run: str, *, domain: str | None = None) -> dict | None:
+    path = _manifest_path(model, run, domain=domain)
     if not path.is_file():
         return None
     return _load_json_cached(path, _manifest_cache)
@@ -3453,8 +3468,8 @@ def _manifest_run_complete(manifest: dict[str, Any]) -> bool:
     return saw_expected
 
 
-def _run_version_token(model: str, run: str, *, region: str | None = None) -> str:
-    path = _manifest_path(model, run, region=region)
+def _run_version_token(model: str, run: str, *, domain: str | None = None) -> str:
+    path = _manifest_path(model, run, domain=domain)
     try:
         mtime_ns = int(path.stat().st_mtime_ns)
     except OSError:
@@ -3462,8 +3477,8 @@ def _run_version_token(model: str, run: str, *, region: str | None = None) -> st
     return f"{run}-{mtime_ns}"
 
 
-def _grid_version_token(model: str, run: str, var: str, *, region: str | None = None) -> str:
-    path = grid_manifest_path(DATA_ROOT, model, run, var, region=region)
+def _grid_version_token(model: str, run: str, var: str, *, domain: str | None = None) -> str:
+    path = grid_manifest_path(DATA_ROOT, model, run, var, domain=domain)
     try:
         mtime_ns = int(path.stat().st_mtime_ns)
     except OSError:
@@ -3517,26 +3532,24 @@ def _runtime_var_id_for_request(model: str, var: str, ensemble_view: str | None)
     return normalized_var
 
 
-def _published_var_dir(model: str, run: str, var: str, *, region: str | None = None) -> Path:
-    del region
-    return PUBLISHED_ROOT / model / run / var
+def _published_var_dir(model: str, run: str, var: str, *, domain: str | None = None) -> Path:
+    return _published_model_root(model, domain) / run / var
 
 
 # _resolve_sidecar lives in app.services.sampling (imported above); it
 # delegates run/runtime-var/path resolution back to helpers in this module.
 
 
-def _frame_has_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None, region: str | None = None) -> bool:
+def _frame_has_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None, domain: str | None = None) -> bool:
     # `has_cog` means "a hover-samplable frame exists". Value COGs are retired;
     # the grid binary frame is the sole artifact /api/v4/sample reads. The wire
     # field keeps its name because clients depend on it.
-    return _resolve_binary_grid_frame(model, run, var, fh, ensemble_view=ensemble_view, region=region) is not None
+    return _resolve_binary_grid_frame(model, run, var, fh, ensemble_view=ensemble_view, domain=domain) is not None
 
 
-def _load_grid_manifest(model: str, run: str, var: str, *, ensemble_view: str | None = None, region: str | None = None) -> dict[str, Any] | None:
-    del region
+def _load_grid_manifest(model: str, run: str, var: str, *, ensemble_view: str | None = None, domain: str | None = None) -> dict[str, Any] | None:
     runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
-    path = grid_manifest_path(DATA_ROOT, model, run, runtime_var)
+    path = grid_manifest_path(DATA_ROOT, model, run, runtime_var, domain=domain)
     if not path.is_file():
         return None
     loaded = _load_json_cached(path, _grid_manifest_cache)
@@ -3545,11 +3558,14 @@ def _load_grid_manifest(model: str, run: str, var: str, *, ensemble_view: str | 
     return None
 
 
-def _grid_file_url(model: str, run: str, var: str, filename: str, *, version_token: str, region: str | None = None) -> str:
-    del region
+def _grid_file_url(model: str, run: str, var: str, filename: str, *, version_token: str, domain: str | None = None) -> str:
+    # Non-canonical domains carry `domains/{d}` in the PATH, immediately before
+    # `{model}` (locked decision #5). Canonical output is byte-identical to
+    # today: no `domains/` segment and no `domain=` query.
     safe_filename = Path(filename).name
+    prefix = domain_url_prefix(model, domain)
     return (
-        f"/api/v4/grid/{model}/{run}/{var}/{safe_filename}"
+        f"/api/v4/grid/{prefix}{model}/{run}/{var}/{safe_filename}"
         f"?v={version_token}"
     )
 
@@ -3574,12 +3590,12 @@ def _grid_manifest_frame_file_is_valid(
     width: int,
     height: int,
     dtype: str,
-    region: str | None = None,
+    domain: str | None = None,
 ) -> bool:
     safe_filename = Path(filename).name
     if not safe_filename or width <= 0 or height <= 0:
         return False
-    candidate = grid_frame_path(DATA_ROOT, model, run, var, 0, region=region).parent / safe_filename
+    candidate = grid_frame_path(DATA_ROOT, model, run, var, 0, domain=domain).parent / safe_filename
     if not candidate.is_file():
         return False
     expected_size_bytes = expected_grid_frame_size_bytes(width=width, height=height, dtype=dtype)
@@ -3589,14 +3605,13 @@ def _grid_manifest_frame_file_is_valid(
         return False
 
 
-def _resolve_frame_var_dir(model: str, run: str, var: str, fh: int, *, region: str | None = None) -> Path | None:
+def _resolve_frame_var_dir(model: str, run: str, var: str, fh: int, *, domain: str | None = None) -> Path | None:
     del fh
-    del region
-    resolved = _resolve_run(model, run)
+    resolved = _resolve_run(model, run, domain=domain)
     if resolved is None:
         return None
     runtime_var = _runtime_var_id_for_request(model, var, None)
-    var_dir = _published_var_dir(model, resolved, runtime_var)
+    var_dir = _published_var_dir(model, resolved, runtime_var, domain=domain)
     if not var_dir.is_dir():
         return None
     return var_dir
@@ -3610,9 +3625,14 @@ def _sample_cache_key(
     row: int,
     col: int,
     ensemble_view: str | None = None,
+    domain: str | None = None,
 ) -> str:
+    # Canonical requests keep the legacy key shape (no cold-cache blip); a
+    # non-canonical domain gets its own namespace so cross-domain values can
+    # never be served from one another's cache entry.
     view = _normalize_ensemble_view(ensemble_view) or "-"
-    return f"{model}:{run}:{var}:{view}:{fh}:{row}:{col}"
+    scope = "" if is_canonical(model, domain) else f"{normalize_domain(model, domain)}:"
+    return f"{scope}{model}:{run}:{var}:{view}:{fh}:{row}:{col}"
 
 
 def _sample_batch_cache_key(
@@ -3622,9 +3642,11 @@ def _sample_batch_cache_key(
     fh: int,
     points_hash: str,
     ensemble_view: str | None = None,
+    domain: str | None = None,
 ) -> str:
     view = _normalize_ensemble_view(ensemble_view) or "-"
-    return f"batch:{model}:{run}:{var}:{view}:{fh}:{points_hash}"
+    scope = "" if is_canonical(model, domain) else f"{normalize_domain(model, domain)}:"
+    return f"batch:{scope}{model}:{run}:{var}:{view}:{fh}:{points_hash}"
 
 
 def _sample_points_hash(points: list[SampleBatchPointIn]) -> str:
@@ -4034,6 +4056,7 @@ class MeteogramRequestIn(BaseModel):
     pinned_runs: dict[str, str] | None = None
     include_members: bool = False
     region: str | None = None
+    domain: str | None = None
 
 
 @app.post("/api/v4/forecast/meteogram")
@@ -4070,7 +4093,7 @@ def forecast_meteogram(
             run_policy=body.run_policy,
             pinned_runs=body.pinned_runs,
             include_members=body.include_members,
-            region=body.region,
+            domain=body.domain,
             entitled=entitled,
         )
     except forecast_page_service.MeteogramRequestError as exc:
@@ -4792,6 +4815,7 @@ def get_bootstrap_v4(
     var: str | None = Query(None, description="Optional preferred variable ID"),
     ensemble_view: str | None = Query(None, description="Optional ensemble view"),
     region: str | None = Query(None, description="Optional preferred region preset ID"),
+    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
     started_at = time.perf_counter()
@@ -4813,6 +4837,7 @@ def get_bootstrap_v4(
             var=var,
             ensemble_view=ensemble_view,
             region=region,
+            domain=domain,
             capabilities_by_model=capabilities_by_model,
         )
         selected_model = str(selection_state.get("selected_model") or "")
@@ -4884,7 +4909,7 @@ def get_bootstrap_v4(
                             selected_var,
                             fh,
                             ensemble_view=selected_ensemble_view,
-                            region=selected_region,
+                            domain=domain,
                         ),
                         "run": selected_run,
                         "meta": {
@@ -4894,7 +4919,7 @@ def get_bootstrap_v4(
                                 selected_var,
                                 fh,
                                 ensemble_view=selected_ensemble_view,
-                                region=selected_region,
+                                domain=domain,
                             )
                         },
                     }
@@ -4975,10 +5000,14 @@ def get_model_capabilities_v4(
 def list_runs(
     request: Request,
     model: str,
+    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
     entitlements.require_product_access(principal, model)
-    runs = _scan_manifest_runs(model)
+    domain = _request_domain_or_404(model, domain)
+    if domain is None:
+        return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
+    runs = _scan_manifest_runs(model, domain=domain)
     cache_control = _product_cache_control(model, "public, max-age=60")
     etag = _make_etag(runs)
     r304 = _maybe_304(request, etag=etag, cache_control=cache_control)
@@ -4999,16 +5028,20 @@ def get_manifest(
     model: str,
     run: str,
     region: str | None = Query(None, description="Optional region preset ID"),
+    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
     entitlements.require_product_access(principal, model)
+    domain = _request_domain_or_404(model, domain)
+    if domain is None:
+        return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
     with otel_tracing.start_as_current_span(
         "manifest.resolve",
         attributes={"cartosky.model": model, "cartosky.requested_run": run},
     ):
-        resolved = _resolve_run(model, run, region=region)
+        resolved = _resolve_run(model, run, domain=domain)
         if resolved:
             otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
@@ -5019,7 +5052,7 @@ def get_manifest(
         "manifest.load",
         attributes={"cartosky.model": model, "cartosky.run": resolved},
     ):
-        manifest = _load_manifest(model, resolved, region=region)
+        manifest = _load_manifest(model, resolved, domain=domain)
     load_ms = (time.perf_counter() - load_started_at) * 1000.0
     if manifest is None:
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
@@ -5052,15 +5085,19 @@ def list_vars(
     model: str,
     run: str,
     region: str | None = Query(None, description="Optional region preset ID"),
+    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
     model_id = model.strip().lower()
     entitlements.require_product_access(principal, model_id)
-    resolved = _resolve_run(model_id, run, region=region)
+    domain = _request_domain_or_404(model_id, domain)
+    if domain is None:
+        return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
+    resolved = _resolve_run(model_id, run, domain=domain)
     if resolved is None:
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
 
-    manifest = _load_manifest(model_id, resolved, region=region)
+    manifest = _load_manifest(model_id, resolved, domain=domain)
     if manifest is None:
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
 
@@ -5088,23 +5125,27 @@ def list_frames(
     var: str,
     ensemble_view: str | None = Query(None, description="Optional ensemble view"),
     region: str | None = Query(None, description="Optional region preset ID"),
+    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
     entitlements.require_product_access(principal, model)
+    domain = _request_domain_or_404(model, domain)
+    if domain is None:
+        return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
     with otel_tracing.start_as_current_span(
         "frames.resolve",
         attributes={"cartosky.model": model, "cartosky.requested_run": run, "cartosky.variable": var},
     ):
-        resolved = _resolve_run(model, run, region=region)
+        resolved = _resolve_run(model, run, domain=domain)
         if resolved:
             otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
     if resolved is None:
         _emit_frames_404(
             endpoint="frames", reason="stale_run", model=model, run_requested=run,
-            run_resolved=None, var=var, region=region,
+            run_resolved=None, var=var, domain=domain,
         )
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
 
@@ -5113,13 +5154,13 @@ def list_frames(
         "frames.manifest",
         attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
     ):
-        manifest = _load_manifest(model, resolved, region=region)
+        manifest = _load_manifest(model, resolved, domain=domain)
     manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
     if manifest is None:
         _emit_frames_404(
             endpoint="frames", reason="manifest_missing", model=model, run_requested=run,
             run_resolved=resolved, var=var,
-            runtime_var=_runtime_var_id_for_request(model, var, ensemble_view), region=region,
+            runtime_var=_runtime_var_id_for_request(model, var, ensemble_view), domain=domain,
         )
         return Response(status_code=404, content='{"error": "manifest not found"}', media_type="application/json")
 
@@ -5149,11 +5190,11 @@ def list_frames(
             if not isinstance(fh, int):
                 continue
 
-            meta = _resolve_sidecar(model, resolved, var, fh, ensemble_view=ensemble_view, region=region)
+            meta = _resolve_sidecar(model, resolved, var, fh, ensemble_view=ensemble_view, domain=domain)
             frames.append(
                 {
                     "fh": fh,
-                    "has_cog": _frame_has_cog(model, resolved, var, fh, ensemble_view=ensemble_view, region=region),
+                    "has_cog": _frame_has_cog(model, resolved, var, fh, ensemble_view=ensemble_view, domain=domain),
                     "run": resolved,
                     "meta": {
                         "meta": meta,
@@ -5197,30 +5238,34 @@ def get_grid_manifest(
     var: str,
     ensemble_view: str | None = Query(None, description="Optional ensemble view"),
     region: str | None = Query(None, description="Optional region preset ID"),
+    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
     entitlements.require_product_access(principal, model)
+    domain = _request_domain_or_404(model, domain)
+    if domain is None:
+        return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
     started_at = time.perf_counter()
     resolve_started_at = time.perf_counter()
     with otel_tracing.start_as_current_span(
         "grid_manifest.resolve",
         attributes={"cartosky.model": model, "cartosky.requested_run": run, "cartosky.variable": var},
     ):
-        resolved = _resolve_run(model, run, region=region)
+        resolved = _resolve_run(model, run, domain=domain)
         if resolved:
             otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved})
     resolve_ms = (time.perf_counter() - resolve_started_at) * 1000.0
     if resolved is None:
         _emit_frames_404(
             endpoint="grid_manifest", reason="stale_run", model=model, run_requested=run,
-            run_resolved=None, var=var, region=region,
+            run_resolved=None, var=var, domain=domain,
         )
         return Response(status_code=404, content='{"error": "run not found"}', media_type="application/json")
     runtime_var = _runtime_var_id_for_request(model, var, ensemble_view)
     if not grid_supported(model, runtime_var):
         _emit_frames_404(
             endpoint="grid_manifest", reason="not_supported", model=model, run_requested=run,
-            run_resolved=resolved, var=var, runtime_var=runtime_var, region=region,
+            run_resolved=resolved, var=var, runtime_var=runtime_var, domain=domain,
         )
         return Response(status_code=404, content='{"error": "grid manifest not enabled"}', media_type="application/json")
 
@@ -5229,16 +5274,16 @@ def get_grid_manifest(
         "grid_manifest.load",
         attributes={"cartosky.model": model, "cartosky.run": resolved, "cartosky.variable": var},
     ):
-        manifest = _load_grid_manifest(model, resolved, var, ensemble_view=ensemble_view, region=region)
+        manifest = _load_grid_manifest(model, resolved, var, ensemble_view=ensemble_view, domain=domain)
     manifest_ms = (time.perf_counter() - manifest_started_at) * 1000.0
     if manifest is None:
         _emit_frames_404(
             endpoint="grid_manifest", reason="manifest_missing", model=model, run_requested=run,
-            run_resolved=resolved, var=var, runtime_var=runtime_var, region=region,
+            run_resolved=resolved, var=var, runtime_var=runtime_var, domain=domain,
         )
         return Response(status_code=404, content='{"error": "grid manifest not found"}', media_type="application/json")
 
-    version_token = _grid_version_token(model, resolved, runtime_var, region=region)
+    version_token = _grid_version_token(model, resolved, runtime_var, domain=domain)
     build_started_at = time.perf_counter()
     payload = dict(manifest)
     plugin = get_model(model)
@@ -5273,7 +5318,7 @@ def get_grid_manifest(
                         width=frame_width,
                         height=frame_height,
                         dtype=grid_dtype,
-                        region=region,
+                        domain=domain,
                     ):
                         continue
                     next_frame = dict(frame)
@@ -5283,7 +5328,7 @@ def get_grid_manifest(
                         runtime_var,
                         filename,
                         version_token=version_token,
-                        region=region,
+                        domain=domain,
                     )
                     next_frames.append(next_frame)
             next_frames.sort(key=lambda item: int(item.get("fh", 0)))
@@ -5329,7 +5374,7 @@ def get_grid_manifest(
                                 width=frame_width,
                                 height=frame_height,
                                 dtype=contour_dtype,
-                                region=region,
+                                domain=domain,
                             ):
                                 continue
                             next_frame = dict(frame)
@@ -5339,7 +5384,7 @@ def get_grid_manifest(
                                 runtime_var,
                                 filename,
                                 version_token=version_token,
-                                region=region,
+                                domain=domain,
                             )
                             next_frames.append(next_frame)
                     next_frames.sort(key=lambda item: int(item.get("fh", 0)))
@@ -5567,7 +5612,7 @@ def _match_grid_manifest_file(
 
 
 def _seconds_since_publish(
-    model: str, resolved: str, runtime_var: str, *, region: str | None = None
+    model: str, resolved: str, runtime_var: str, *, domain: str | None = None
 ) -> float | None:
     """Seconds since the most recent publish-relevant mtime for a resolved run.
 
@@ -5575,12 +5620,11 @@ def _seconds_since_publish(
     signature). Stat-only, on the 404 path; OSError → ignored path → None if
     nothing is stat-able.
     """
-    del region
     mtimes: list[float] = []
     for path in (
-        PUBLISHED_ROOT / model / resolved,
-        grid_manifest_path(DATA_ROOT, model, resolved, runtime_var),
-        _manifest_path(model, resolved),
+        _published_model_root(model, domain) / resolved,
+        grid_manifest_path(DATA_ROOT, model, resolved, runtime_var, domain=domain),
+        _manifest_path(model, resolved, domain=domain),
     ):
         try:
             mtimes.append(path.stat().st_mtime)
@@ -5601,14 +5645,14 @@ def _emit_frames_404(
     var: str,
     runtime_var: str | None = None,
     filename_or_fh: str | None = None,
-    region: str | None = None,
+    domain: str | None = None,
 ) -> None:
     """Best-effort classified-404 telemetry. Never alters or blocks the route."""
     try:
         seconds = None
         if run_resolved is not None:
             seconds = _seconds_since_publish(
-                model, run_resolved, runtime_var or var, region=region,
+                model, run_resolved, runtime_var or var, domain=domain,
             )
         frames_404_telemetry.record_frames_404(
             data_root=DATA_ROOT,
@@ -5620,6 +5664,7 @@ def _emit_frames_404(
             var=var,
             filename_or_fh=filename_or_fh,
             seconds_since_publish=seconds,
+            domain=normalize_domain(model, domain),
         )
     except Exception:  # noqa: BLE001 - telemetry must never break the route
         logger.debug("frames_404 telemetry record failed", exc_info=True)
@@ -5631,33 +5676,36 @@ def _get_grid_file(
     var: str,
     filename: str,
     *,
-    region: str | None = None,
+    domain: str | None = None,
     principal: ClerkPrincipal | None = None,
 ):
     entitlements.require_product_access(principal, model)
+    domain = _request_domain_or_404(model, domain)
+    if domain is None:
+        raise HTTPException(status_code=404, detail="Run not found")
     started_at = time.perf_counter()
-    resolved = _resolve_run(model, run, region=region)
+    resolved = _resolve_run(model, run, domain=domain)
     if resolved is None:
         _emit_frames_404(
             endpoint="grid_file", reason="stale_run", model=model, run_requested=run,
-            run_resolved=None, var=var, filename_or_fh=Path(filename).name,
+            run_resolved=None, var=var, filename_or_fh=Path(filename).name, domain=domain,
         )
         raise HTTPException(status_code=404, detail="Run not found")
     if not grid_supported(model, var):
         _emit_frames_404(
             endpoint="grid_file", reason="not_supported", model=model, run_requested=run,
-            run_resolved=resolved, var=var, filename_or_fh=Path(filename).name, region=region,
+            run_resolved=resolved, var=var, filename_or_fh=Path(filename).name, domain=domain,
         )
         raise HTTPException(status_code=404, detail="Grid artifact not enabled")
     safe_filename = Path(filename).name
-    candidate = grid_frame_path(DATA_ROOT, model, resolved, var, 0, region=region).parent / safe_filename
+    candidate = grid_frame_path(DATA_ROOT, model, resolved, var, 0, domain=domain).parent / safe_filename
     if not candidate.is_file():
         # File missing on disk: a frame listed in the current manifest is the
         # 2.1 swap-gap signature (published state internally inconsistent); an
         # unlisted frame is benign (never built / never existed).
         reason = "not_published"
         try:
-            classify_manifest = _load_grid_manifest(model, resolved, var, region=region)
+            classify_manifest = _load_grid_manifest(model, resolved, var, domain=domain)
             matched, _, _, _ = _match_grid_manifest_file(
                 classify_manifest, safe_filename, width=0, height=0, dtype="uint16",
             )
@@ -5666,10 +5714,10 @@ def _get_grid_file(
             reason = "not_published"
         _emit_frames_404(
             endpoint="grid_file", reason=reason, model=model, run_requested=run,
-            run_resolved=resolved, var=var, filename_or_fh=safe_filename, region=region,
+            run_resolved=resolved, var=var, filename_or_fh=safe_filename, domain=domain,
         )
         raise HTTPException(status_code=404, detail="Grid artifact not found")
-    manifest = _load_grid_manifest(model, resolved, var, region=region)
+    manifest = _load_grid_manifest(model, resolved, var, domain=domain)
     grid_meta = manifest.get("grid") if isinstance(manifest, dict) else None
     width = int(grid_meta.get("width") or 0) if isinstance(grid_meta, dict) else 0
     height = int(grid_meta.get("height") or 0) if isinstance(grid_meta, dict) else 0
@@ -5682,7 +5730,7 @@ def _get_grid_file(
         # direction publish inconsistency, also swap-window evidence.
         _emit_frames_404(
             endpoint="grid_file", reason="manifest_skew", model=model, run_requested=run,
-            run_resolved=resolved, var=var, filename_or_fh=safe_filename, region=region,
+            run_resolved=resolved, var=var, filename_or_fh=safe_filename, domain=domain,
         )
         raise HTTPException(status_code=404, detail="Grid artifact not listed in manifest")
     if width > 0 and height > 0:
@@ -5691,7 +5739,7 @@ def _get_grid_file(
         if actual_size_bytes != expected_size_bytes:
             _emit_frames_404(
                 endpoint="grid_file", reason="size_mismatch", model=model, run_requested=run,
-                run_resolved=resolved, var=var, filename_or_fh=safe_filename, region=region,
+                run_resolved=resolved, var=var, filename_or_fh=safe_filename, domain=domain,
             )
             raise HTTPException(status_code=404, detail="Grid artifact invalid")
     timing_header = _format_server_timing(
@@ -5725,6 +5773,33 @@ def _get_grid_file(
     )
 
 
+# The `domains/`-prefixed variants are declared BEFORE the parameterized
+# canonical routes so FastAPI can never bind `model="domains"` (locked design
+# §2). Canonical routes below are byte-identical to pre-Phase-2A.
+@app.get("/api/v4/grid/domains/{domain}/{model}/{run}/{var}/{filename}")
+def get_grid_file_for_domain(
+    domain: str,
+    model: str,
+    run: str,
+    var: str,
+    filename: str,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
+    return _get_grid_file(model, run, var, filename, domain=domain, principal=principal)
+
+
+@app.get("/api/v4/grid/v1/domains/{domain}/{model}/{run}/{var}/{filename}")
+def get_grid_file_compat_for_domain(
+    domain: str,
+    model: str,
+    run: str,
+    var: str,
+    filename: str,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
+    return _get_grid_file(model, run, var, filename, domain=domain, principal=principal)
+
+
 @app.get("/api/v4/grid/{model}/{run}/{var}/{filename}")
 def get_grid_file(
     model: str,
@@ -5732,9 +5807,10 @@ def get_grid_file(
     var: str,
     filename: str,
     region: str | None = Query(None, description="Optional region preset ID"),
+    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
-    return _get_grid_file(model, run, var, filename, region=region, principal=principal)
+    return _get_grid_file(model, run, var, filename, domain=domain, principal=principal)
 
 
 @app.get("/api/v4/grid/v1/{model}/{run}/{var}/{filename}")
@@ -5744,9 +5820,10 @@ def get_grid_file_compat(
     var: str,
     filename: str,
     region: str | None = Query(None, description="Optional region preset ID"),
+    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
-    return _get_grid_file(model, run, var, filename, region=region, principal=principal)
+    return _get_grid_file(model, run, var, filename, domain=domain, principal=principal)
 
 
 @app.get("/api/v4/sample")
@@ -5756,6 +5833,7 @@ def sample(
     run: str = Query(..., description="Run ID (e.g. 20260217_20z or latest)"),
     var: str = Query(..., description="Variable ID (e.g. tmp2m)"),
     region: str | None = Query(None, description="Optional region preset ID"),
+    domain: str | None = Query(None, description="Optional artifact domain ID"),
     ensemble_view: str | None = Query(None, description="Optional ensemble view"),
     fh: int = Query(..., description="Forecast hour"),
     lat: float = Query(..., ge=-90, le=90, description="Latitude (WGS84)"),
@@ -5763,6 +5841,10 @@ def sample(
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
     entitlements.require_product_access(principal, model)
+    domain = _request_domain_or_404(model, domain)
+    if domain is None:
+        # Response body is retained verbatim: clients match on it.
+        return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
     client_id = request.client.host if request.client and request.client.host else "unknown"
     otel_tracing.set_current_attributes(
         {
@@ -5785,7 +5867,7 @@ def sample(
 
     with otel_tracing.start_as_current_span("sample.resolve_binary_frame"):
         binary_frame = _resolve_binary_grid_frame(
-            model, run, var, fh, ensemble_view=ensemble_view, region=region
+            model, run, var, fh, ensemble_view=ensemble_view, domain=domain
         )
     if binary_frame is None:
         # Response body is retained verbatim: clients match on it.
@@ -5798,8 +5880,8 @@ def sample(
             row, col = _sample_binary_frame_index(frame_meta, lon=lon, lat=lat)
             grid_height = int(frame_meta["height"])
             grid_width = int(frame_meta["width"])
-            resolved_run = _resolve_run(model, run, region=region) or run
-            sidecar = _resolve_sidecar(model, run, var, fh, ensemble_view=ensemble_view, region=region)
+            resolved_run = _resolve_run(model, run, domain=domain) or run
+            sidecar = _resolve_sidecar(model, run, var, fh, ensemble_view=ensemble_view, domain=domain)
             units = sidecar.get("units", "") if sidecar else ""
             valid_time = sidecar.get("valid_time", "") if sidecar else ""
             otel_tracing.set_current_attributes({"cartosky.resolved_run": resolved_run})
@@ -5820,7 +5902,7 @@ def sample(
             return JSONResponse(content=payload, headers={"Cache-Control": "private, max-age=300"})
 
         key = _sample_cache_key(
-            model, resolved_run, var, fh, row, col, ensemble_view
+            model, resolved_run, var, fh, row, col, ensemble_view, domain
         )
         now = time.monotonic()
         inflight: _SampleInflight | None = None
@@ -5940,6 +6022,10 @@ def sample_batch(
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
     entitlements.require_product_access(principal, body.model)
+    batch_domain = _request_domain_or_404(body.model, body.domain)
+    if batch_domain is None:
+        # Response body is retained verbatim: clients match on it.
+        return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
     model_capability = list_model_capabilities().get(body.model.strip().lower())
     ui_constraints = getattr(model_capability, "ui_constraints", {}) or {}
     if ui_constraints.get("supports_sampling") is False:
@@ -5975,13 +6061,13 @@ def sample_batch(
             body.variable,
             body.forecast_hour,
             ensemble_view=body.ensemble_view,
-            region=body.region,
+            domain=batch_domain,
         )
     if binary_frame is None:
         # Response body is retained verbatim: clients match on it.
         return Response(status_code=404, content='{"error": "val.cog.tif not found"}', media_type="application/json")
 
-    resolved_run = _resolve_run(body.model, body.run, region=body.region) or body.run
+    resolved_run = _resolve_run(body.model, body.run, domain=batch_domain) or body.run
     key = _sample_batch_cache_key(
         body.model,
         resolved_run,
@@ -5989,6 +6075,7 @@ def sample_batch(
         body.forecast_hour,
         _sample_points_hash(body.points),
         body.ensemble_view,
+        batch_domain,
     )
     now = time.monotonic()
     inflight: _SampleInflight | None = None
@@ -6041,7 +6128,7 @@ def sample_batch(
                 body.variable,
                 body.forecast_hour,
                 ensemble_view=body.ensemble_view,
-                region=body.region,
+                domain=batch_domain,
             )
             units = sidecar.get("units", "") if sidecar else ""
             # runtime_var (from _resolve_binary_grid_frame) is the id the
@@ -6091,6 +6178,19 @@ def sample_batch(
         return Response(status_code=500, content='{"error": "internal error"}', media_type="application/json")
 
 
+@app.get("/api/v4/domains/{domain}/{model}/{run}/{var}/{fh:int}/contours/{key}")
+def get_contour_geojson_for_domain(
+    domain: str,
+    model: str,
+    run: str,
+    var: str,
+    fh: int,
+    key: str,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
+    return _get_contour_geojson(model, run, var, fh, key, domain=domain, principal=principal)
+
+
 @app.get("/api/v4/{model}/{run}/{var}/{fh:int}/contours/{key}")
 def get_contour_geojson(
     model: str,
@@ -6099,11 +6199,28 @@ def get_contour_geojson(
     fh: int,
     key: str,
     region: str | None = Query(None, description="Optional region preset ID"),
+    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
+    return _get_contour_geojson(model, run, var, fh, key, domain=domain, principal=principal)
+
+
+def _get_contour_geojson(
+    model: str,
+    run: str,
+    var: str,
+    fh: int,
+    key: str,
+    *,
+    domain: str | None = None,
+    principal: ClerkPrincipal | None = None,
+):
     entitlements.require_product_access(principal, model)
+    domain = _request_domain_or_404(model, domain)
+    if domain is None:
+        raise HTTPException(status_code=404, detail="Frame not found")
     started_at = time.perf_counter()
-    var_dir = _resolve_frame_var_dir(model, run, var, fh, region=region)
+    var_dir = _resolve_frame_var_dir(model, run, var, fh, domain=domain)
     if var_dir is None:
         raise HTTPException(status_code=404, detail="Frame not found")
 
@@ -6165,6 +6282,19 @@ def get_contour_geojson(
         raise HTTPException(status_code=500, detail=f"Failed to read contour GeoJSON: {exc}") from exc
 
 
+@app.get("/api/v4/domains/{domain}/{model}/{run}/{var}/{fh:int}/vectors/{key}")
+def get_vector_geojson_for_domain(
+    domain: str,
+    model: str,
+    run: str,
+    var: str,
+    fh: int,
+    key: str,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
+    return _get_vector_geojson(model, run, var, fh, key, domain=domain, principal=principal)
+
+
 @app.get("/api/v4/{model}/{run}/{var}/{fh:int}/vectors/{key}")
 def get_vector_geojson(
     model: str,
@@ -6173,11 +6303,28 @@ def get_vector_geojson(
     fh: int,
     key: str,
     region: str | None = Query(None, description="Optional region preset ID"),
+    domain: str | None = Query(None, description="Optional artifact domain ID"),
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
+    return _get_vector_geojson(model, run, var, fh, key, domain=domain, principal=principal)
+
+
+def _get_vector_geojson(
+    model: str,
+    run: str,
+    var: str,
+    fh: int,
+    key: str,
+    *,
+    domain: str | None = None,
+    principal: ClerkPrincipal | None = None,
+):
     entitlements.require_product_access(principal, model)
+    domain = _request_domain_or_404(model, domain)
+    if domain is None:
+        raise HTTPException(status_code=404, detail="Frame not found")
     started_at = time.perf_counter()
-    var_dir = _resolve_frame_var_dir(model, run, var, fh, region=region)
+    var_dir = _resolve_frame_var_dir(model, run, var, fh, domain=domain)
     if var_dir is None:
         raise HTTPException(status_code=404, detail="Frame not found")
 
