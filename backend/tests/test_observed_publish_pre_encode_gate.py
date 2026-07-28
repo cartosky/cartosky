@@ -1,5 +1,5 @@
 """Pre-encode gate for the observed-product publishers (current_analysis,
-GOES-East, MRMS) — dual mode, mirroring test_publish_pre_encode_shadow_gate.py.
+GOES-East, MRMS) — enforced, mirroring test_publish_pre_encode_gate.py.
 
 Same invariants as the NDFD/WPC template:
 - ``check_pre_encode_value_sanity`` runs UNCONDITIONALLY on every fresh frame
@@ -39,19 +39,6 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services import goes_publish, mrms_publish, rtma_ru_publish
 
 
-def _set_allowlist(monkeypatch: pytest.MonkeyPatch, allowlist: str) -> None:
-    """Post-inversion shim preserving this file's original mode semantics:
-    a truthy value = binary mode, which is now the zero-config DEFAULT; "" =
-    the old shadow/COG mode, now expressed by opting this file's models out
-    via CARTOSKY_COG_SAMPLING_MODELS. The retired opt-in allowlist env is
-    always cleared (it is a no-op)."""
-    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS", raising=False)
-    if allowlist:
-        monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
-    else:
-        monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "current_analysis,goes-east,mrms")
-
-
 def _fail_if_called(name: str):
     def _spy(*args, **kwargs):
         raise AssertionError(f"{name} must not be called")
@@ -71,20 +58,6 @@ def _grid_spies(monkeypatch: pytest.MonkeyPatch, module) -> list[tuple[str, int]
     )
     monkeypatch.setattr(module, "build_grid_manifests_for_run_root", lambda **kwargs: 0)
     return grid_calls
-
-
-def _cog_recorder(monkeypatch: pytest.MonkeyPatch, module) -> list[str]:
-    """Record value-COG writes by the var-directory name they land in."""
-    cog_calls: list[str] = []
-    monkeypatch.setattr(
-        module,
-        "write_value_cog",
-        lambda values, output_path, **kwargs: (
-            cog_calls.append(Path(output_path).parent.name),
-            Path(output_path).write_bytes(b"value"),
-        )[1],
-    )
-    return cog_calls
 
 
 def _mock_sidecar(monkeypatch: pytest.MonkeyPatch, module, attr: str) -> None:
@@ -120,7 +93,7 @@ def _ca_frame(values_by_var: dict[str, np.ndarray]) -> rtma_ru_publish.CurrentAn
     )
 
 
-def _ca_harness(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def _ca_harness(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rtma_ru_publish, "grid_build_enabled", lambda: False)
     monkeypatch.setattr(
         rtma_ru_publish,
@@ -131,7 +104,6 @@ def _ca_harness(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         ),
     )
     _mock_sidecar(monkeypatch, rtma_ru_publish, "_build_sidecar_json")
-    return _cog_recorder(monkeypatch, rtma_ru_publish)
 
 
 def _publish_ca(tmp_path: Path, values_by_var: dict[str, np.ndarray]):
@@ -142,35 +114,8 @@ def _publish_ca(tmp_path: Path, values_by_var: dict[str, np.ndarray]):
     )
 
 
-@pytest.mark.parametrize("allowlist", ["", "current_analysis"])
-def test_current_analysis_gate_runs_regardless_of_allowlist(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, allowlist: str
-) -> None:
-    _set_allowlist(monkeypatch, allowlist)
-    cog_calls = _ca_harness(monkeypatch)
-    labels = _gate_spy(monkeypatch, rtma_ru_publish, result=True)
-
-    result = _publish_ca(tmp_path, {"tmp2m": _GOOD_TEMPS})
-
-    assert result.frame_count == 1
-    assert labels == ["current_analysis/tmp2m/fh000"]
-    assert cog_calls == ([] if allowlist else ["tmp2m"])
 
 
-def test_current_analysis_shadow_gate_failure_never_rejects(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    _set_allowlist(monkeypatch, "")
-    cog_calls = _ca_harness(monkeypatch)
-    monkeypatch.setattr(rtma_ru_publish, "check_pre_encode_value_sanity", lambda *a, **k: False)
-
-    with caplog.at_level("WARNING"):
-        result = _publish_ca(tmp_path, {"tmp2m": _GOOD_TEMPS})
-
-    assert result.frame_count == 1
-    assert cog_calls == ["tmp2m"]
-    assert (result.published_run_dir / "tmp2m" / "fh000.val.cog.tif").is_file()
-    assert any("Phase C shadow gate failed" in r.getMessage() for r in caplog.records)
 
 
 def test_current_analysis_enforced_gate_rejects_variable_not_whole_frame(
@@ -191,9 +136,7 @@ def test_current_analysis_enforced_gate_rejects_variable_not_whole_frame(
         is False
     )
 
-    _set_allowlist(monkeypatch, "current_analysis")
     _ca_harness(monkeypatch)
-    monkeypatch.setattr(rtma_ru_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     grid_calls = _grid_spies(monkeypatch, rtma_ru_publish)
 
     with caplog.at_level("INFO"):
@@ -213,12 +156,10 @@ def test_current_analysis_enforced_gate_rejects_variable_not_whole_frame(
     assert manifest["metadata"]["variables_published"] == ["tmp2m"]
 
 
-def test_current_analysis_binary_only_good_frame_skips_cog_but_writes_grid(
+def test_current_analysis_good_frame_writes_grid(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    _set_allowlist(monkeypatch, "current_analysis")
     _ca_harness(monkeypatch)
-    monkeypatch.setattr(rtma_ru_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     grid_calls = _grid_spies(monkeypatch, rtma_ru_publish)
 
     with caplog.at_level("INFO"):
@@ -227,11 +168,6 @@ def test_current_analysis_binary_only_good_frame_skips_cog_but_writes_grid(
     assert result.frame_count == 1
     assert grid_calls == [("tmp2m", 0)]
     assert (result.published_run_dir / "tmp2m" / "fh000.json").is_file()
-    assert not (result.published_run_dir / "tmp2m" / "fh000.val.cog.tif").exists()
-    assert any(
-        "Value COG write skipped (model=current_analysis is binary-only)" in r.getMessage()
-        for r in caplog.records
-    )
 
 
 # ── GOES-East ────────────────────────────────────────────────────────
@@ -252,7 +188,7 @@ def _goes_frame(values: np.ndarray, *, slot_offset_minutes: int = 0) -> goes_pub
     )
 
 
-def _goes_harness(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def _goes_harness(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(goes_publish, "grid_build_enabled", lambda: False)
     monkeypatch.setattr(
         goes_publish,
@@ -263,7 +199,6 @@ def _goes_harness(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         ),
     )
     _mock_sidecar(monkeypatch, goes_publish, "build_sidecar_json")
-    return _cog_recorder(monkeypatch, goes_publish)
 
 
 def _publish_goes(tmp_path: Path, frames, *, band_config=None, publish_offset_minutes: int = 5):
@@ -275,35 +210,8 @@ def _publish_goes(tmp_path: Path, frames, *, band_config=None, publish_offset_mi
     )
 
 
-@pytest.mark.parametrize("allowlist", ["", "goes-east"])
-def test_goes_gate_runs_regardless_of_allowlist(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, allowlist: str
-) -> None:
-    _set_allowlist(monkeypatch, allowlist)
-    cog_calls = _goes_harness(monkeypatch)
-    labels = _gate_spy(monkeypatch, goes_publish, result=True)
-
-    result = _publish_goes(tmp_path, [_goes_frame(_GOOD_BT)])
-
-    assert result.frame_count == 1
-    assert labels == ["goes-east/ir13/fh000"]
-    assert cog_calls == ([] if allowlist else ["ir13"])
 
 
-def test_goes_shadow_gate_failure_never_rejects(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    _set_allowlist(monkeypatch, "")
-    cog_calls = _goes_harness(monkeypatch)
-    monkeypatch.setattr(goes_publish, "check_pre_encode_value_sanity", lambda *a, **k: False)
-
-    with caplog.at_level("WARNING"):
-        result = _publish_goes(tmp_path, [_goes_frame(_GOOD_BT)])
-
-    assert result.frame_count == 1
-    assert cog_calls == ["ir13"]
-    assert (result.published_run_dir / "ir13" / "fh000.val.cog.tif").is_file()
-    assert any("Phase C shadow gate failed" in r.getMessage() for r in caplog.records)
 
 
 def test_goes_enforced_gate_rejects_bad_frame_before_any_write(
@@ -322,9 +230,7 @@ def test_goes_enforced_gate_rejects_bad_frame_before_any_write(
         is False
     )
 
-    _set_allowlist(monkeypatch, "goes-east")
     _goes_harness(monkeypatch)
-    monkeypatch.setattr(goes_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     grid_calls = _grid_spies(monkeypatch, goes_publish)
 
     good = _goes_frame(_GOOD_BT, slot_offset_minutes=0)
@@ -342,18 +248,15 @@ def test_goes_enforced_gate_rejects_bad_frame_before_any_write(
     )
     assert (result.published_run_dir / "ir13" / "fh000.json").is_file()
     assert not (result.published_run_dir / "ir13" / "fh001.json").exists()
-    assert not (result.published_run_dir / "ir13" / "fh001.val.cog.tif").exists()
     manifest = json.loads(result.manifest_path.read_text())
     assert manifest["variables"]["ir13"]["available_frames"] == 1
     assert [f["fh"] for f in manifest["variables"]["ir13"]["frames"]] == [0]
 
 
-def test_goes_binary_only_good_frame_skips_cog_but_writes_grid(
+def test_goes_good_frame_writes_grid(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    _set_allowlist(monkeypatch, "goes-east")
     _goes_harness(monkeypatch)
-    monkeypatch.setattr(goes_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     grid_calls = _grid_spies(monkeypatch, goes_publish)
 
     with caplog.at_level("INFO"):
@@ -362,11 +265,6 @@ def test_goes_binary_only_good_frame_skips_cog_but_writes_grid(
     assert result.frame_count == 1
     assert grid_calls == [("ir13", 0)]
     assert (result.published_run_dir / "ir13" / "fh000.json").is_file()
-    assert not (result.published_run_dir / "ir13" / "fh000.val.cog.tif").exists()
-    assert any(
-        "Value COG write skipped (model=goes-east is binary-only)" in r.getMessage()
-        for r in caplog.records
-    )
 
 
 def test_goes_two_bands_gated_independently(
@@ -375,7 +273,6 @@ def test_goes_two_bands_gated_independently(
     # This publisher runs once per band (band_config), each invocation minting
     # its own run — the gate must fire for every band's publish with that
     # band's own var id, not just the first band ever published.
-    _set_allowlist(monkeypatch, "")
     _goes_harness(monkeypatch)
     labels = _gate_spy(monkeypatch, goes_publish, result=True)
 
@@ -417,7 +314,7 @@ def _mrms_supplemental_frame(values: np.ndarray) -> mrms_publish.MRMSSupplementa
     )
 
 
-def _mrms_harness(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def _mrms_harness(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mrms_publish, "grid_build_enabled", lambda: False)
     # Frames in these tests carry no source CRS; pass each frame's own values
     # through unchanged instead of enforcing the real CONUS target shape.
@@ -433,7 +330,6 @@ def _mrms_harness(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         lambda values, color_map_id, meta_var_key=None: {"kind": "discrete", "min": 0.0, "max": 70.0},
     )
     _mock_sidecar(monkeypatch, mrms_publish, "build_sidecar_json")
-    return _cog_recorder(monkeypatch, mrms_publish)
 
 
 def _publish_mrms(tmp_path: Path, frames, **kwargs):
@@ -445,39 +341,8 @@ def _publish_mrms(tmp_path: Path, frames, **kwargs):
     )
 
 
-@pytest.mark.parametrize("allowlist", ["", "mrms"])
-def test_mrms_gate_runs_regardless_of_allowlist_for_refl_and_ptype(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, allowlist: str
-) -> None:
-    # A frame with PrecipFlag exercises two of the four gated sites in one
-    # publish: the reflectivity write and the composited radar_ptype write,
-    # each gated under its own var id.
-    _set_allowlist(monkeypatch, allowlist)
-    cog_calls = _mrms_harness(monkeypatch)
-    labels = _gate_spy(monkeypatch, mrms_publish, result=True)
-
-    flags = np.ones_like(_GOOD_REFL)  # rain everywhere
-    result = _publish_mrms(tmp_path, [_mrms_frame(_GOOD_REFL, precip_flag_values=flags)])
-
-    assert result.frame_count == 1
-    assert labels == ["mrms/reflectivity/fh000", "mrms/mrms_radar_ptype/fh000"]
-    assert cog_calls == ([] if allowlist else ["reflectivity", "mrms_radar_ptype"])
 
 
-def test_mrms_shadow_gate_failure_never_rejects(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    _set_allowlist(monkeypatch, "")
-    cog_calls = _mrms_harness(monkeypatch)
-    monkeypatch.setattr(mrms_publish, "check_pre_encode_value_sanity", lambda *a, **k: False)
-
-    with caplog.at_level("WARNING"):
-        result = _publish_mrms(tmp_path, [_mrms_frame(_GOOD_REFL)])
-
-    assert result.frame_count == 1
-    assert cog_calls == ["reflectivity"]
-    assert (result.published_run_dir / "reflectivity" / "fh000.val.cog.tif").is_file()
-    assert any("Phase C shadow gate failed" in r.getMessage() for r in caplog.records)
 
 
 def test_mrms_enforced_gate_rejects_bad_frame_before_any_write(
@@ -496,9 +361,7 @@ def test_mrms_enforced_gate_rejects_bad_frame_before_any_write(
         is False
     )
 
-    _set_allowlist(monkeypatch, "mrms")
     _mrms_harness(monkeypatch)
-    monkeypatch.setattr(mrms_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     grid_calls = _grid_spies(monkeypatch, mrms_publish)
 
     good = _mrms_frame(_GOOD_REFL, valid_offset_minutes=0)
@@ -521,12 +384,10 @@ def test_mrms_enforced_gate_rejects_bad_frame_before_any_write(
     assert [f["fh"] for f in manifest["variables"]["reflectivity"]["frames"]] == [0]
 
 
-def test_mrms_binary_only_good_frame_skips_cog_but_writes_grid(
+def test_mrms_good_frame_writes_grid(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    _set_allowlist(monkeypatch, "mrms")
     _mrms_harness(monkeypatch)
-    monkeypatch.setattr(mrms_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     grid_calls = _grid_spies(monkeypatch, mrms_publish)
 
     with caplog.at_level("INFO"):
@@ -535,11 +396,6 @@ def test_mrms_binary_only_good_frame_skips_cog_but_writes_grid(
     assert result.frame_count == 1
     assert grid_calls == [("reflectivity", 0)]
     assert (result.published_run_dir / "reflectivity" / "fh000.json").is_file()
-    assert not (result.published_run_dir / "reflectivity" / "fh000.val.cog.tif").exists()
-    assert any(
-        "Value COG write skipped (model=mrms is binary-only)" in r.getMessage()
-        for r in caplog.records
-    )
 
 
 def test_mrms_ptype_rejection_uses_indexed_spec_and_degrades_to_reflectivity_only(
@@ -569,9 +425,7 @@ def test_mrms_ptype_rejection_uses_indexed_spec_and_degrades_to_reflectivity_onl
         is False
     )
 
-    _set_allowlist(monkeypatch, "mrms")
     _mrms_harness(monkeypatch)
-    monkeypatch.setattr(mrms_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     grid_calls = _grid_spies(monkeypatch, mrms_publish)
 
     with caplog.at_level("INFO"):
@@ -615,9 +469,7 @@ def test_mrms_finalize_deferred_supplemental_path_is_gated(
         is False
     )
 
-    _set_allowlist(monkeypatch, "mrms")
     _mrms_harness(monkeypatch)
-    monkeypatch.setattr(mrms_publish, "write_value_cog", _fail_if_called("write_value_cog"))
 
     run_id = "20260712_1804z"
     published_run_root = tmp_path / "published" / "mrms" / run_id / "reflectivity"
@@ -649,9 +501,7 @@ def test_mrms_finalize_deferred_supplemental_path_is_gated(
     # fh000 (bad) rejected: no artifacts; fh001 (good) written with sidecar
     # but no value COG (binary-only skip applies on this path too).
     assert not (var_dir / "fh000.json").exists()
-    assert not (var_dir / "fh000.val.cog.tif").exists()
     assert (var_dir / "fh001.json").is_file()
-    assert not (var_dir / "fh001.val.cog.tif").exists()
     assert any(
         "Pre-encode sanity gate rejected frame" in r.getMessage()
         and "model=mrms var=mrms_recent_precip_6h fh000" in r.getMessage()

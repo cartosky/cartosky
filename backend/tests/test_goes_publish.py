@@ -35,15 +35,7 @@ def _write_test_value_raster(path: Path, values: np.ndarray) -> None:
 
 
 def _configure_publish(monkeypatch: pytest.MonkeyPatch) -> None:
-    # These tests exercise the retained legacy COG publish flow: opt the model
-    # out of the (now default) binary-only substrate.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "goes-east")
-    monkeypatch.setattr(goes_publish, "grid_build_enabled", lambda: False)
-    monkeypatch.setattr(
-        goes_publish,
-        "write_value_cog",
-        lambda values, output_path, **_: _write_test_value_raster(Path(output_path), np.asarray(values, dtype=np.float32)) or Path(output_path),
-    )
+    monkeypatch.setattr(goes_publish, "grid_build_enabled", lambda: True)
     monkeypatch.setattr(
         goes_publish,
         "float_to_rgba",
@@ -111,7 +103,8 @@ def test_publish_goes_bundle_reuses_previous_frame_by_slot_time(tmp_path: Path, 
     first = goes_publish.GOESBundleFrame(
         valid_time=slot + timedelta(minutes=2),
         slot_time=slot,
-        values=np.ones((2, 2), dtype=np.float32) * 250.0,
+        # Non-constant: the enforced pre-encode gate rejects flat frames.
+        values=250.0 + np.arange(4, dtype=np.float32).reshape(2, 2),
         transform=from_origin(0.0, 2.0, 1.0, 1.0),
         source_metadata={"slot_time": "2026-05-21T12:00:00Z"},
     )
@@ -131,7 +124,7 @@ def test_publish_goes_bundle_reuses_previous_frame_by_slot_time(tmp_path: Path, 
         target_frame_count=1,
     )
     assert second_result.run_id == "20260521_1210z"
-    assert (second_result.published_run_dir / "ir13" / "fh000.val.cog.tif").exists()
+    assert (second_result.published_run_dir / "ir13" / "grid" / "fh000.l0.meta.json").exists()
     assert first_result.run_id != second_result.run_id
 
 
@@ -144,7 +137,8 @@ def test_publish_goes_bundle_seeds_new_run_with_previous_latest_sibling_variable
     ir_frame = goes_publish.GOESBundleFrame(
         valid_time=slot + timedelta(minutes=2),
         slot_time=slot,
-        values=np.ones((2, 2), dtype=np.float32) * 250.0,
+        # Non-constant: the enforced pre-encode gate rejects flat frames.
+        values=250.0 + np.arange(4, dtype=np.float32).reshape(2, 2),
         transform=from_origin(0.0, 2.0, 1.0, 1.0),
         source_metadata={"slot_time": "2026-05-21T12:00:00Z"},
     )
@@ -170,8 +164,8 @@ def test_publish_goes_bundle_seeds_new_run_with_previous_latest_sibling_variable
     )
 
     assert second_result.run_id == "20260521_1210z"
-    assert (second_result.published_run_dir / "ir13" / "fh000.val.cog.tif").exists()
-    assert (second_result.published_run_dir / "vis2" / "fh000.val.cog.tif").exists()
+    assert (second_result.published_run_dir / "ir13" / "grid" / "fh000.l0.meta.json").exists()
+    assert (second_result.published_run_dir / "vis2" / "grid" / "fh000.l0.meta.json").exists()
 
     manifest = json.loads(second_result.manifest_path.read_text())
     assert set(manifest["variables"]) == {"ir13", "vis2"}

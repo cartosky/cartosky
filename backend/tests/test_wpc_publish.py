@@ -100,7 +100,6 @@ def test_publish_wpc_bundle_warps_native_grid_before_write(
 
     # Exercises the retained legacy COG flow: opt wpc out of the (now
     # default) binary-only substrate.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "wpc")
     monkeypatch.setattr(wpc_publish, "grid_build_enabled", lambda: False)
     monkeypatch.setattr(
         wpc_publish,
@@ -118,12 +117,14 @@ def test_publish_wpc_bundle_warps_native_grid_before_write(
         captured["input_shape"] = np.asarray(values).shape
         return np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32), from_origin(-101.0, 46.0, 1.0, 1.0)
 
-    def _write_value(values, output_path, **_kwargs):
-        captured["written_shape"] = np.asarray(values).shape
-        return _write_test_value_raster(Path(output_path), np.asarray(values, dtype=np.float32)) or Path(output_path)
+    def _write_grid(**kwargs):
+        captured["written_shape"] = np.asarray(kwargs["values"]).shape
+
+    monkeypatch.setattr(wpc_publish, "grid_build_enabled", lambda: True)
+    monkeypatch.setattr(wpc_publish, "write_grid_frames_for_run_root", _write_grid)
+    monkeypatch.setattr(wpc_publish, "build_grid_manifests_for_run_root", lambda **kwargs: 0)
 
     monkeypatch.setattr(wpc_publish, "warp_to_target_grid", _warp)
-    monkeypatch.setattr(wpc_publish, "write_value_cog", _write_value)
 
     issue_time = datetime(2026, 5, 26, 12, 0, tzinfo=timezone.utc)
     frame = WPCSourceField(

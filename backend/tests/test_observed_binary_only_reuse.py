@@ -52,7 +52,6 @@ _CA_TIME = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
 
 def _ca_binary_only_harness(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
-    monkeypatch.setattr(rtma_ru_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(
         rtma_ru_publish,
         "float_to_rgba",
@@ -88,7 +87,6 @@ def test_current_analysis_binary_only_frames_survive_load_and_reuse(
     run_id, previous_frames = rtma_ru_publish.load_latest_published_current_analysis_frames(tmp_path)
     assert run_id == first.run_id
     assert len(previous_frames) == 1
-    assert previous_frames[0].value_paths == {}
     assert set(previous_frames[0].sidecar_paths) == {"tmp2m"}
 
     # Reuse into the next run: grid artifacts hardlinked, still no COG.
@@ -115,7 +113,6 @@ def test_goes_binary_only_frames_survive_load_and_reuse(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
-    monkeypatch.setattr(goes_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(
         goes_publish,
         "float_to_rgba",
@@ -143,7 +140,6 @@ def test_goes_binary_only_frames_survive_load_and_reuse(
     run_id, previous_frames = goes_publish.load_latest_published_goes_frames(tmp_path)
     assert run_id == first.run_id
     assert len(previous_frames) == 1
-    assert previous_frames[0].value_path is None
     assert previous_frames[0].sidecar_path is not None
 
     second = goes_publish.publish_goes_bundle(
@@ -167,7 +163,6 @@ _MRMS_TIME = datetime(2026, 7, 14, 18, 0, tzinfo=timezone.utc)
 
 def _mrms_binary_only_harness(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
-    monkeypatch.setattr(mrms_publish, "write_value_cog", _fail_if_called("write_value_cog"))
     monkeypatch.setattr(
         mrms_publish,
         "_warp_frame_to_target_grid",
@@ -206,9 +201,7 @@ def test_mrms_binary_only_frames_survive_load_and_reuse_including_ptype(
     run_id, previous_frames = mrms_publish.load_latest_published_mrms_frames(tmp_path)
     assert run_id == first.run_id
     assert len(previous_frames) == 1
-    assert previous_frames[0].value_path is None
     assert previous_frames[0].sidecar_path is not None
-    assert previous_frames[0].ptype_value_path is None
     assert previous_frames[0].ptype_sidecar is not None
 
     second = mrms_publish.publish_mrms_bundle(

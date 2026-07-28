@@ -10,12 +10,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import rasterio
 
-from app.config import binary_sampling_enabled, grid_build_enabled
+from app.config import grid_build_enabled
 from app.models.goes_east import GOES_EAST_MODEL
 from app.services.builder.colorize import float_to_rgba
-from app.services.builder.cog_writer import write_value_cog
 from app.services.builder.pipeline import build_sidecar_json, check_pre_encode_value_sanity
 from app.services.colormaps import get_color_map_spec
 from app.services.grid import (
@@ -87,9 +85,6 @@ class GOESBundleFrame:
 class GOESPublishedFrame:
     valid_time: datetime
     slot_time: datetime
-    # None for binary-only frames (post value-COG cutover): reuse links their
-    # grid artifacts via sidecar_path instead.
-    value_path: Path | None
     sidecar: dict[str, Any]
     sidecar_path: Path | None = None
 
@@ -210,15 +205,11 @@ def load_latest_published_goes_frames(
             fh = int(frame["fh"])
         except (KeyError, TypeError, ValueError):
             continue
-        value_path = var_dir / f"fh{fh:03d}.val.cog.tif"
         sidecar_path = var_dir / f"fh{fh:03d}.json"
         if not sidecar_path.is_file():
             continue
-        # Substrate-aware admission: sidecar plus EITHER artifact. Binary-only
-        # frames (post value-COG cutover) have grid artifacts but no COG —
-        # requiring the COG here silently collapsed the rolling reuse window.
-        has_cog = value_path.is_file()
-        if not has_cog and not _published_grid_meta_exists(published_run_dir, var_id, fh):
+        # Admission: sidecar plus published grid artifacts.
+        if not _published_grid_meta_exists(published_run_dir, var_id, fh):
             continue
         try:
             sidecar = json.loads(sidecar_path.read_text())
@@ -236,7 +227,6 @@ def load_latest_published_goes_frames(
             GOESPublishedFrame(
                 valid_time=valid_time,
                 slot_time=slot_time or valid_time,
-                value_path=value_path if has_cog else None,
                 sidecar=sidecar,
                 sidecar_path=sidecar_path,
             )
@@ -416,13 +406,8 @@ def write_goes_frame(
     var_spec_colormap = get_color_map_spec(color_map_id)
     var_spec_model = GOES_EAST_MODEL.get_var(var_id)
     var_capability = GOES_EAST_MODEL.get_var_capability(var_id)
-    # Pre-encode gate (COG->binary sampling migration): the check itself runs
-    # on every fresh frame write, per band-publish invocation. For a
-    # binary-sampling-allowlisted model it is ENFORCED — failure (or a gate
-    # error) rejects the frame before ANY artifact is written, matching
-    # pipeline.py's binary_only branch. Otherwise it stays the Phase C shadow
-    # gate: log-only.
-    binary_only = binary_sampling_enabled(GOES_EAST_MODEL_ID)
+    # Pre-encode gate: ENFORCED — failure (or a gate error) rejects the frame
+    # before ANY artifact is written, matching pipeline.py.
     try:
         gate_ok = check_pre_encode_value_sanity(
             values,
@@ -432,58 +417,30 @@ def write_goes_frame(
             label=f"{GOES_EAST_MODEL_ID}/{var_id}/fh{int(forecast_hour):03d}",
         )
     except Exception:
-        if binary_only:
-            logger.exception(
-                "Pre-encode sanity gate errored — rejecting frame "
-                "model=%s var=%s fh%03d — frame not published",
-                GOES_EAST_MODEL_ID,
-                var_id,
-                int(forecast_hour),
-            )
-            return False
         logger.exception(
-            "Phase C shadow gate errored: pre-encode value sanity "
-            "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+            "Pre-encode sanity gate errored — rejecting frame "
+            "model=%s var=%s fh%03d — frame not published",
             GOES_EAST_MODEL_ID,
             var_id,
             int(forecast_hour),
         )
-        gate_ok = True
+        return False
     if not gate_ok:
-        if binary_only:
-            logger.error(
-                "Pre-encode sanity gate rejected frame model=%s var=%s "
-                "fh%03d — frame not published",
-                GOES_EAST_MODEL_ID,
-                var_id,
-                int(forecast_hour),
-            )
-            return False
-        logger.warning(
-            "Phase C shadow gate failed: pre-encode value sanity "
-            "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+        logger.error(
+            "Pre-encode sanity gate rejected frame model=%s var=%s "
+            "fh%03d — frame not published",
             GOES_EAST_MODEL_ID,
             var_id,
             int(forecast_hour),
         )
+        return False
 
     fh_str = f"fh{int(forecast_hour):03d}"
     staging_dir = data_root / "staging" / GOES_EAST_MODEL_ID / run_id / var_id
     staging_dir.mkdir(parents=True, exist_ok=True)
 
-    value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
     _, colorize_meta = float_to_rgba(values, color_map_id, meta_var_key=var_id)
-    if binary_only:
-        # Value COG retired for binary-sampling models: the grid binary
-        # (written below) serves rendering and sampling, and the enforced
-        # gate above already applied the value-quality gate.
-        logger.info(
-            "Value COG write skipped (model=%s is binary-only)",
-            GOES_EAST_MODEL_ID,
-        )
-    else:
-        write_value_cog(values, value_path, model=GOES_EAST_MODEL_ID, region=GOES_EAST_REGION_ID)
 
     source_metadata = dict(frame.source_metadata or {})
     if frame.source_bucket:
@@ -537,20 +494,18 @@ def reuse_goes_frame(
     band_config: GOESBandConfig | None = None,
 ) -> bool:
     """Hardlink a previously published frame into the new run. Returns False
-    when nothing samplable could be reused (binary-only frame with no grid
-    artifacts to link and no COG fallback) so the caller drops the frame
-    instead of publishing it substrate-less."""
+    when nothing samplable could be reused (no grid artifacts to link) so the
+    caller drops the frame instead of publishing it substrate-less."""
     band_config = _resolve_band_config(band_config)
     var_id = band_config.variable_id
     # The grid-artifact reuse only needs an fh-named path in the source var
-    # dir; the sidecar works when the frame is binary-only (no COG).
-    reference_path = frame.value_path or frame.sidecar_path
+    # dir; the sidecar provides it.
+    reference_path = frame.sidecar_path
     if reference_path is None:
         return False
     fh_str = f"fh{int(forecast_hour):03d}"
     staging_dir = data_root / "staging" / GOES_EAST_MODEL_ID / run_id / var_id
     staging_dir.mkdir(parents=True, exist_ok=True)
-    value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
 
     if grid_build_enabled():
@@ -561,28 +516,13 @@ def reuse_goes_frame(
             source_value_path=reference_path,
             source_var_id=var_id,
         ):
-            if frame.value_path is None:
-                logger.warning(
-                    "Skipping GOES reuse: no grid artifacts and no value COG "
-                    "fallback var=%s fh%03d source=%s",
-                    var_id,
-                    int(forecast_hour),
-                    reference_path,
-                )
-                return False
-            with rasterio.open(frame.value_path) as ds:
-                write_grid_frames_for_run_root(
-                    run_root=data_root / "staging" / GOES_EAST_MODEL_ID / run_id,
-                    model=GOES_EAST_MODEL_ID,
-                    var=var_id,
-                    fh=int(forecast_hour),
-                    values=ds.read(1).astype(np.float32, copy=False),
-                    transform=ds.transform,
-                    projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
-                )
-
-    if frame.value_path is not None:
-        _link_or_copy(frame.value_path, value_path)
+            logger.warning(
+                "Skipping GOES reuse: no grid artifacts var=%s fh%03d source=%s",
+                var_id,
+                int(forecast_hour),
+                reference_path,
+            )
+            return False
 
     sidecar = dict(frame.sidecar)
     sidecar["run"] = run_id

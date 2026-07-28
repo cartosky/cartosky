@@ -177,7 +177,6 @@ def test_ensure_products_ready_readiness_cache_is_scoped_per_forecast_hour(monke
 def test_build_frame_tmp2m_skips_dead_contour_generation(monkeypatch, tmp_path: Path) -> None:
     # Exercises build_frame's retained COG path: opt the model out of the
     # (now default) binary-only substrate.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs,hrrr,nbm,eps")
     plugin = _Plugin()
     var_spec_model = SimpleNamespace(
         id="tmp2m",
@@ -215,6 +214,8 @@ def test_build_frame_tmp2m_skips_dead_contour_generation(monkeypatch, tmp_path: 
         ),
     )
     monkeypatch.setattr(pipeline_module, "convert_units", lambda data, **kwargs: data)
+    # Not under test: the 1x1 constant fixture would fail the real enforced gate.
+    monkeypatch.setattr(pipeline_module, "check_pre_encode_value_sanity", lambda *args, **kwargs: True)
     monkeypatch.setattr(
         pipeline_module,
         "warp_to_target_grid",
@@ -228,13 +229,6 @@ def test_build_frame_tmp2m_skips_dead_contour_generation(monkeypatch, tmp_path: 
             {"kind": "continuous", "units": "F", "min": 0.0, "max": 100.0},
         ),
     )
-    monkeypatch.setattr(
-        pipeline_module,
-        "write_value_cog",
-        lambda data, path, **kwargs: path.write_bytes(b"value"),
-    )
-    monkeypatch.setattr(pipeline_module, "validate_cog", lambda *args, **kwargs: True)
-    monkeypatch.setattr(pipeline_module, "check_value_sanity", lambda *args, **kwargs: True)
     monkeypatch.setattr(pipeline_module, "grid_build_enabled", lambda: False)
 
     contour_called = {"value": False}

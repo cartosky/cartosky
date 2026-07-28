@@ -10,7 +10,7 @@ Covers the three load-bearing behaviors of the cutover:
    with NO value COG written and no COG gates run — grid binary + sidecar
    are the complete artifact set.
 3. For a non-allowlisted model, nothing changes: value COG written,
-   ``validate_cog``/``check_value_sanity`` run, and the pre-encode gate
+   COG-era gates run, and the pre-encode gate
    remains shadow/log-only (a failure does not reject).
 
 Also covers the two value-COG consumers found during the pre-change sweep
@@ -157,11 +157,7 @@ def test_binary_only_model_rejects_bad_frame(monkeypatch: pytest.MonkeyPatch, tm
     # rejects (min == max). With gfs allowlisted, that rejection must fail the
     # frame build — not publish it ungated — and the COG write/gates must
     # never even be reached.
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32))
-    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
-    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
-    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
 
     path, status = _build(tmp_path)
 
@@ -176,11 +172,7 @@ def test_binary_only_model_rejects_bad_frame(monkeypatch: pytest.MonkeyPatch, tm
 def test_binary_only_model_builds_good_frame_without_value_cog(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _harness(monkeypatch, fetched=np.array([[32.0, 33.0], [34.0, 35.0]], dtype=np.float32))
-    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
-    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
-    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
 
     path, status = _build(tmp_path)
 
@@ -194,54 +186,93 @@ def test_binary_only_model_builds_good_frame_without_value_cog(
     assert (staging_var / "grid" / "fh000.l0.meta.json").is_file()
 
 
-def test_non_allowlisted_model_gate_behavior_unchanged(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def _hrrr_var_specs(var: str):
+    """(var_spec_model, var_capability) mirroring the real HRRR catalog entry
+    for `var` — HRRR_VARIABLE_CATALOG has tmp2m as a primary continuous fetch
+    (units F, color_map_id "tmp2m") and radar_ptype as a derived discrete
+    composite (derive="radar_ptype_combo", units dBZ, color_map_id
+    "radar_ptype", frontend WITHOUT allow_dry_frame — that flag belongs to the
+    radar_ptype_* components only)."""
+    if var == "tmp2m":
+        return (
+            SimpleNamespace(
+                id="tmp2m",
+                derived=False,
+                selectors=SimpleNamespace(hints={}, search=[":TMP:2 m above ground:"]),
+                kind="continuous",
+                units="F",
+            ),
+            SimpleNamespace(color_map_id="tmp2m", kind="continuous", units="F", frontend={}),
+        )
+    if var == "radar_ptype":
+        return (
+            SimpleNamespace(
+                id="radar_ptype",
+                derived=True,
+                selectors=SimpleNamespace(hints={}, search=[]),
+                kind="discrete",
+                units="dBZ",
+            ),
+            SimpleNamespace(color_map_id="radar_ptype", kind="discrete", units="dBZ", frontend={}),
+        )
+    raise AssertionError(f"unexpected HRRR test var: {var}")
+
+
+def _hrrr_harness(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fetched: np.ndarray,
+    var: str,
 ) -> None:
-    # Empty allowlist (default): the COG write and both COG gates all run, and
-    # a FAILING pre-encode gate stays shadow-only — the build still succeeds.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs")
-    _harness(monkeypatch, fetched=np.array([[32.0, 33.0], [34.0, 35.0]], dtype=np.float32))
+    """HRRR twin of `_harness`. Differences: per-variable var_spec/capability
+    from `_hrrr_var_specs`, `derive_variable` mocked for the derived
+    radar_ptype path (build_frame skips fetch/convert for derived vars), and
+    the real `get_color_map_spec` left in place."""
+    var_spec_model, var_capability = _hrrr_var_specs(var)
 
-    calls: list[str] = []
+    monkeypatch.setattr(pipeline_module, "_ensure_products_ready", lambda **kwargs: None)
+    monkeypatch.setattr(pipeline_module, "_resolve_model_var_spec", lambda *a, **k: var_spec_model)
+    monkeypatch.setattr(pipeline_module, "_resolve_model_var_capability", lambda *a, **k: var_capability)
     monkeypatch.setattr(
         pipeline_module,
-        "write_value_cog",
-        lambda data, path, **kwargs: (calls.append("write_value_cog"), path.write_bytes(b"value"))[1],
-    )
-    monkeypatch.setattr(
-        pipeline_module, "validate_cog", lambda *a, **k: (calls.append("validate_cog"), True)[1]
-    )
-    monkeypatch.setattr(
-        pipeline_module, "check_value_sanity", lambda *a, **k: (calls.append("check_value_sanity"), True)[1]
+        "fetch_variable",
+        lambda **kwargs: (fetched, "EPSG:4326", from_origin(-101.0, 46.0, 1.0, 1.0)),
     )
     monkeypatch.setattr(
         pipeline_module,
-        "check_pre_encode_value_sanity",
-        lambda *a, **k: (calls.append("pre_encode"), False)[1],
+        "derive_variable",
+        lambda **kwargs: (fetched, "EPSG:4326", from_origin(-101.0, 46.0, 1.0, 1.0)),
     )
+    monkeypatch.setattr(pipeline_module, "convert_units", lambda data, **kwargs: data)
+    monkeypatch.setattr(
+        pipeline_module,
+        "warp_to_target_grid",
+        lambda data, src_crs, src_transform, **kwargs: (data, src_transform),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "float_to_rgba",
+        lambda data, color_map_id, meta_var_key=None: (
+            np.zeros((4, data.shape[0], data.shape[1]), dtype=np.uint8),
+            {"kind": "continuous", "units": "F", "min": 0.0, "max": 100.0},
+        ),
+    )
+    monkeypatch.setattr(pipeline_module, "grid_build_enabled", lambda: True)
+    monkeypatch.setattr(pipeline_module, "_build_contour_metadata_for_variable", lambda **kwargs: ({}, None))
 
-    path, status = _build(tmp_path)
 
-    assert status == "ok"
-    assert path is not None
-    assert calls == ["pre_encode", "write_value_cog", "validate_cog", "check_value_sanity"]
-    staging_var = tmp_path / "staging" / "gfs" / "20260630_00z" / "tmp2m"
-    assert (staging_var / "fh000.val.cog.tif").is_file()
-
-
-# ── HRRR coverage ────────────────────────────────────────────────────────────
-#
-# Same enforced-gate guarantee as the GFS tests above, for the next model in
-# the migration (Phase G). Two materially different rejection paths:
-# tmp2m goes through the generic continuous branch of
-# _check_value_array_sanity (flat field, max_nodata_ratio=0.95), while
-# radar_ptype takes the is_categorical_ptype branch (real colormap spec is
-# type="indexed" with ptype_breaks), whose threshold is max_nodata_ratio=0.998
-# and whose only flat/dry allowance requires finite_count == 0. The GFS
-# fixtures above are untouched; HRRR gets its own plugin/harness with each
-# variable's real spec shape from HRRR_VARIABLE_CATALOG and the REAL colormap
-# specs (get_color_map_spec is deliberately not mocked here — the categorical
-# branch keys off the real radar_ptype spec's type + ptype_breaks).
+def _build_hrrr(tmp_path: Path, var: str):
+    return pipeline_module.build_frame(
+        model="hrrr",
+        region="conus",
+        var_id=var,
+        fh=0,
+        run_date=datetime(2026, 7, 2, 10, 0),
+        data_root=tmp_path,
+        product="sfc",
+        model_plugin=_HrrrPlugin(),
+        return_status=True,
+    )
 
 
 class _HrrrPlugin(_Plugin):
@@ -346,11 +377,7 @@ def test_binary_only_model_rejects_bad_frame_hrrr_tmp2m(
     # 32.0 F sits inside HRRR's real tmp2m packing band
     # (_PACKING_BY_MODEL_VAR[("hrrr", "tmp2m")]: scale=0.1, offset=-100.0) —
     # the rejection is the gate's doing, not an out-of-band encode artifact.
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _hrrr_harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32), var="tmp2m")
-    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
-    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
-    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
 
     path, status = _build_hrrr(tmp_path, "tmp2m")
 
@@ -405,11 +432,7 @@ def test_binary_only_model_rejects_bad_frame_hrrr_radar_ptype(
     bad = np.full((40, 50), np.nan, dtype=np.float32)
     bad.flat[0] = rain_lo  # 1/2000 finite -> nodata ratio 0.9995, not fully dry
 
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _hrrr_harness(monkeypatch, fetched=bad, var="radar_ptype")
-    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
-    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
-    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
 
     path, status = _build_hrrr(tmp_path, "radar_ptype")
 
@@ -489,11 +512,7 @@ def test_binary_only_model_rejects_bad_frame_nbm_tmp2m(
     # reached. 32.0 F sits inside NBM's real tmp2m packing band
     # (_PACKING_BY_MODEL_VAR[("nbm", "tmp2m")]: scale=0.1, offset=-100.0) —
     # the rejection is the gate's doing, not an out-of-band encode artifact.
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _nbm_harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32))
-    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
-    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
-    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
 
     path, status = pipeline_module.build_frame(
         model="nbm",
@@ -655,11 +674,7 @@ def test_binary_only_model_rejects_bad_frame_gefs_tmp2m(
     # (_PACKING_BY_MODEL_VAR[("gefs", "tmp2m__mean")]: scale=0.1,
     # offset=-100.0; there is NO bare ("gefs", "tmp2m") packing entry) — the
     # rejection is the gate's doing, not an out-of-band encode artifact.
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _gefs_harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32), var="tmp2m__mean")
-    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
-    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
-    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
 
     path, status = _build_gefs(tmp_path, "tmp2m__mean")
 
@@ -720,11 +735,7 @@ def test_binary_only_model_rejects_bad_frame_gefs_precip_total(
     bad.flat[0] = 0.2
     bad.flat[1] = 0.6
 
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _gefs_harness(monkeypatch, fetched=bad, var="precip_total__mean")
-    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
-    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
-    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
 
     path, status = _build_gefs(tmp_path, "precip_total__mean")
 
@@ -815,11 +826,7 @@ def test_binary_only_model_rejects_bad_frame_eps_tmp2m(
     # (_PACKING_BY_MODEL_VAR[("eps", "tmp2m__mean")]: scale=0.1,
     # offset=-100.0) — the rejection is the gate's doing, not an out-of-band
     # encode artifact.
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     _eps_harness(monkeypatch, fetched=np.full((2, 2), 32.0, dtype=np.float32))
-    monkeypatch.setattr(pipeline_module, "write_value_cog", _fail_if_called("write_value_cog"))
-    monkeypatch.setattr(pipeline_module, "validate_cog", _fail_if_called("validate_cog"))
-    monkeypatch.setattr(pipeline_module, "check_value_sanity", _fail_if_called("check_value_sanity"))
 
     path, status = pipeline_module.build_frame(
         model="eps",
@@ -845,9 +852,7 @@ def test_scheduler_frame_marker_is_grid_meta_for_binary_only_models(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # The scheduler's "frame already built" marker (build frontier, available
-    # counts, promotion readiness) is the staging value COG today. For a
-    # binary-only model it must be the grid frame meta instead, or every frame
-    # would look forever-missing after the cutover.
+    # counts, promotion readiness) is the grid frame meta.
     from app.services import scheduler as scheduler_module
 
     run_id = "20260630_00z"
@@ -856,17 +861,10 @@ def test_scheduler_frame_marker_is_grid_meta_for_binary_only_models(
     (staging_var / "fh000.json").write_text("{}")
 
     # Sidecar present but no grid meta and no COG: not built either way.
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
     assert scheduler_module._frame_artifacts_exist(tmp_path, "gfs", run_id, "tmp2m", 0) is False
 
-    # Grid meta appears: built for the binary-only model...
+    # Grid meta appears: built.
     (staging_var / "grid" / "fh000.l0.meta.json").write_text("{}")
-    assert scheduler_module._frame_artifacts_exist(tmp_path, "gfs", run_id, "tmp2m", 0) is True
-
-    # ...but with the allowlist empty the marker is still the value COG.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs")
-    assert scheduler_module._frame_artifacts_exist(tmp_path, "gfs", run_id, "tmp2m", 0) is False
-    (staging_var / "fh000.val.cog.tif").write_bytes(b"value")
     assert scheduler_module._frame_artifacts_exist(tmp_path, "gfs", run_id, "tmp2m", 0) is True
 
 

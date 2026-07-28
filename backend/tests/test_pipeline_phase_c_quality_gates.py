@@ -130,7 +130,6 @@ def test_build_frame_runs_phase_c_gates_as_parallel_non_authoritative_checks(
 ) -> None:
     # Exercises build_frame's retained COG path: opt the model out of the
     # (now default) binary-only substrate.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs")
     plugin = _Plugin()
     var_spec_model = SimpleNamespace(
         id="tmp2m",
@@ -180,25 +179,26 @@ def test_build_frame_runs_phase_c_gates_as_parallel_non_authoritative_checks(
             {"kind": "continuous", "units": "F", "min": 32.0, "max": 35.0},
         ),
     )
-    monkeypatch.setattr(pipeline_module, "write_value_cog", lambda data, path, **kwargs: path.write_bytes(b"value"))
-    monkeypatch.setattr(pipeline_module, "validate_cog", lambda *args, **kwargs: True)
-    monkeypatch.setattr(pipeline_module, "check_value_sanity", lambda *args, **kwargs: True)
     monkeypatch.setattr(pipeline_module, "grid_build_enabled", lambda: True)
     monkeypatch.setattr(pipeline_module, "_build_contour_metadata_for_variable", lambda **kwargs: ({}, None))
 
     phase_c_calls: list[str] = []
 
-    def _failing_pre_encode_gate(*args, **kwargs):
+    def _passing_pre_encode_gate(*args, **kwargs):
         del args, kwargs
         phase_c_calls.append("pre-encode")
-        return False
+        return True
 
     def _failing_binary_gate(*args, **kwargs):
         del args, kwargs
         phase_c_calls.append("binary")
         return False
 
-    monkeypatch.setattr(pipeline_module, "check_pre_encode_value_sanity", _failing_pre_encode_gate)
+    # The pre-encode gate is AUTHORITATIVE (a False rejects the frame — pinned
+    # by test_binary_only_frame_builds.py); the grid-binary structural
+    # validation remains a non-authoritative shadow check: a False logs but
+    # the frame still publishes.
+    monkeypatch.setattr(pipeline_module, "check_pre_encode_value_sanity", _passing_pre_encode_gate)
     monkeypatch.setattr(pipeline_module, "validate_grid_binary_frame", _failing_binary_gate)
 
     result = pipeline_module.build_frame(

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
+from rasterio.transform import from_origin
 import pytest
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -17,13 +18,7 @@ from app.services import goes_publish, goes_rgb_publish
 
 def _configure_band_publish(monkeypatch: pytest.MonkeyPatch) -> None:
     # Exercises the retained legacy COG publish flow for the band publisher.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "goes-east")
-    monkeypatch.setattr(goes_publish, "grid_build_enabled", lambda: False)
-    monkeypatch.setattr(
-        goes_publish,
-        "write_value_cog",
-        lambda values, output_path, **_: Path(output_path).write_bytes(b"cog") or Path(output_path),
-    )
+    monkeypatch.setattr(goes_publish, "grid_build_enabled", lambda: True)
     monkeypatch.setattr(
         goes_publish,
         "float_to_rgba",
@@ -55,8 +50,9 @@ def test_publish_goes_rgb_bundle_seeds_new_run_with_previous_latest_sibling_vari
     ir_frame = goes_publish.GOESBundleFrame(
         valid_time=slot + timedelta(minutes=2),
         slot_time=slot,
-        values=np.ones((2, 2), dtype=np.float32) * 250.0,
-        transform=None,
+        # Non-constant: the enforced pre-encode gate rejects flat frames.
+        values=250.0 + np.arange(4, dtype=np.float32).reshape(2, 2),
+        transform=from_origin(0.0, 2.0, 1.0, 1.0),
         source_metadata={"slot_time": "2026-05-21T12:00:00Z"},
     )
     first_result = goes_publish.publish_goes_bundle(
@@ -79,7 +75,7 @@ def test_publish_goes_rgb_bundle_seeds_new_run_with_previous_latest_sibling_vari
     )
 
     assert second_result.run_id == "20260521_1210z"
-    assert (second_result.published_run_dir / "ir13" / "fh000.val.cog.tif").exists()
+    assert (second_result.published_run_dir / "ir13" / "grid" / "fh000.l0.meta.json").exists()
     assert (second_result.published_run_dir / "true_color" / "fh000.webp").exists()
 
     manifest = json.loads(second_result.manifest_path.read_text())

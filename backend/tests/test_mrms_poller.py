@@ -333,7 +333,6 @@ def test_run_once_decodes_only_new_scans_when_previous_window_exists(tmp_path: P
                 MRMSPublishedFrame(
                     valid_time=older,
                     source_valid_time=older,
-                    value_path=tmp_path / "old.val.cog.tif",
                     sidecar=json.loads(json.dumps(previous_sidecar)),
                 )
             ],

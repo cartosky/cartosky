@@ -36,20 +36,11 @@ def _write_test_value_raster(path: Path, values: np.ndarray) -> None:
 
 
 def _configure_small_grid(monkeypatch: pytest.MonkeyPatch) -> None:
-    # These tests exercise the retained legacy COG publish flow: opt mrms out
-    # of the (now default) binary-only substrate.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "mrms")
     monkeypatch.setattr(mrms_publish, "_expected_target_shape", lambda: (2, 3))
     monkeypatch.setattr(
         mrms_publish,
         "warp_to_target_grid",
         lambda values, *args, **kwargs: (np.asarray(values, dtype=np.float32), from_origin(-101.0, 46.0, 1.0, 1.0)),
-    )
-    monkeypatch.setattr(
-        mrms_publish,
-        "write_value_cog",
-        lambda values, output_path, **_: _write_test_value_raster(Path(output_path), np.asarray(values, dtype=np.float32))
-        or Path(output_path),
     )
 
 
@@ -109,7 +100,6 @@ def test_publish_mrms_bundle_writes_manifest_and_latest_pointer(
     assert "MRMS publish phase=start run=20260327_1206z frames=2 previous_frames=0 supplemental_vars=0 workers=1" in caplog.text
     assert "MRMS publish phase=frame_prepare run=20260327_1206z var=reflectivity fh=000 elapsed=" in caplog.text
     assert "MRMS publish phase=reproject run=20260327_1206z var=reflectivity fh=000 elapsed=" in caplog.text
-    assert "MRMS publish phase=cog_write run=20260327_1206z var=reflectivity fh=000 elapsed=" in caplog.text
     assert "MRMS publish phase=complete run=20260327_1206z elapsed=" in caplog.text
 
 
@@ -162,12 +152,14 @@ def test_publish_mrms_bundle_smooths_display_only_not_value_grid(
         captured["metadata_input"] = np.asarray(values, dtype=np.float32).copy()
         return {"legend_title": "MRMS Reflectivity (dBZ)"}
 
-    def _write_value(values, output_path, **_kwargs):
-        captured["value_input"] = np.asarray(values, dtype=np.float32).copy()
-        return _write_test_value_raster(Path(output_path), captured["value_input"]) or Path(output_path)
+    real_grid_write = mrms_publish.write_grid_frames_for_run_root
+
+    def _capture_grid_write(**kwargs):
+        captured["value_input"] = np.asarray(kwargs["values"], dtype=np.float32).copy()
+        return real_grid_write(**kwargs)
 
     monkeypatch.setattr(mrms_publish, "colorize_metadata", _colorize_metadata)
-    monkeypatch.setattr(mrms_publish, "write_value_cog", _write_value)
+    monkeypatch.setattr(mrms_publish, "write_grid_frames_for_run_root", _capture_grid_write)
 
     frame = mrms_publish.MRMSBundleFrame(
         valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
@@ -234,7 +226,8 @@ def test_publish_mrms_bundle_reuses_prior_frames_and_trims_window(
     initial_frames = [
         mrms_publish.MRMSBundleFrame(
             valid_time=base_time + timedelta(minutes=offset),
-            values=np.full((2, 3), 10.0 + offset, dtype=np.float32),
+            # Non-constant: the enforced pre-encode gate rejects flat frames.
+            values=10.0 + offset + np.arange(6, dtype=np.float32).reshape(2, 3),
             source_filename=f"scan-{offset}.grib2.gz",
         )
         for offset in (0, 5, 10)
@@ -256,7 +249,7 @@ def test_publish_mrms_bundle_reuses_prior_frames_and_trims_window(
         frames=[
             mrms_publish.MRMSBundleFrame(
                 valid_time=base_time + timedelta(minutes=15),
-                values=np.full((2, 3), 25.0, dtype=np.float32),
+                values=25.0 + np.arange(6, dtype=np.float32).reshape(2, 3),
                 source_filename="scan-15.grib2.gz",
             )
         ],
@@ -737,11 +730,11 @@ def test_publish_mrms_bundle_writes_mrms_radar_ptype_when_precip_flag_present(
     )
 
     # Reflectivity artifacts exist
-    assert (result.published_run_dir / "reflectivity" / "fh000.val.cog.tif").is_file()
+    assert (result.published_run_dir / "reflectivity" / "grid" / "fh000.l0.meta.json").is_file()
     assert (result.published_run_dir / "reflectivity" / "fh000.json").is_file()
 
     # mrms_radar_ptype artifacts exist
-    assert (result.published_run_dir / "mrms_radar_ptype" / "fh000.val.cog.tif").is_file()
+    assert (result.published_run_dir / "mrms_radar_ptype" / "grid" / "fh000.l0.meta.json").is_file()
     assert (result.published_run_dir / "mrms_radar_ptype" / "fh000.json").is_file()
 
     # Check manifest includes both variables
@@ -783,7 +776,7 @@ def test_publish_mrms_bundle_omits_mrms_radar_ptype_when_no_precip_flag(
     )
 
     # Reflectivity artifacts exist
-    assert (result.published_run_dir / "reflectivity" / "fh000.val.cog.tif").is_file()
+    assert (result.published_run_dir / "reflectivity" / "grid" / "fh000.l0.meta.json").is_file()
 
     # No mrms_radar_ptype directory
     assert not (result.published_run_dir / "mrms_radar_ptype").exists()
@@ -838,7 +831,7 @@ def test_publish_mrms_bundle_reuse_only_cycle_preserves_mrms_radar_ptype(
     assert previous_run_id == first_result.run_id
     assert len(previous_frames) == 2
     # Verify ptype paths were loaded
-    assert all(f.ptype_value_path is not None for f in previous_frames)
+    assert all(f.ptype_sidecar_path is not None for f in previous_frames)
     assert all(f.ptype_sidecar is not None for f in previous_frames)
 
     # Second publish: ALL frames reused (no new MRMSBundleFrame), zero fresh decodes
@@ -860,64 +853,10 @@ def test_publish_mrms_bundle_reuse_only_cycle_preserves_mrms_radar_ptype(
     assert second_manifest["variables"]["mrms_radar_ptype"]["available_frames"] == 2
 
     # Verify the actual artifacts exist
-    assert (second_result.published_run_dir / "mrms_radar_ptype" / "fh000.val.cog.tif").is_file()
-    assert (second_result.published_run_dir / "mrms_radar_ptype" / "fh001.val.cog.tif").is_file()
+    assert (second_result.published_run_dir / "mrms_radar_ptype" / "grid" / "fh000.l0.meta.json").is_file()
+    assert (second_result.published_run_dir / "mrms_radar_ptype" / "grid" / "fh001.l0.meta.json").is_file()
     assert (second_result.published_run_dir / "mrms_radar_ptype" / "fh000.json").is_file()
     assert (second_result.published_run_dir / "mrms_radar_ptype" / "fh001.json").is_file()
-
-
-def test_reuse_mrms_frame_writes_grids_without_generic_value_cog_helper(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _configure_small_grid(monkeypatch)
-    monkeypatch.setattr(mrms_publish, "grid_build_enabled", lambda: True)
-
-    values = np.array([[10.0, 12.0, 14.0], [16.0, 18.0, 20.0]], dtype=np.float32)
-    ptype_values = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
-    refl_path = tmp_path / "published" / "mrms" / "20260327_1206z" / "reflectivity" / "fh000.val.cog.tif"
-    ptype_path = tmp_path / "published" / "mrms" / "20260327_1206z" / "mrms_radar_ptype" / "fh000.val.cog.tif"
-    _write_test_value_raster(refl_path, values)
-    _write_test_value_raster(ptype_path, ptype_values)
-
-    frame = mrms_publish.MRMSPublishedFrame(
-        valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
-        source_valid_time=datetime(2026, 3, 27, 12, 0, tzinfo=timezone.utc),
-        value_path=refl_path,
-        sidecar={"valid_time": "2026-03-27T12:00:00Z"},
-        ptype_value_path=ptype_path,
-        ptype_sidecar={"valid_time": "2026-03-27T12:00:00Z"},
-    )
-
-    generic_helper_calls: list[tuple[str, int]] = []
-    written_grid_calls: list[tuple[str, int, tuple[int, int]]] = []
-
-    def _fail_generic_helper(**kwargs):
-        generic_helper_calls.append((str(kwargs["var"]), int(kwargs["fh"])))
-        raise AssertionError("generic value-cog grid helper should not be used during MRMS reuse")
-
-    def _capture_grid_write(**kwargs):
-        written_grid_calls.append(
-            (str(kwargs["var"]), int(kwargs["fh"]), np.asarray(kwargs["values"]).shape)
-        )
-        return [{"level": 0, "fh": int(kwargs["fh"])}]
-
-    monkeypatch.setattr(mrms_publish, "write_grid_frame_from_value_cog_for_run_root", _fail_generic_helper, raising=False)
-    monkeypatch.setattr(mrms_publish, "write_grid_frames_for_run_root", _capture_grid_write)
-
-    _reused_refl, has_ptype = mrms_publish.reuse_mrms_frame(
-        data_root=tmp_path,
-        run_id="20260327_1208z",
-        forecast_hour=0,
-        frame=frame,
-    )
-
-    assert has_ptype is True
-    assert generic_helper_calls == []
-    assert written_grid_calls == [
-        ("reflectivity", 0, (2, 3)),
-        ("mrms_radar_ptype", 0, (2, 3)),
-    ]
 
 
 def test_reuse_mrms_frame_reuses_existing_grid_artifacts_without_rewrite(
@@ -927,10 +866,12 @@ def test_reuse_mrms_frame_reuses_existing_grid_artifacts_without_rewrite(
     monkeypatch.setattr(mrms_publish, "grid_build_enabled", lambda: True)
 
     source_run = tmp_path / "published" / "mrms" / "20260327_1206z"
-    refl_path = source_run / "reflectivity" / "fh003.val.cog.tif"
-    ptype_path = source_run / "mrms_radar_ptype" / "fh003.val.cog.tif"
-    _write_test_value_raster(refl_path, np.ones((2, 3), dtype=np.float32))
-    _write_test_value_raster(ptype_path, np.ones((2, 3), dtype=np.float32) * 2.0)
+    refl_sidecar = source_run / "reflectivity" / "fh003.json"
+    ptype_sidecar = source_run / "mrms_radar_ptype" / "fh003.json"
+    refl_sidecar.parent.mkdir(parents=True, exist_ok=True)
+    ptype_sidecar.parent.mkdir(parents=True, exist_ok=True)
+    refl_sidecar.write_text(json.dumps({"valid_time": "2026-03-27T12:15:00Z"}))
+    ptype_sidecar.write_text(json.dumps({"valid_time": "2026-03-27T12:15:00Z"}))
 
     def _write_grid_fixture(var: str) -> None:
         grid_dir = source_run / var / "grid"
@@ -960,10 +901,10 @@ def test_reuse_mrms_frame_reuses_existing_grid_artifacts_without_rewrite(
     frame = mrms_publish.MRMSPublishedFrame(
         valid_time=datetime(2026, 3, 27, 12, 15, tzinfo=timezone.utc),
         source_valid_time=datetime(2026, 3, 27, 12, 15, tzinfo=timezone.utc),
-        value_path=refl_path,
         sidecar={"valid_time": "2026-03-27T12:15:00Z"},
-        ptype_value_path=ptype_path,
         ptype_sidecar={"valid_time": "2026-03-27T12:15:00Z"},
+        sidecar_path=refl_sidecar,
+        ptype_sidecar_path=ptype_sidecar,
     )
 
     _reused_refl, has_ptype = mrms_publish.reuse_mrms_frame(

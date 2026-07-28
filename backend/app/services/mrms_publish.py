@@ -12,15 +12,13 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import rasterio
 from rasterio.transform import Affine
 from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 
-from ..config import binary_sampling_enabled, grid_build_enabled
+from ..config import grid_build_enabled
 from ..models.mrms import MRMS_MODEL
 from .builder.colorize import colorize_metadata
 from .builder.raster_grid import compute_transform_and_shape, get_grid_params, warp_to_target_grid
-from .builder.cog_writer import write_value_cog
 from .builder.pipeline import build_sidecar_json, check_pre_encode_value_sanity
 from .colormaps import MRMS_RADAR_PTYPE_BREAKS, MRMS_RADAR_PTYPE_ORDER, get_color_map_spec
 from .observed_bundle_health import build_observed_bundle_health
@@ -69,14 +67,10 @@ def _pre_encode_gate_allows(
     var_id: str,
     color_map_id: str,
     forecast_hour: int,
-    binary_only: bool,
 ) -> bool:
-    """Dual-mode pre-encode gate (COG->binary sampling migration), shared by
-    all four MRMS fresh-write sites. The check itself runs unconditionally on
-    every fresh frame write; ``binary_only`` decides only what a failure
-    means. Enforced (model allowlisted): failure or a gate error rejects the
-    frame before ANY artifact is written, matching pipeline.py's binary_only
-    branch. Shadow (default): log-only, frame governed by the COG path."""
+    """Pre-encode gate shared by all four MRMS fresh-write sites: ENFORCED —
+    failure or a gate error rejects the frame before ANY artifact is
+    written, matching pipeline.py."""
     try:
         gate_ok = check_pre_encode_value_sanity(
             values,
@@ -86,40 +80,23 @@ def _pre_encode_gate_allows(
             label=f"{MRMS_MODEL_ID}/{var_id}/fh{int(forecast_hour):03d}",
         )
     except Exception:
-        if binary_only:
-            logger.exception(
-                "Pre-encode sanity gate errored — rejecting frame "
-                "model=%s var=%s fh%03d — frame not published",
-                MRMS_MODEL_ID,
-                var_id,
-                int(forecast_hour),
-            )
-            return False
         logger.exception(
-            "Phase C shadow gate errored: pre-encode value sanity "
-            "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+            "Pre-encode sanity gate errored — rejecting frame "
+            "model=%s var=%s fh%03d — frame not published",
             MRMS_MODEL_ID,
             var_id,
             int(forecast_hour),
         )
-        return True
+        return False
     if not gate_ok:
-        if binary_only:
-            logger.error(
-                "Pre-encode sanity gate rejected frame model=%s var=%s "
-                "fh%03d — frame not published",
-                MRMS_MODEL_ID,
-                var_id,
-                int(forecast_hour),
-            )
-            return False
-        logger.warning(
-            "Phase C shadow gate failed: pre-encode value sanity "
-            "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+        logger.error(
+            "Pre-encode sanity gate rejected frame model=%s var=%s "
+            "fh%03d — frame not published",
             MRMS_MODEL_ID,
             var_id,
             int(forecast_hour),
         )
+        return False
     return True
 
 
@@ -209,11 +186,7 @@ class MRMSPublishResult:
 class MRMSPublishedFrame:
     valid_time: datetime
     source_valid_time: datetime | None
-    # None for binary-only frames (post value-COG cutover): reuse links their
-    # grid artifacts via sidecar_path instead.
-    value_path: Path | None
     sidecar: dict[str, Any]
-    ptype_value_path: Path | None = None
     ptype_sidecar: dict[str, Any] | None = None
     sidecar_path: Path | None = None
     ptype_sidecar_path: Path | None = None
@@ -273,14 +246,10 @@ def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list
         except (TypeError, ValueError):
             continue
         sidecar_path = refl_dir / f"fh{fh_int:03d}.json"
-        value_path = refl_dir / f"fh{fh_int:03d}.val.cog.tif"
         if not sidecar_path.is_file():
             continue
-        # Substrate-aware admission: sidecar plus EITHER artifact. Binary-only
-        # frames (post value-COG cutover) have grid artifacts but no COG —
-        # requiring the COG here silently collapsed the rolling reuse window.
-        has_cog = value_path.is_file()
-        if not has_cog and not _published_grid_meta_exists(published_run_dir, MRMS_VARIABLE_ID, fh_int):
+        # Admission: sidecar plus published grid artifacts.
+        if not _published_grid_meta_exists(published_run_dir, MRMS_VARIABLE_ID, fh_int):
             continue
         try:
             sidecar = json.loads(sidecar_path.read_text())
@@ -294,23 +263,18 @@ def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list
         except ValueError:
             continue
 
-        # Check for paired mrms_radar_ptype artifacts (same substrate-aware
-        # admission as reflectivity above).
-        ptype_value_path: Path | None = None
+        # Check for paired mrms_radar_ptype artifacts (same admission as
+        # reflectivity above).
         ptype_sidecar_data: dict[str, Any] | None = None
         ptype_sidecar_source: Path | None = None
         if fh_int in ptype_fh_set:
-            ptype_val = ptype_dir / f"fh{fh_int:03d}.val.cog.tif"
             ptype_sc = ptype_dir / f"fh{fh_int:03d}.json"
-            ptype_has_cog = ptype_val.is_file()
-            if ptype_sc.is_file() and (
-                ptype_has_cog
-                or _published_grid_meta_exists(published_run_dir, MRMS_RADAR_PTYPE_VARIABLE_ID, fh_int)
+            if ptype_sc.is_file() and _published_grid_meta_exists(
+                published_run_dir, MRMS_RADAR_PTYPE_VARIABLE_ID, fh_int
             ):
                 try:
                     ptype_sidecar_data = json.loads(ptype_sc.read_text())
                     ptype_sidecar_source = ptype_sc
-                    ptype_value_path = ptype_val if ptype_has_cog else None
                 except (OSError, json.JSONDecodeError):
                     pass
 
@@ -318,9 +282,7 @@ def load_latest_published_mrms_frames(data_root: Path) -> tuple[str | None, list
             MRMSPublishedFrame(
                 valid_time=valid_time,
                 source_valid_time=_source_valid_time_from_sidecar(sidecar, fallback=valid_time),
-                value_path=value_path if has_cog else None,
                 sidecar=sidecar,
-                ptype_value_path=ptype_value_path,
                 ptype_sidecar=ptype_sidecar_data,
                 sidecar_path=sidecar_path,
                 ptype_sidecar_path=ptype_sidecar_source,
@@ -717,13 +679,11 @@ def write_mrms_frame(
 
     # Gate the warped array — the one both the COG and grid writes receive —
     # not the colorize-only smoothed display copy computed below.
-    binary_only = binary_sampling_enabled(MRMS_MODEL_ID)
     if not _pre_encode_gate_allows(
         values,
         var_id=MRMS_VARIABLE_ID,
         color_map_id=MRMS_COLOR_MAP_ID,
         forecast_hour=forecast_hour,
-        binary_only=binary_only,
     ):
         return False
 
@@ -733,7 +693,6 @@ def write_mrms_frame(
     staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_VARIABLE_ID
     staging_dir.mkdir(parents=True, exist_ok=True)
 
-    value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
 
     colorize_meta = colorize_metadata(display_values, MRMS_COLOR_MAP_ID, meta_var_key=MRMS_VARIABLE_ID)
@@ -747,28 +706,6 @@ def write_mrms_frame(
         metadata_only="true",
         rgba_mib="0.0",
     )
-    if binary_only:
-        # Value COG retired for binary-sampling models: the grid binary
-        # (written below) serves rendering and sampling, and the enforced
-        # gate above already applied the value-quality gate.
-        logger.info(
-            "Value COG write skipped (model=%s is binary-only)",
-            MRMS_MODEL_ID,
-        )
-    else:
-        write_value_cog(
-            values,
-            value_path,
-            model=MRMS_MODEL_ID,
-            region=MRMS_REGION_ID,
-        )
-        logger.info(
-            "MRMS publish phase=cog_write run=%s var=%s fh=%03d elapsed=%.1fs",
-            run_id,
-            MRMS_VARIABLE_ID,
-            int(forecast_hour),
-            time.monotonic() - phase_started_at,
-        )
 
     run_dt = datetime.now(timezone.utc)
     sidecar = build_sidecar_json(
@@ -836,19 +773,18 @@ def reuse_mrms_frame(
 
     Returns ``(reused_reflectivity, reused_ptype)``. Reflectivity reuse fails
     (False, False) only when nothing samplable can be carried forward — a
-    binary-only frame with no grid artifacts to link and no COG fallback —
-    so the caller drops the frame instead of publishing it substrate-less.
+    frame with no grid artifacts to link — so the caller drops the frame
+    instead of publishing it substrate-less.
     """
     fh_str = f"fh{int(forecast_hour):03d}"
     # The grid-artifact reuse only needs an fh-named path in the source var
-    # dir; the sidecar works when the frame is binary-only (no COG).
-    reference_path = frame.value_path or frame.sidecar_path
+    # dir; the sidecar provides it.
+    reference_path = frame.sidecar_path
     if reference_path is None:
         return False, False
     staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_VARIABLE_ID
     staging_dir.mkdir(parents=True, exist_ok=True)
 
-    value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
 
     if build_grid_artifacts and grid_build_enabled():
@@ -859,28 +795,13 @@ def reuse_mrms_frame(
             forecast_hour=int(forecast_hour),
             source_value_path=reference_path,
         ):
-            if frame.value_path is None:
-                logger.warning(
-                    "Skipping MRMS reuse: no grid artifacts and no value COG "
-                    "fallback var=%s fh%03d source=%s",
-                    MRMS_VARIABLE_ID,
-                    int(forecast_hour),
-                    reference_path,
-                )
-                return False, False
-            with rasterio.open(frame.value_path) as ds:
-                write_grid_frames_for_run_root(
-                    run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
-                    model=MRMS_MODEL_ID,
-                    var=MRMS_VARIABLE_ID,
-                    fh=int(forecast_hour),
-                    values=ds.read(1).astype(np.float32, copy=False),
-                    transform=ds.transform,
-                    projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
-                )
-
-    if frame.value_path is not None:
-        _link_or_copy(frame.value_path, value_path)
+            logger.warning(
+                "Skipping MRMS reuse: no grid artifacts var=%s fh%03d source=%s",
+                MRMS_VARIABLE_ID,
+                int(forecast_hour),
+                reference_path,
+            )
+            return False, False
 
     sidecar = dict(frame.sidecar)
     sidecar["run"] = run_id
@@ -894,13 +815,12 @@ def reuse_mrms_frame(
 
     # Reuse paired mrms_radar_ptype artifacts if they exist
     has_ptype = False
-    ptype_reference = frame.ptype_value_path or frame.ptype_sidecar_path
+    ptype_reference = frame.ptype_sidecar_path
     if ptype_reference is not None and frame.ptype_sidecar is not None:
         try:
             ptype_staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_RADAR_PTYPE_VARIABLE_ID
             ptype_staging_dir.mkdir(parents=True, exist_ok=True)
 
-            ptype_value_path = ptype_staging_dir / f"{fh_str}.val.cog.tif"
             ptype_sidecar_path = ptype_staging_dir / f"{fh_str}.json"
 
             if build_grid_artifacts and grid_build_enabled():
@@ -911,23 +831,7 @@ def reuse_mrms_frame(
                     forecast_hour=int(forecast_hour),
                     source_value_path=ptype_reference,
                 ):
-                    if frame.ptype_value_path is None:
-                        raise ValueError(
-                            "no ptype grid artifacts and no value COG fallback"
-                        )
-                    with rasterio.open(frame.ptype_value_path) as ds:
-                        write_grid_frames_for_run_root(
-                            run_root=data_root / "staging" / MRMS_MODEL_ID / run_id,
-                            model=MRMS_MODEL_ID,
-                            var=MRMS_RADAR_PTYPE_VARIABLE_ID,
-                            fh=int(forecast_hour),
-                            values=ds.read(1).astype(np.float32, copy=False),
-                            transform=ds.transform,
-                            projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
-                        )
-
-            if frame.ptype_value_path is not None:
-                _link_or_copy(frame.ptype_value_path, ptype_value_path)
+                    raise ValueError("no ptype grid artifacts to reuse")
 
             ptype_sc = dict(frame.ptype_sidecar)
             ptype_sc["run"] = run_id
@@ -1285,13 +1189,11 @@ def write_mrms_radar_ptype_frame(
     # Gate the composited indexed array with its own indexed spec (the real
     # "mrms_radar_ptype" colormap carries ptype_breaks, so the categorical
     # branch of the gate applies) — never reflectivity's continuous spec.
-    binary_only = binary_sampling_enabled(MRMS_MODEL_ID)
     if not _pre_encode_gate_allows(
         indexed,
         var_id=MRMS_RADAR_PTYPE_VARIABLE_ID,
         color_map_id=MRMS_RADAR_PTYPE_COLOR_MAP_ID,
         forecast_hour=forecast_hour,
-        binary_only=binary_only,
     ):
         return False
 
@@ -1299,7 +1201,6 @@ def write_mrms_radar_ptype_frame(
     staging_dir = data_root / "staging" / MRMS_MODEL_ID / run_id / MRMS_RADAR_PTYPE_VARIABLE_ID
     staging_dir.mkdir(parents=True, exist_ok=True)
 
-    value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
 
     colorize_meta = colorize_metadata(indexed, MRMS_RADAR_PTYPE_COLOR_MAP_ID, meta_var_key=MRMS_RADAR_PTYPE_VARIABLE_ID)
@@ -1312,25 +1213,6 @@ def write_mrms_radar_ptype_frame(
         metadata_only="true",
         rgba_mib="0.0",
     )
-    if binary_only:
-        logger.info(
-            "Value COG write skipped (model=%s is binary-only)",
-            MRMS_MODEL_ID,
-        )
-    else:
-        write_value_cog(
-            indexed,
-            value_path,
-            model=MRMS_MODEL_ID,
-            region=MRMS_REGION_ID,
-        )
-        logger.info(
-            "MRMS publish phase=cog_write run=%s var=%s fh=%03d elapsed=%.1fs",
-            run_id,
-            MRMS_RADAR_PTYPE_VARIABLE_ID,
-            int(forecast_hour),
-            time.monotonic() - phase_started_at,
-        )
 
     run_dt = datetime.now(timezone.utc)
     sidecar = build_sidecar_json(
@@ -1447,13 +1329,11 @@ def _write_mrms_supplemental_frame_to_run_root(
         time.monotonic() - phase_started_at,
     )
 
-    binary_only = binary_sampling_enabled(MRMS_MODEL_ID)
     if not _pre_encode_gate_allows(
         warped_values,
         var_id=var_id,
         color_map_id=color_map_id,
         forecast_hour=forecast_hour,
-        binary_only=binary_only,
     ):
         return False
 
@@ -1461,7 +1341,6 @@ def _write_mrms_supplemental_frame_to_run_root(
     staging_dir = run_root / var_id
     staging_dir.mkdir(parents=True, exist_ok=True)
 
-    value_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
 
     colorize_meta = colorize_metadata(warped_values, color_map_id, meta_var_key=var_id)
@@ -1474,25 +1353,6 @@ def _write_mrms_supplemental_frame_to_run_root(
         metadata_only="true",
         rgba_mib="0.0",
     )
-    if binary_only:
-        logger.info(
-            "Value COG write skipped (model=%s is binary-only)",
-            MRMS_MODEL_ID,
-        )
-    else:
-        write_value_cog(
-            warped_values,
-            value_path,
-            model=MRMS_MODEL_ID,
-            region=MRMS_REGION_ID,
-        )
-        logger.info(
-            "MRMS publish phase=cog_write run=%s var=%s fh=%03d elapsed=%.1fs",
-            run_id,
-            var_id,
-            int(forecast_hour),
-            time.monotonic() - phase_started_at,
-        )
 
     run_dt = datetime.now(timezone.utc)
     sidecar = build_sidecar_json(
@@ -1761,10 +1621,7 @@ def published_mrms_variable_artifacts_exist(
 
     return all(
         (var_dir / f"fh{fh:03d}.json").is_file()
-        and (
-            (var_dir / f"fh{fh:03d}.val.cog.tif").is_file()
-            or _published_grid_meta_exists(run_root, var_id, fh)
-        )
+        and _published_grid_meta_exists(run_root, var_id, fh)
         for fh in frame_hours
     )
 
@@ -1829,27 +1686,12 @@ def _build_published_run_grid_artifacts(
             if _published_grid_meta_exists(run_root, var_id, fh):
                 wrote_any = True
                 continue
-            value_path = var_dir / f"fh{fh:03d}.val.cog.tif"
-            if not value_path.is_file():
-                logger.warning(
-                    "MRMS grid backfill impossible: no grid artifacts and no "
-                    "value COG for %s/%s fh%03d",
-                    run_id,
-                    var_id,
-                    fh,
-                )
-                continue
-            with rasterio.open(value_path) as ds:
-                write_grid_frames_for_run_root(
-                    run_root=run_root,
-                    model=MRMS_MODEL_ID,
-                    var=var_id,
-                    fh=fh,
-                    values=ds.read(1).astype(np.float32, copy=False),
-                    transform=ds.transform,
-                    projection=ds.crs.to_string() if ds.crs is not None else "EPSG:3857",
-                )
-            wrote_any = True
+            logger.warning(
+                "MRMS grid backfill impossible: no grid artifacts for %s/%s fh%03d",
+                run_id,
+                var_id,
+                fh,
+            )
 
         if wrote_any:
             built_variables.append(var_id)

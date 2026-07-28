@@ -4,11 +4,10 @@ This is the single entry-point for producing V3 artifacts. For a given
 model/region/var/fh it produces the published numeric/value metadata and, when
 enabled, packed grid frames in the staging directory:
 
-    fh{NNN}.val.cog.tif    — 1-band float32 value COG
     fh{NNN}.json           — sidecar metadata (per artifact contract)
     grid/fh{NNN}.l0.*      — packed grid frame + metadata
 
-Published value outputs pass structural and sanity validation before being accepted.
+Values pass the enforced pre-encode sanity gate before any artifact is written.
 
 Phase 1 scope: "simple" derivation path only (tmp2m, refc — single GRIB fetch).
 Phase 2 adds wspd (vector magnitude) and radar_ptype (categorical combo).
@@ -34,9 +33,8 @@ from typing import Any
 import numpy as np
 import rasterio
 
-from app.config import binary_sampling_enabled, grid_build_enabled
+from app.config import grid_build_enabled
 from app.services.builder.raster_grid import _gdal, compute_transform_and_shape, get_grid_params, warp_to_target_grid
-from app.services.builder.cog_writer import write_value_cog
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.derive import (
     FetchContext,
@@ -610,95 +608,6 @@ def _build_pressure_center_metadata_for_variable(
 
 
 # ---------------------------------------------------------------------------
-# Gate 1: structural validation (in-process via rasterio)
-# ---------------------------------------------------------------------------
-
-# Map GDAL type names (used by callers) to numpy/rasterio dtype strings.
-_GDAL_DTYPE_TO_RASTERIO: dict[str, str] = {
-    "Byte": "uint8",
-    "UInt16": "uint16",
-    "Int16": "int16",
-    "UInt32": "uint32",
-    "Int32": "int32",
-    "Float32": "float32",
-    "Float64": "float64",
-}
-
-
-def validate_cog(
-    path: Path,
-    *,
-    expected_bands: int,
-    expected_dtype: str,
-    region: str,
-    grid_meters: float,
-) -> bool:
-    """Validate a COG's structure using rasterio (in-process).
-
-    Checks band count, band type, CRS, internal tiling, overview presence,
-    pixel size, and COG layout metadata.  Returns True if all checks pass.
-    """
-    try:
-        ds = rasterio.open(path)
-    except Exception as exc:
-        logger.error("Cannot open %s: %s", path, exc)
-        return False
-
-    ok = True
-
-    try:
-        # Band count
-        if ds.count != expected_bands:
-            logger.error("Band count: expected %d, got %d (%s)", expected_bands, ds.count, path)
-            ok = False
-
-        # Band dtype
-        expected_rio_dtype = _GDAL_DTYPE_TO_RASTERIO.get(expected_dtype, expected_dtype.lower())
-        if ds.dtypes[0] != expected_rio_dtype:
-            logger.error("Band type: expected %s, got %s (%s)", expected_dtype, ds.dtypes[0], path)
-            ok = False
-
-        # CRS — must be EPSG:3857
-        if ds.crs is None or ds.crs.to_epsg() != 3857:
-            logger.error("CRS does not match EPSG:3857 (%s)", path)
-            ok = False
-
-        # Internal tiling (512×512)
-        block_shapes = ds.block_shapes
-        if block_shapes and block_shapes[0] != (512, 512):
-            logger.error("Block size: expected (512, 512), got %s (%s)", block_shapes[0], path)
-            ok = False
-
-        # Overviews present
-        if not ds.overviews(1):
-            logger.error("No overviews found (%s)", path)
-            ok = False
-
-        # Pixel size matches grid_meters (±0.1m tolerance)
-        pixel_x = abs(ds.transform.a)
-        pixel_y = abs(ds.transform.e)
-        if abs(pixel_x - grid_meters) > 0.1 or abs(pixel_y - grid_meters) > 0.1:
-            logger.error(
-                "Pixel size: expected %.1fm, got (%.1f, %.1f) (%s)",
-                grid_meters, pixel_x, pixel_y, path,
-            )
-            ok = False
-
-        # COG layout metadata
-        image_structure = ds.tags(ns="IMAGE_STRUCTURE")
-        layout = image_structure.get("LAYOUT", "")
-        if layout != "COG":
-            logger.error("Layout: expected 'COG', got %r (%s)", layout, path)
-            ok = False
-    finally:
-        ds.close()
-
-    if ok:
-        logger.info("Gate 1 PASS: %s", path.name)
-    return ok
-
-
-# ---------------------------------------------------------------------------
 # Gate 2: value sanity check
 # ---------------------------------------------------------------------------
 
@@ -841,26 +750,6 @@ def check_pre_encode_value_sanity(
         var_capability=var_capability,
         label=label,
         gate_name="Pre-encode value sanity",
-    )
-
-
-def check_value_sanity(
-    val_path: Path,
-    var_spec: dict[str, Any],
-    var_spec_model: Any | None = None,
-    var_capability: Any | None = None,
-) -> bool:
-    """Sanity-check pixel statistics of the produced value artifact."""
-    with rasterio.open(val_path) as src:
-        values = src.read(1)
-    return _check_value_array_sanity(
-        values,
-        var_spec,
-        var_spec_model=var_spec_model,
-        var_capability=var_capability,
-        label=str(val_path),
-        gate_name="Value COG",
-        pass_name="Value sanity",
     )
 
 
@@ -1625,6 +1514,8 @@ def build_frame(
     staging_dir = data_root / "staging" / model / run_id / var_key
     staging_dir.mkdir(parents=True, exist_ok=True)
 
+    # Retired value-COG staging path: never written anymore, but kept in the
+    # cleanup set so an interrupted pre-cutover staging dir cannot leak one.
     val_path = staging_dir / f"{fh_str}.val.cog.tif"
     sidecar_path = staging_dir / f"{fh_str}.json"
     contour_geojson_path: Path | None = None
@@ -1806,100 +1697,24 @@ def build_frame(
             warped_mib=round(_array_mib(warped_data), 2), shape=tuple(getattr(warped_data, "shape", ())),
             dtype=str(getattr(warped_data, "dtype", "")),
         )
-        # Binary-sampling models (migration plan Phase F cutover) no longer
-        # write a value COG, so the COG-based gates below never run for them.
-        # The pre-encode sanity gate is therefore ENFORCED for these models —
-        # a failure rejects the frame exactly like check_value_sanity does on
-        # the COG path. For everything else it stays a Phase C shadow gate.
-        binary_only = binary_sampling_enabled(model)
-        if binary_only:
-            # No try/except: an unexpected gate error propagates to the outer
-            # handler (cleanup + "failed"), matching how a check_value_sanity
-            # exception behaves on the COG path.
-            if not check_pre_encode_value_sanity(
-                warped_data,
-                var_spec_colormap,
-                var_spec_model=var_spec_model,
-                var_capability=var_capability,
-                label=f"{model}/{var_key}/fh{int(fh):03d}",
-            ):
-                logger.error(
-                    "Pre-encode value sanity failed — rejecting frame "
-                    "(model=%s is binary-only; no COG fallback gate exists)",
-                    model,
-                )
-                _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
-                return _result(None, "failed")
-        else:
-            try:
-                if not check_pre_encode_value_sanity(
-                    warped_data,
-                    var_spec_colormap,
-                    var_spec_model=var_spec_model,
-                    var_capability=var_capability,
-                    label=f"{model}/{var_key}/fh{int(fh):03d}",
-                ):
-                    logger.warning(
-                        "Phase C shadow gate failed: pre-encode value sanity "
-                        "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
-                        model,
-                        var_key,
-                        int(fh),
-                    )
-            except Exception:
-                logger.exception(
-                    "Phase C shadow gate errored: pre-encode value sanity "
-                    "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
-                    model,
-                    var_key,
-                    int(fh),
-                )
+        # The pre-encode sanity gate is ENFORCED: a failure rejects the frame.
+        # (This was the binary-only branch of the Phase F cutover; the value
+        # COG write and its post-write gates are retired.)
+        # No try/except: an unexpected gate error propagates to the outer
+        # handler (cleanup + "failed").
+        if not check_pre_encode_value_sanity(
+            warped_data,
+            var_spec_colormap,
+            var_spec_model=var_spec_model,
+            var_capability=var_capability,
+            label=f"{model}/{var_key}/fh{int(fh):03d}",
+        ):
+            logger.error("Pre-encode value sanity failed — rejecting frame")
+            _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
+            return _result(None, "failed")
 
         # --- Step 5: Write artifacts ---
         logger.info("Step 5/6: Writing artifacts")
-        if binary_only:
-            # Value COG retired for binary-sampling models: the grid binary
-            # (written below) serves rendering and sampling, and the enforced
-            # pre-encode gate above already applied the value-quality gate.
-            logger.info(
-                "Step 6/6: Value COG write + COG gates skipped (model=%s is binary-only)",
-                model,
-            )
-        else:
-            write_value_cog(
-                warped_data, val_path,
-                model=model, region=region,
-                downsample_factor=VALUE_HOVER_DOWNSAMPLE_FACTOR,
-            )
-            _log_frame_memory_checkpoint(
-                "after_publish", model=model, region=region, var=var_key, fh=fh,
-            )
-
-            # --- Step 6: Validate (Gates 1 & 2) ---
-            logger.info("Step 6/6: Validating artifacts")
-            _, grid_m = get_grid_params(model, region)
-
-            # Gate 1: structural validation
-            if not validate_cog(
-                val_path,
-                expected_bands=1,
-                expected_dtype="Float32",
-                region=region,
-                grid_meters=grid_m * VALUE_HOVER_DOWNSAMPLE_FACTOR,
-            ):
-                logger.error("Value COG validation failed — rejecting frame")
-                _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
-                return _result(None, "failed")
-
-            if not check_value_sanity(
-                val_path,
-                var_spec_colormap,
-                var_spec_model=var_spec_model,
-                var_capability=var_capability,
-            ):
-                logger.error("Value sanity failed — rejecting frame")
-                _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)
-                return _result(None, "failed")
 
         contours_meta, contour_geojson_path = _build_contour_metadata_for_variable(
             model=model,
@@ -1998,9 +1813,8 @@ def build_frame(
 
         logger.info(
             "Frame complete: %s/%s/%s/%s/%s "
-            "(Val: %s, JSON: %s%s)",
+            "(JSON: %s%s)",
             model, region, run_id, var_key, fh_str,
-            "skipped (binary-only)" if binary_only else _file_size_str(val_path),
             _file_size_str(sidecar_path),
             f", Grid: {_file_size_str(grid_frame_path)}" if grid_frame_path is not None else "",
         )

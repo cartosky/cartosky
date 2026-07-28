@@ -35,7 +35,6 @@ class _Plugin:
 def test_build_frame_rewarps_derived_output_when_cached_component_grid_does_not_match_target(monkeypatch, tmp_path: Path) -> None:
     # Exercises build_frame's retained COG path: opt the model out of the
     # (now default) binary-only substrate.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "gfs,hrrr,nbm,eps,aigfs,ifs")
     plugin = _Plugin()
     var_spec_model = SimpleNamespace(
         id="vort500",
@@ -96,15 +95,18 @@ def test_build_frame_rewarps_derived_output_when_cached_component_grid_does_not_
         ),
     )
 
-    def _fake_write_value_cog(data, path, **kwargs):
-        del kwargs
-        assert data.shape == (657, 682)
-        path.write_bytes(b"value")
-
-    monkeypatch.setattr(pipeline_module, "write_value_cog", _fake_write_value_cog)
-    monkeypatch.setattr(pipeline_module, "validate_cog", lambda *args, **kwargs: True)
-    monkeypatch.setattr(pipeline_module, "check_value_sanity", lambda *args, **kwargs: True)
-    monkeypatch.setattr(pipeline_module, "grid_build_enabled", lambda: False)
+    # Shape probe: the grid frame write receives the (re)warped array, so it
+    # observes whether the derive output was rewarped to the target grid.
+    grid_shapes: list[tuple[int, ...]] = []
+    monkeypatch.setattr(
+        pipeline_module,
+        "write_grid_frame_for_run_root",
+        lambda **kwargs: grid_shapes.append(tuple(np.asarray(kwargs["values"]).shape)),
+    )
+    monkeypatch.setattr(pipeline_module, "validate_grid_binary_frame", lambda *args, **kwargs: True)
+    monkeypatch.setattr(pipeline_module, "grid_build_enabled", lambda: True)
+    # Not under test here; the synthetic field would fail the real gate.
+    monkeypatch.setattr(pipeline_module, "check_pre_encode_value_sanity", lambda *args, **kwargs: True)
     monkeypatch.setattr(pipeline_module, "_build_contour_metadata_for_variable", lambda **kwargs: ({}, None))
 
     result = pipeline_module.build_frame(
@@ -121,3 +123,6 @@ def test_build_frame_rewarps_derived_output_when_cached_component_grid_does_not_
 
     assert result is not None
     assert warp_calls["count"] == 1
+    # The grid write saw the rewarped target-grid array, not the cached
+    # component grid.
+    assert grid_shapes == [(657, 682)]

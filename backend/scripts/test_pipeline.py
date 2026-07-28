@@ -2,20 +2,17 @@
 """Integration test for pipeline.py validation gates and sidecar JSON.
 
 Exercises the full pipeline (minus GRIB fetch) by synthesizing data arrays,
-running them through colorize → write value COG → validate_cog →
-build_sidecar_json.  This validates all the wiring without network access.
+running them through colorize → build_sidecar_json.  This validates the
+wiring without network access.
 
 Run from repo root:
     PYTHONPATH=backend .venv/bin/python backend/scripts/test_pipeline.py
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
-import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -23,7 +20,6 @@ import numpy as np
 # Ensure backend/ is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.builder.cog_writer import write_value_cog
 from app.services.builder.raster_grid import (
     compute_transform_and_shape,
     get_grid_params,
@@ -38,7 +34,6 @@ from app.services.builder.pipeline import (
     _prepare_display_data_for_colorize,
     _run_id_from_date,
     build_sidecar_json,
-    validate_cog,
 )
 from app.services.colormaps import COLOR_MAP_SPECS, RADAR_PTYPE_BREAKS, RADAR_PTYPE_ORDER
 
@@ -98,30 +93,6 @@ def test_colorize_roundtrip():
     print(f"  Colorize roundtrip: PASS (range {meta['min']:.1f}–{meta['max']:.1f}°F)")
 
 
-def test_validate_cog_gates():
-    """Write a value COG and run structural validation."""
-    bbox, grid_m = get_grid_params(MODEL, REGION)
-    transform, height, width = compute_transform_and_shape(bbox, grid_m)
-
-    # Synthesize data
-    data_k = _make_synthetic_tmp2m()
-    data_f = convert_units(data_k, "tmp2m")
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        val_path = Path(tmpdir) / "fh000.val.cog.tif"
-
-        write_value_cog(data_f, val_path, model=MODEL, region=REGION)
-
-        val_size = val_path.stat().st_size / 1024
-        print(f"  COG sizes: Val={val_size:.0f}KB")
-
-        # Gate 1: structural validation
-        assert validate_cog(
-            val_path, expected_bands=1, expected_dtype="Float32",
-            region=REGION, grid_meters=grid_m,
-        ), "Gate 1 failed for value COG"
-        print("  Gate 1 (Value structural): PASS")
-
 
 def test_sidecar_json():
     """Verify sidecar JSON matches the artifact contract schema."""
@@ -167,7 +138,7 @@ def test_sidecar_json():
         assert isinstance(stop[1], str)
 
     # Pretty-print for visual inspection
-    print(f"  Sidecar JSON:")
+    print("  Sidecar JSON:")
     print(f"    contract_version: {sidecar['contract_version']}")
     print(f"    valid_time:       {sidecar['valid_time']}")
     print(f"    units:            {sidecar['units']}")
@@ -193,26 +164,6 @@ def test_run_id_helpers():
     assert _format_units("dBZ") == "dBZ"
     print("  Run ID helpers: PASS")
 
-
-def test_validate_cog_rejects_bad_band_count():
-    """Gate 1 should reject a COG with wrong band count."""
-    bbox, grid_m = get_grid_params(MODEL, REGION)
-    transform, height, width = compute_transform_and_shape(bbox, grid_m)
-
-    # Write a valid value COG, then validate it pretending it should be RGBA
-    data = np.random.uniform(-40, 120, (height, width)).astype(np.float32)
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        val_path = Path(tmpdir) / "test.val.cog.tif"
-        write_value_cog(data, val_path, model=MODEL, region=REGION)
-
-        # Should fail: 1-band COG asked to validate as 4-band
-        result = validate_cog(
-            val_path, expected_bands=4, expected_dtype="Byte",
-            region=REGION, grid_meters=grid_m,
-        )
-        assert not result, "Gate 1 should reject wrong band count"
-    print("  Gate 1 rejection (wrong band count): PASS")
 
 
 def test_phase2_value_grid_semantics():
@@ -378,9 +329,7 @@ if __name__ == "__main__":
     test_run_id_helpers()
     test_unit_conversion()
     test_colorize_roundtrip()
-    test_validate_cog_gates()
     test_sidecar_json()
-    test_validate_cog_rejects_bad_band_count()
     test_phase2_value_grid_semantics()
     test_radar_ptype_display_prep_preserves_indexed_classes()
 

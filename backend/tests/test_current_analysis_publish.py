@@ -35,15 +35,7 @@ def _write_test_value_raster(path: Path, values: np.ndarray) -> None:
 
 
 def _configure_publish(monkeypatch: pytest.MonkeyPatch) -> None:
-    # These tests exercise the retained legacy COG publish flow: opt the model
-    # out of the (now default) binary-only substrate.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "current_analysis")
-    monkeypatch.setattr(rtma_ru_publish, "grid_build_enabled", lambda: False)
-    monkeypatch.setattr(
-        rtma_ru_publish,
-        "write_value_cog",
-        lambda values, output_path, **_: _write_test_value_raster(Path(output_path), np.asarray(values, dtype=np.float32)) or Path(output_path),
-    )
+    monkeypatch.setattr(rtma_ru_publish, "grid_build_enabled", lambda: True)
 
     def _float_to_rgba(values, color_map_id, **_kwargs):
         values_arr = np.asarray(values, dtype=np.float32)
@@ -144,7 +136,7 @@ def test_publish_current_analysis_bundle_reuses_previous_frames(
 
     _, previous_frames = rtma_ru_publish.load_latest_published_current_analysis_frames(tmp_path)
     assert len(previous_frames) == 1
-    assert set(previous_frames[0].value_paths) == {"tmp2m", "dp2m", "wspd10m", "wgst10m", "spres"}
+    assert set(previous_frames[0].sidecar_paths) == {"tmp2m", "dp2m", "wspd10m", "wgst10m", "spres"}
 
     second_result = rtma_ru_publish.publish_current_analysis_bundle(
         data_root=tmp_path,
@@ -155,7 +147,7 @@ def test_publish_current_analysis_bundle_reuses_previous_frames(
     )
 
     assert second_result.run_id == "20260521_1210z"
-    assert (second_result.published_run_dir / "tmp2m" / "fh000.val.cog.tif").exists()
+    assert (second_result.published_run_dir / "tmp2m" / "grid" / "fh000.l0.meta.json").exists()
     reused_sidecar = json.loads((second_result.published_run_dir / "tmp2m" / "fh000.json").read_text())
     assert reused_sidecar["run"] == "20260521_1210z"
     assert reused_sidecar["fh"] == 0
