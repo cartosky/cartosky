@@ -11,7 +11,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import rasterio
 
 from ..models.registry import MODEL_REGISTRY
 from .ensemble_stats_health import load_ensemble_stats_health
@@ -650,10 +649,6 @@ def _published_run_ids(data_root: Path, model_id: str, *, keep_runs: int) -> lis
         reverse=True,
     )
     return run_ids[: max(1, int(keep_runs))]
-
-
-def _value_cog_path(data_root: Path, model_id: str, run_id: str, variable_id: str, forecast_hour: int) -> Path:
-    return data_root / "published" / model_id / run_id / variable_id / f"fh{forecast_hour:03d}.val.cog.tif"
 
 
 def _sidecar_path(data_root: Path, model_id: str, run_id: str, variable_id: str, forecast_hour: int) -> Path:
@@ -1650,7 +1645,6 @@ def _scan_run_issue(
         validation_hours = _artifact_validation_hours(frame_hours, include_details=include_details)
 
         for fh in validation_hours:
-            value_path = _value_cog_path(data_root, model_id, run_id, artifact_variable_id, fh)
             sidecar_path = _sidecar_path(data_root, model_id, run_id, artifact_variable_id, fh)
             sidecar_exists = sidecar_path.is_file()
             needs_sidecar_payload = has_vector_substrate or bool(contour_keys)
@@ -1736,10 +1730,6 @@ def _scan_run_issue(
                                         },
                                     )
             else:
-                if "grid" in substrates and not value_path.is_file():
-                    missing_artifact_count += 1
-                    missing_here = True
-                    artifact_path = str(value_path)
                 if not sidecar_exists:
                     missing_artifact_count += 1
                     missing_here = True
@@ -1763,7 +1753,6 @@ def _scan_run_issue(
                         "variable_id": public_variable_id,
                         "forecast_hour": fh,
                         "issue": "missing_artifact",
-                        "value_grid_path": str(value_path) if "grid" in substrates and not uses_grid_runtime else None,
                         "artifact_path": artifact_path,
                         "sidecar_path": str(sidecar_path) if sidecar_exists or contour_keys or has_vector_substrate or not uses_grid_runtime else None,
                     },
@@ -1774,27 +1763,9 @@ def _scan_run_issue(
             if len(frame_hours) > 1:
                 sample_hours.append(frame_hours[-1])
             for fh in sorted(set(sample_hours)):
-                value_path = _value_cog_path(data_root, model_id, run_id, artifact_variable_id, fh)
                 sidecar_path = _sidecar_path(data_root, model_id, run_id, artifact_variable_id, fh)
                 sidecar_payload = _load_json_file(sidecar_path) if has_vector_substrate and sidecar_path.is_file() else None
                 vector_paths = _vector_artifact_paths(data_root, model_id, run_id, artifact_variable_id, fh, sidecar_payload) if has_vector_substrate else []
-                if not uses_grid_runtime and "grid" in substrates and value_path.is_file():
-                    try:
-                        with rasterio.open(value_path):
-                            pass
-                    except Exception as exc:
-                        unreadable_artifact_count += 1
-                        _append_sample_path(
-                            sample_paths,
-                            {
-                                "variable_id": public_variable_id,
-                                "forecast_hour": fh,
-                                "issue": "unreadable_value_grid",
-                                "value_grid_path": str(value_path),
-                                "artifact_path": str(value_path),
-                                "read_error": str(exc),
-                            },
-                        )
                 if has_vector_substrate:
                     for vector_path in vector_paths:
                         if not vector_path.is_file():

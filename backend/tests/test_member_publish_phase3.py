@@ -79,11 +79,11 @@ def test_grid_supported_flows_through_fallback() -> None:
 
 
 def test_canary_scope_unchanged_by_fallback() -> None:
-    """The fallback adds no packing keys, so canary scope derivation and
+    """The fallback adds no packing keys, so audited scope derivation and
     member ids never leak into it."""
-    from backend.scripts import canary_binary_sampler as canary
+    from backend.tests import helpers_variable_scope as scope_helper
 
-    scope, _, _, _ = canary._scope_for_model("gefs")
+    scope, _, _, _ = scope_helper._scope_for_model("gefs")
     assert "tmp2m__mean" in scope
     assert not any("__m0" in var or var.endswith("__control") for var in scope)
 

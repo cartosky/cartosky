@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import concurrent.futures
 import brotli
 import gzip
 import json
@@ -11,8 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import rasterio
-from rasterio.errors import RasterioIOError
 from rasterio.transform import Affine, array_bounds, from_bounds
 from scipy.ndimage import zoom as ndimage_zoom
 
@@ -2016,31 +2013,6 @@ def write_contour_grid_frames_for_run_root(
     return written
 
 
-def write_grid_frame_from_value_cog_for_run_root(
-    *,
-    run_root: Path,
-    model: str,
-    var: str,
-    fh: int,
-    value_cog_path: Path,
-) -> dict[str, Any]:
-    if not value_cog_path.is_file():
-        raise FileNotFoundError(f"Missing grid source value COG: {value_cog_path}")
-    try:
-        with rasterio.open(value_cog_path) as ds:
-            frame_entries = write_grid_frames_for_run_root(
-                run_root=run_root,
-                model=model,
-                var=var,
-                fh=fh,
-                values=ds.read(1).astype(np.float32, copy=False),
-                transform=ds.transform,
-                projection=ds.crs.to_string() if ds.crs is not None else GRID_PROJECTION,
-            )
-            return next((entry for entry in frame_entries if int(entry.get("level", GRID_LEVEL)) == GRID_LEVEL), frame_entries[0])
-    except RasterioIOError as exc:
-        raise FileNotFoundError(f"Unreadable grid source value COG: {value_cog_path}") from exc
-
 
 def _build_palette_block(model: str, var: str) -> dict[str, Any]:
     color_map_id = variable_color_map_id(model, var)
@@ -2414,82 +2386,3 @@ def build_grid_manifests_for_run_root(
     return manifest_ok
 
 
-def build_grid_for_run(
-    *,
-    data_root: Path,
-    model: str,
-    run: str,
-    workers: int,
-    variables: tuple[str, ...] | None = None,
-) -> tuple[int, int, int]:
-    published_run = data_root / "published" / model / run
-    if not published_run.is_dir():
-        return 0, 0, 0
-
-    requested_vars = {str(item).strip().lower() for item in (variables or ()) if str(item).strip()}
-    jobs: list[tuple[Path, str, int, Path]] = []
-    manifest_roots_by_var: dict[str, set[Path]] = {}
-
-    for variable_run_root, var in _iter_grid_variable_run_roots(published_run, model):
-        var_dir = variable_run_root / var
-        if requested_vars and var not in requested_vars:
-            continue
-        manifest_roots_by_var.setdefault(var, set()).add(variable_run_root)
-        for value_cog_path in sorted(var_dir.glob("fh*.val.cog.tif")):
-            if not value_cog_path.is_file():
-                logger.warning(
-                    "Skipping missing grid source value COG: model=%s run=%s var=%s path=%s",
-                    model,
-                    run,
-                    var,
-                    value_cog_path,
-                )
-                continue
-            fh_token = value_cog_path.name.split(".")[0]
-            try:
-                fh = int(fh_token.removeprefix("fh"))
-            except ValueError:
-                continue
-            sidecar_path = var_dir / f"{fh_token}.json"
-            if not sidecar_path.is_file():
-                continue
-            jobs.append((variable_run_root, var, fh, value_cog_path))
-
-    if not jobs:
-        return 0, 0, 0
-
-    ok = 0
-    fail = 0
-    max_workers = max(1, int(workers))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = [
-            pool.submit(
-                write_grid_frame_from_value_cog_for_run_root,
-                run_root=variable_run_root,
-                model=model,
-                var=var,
-                fh=fh,
-                value_cog_path=value_cog_path,
-            )
-            for variable_run_root, var, fh, value_cog_path in jobs
-        ]
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                future.result()
-            except Exception:
-                logger.exception("grid frame build failed for model=%s run=%s", model, run)
-                fail += 1
-                continue
-            ok += 1
-
-    manifest_ok = 0
-    for var, roots in manifest_roots_by_var.items():
-        for variable_run_root in sorted(roots):
-            manifest_ok += build_grid_manifests_for_run_root(
-                run_root=variable_run_root,
-                model=model,
-                run=run,
-                variables=(var,),
-            )
-
-    return ok, fail, manifest_ok

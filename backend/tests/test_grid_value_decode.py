@@ -58,7 +58,7 @@ def _canary_scope_vars(model: str) -> list[str]:
     ``_PACKING_BY_MODEL_VAR`` keys intersected with the canary's own
     ``_split_scope_by_buildable`` logic (via ``_scope_for_model``), so this
     parameterization cannot silently drift from what Layer 3 exercises."""
-    from backend.scripts.canary_binary_sampler import _scope_for_model
+    from backend.tests.helpers_variable_scope import _scope_for_model
 
     return list(_scope_for_model(model)[0])
 
@@ -271,7 +271,7 @@ def test_ensemble_scope_partitions_cleanly_and_pins_dead_aliases(model: str) -> 
     the dead-alias bucket must equal the audited set — so an unaudited catalog
     or packing change fails loudly here rather than silently narrowing (or
     widening) the parameterized decode coverage above."""
-    from backend.scripts.canary_binary_sampler import _scope_for_model
+    from backend.tests.helpers_variable_scope import _scope_for_model
 
     (
         in_scope,
@@ -339,7 +339,7 @@ def test_publisher_scope_has_no_exclusions_and_is_fully_covered(model: str) -> N
     parameterization covers exactly that scope. Derived through the canary's
     own logic (not hardcoded) so a future catalog change that populates a
     bucket fails loudly here instead of silently narrowing coverage."""
-    from backend.scripts.canary_binary_sampler import _scope_for_model
+    from backend.tests.helpers_variable_scope import _scope_for_model
 
     (
         in_scope,
@@ -506,7 +506,7 @@ def test_observed_scope_partitions_and_pins_exclusions(model: str) -> None:
     """Pin each observed model's canary scope buckets and prove the Layer 1
     parameterization covers exactly the canary scope — a catalog or packing
     change that moves a variable between buckets fails loudly here."""
-    from backend.scripts.canary_binary_sampler import _scope_for_model
+    from backend.tests.helpers_variable_scope import _scope_for_model
 
     (
         in_scope,

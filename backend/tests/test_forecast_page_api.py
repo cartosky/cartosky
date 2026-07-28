@@ -1308,7 +1308,10 @@ async def test_fetch_acis_precip_summary_prefers_nws_station_candidates_before_b
     assert "resolved via NWS-anchored station" in caplog.text
 
 
-async def test_fetch_observed_precip_mrms_samples_value_cogs(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_fetch_observed_precip_mrms_samples_grid_binaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression pin: this lookup silently returned all-None after the MRMS
+    # binary cutover because it still called the COG sampler. It must read the
+    # grid binaries — MRMS's only substrate.
     values = {
         "mrms_recent_precip_6h": 0.31,
         "mrms_recent_precip_24h": 0.87,
@@ -1339,12 +1342,8 @@ async def test_fetch_observed_precip_mrms_samples_value_cogs(monkeypatch: pytest
         assert region == "conus"
         return True, values[var]
 
-    def fail_binary_sample(*args, **kwargs):
-        raise AssertionError("MRMS recent precip should sample value COGs, not binary grid frames")
-
     monkeypatch.setattr(forecast_page_service.sampling, "resolve_latest_complete_run", fake_resolve_latest_complete_run)
-    monkeypatch.setattr(forecast_page_service.sampling, "sample_value", fake_sample_value)
-    monkeypatch.setattr(forecast_page_service.sampling, "sample_binary_value", fail_binary_sample)
+    monkeypatch.setattr(forecast_page_service.sampling, "sample_binary_value", fake_sample_value)
 
     payload = await forecast_page_service._fetch_observed_precip_mrms(43.55, -96.73)
 

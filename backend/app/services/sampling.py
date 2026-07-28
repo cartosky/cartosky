@@ -26,10 +26,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import rasterio
 from pyproj import Transformer
 from rasterio.transform import Affine
-from rasterio.windows import Window
 
 from .grid import (
     GRID_DTYPE,
@@ -52,84 +50,10 @@ logger = logging.getLogger(__name__)
 # this fallback is rarely exercised.
 _MIN_USABLE_FRAMES_FALLBACK = 6
 
-# ── Open dataset cache ────────────────────────────────────────────────────
-_ds_cache: dict[str, rasterio.DatasetReader] = {}
-_ds_cache_lock = threading.Lock()
-_DS_CACHE_MAX = 16
-
-
-def _get_cached_dataset(path: Path) -> rasterio.DatasetReader:
-    key = str(path)
-    with _ds_cache_lock:
-        ds = _ds_cache.get(key)
-        if ds is not None and not ds.closed:
-            return ds
-        if len(_ds_cache) >= _DS_CACHE_MAX:
-            evict_key = next(iter(_ds_cache))
-            try:
-                _ds_cache.pop(evict_key).close()
-            except Exception:
-                _ds_cache.pop(evict_key, None)
-        ds = rasterio.open(path)
-        _ds_cache[key] = ds
-        return ds
-
-
 # ── Point sampling primitives ─────────────────────────────────────────────
 @lru_cache(maxsize=16)
 def _sample_transformer(dst_crs: str) -> Transformer:
     return Transformer.from_crs("EPSG:4326", dst_crs, always_xy=True)
-
-
-def _sample_dataset_xy(ds: rasterio.DatasetReader, *, lon: float, lat: float) -> tuple[float, float]:
-    ds_crs = ds.crs
-    if ds_crs is None:
-        raise ValueError(f"Sample dataset missing CRS: {ds.name}")
-    dst_crs = ds_crs.to_string()
-    if dst_crs == "EPSG:4326":
-        return float(lon), float(lat)
-    return _sample_transformer(dst_crs).transform(lon, lat)
-
-
-def _sample_dataset_index(ds: rasterio.DatasetReader, *, lon: float, lat: float) -> tuple[int, int]:
-    x, y = _sample_dataset_xy(ds, lon=lon, lat=lat)
-    row, col = ds.index(x, y)
-    return row, col
-
-
-def _read_sample_value(
-    ds: rasterio.DatasetReader,
-    *,
-    row: int,
-    col: int,
-    masked: bool,
-) -> tuple[float | None, bool]:
-    if row < 0 or row >= ds.height or col < 0 or col >= ds.width:
-        return None, True
-
-    window = Window(col, row, 1, 1)  # type: ignore[call-arg]
-    pixel = ds.read(1, window=window, masked=masked)
-    raw_value = pixel[0, 0]
-    if np.ma.is_masked(raw_value):
-        return None, True
-
-    value = float(raw_value)
-    if np.isnan(value):
-        return None, True
-    return value, False
-
-
-def _sample_batch_values(
-    ds: rasterio.DatasetReader,
-    *,
-    points: list[Any],
-) -> dict[str, float | None]:
-    values: dict[str, float | None] = {}
-    for point in points:
-        row, col = _sample_dataset_index(ds, lon=point.lon, lat=point.lat)
-        value, no_data = _read_sample_value(ds, row=row, col=col, masked=True)
-        values[point.id] = None if no_data or value is None else round(float(value), 1)
-    return values
 
 
 # ── Binary point sampling primitives ──────────────────────────────────────
@@ -519,7 +443,7 @@ def sample_binary_batch_values(
     var: str,
     points: list[Any],
 ) -> dict[str, float | None]:
-    """Grid-binary twin of :func:`_sample_batch_values`: one value per point
+    """Batch point sampling over one grid binary frame: one value per point
     id, rounded to 1 decimal, ``None`` for out-of-bounds / nodata / NaN
     pixels. ``var`` must be the runtime variable id the frame was encoded
     under, since it selects the decode packing config.
@@ -576,25 +500,6 @@ def sample_binary_batch_values(
 # import to avoid a load-time cycle). The published value COG already stores
 # display units (conversion happens at build time), so callers get the same
 # values served by ``/api/v4/sample``.
-def _resolve_val_cog(
-    model: str,
-    run: str,
-    var: str,
-    fh: int,
-    *,
-    ensemble_view: str | None = None,
-    region: str | None = None,
-) -> Path | None:
-    del region
-    from .. import main as _main
-
-    resolved = _main._resolve_run(model, run) or run
-    runtime_var = _main._runtime_var_id_for_request(model, var, ensemble_view)
-    candidate = _main._published_var_dir(model, resolved, runtime_var) / f"fh{fh:03d}.val.cog.tif"
-    if candidate.is_file():
-        return candidate
-    return None
-
 
 def _resolve_sidecar(
     model: str,
@@ -901,60 +806,13 @@ def manifest_frame_hours(model: str, run: str, var: str, *, region: str | None =
     return [fh for fh, _vt in entries]
 
 
-def sample_point_value(cog_path: Path, *, lat: float, lon: float) -> float | None:
-    """Sample a single point from an already-resolved value COG.
 
-    Returns the value rounded to 1 decimal (matching ``/api/v4/sample``), or
-    ``None`` for out-of-bounds / nodata / NaN pixels.
-    """
-    ds = _get_cached_dataset(cog_path)
-    row, col = _sample_dataset_index(ds, lon=lon, lat=lat)
-    value, no_data = _read_sample_value(ds, row=row, col=col, masked=True)
-    if no_data or value is None:
-        return None
-    return round(float(value), 1)
-
-
-# Concurrency for the meteogram frame fan-out. Threads overlap COG opens when
-# the workload is I/O-bound (cold page cache / remote storage); when the COGs
-# are hot in page cache the opens are GIL-bound and threads don't help — see the
-# note on ``sample_values_parallel`` for the process-pool escape hatch.
+# Concurrency for the meteogram sidecar fan-out.
 _METEOGRAM_SAMPLE_WORKERS = 16
 
 # (model, run_id, var, fh) — one frame to sample.
 SampleTask = tuple[str, str, str, int]
 
-
-def sample_value(
-    model: str,
-    run_id: str,
-    var: str,
-    fh: int,
-    *,
-    lat: float,
-    lon: float,
-    region: str | None = None,
-) -> tuple[bool, float | None]:
-    """Sample one frame's value COG. Thread-safe: opens and closes its own
-    dataset (not the shared ``_ds_cache``, whose LRU eviction closes handles
-    other threads may still be reading).
-
-    Returns ``(present, value)``: ``present`` is False when the value COG is
-    absent (the caller omits the frame, matching the prior behavior); ``value``
-    is None for nodata / out-of-bounds / read errors on a present COG. No sidecar
-    is read here — ``valid_time`` and ``units`` come from the run manifest.
-    """
-    cog = _resolve_val_cog(model, run_id, var, fh, region=region)
-    if cog is None:
-        return (False, None)
-    try:
-        with rasterio.open(cog) as ds:
-            row, col = _sample_dataset_index(ds, lon=lon, lat=lat)
-            raw, no_data = _read_sample_value(ds, row=row, col=col, masked=True)
-            return (True, None if (no_data or raw is None) else round(float(raw), 1))
-    except Exception:
-        logger.exception("Meteogram sample failed: %s/%s/%s/fh%03d", model, run_id, var, fh)
-        return (True, None)
 
 
 def sample_binary_value(
@@ -969,9 +827,9 @@ def sample_binary_value(
 ) -> tuple[bool, float | None]:
     """Sample one frame's grid binary.
 
-    Returns ``(present, value)`` with the same shape as :func:`sample_value` so
-    canary/shadow comparisons can call both paths side by side without touching
-    production route handlers.
+    Returns ``(present, value)``: ``present`` is False when the frame is
+    absent (the caller omits it); ``value`` is None for nodata /
+    out-of-bounds / read errors on a present frame.
 
     ``var`` may be any requestable id (canonical, alias, or ensemble-view
     default): the frame is resolved AND decoded under the runtime variable id
@@ -998,37 +856,6 @@ def sample_binary_value(
         logger.exception("Binary sample failed: %s/%s/%s/fh%03d", model, run_id, var, fh)
         return (True, None)
 
-
-def sample_values_parallel(
-    tasks: list[SampleTask],
-    *,
-    lat: float,
-    lon: float,
-    region: str | None = None,
-) -> list[tuple[bool, float | None]]:
-    """Sample every frame in ``tasks`` (all models/variables for one request) in
-    a single pool, returning ``(present, value)`` per task in input order.
-
-    Uses a thread pool: effective only while the per-frame COG opens are
-    I/O-bound. If profiling shows the opens are GIL-bound (hot page cache), swap
-    ``ThreadPoolExecutor`` for ``ProcessPoolExecutor`` here — the worker
-    (:func:`sample_value`) is already a top-level, picklable function with no
-    shared state, so that is the only change required.
-    """
-    if not tasks:
-        return []
-    if len(tasks) == 1:
-        m, r, v, fh = tasks[0]
-        return [sample_value(m, r, v, fh, lat=lat, lon=lon, region=region)]
-
-    workers = min(_METEOGRAM_SAMPLE_WORKERS, len(tasks))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(
-            pool.map(
-                lambda t: sample_value(t[0], t[1], t[2], t[3], lat=lat, lon=lon, region=region),
-                tasks,
-            )
-        )
 
 
 def read_frame_valid_times(

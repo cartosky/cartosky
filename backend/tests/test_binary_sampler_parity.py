@@ -46,36 +46,11 @@ from app.services.grid_display_prep import (
 from app.services.sampling import (
     read_binary_sample_value,
     sample_binary_value,
-    sample_binary_point_value,
-    sample_point_value,
 )
 
 # Default fixture geometry for the original GFS-era tests below.
 _DEFAULT_TRANSFORM = from_origin(-101.0, 46.0, 1.0, 1.0)
 _DEFAULT_PROJECTION = "EPSG:4326"
-
-
-def _write_value_cog(
-    path: Path,
-    values: np.ndarray,
-    *,
-    transform: Affine = _DEFAULT_TRANSFORM,
-    projection: str = _DEFAULT_PROJECTION,
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=values.shape[0],
-        width=values.shape[1],
-        count=1,
-        dtype="float32",
-        crs=projection,
-        transform=transform,
-        nodata=np.nan,
-    ) as ds:
-        ds.write(values.astype(np.float32), 1)
 
 
 def _write_pair(
@@ -86,11 +61,9 @@ def _write_pair(
     values: np.ndarray,
     transform: Affine = _DEFAULT_TRANSFORM,
     projection: str = _DEFAULT_PROJECTION,
-) -> tuple[Path, Path, Path]:
+) -> tuple[Path, Path]:
     run_root = tmp_path / "published" / model / "20260630_00z"
     var_dir = run_root / var
-    cog_path = var_dir / "fh000.val.cog.tif"
-    _write_value_cog(cog_path, values, transform=transform, projection=projection)
     write_grid_frame_for_run_root(
         run_root=run_root,
         model=model,
@@ -105,7 +78,6 @@ def _write_pair(
     packing = _PACKING_BY_MODEL_VAR.get((model, var), {})
     bin_name = grid_frame_filename(0, dtype=grid_dtype(str(packing.get("dtype") or GRID_DTYPE)))
     return (
-        cog_path,
         var_dir / "grid" / bin_name,
         var_dir / "grid" / "fh000.l0.meta.json",
     )
@@ -123,97 +95,6 @@ def _meta_index(meta_path: Path, *, lon: float, lat: float) -> tuple[int, int]:
     return int(np.floor(row_f)), int(np.floor(col_f))
 
 
-def test_binary_sampler_matches_cog_for_unscaled_variable_and_oob(tmp_path: Path) -> None:
-    values = np.array(
-        [
-            [1.34, 2.21, 3.09],
-            [4.04, np.nan, 6.52],
-            [7.77, 8.88, 9.99],
-        ],
-        dtype=np.float32,
-    )
-    cog_path, frame_path, meta_path = _write_pair(
-        tmp_path,
-        model="gfs",
-        var="tmp2m",
-        values=values,
-    )
-
-    assert sample_binary_point_value(
-        frame_path,
-        meta_path,
-        model="gfs",
-        var="tmp2m",
-        lat=45.5,
-        lon=-100.5,
-    ) == sample_point_value(cog_path, lat=45.5, lon=-100.5)
-
-    raw, no_data = read_binary_sample_value(
-        frame_path,
-        meta_path,
-        model="gfs",
-        var="tmp2m",
-        lat=44.5,
-        lon=-99.5,
-    )
-    assert raw is None
-    assert no_data is True
-
-    raw, no_data = read_binary_sample_value(
-        frame_path,
-        meta_path,
-        model="gfs",
-        var="tmp2m",
-        lat=60.0,
-        lon=-120.0,
-    )
-    assert raw is None
-    assert no_data is True
-
-
-def test_binary_sampler_reads_display_prepped_continuous_upscale(tmp_path: Path) -> None:
-    values = np.array(
-        [
-            [0.00, 0.30, 0.60],
-            [0.90, 1.20, 1.50],
-            [1.80, 2.10, 2.40],
-        ],
-        dtype=np.float32,
-    )
-    cog_path, frame_path, meta_path = _write_pair(
-        tmp_path,
-        model="gfs",
-        var="precip_total",
-        values=values,
-    )
-
-    lat = 45.75
-    lon = -100.25
-    raw, no_data = read_binary_sample_value(
-        frame_path,
-        meta_path,
-        model="gfs",
-        var="precip_total",
-        lat=lat,
-        lon=lon,
-    )
-
-    display_values, prep_meta = prepare_grid_display_values(model="gfs", var="precip_total", values=values)
-    row, col = _meta_index(meta_path, lon=lon, lat=lat)
-    expected = float(display_values[row, col])
-    assert prep_meta is not None
-    assert prep_meta["upscale_factor"] == 3
-    assert no_data is False
-    assert raw == pytest.approx(expected, abs=0.005)
-
-    # The COG still samples the original lower-resolution field during canary.
-    # For continuous 3x display-prepped vars, exact equality is not required.
-    cog_value = sample_point_value(cog_path, lat=lat, lon=lon)
-    assert cog_value is not None
-    assert raw is not None
-    assert abs(round(raw, 1) - cog_value) <= 0.5
-
-
 def test_binary_sampler_reads_display_prepped_categorical_upscale(tmp_path: Path) -> None:
     values = np.array(
         [
@@ -222,7 +103,7 @@ def test_binary_sampler_reads_display_prepped_categorical_upscale(tmp_path: Path
         ],
         dtype=np.float32,
     )
-    _cog_path, frame_path, meta_path = _write_pair(
+    frame_path, meta_path = _write_pair(
         tmp_path,
         model="gfs",
         var="ptype_intensity",
@@ -250,7 +131,7 @@ def test_binary_sampler_reads_display_prepped_categorical_upscale(tmp_path: Path
 
 def test_binary_sampler_rejects_unknown_meta_format_version(tmp_path: Path) -> None:
     values = np.array([[32.0]], dtype=np.float32)
-    _cog_path, frame_path, meta_path = _write_pair(
+    frame_path, meta_path = _write_pair(
         tmp_path,
         model="gfs",
         var="tmp2m",
@@ -389,7 +270,7 @@ def _model_scope(model: str) -> list[str]:
 def _canary_scope(model: str) -> list[str]:
     """Packed variables intersected with the canary's own scope logic, so
     Layer 2 coverage cannot silently drift from what Layer 3 exercises."""
-    from backend.scripts.canary_binary_sampler import _scope_for_model
+    from backend.tests.helpers_variable_scope import _scope_for_model
 
     return list(_scope_for_model(model)[0])
 
@@ -518,7 +399,7 @@ def test_phase_g_ensemble_partition_matches_audit_and_canary_scope() -> None:
     the audited set, and the parity scope above must be exactly the canary
     scope with the audited tolerance groups — so an unaudited catalog change
     fails loudly here instead of silently narrowing coverage."""
-    from backend.scripts.canary_binary_sampler import _scope_for_model
+    from backend.tests.helpers_variable_scope import _scope_for_model
 
     for model, expected in EXPECTED_ENSEMBLE_GROUP_PARTITION.items():
         (
@@ -569,7 +450,7 @@ def test_publisher_partition_matches_audit_and_canary_scope() -> None:
     Group 1, and the parity scope above is exactly the canary scope — so an
     unaudited catalog or display-prep change fails loudly here instead of
     silently reclassifying (or dropping) a variable."""
-    from backend.scripts.canary_binary_sampler import _scope_for_model
+    from backend.tests.helpers_variable_scope import _scope_for_model
 
     for model, expected in EXPECTED_PUBLISHER_GROUP_PARTITION.items():
         (
@@ -652,219 +533,6 @@ def _lattice_values(model: str, var: str, shape: tuple[int, int]) -> np.ndarray:
     return (offset + codes * step).reshape(shape).astype(np.float32)
 
 
-@pytest.mark.parametrize(("model", "var"), GROUP1_PARAMS)
-def test_group1_binary_matches_cog_on_model_native_grid(
-    model: str, var: str, tmp_path: Path
-) -> None:
-    """Group 1 (no display prep): COG and binary describe the same pixel grid,
-    so the rounded sampled values must be exactly equal at interior points,
-    pixel-boundary points, nodata cells, and out-of-bbox points."""
-    transform, projection = _model_grid_geometry(model)
-    values = _lattice_values(model, var, (5, 5))
-    values[1, 1] = np.nan  # nodata cell
-    height, width = values.shape
-
-    cog_path, frame_path, meta_path = _write_pair(
-        tmp_path,
-        model=model,
-        var=var,
-        values=values,
-        transform=transform,
-        projection=projection,
-    )
-
-    # Group 1 invariant: no resolution change between the artifacts.
-    meta = json.loads(meta_path.read_text())
-    assert (meta["height"], meta["width"]) == (height, width)
-
-    interior_points = [(0.5, 0.5), (height - 0.5, width - 0.5), (2.5, 3.5)]
-    boundary_points = [(2.0, 2.0), (0.5, 3.0), (height - 1.0, 2.5)]
-    for row_f, col_f in interior_points + boundary_points:
-        lat, lon = _lonlat_at(transform, projection, row_f, col_f)
-        cog_value = sample_point_value(cog_path, lat=lat, lon=lon)
-        binary_value = sample_binary_point_value(
-            frame_path, meta_path, model=model, var=var, lat=lat, lon=lon
-        )
-        assert cog_value is not None, f"{model}/{var}: COG sample missing at ({row_f}, {col_f})"
-        assert binary_value == cog_value, (
-            f"{model}/{var}: Group 1 divergence at ({row_f}, {col_f}): "
-            f"cog={cog_value} binary={binary_value}"
-        )
-
-    # Nodata cell center: both substrates agree it has no value.
-    lat, lon = _lonlat_at(transform, projection, 1.5, 1.5)
-    assert sample_point_value(cog_path, lat=lat, lon=lon) is None
-    raw, no_data = read_binary_sample_value(
-        frame_path, meta_path, model=model, var=var, lat=lat, lon=lon
-    )
-    assert raw is None
-    assert no_data is True
-
-    # Point outside the model's bbox (well northwest of the domain origin).
-    lat, lon = _lonlat_at(transform, projection, -50.0, -50.0)
-    assert sample_point_value(cog_path, lat=lat, lon=lon) is None
-    raw, no_data = read_binary_sample_value(
-        frame_path, meta_path, model=model, var=var, lat=lat, lon=lon
-    )
-    assert raw is None
-    assert no_data is True
-
-
-@pytest.mark.parametrize(("model", "var"), GROUP2_PARAMS)
-def test_group2_continuous_upscale_parity_on_model_native_grid(
-    model: str, var: str, tmp_path: Path
-) -> None:
-    """Group 2 (continuous upscale): the binary stores a finer, display-prepped
-    grid. The authoritative assertion is against the real display-prep output
-    at the sampled fine pixel (within packing quantization, scale/2); the
-    COG comparison is a bounded sanity check, not equality — see the tolerance
-    comment inline."""
-    transform, projection = _model_grid_geometry(model)
-    packing = _PACKING_BY_MODEL_VAR[(model, var)]
-    scale = float(packing["scale"])
-    config = grid_display_prep_config(model, var)
-    assert config is not None
-
-    # Smooth gradient comfortably above the display-prep support threshold so
-    # zero-support masking never engages; adjacent-cell delta is `step`
-    # horizontally and `width * step` vertically.
-    base = float(config.support_min_value or 0.0) + 10.0 * scale
-    step = 25.0 * scale
-    height = width = 5
-    values = (
-        base + np.arange(height * width, dtype=np.float64) * step
-    ).reshape(height, width).astype(np.float32)
-
-    cog_path, frame_path, meta_path = _write_pair(
-        tmp_path,
-        model=model,
-        var=var,
-        values=values,
-        transform=transform,
-        projection=projection,
-    )
-
-    display_values, prep_meta = prepare_grid_display_values(model=model, var=var, values=values)
-    assert prep_meta is not None
-    upscale_factor = int(prep_meta["upscale_factor"])
-    assert upscale_factor > 1
-    meta = json.loads(meta_path.read_text())
-    assert (meta["height"], meta["width"]) == (height * upscale_factor, width * upscale_factor)
-
-    for row_f, col_f in [(1.25, 1.75), (2.5, 3.5), (3.9, 0.6)]:
-        lat, lon = _lonlat_at(transform, projection, row_f, col_f)
-        raw, no_data = read_binary_sample_value(
-            frame_path, meta_path, model=model, var=var, lat=lat, lon=lon
-        )
-        assert no_data is False
-        assert raw is not None
-
-        # Authoritative: the binary must reproduce the display-prepped field at
-        # the fine pixel the meta transform maps this point to, within packing
-        # quantization only.
-        fine_row, fine_col = _meta_index(meta_path, lon=lon, lat=lat)
-        expected = float(display_values[fine_row, fine_col])
-        assert raw == pytest.approx(expected, abs=scale / 2 + 1e-4), (
-            f"{model}/{var}: binary sample diverged from display-prepped field "
-            f"at ({row_f}, {col_f}): raw={raw} expected={expected}"
-        )
-
-        # Bounded COG sanity check. The COG samples the original coarse grid;
-        # the binary samples a bilinear-upscaled fine grid, so exact equality
-        # is not expected (this is what makes Group 2 a distinct tolerance
-        # group). A fine-grid bilinear value stays within the local coarse
-        # neighborhood, so the divergence is bounded by the fixture's largest
-        # adjacent-cell delta (width * step vertically, plus one horizontal
-        # step), plus packing quantization and the samplers' 1-decimal
-        # rounding. Anything beyond that bound means the sampler read a pixel
-        # from the wrong part of the grid, not an upscale artifact.
-        cog_value = sample_point_value(cog_path, lat=lat, lon=lon)
-        assert cog_value is not None
-        neighborhood_bound = (width + 1) * step + scale + 0.05
-        assert abs(raw - cog_value) <= neighborhood_bound, (
-            f"{model}/{var}: Group 2 divergence exceeds the coarse-neighborhood "
-            f"bound at ({row_f}, {col_f}): raw={raw} cog={cog_value} "
-            f"bound={neighborhood_bound}"
-        )
-
-    # Point outside the model's bbox.
-    lat, lon = _lonlat_at(transform, projection, -50.0, -50.0)
-    raw, no_data = read_binary_sample_value(
-        frame_path, meta_path, model=model, var=var, lat=lat, lon=lon
-    )
-    assert raw is None
-    assert no_data is True
-
-
-@pytest.mark.parametrize(("model", "var"), GROUP4_PARAMS)
-def test_group4_categorical_no_upscale_requires_exact_integer_equality(
-    model: str, var: str, tmp_path: Path
-) -> None:
-    """Group 4 (categorical_nearest with upscale_factor=1): there is NO
-    resolution difference between the value COG and the grid binary, so the
-    two samplers must return exactly equal integer categories at every test
-    point — including points on and near category boundaries. No tolerance,
-    no boundary exception: any divergence is a test failure (and blocking in
-    the canary), unlike Group 3 where boundary divergence is expected from
-    the resolution mismatch."""
-    transform, projection = _model_grid_geometry(model)
-    height = width = 6
-
-    # Explicit multi-category quadrants (categories 1, 2, 3, 5) with internal
-    # class boundaries between rows/cols 2 and 3.
-    values = np.zeros((height, width), dtype=np.float32)
-    values[:3, :3] = 1.0
-    values[:3, 3:] = 2.0
-    values[3:, :3] = 3.0
-    values[3:, 3:] = 5.0
-
-    cog_path, frame_path, meta_path = _write_pair(
-        tmp_path,
-        model=model,
-        var=var,
-        values=values,
-        transform=transform,
-        projection=projection,
-    )
-
-    # Group 4 invariant: same resolution on both sides.
-    meta = json.loads(meta_path.read_text())
-    assert (meta["height"], meta["width"]) == (height, width)
-
-    quadrant_centers = [(1.5, 1.5), (1.5, 4.5), (4.5, 1.5), (4.5, 4.5)]
-    near_boundary = [
-        (2.9, 2.9), (3.1, 3.1), (2.9, 3.1), (3.1, 2.9),
-        (1.5, 2.95), (1.5, 3.05), (2.95, 4.5), (3.05, 4.5),
-    ]
-    on_boundary = [(3.0, 3.0), (3.0, 1.5), (1.5, 3.0)]
-    for row_f, col_f in quadrant_centers + near_boundary + on_boundary:
-        lat, lon = _lonlat_at(transform, projection, row_f, col_f)
-        cog_value = sample_point_value(cog_path, lat=lat, lon=lon)
-        binary_value = sample_binary_point_value(
-            frame_path, meta_path, model=model, var=var, lat=lat, lon=lon
-        )
-        assert cog_value is not None
-        assert binary_value is not None
-        assert float(cog_value).is_integer()
-        assert float(binary_value).is_integer()
-        assert int(binary_value) == int(cog_value), (
-            f"{model}/{var}: Group 4 categorical divergence at ({row_f}, {col_f}): "
-            f"cog={cog_value} binary={binary_value} — same-resolution categorical "
-            f"artifacts must never disagree, even at class boundaries"
-        )
-
-    # Point outside the model's bbox.
-    lat, lon = _lonlat_at(transform, projection, -50.0, -50.0)
-    assert sample_point_value(cog_path, lat=lat, lon=lon) is None
-    raw, no_data = read_binary_sample_value(
-        frame_path, meta_path, model=model, var=var, lat=lat, lon=lon
-    )
-    assert raw is None
-    assert no_data is True
-
-
-# ── Observed products (current_analysis, MRMS, GOES-East) ────────────
-
 # Expected classifier groups per the live sampling_tolerance_group() config:
 # ALL Group 1 across all three models — including mrms_radar_ptype (it has NO
 # categorical display-prep entry, unlike hrrr's radar_ptype which an entry
@@ -900,7 +568,7 @@ def test_observed_partition_matches_classifier_and_canary_scope() -> None:
     groups (all Group 1), and that the generic Group 1 coverage is exactly
     the canary scope minus the transformed-binary exclusions — so neither an
     unaudited catalog change nor a silent exclusion drop can slip through."""
-    from backend.scripts.canary_binary_sampler import _scope_for_model
+    from backend.tests.helpers_variable_scope import _scope_for_model
 
     for model, expected_groups in EXPECTED_OBSERVED_GROUP_PARTITION.items():
         (
@@ -935,191 +603,6 @@ def test_observed_partition_matches_classifier_and_canary_scope() -> None:
         assert covered == set(in_scope) - transformed
         assert not [var for (mdl, var) in GROUP2_PARAMS if mdl == model]
         assert not [var for (mdl, var) in GROUP4_PARAMS if mdl == model]
-
-
-@pytest.mark.parametrize("var", ["ir13", "wv9", "wv8"])
-def test_goes_ir_band_binary_stores_celsius_cog_stores_kelvin(
-    var: str, tmp_path: Path
-) -> None:
-    """The K->C conversion is a HARDCODED special case at the top of
-    prepare_grid_display_values (values - 273.15), not a display-prep config
-    entry — so the binary stores Celsius while the COG stores Kelvin, a fixed
-    273.15 offset at every pixel. The binary must round-trip the CELSIUS
-    field (packing offset=-100 is Celsius-calibrated); COG-vs-binary is a
-    clean constant delta. The canary will flag this as ~273.15 divergence —
-    expected and handled at canary time, not here."""
-    from app.services.grid_display_prep import prepare_grid_display_values as _prep
-
-    kelvin = np.array([[183.15, 233.15], [273.15, 313.15]], dtype=np.float32)
-
-    # Pin the hardcode itself: exact -273.15 shift, no other transformation.
-    display, prep_meta = _prep(model="goes-east", var=var, values=kelvin)
-    assert prep_meta == {"id": f"goes_{var}_display_celsius_v1", "unit_conversion": "K_to_C"}
-    assert np.allclose(display, kelvin - np.float32(273.15), atol=1e-4)
-
-    transform, projection = _model_grid_geometry("goes-east")
-    cog_path, frame_path, meta_path = _write_pair(
-        tmp_path,
-        model="goes-east",
-        var=var,
-        values=kelvin,
-        transform=transform,
-        projection=projection,
-    )
-
-    # Same resolution on both substrates (the conversion is not an upscale).
-    meta = json.loads(meta_path.read_text())
-    assert (meta["height"], meta["width"]) == kelvin.shape
-
-    scale = float(_PACKING_BY_MODEL_VAR[("goes-east", var)]["scale"])
-    for row_f, col_f in [(0.5, 0.5), (0.5, 1.5), (1.5, 0.5), (1.5, 1.5)]:
-        lat, lon = _lonlat_at(transform, projection, row_f, col_f)
-        cog_value = sample_point_value(cog_path, lat=lat, lon=lon)
-        binary_value = sample_binary_point_value(
-            frame_path, meta_path, model="goes-east", var=var, lat=lat, lon=lon
-        )
-        assert cog_value is not None
-        assert binary_value is not None
-        row, col = _meta_index(meta_path, lon=lon, lat=lat)
-        expected_c = float(kelvin[row, col]) - 273.15
-        # Binary is the Celsius value (1-decimal sampler rounding + scale/2).
-        assert binary_value == pytest.approx(expected_c, abs=0.05 + scale / 2 + 1e-3)
-        # COG stays Kelvin; the substrates differ by exactly the K->C offset
-        # (two independent 1-decimal roundings + packing quantization).
-        assert binary_value == pytest.approx(cog_value - 273.15, abs=0.11)
-
-
-def test_mrms_reflectivity_binary_stores_smoothed_field_group1_blind_spot(
-    tmp_path: Path,
-) -> None:
-    """mrms/reflectivity has a display-prep entry (smooth_sigma=0.45 at
-    upscale 1), so the binary stores a masked-gaussian-smoothed field while
-    the COG stores the raw warp — yet sampling_tolerance_group classifies it
-    Group 1 (no upscale, non-categorical). This is a KNOWN Group-1-classifier
-    blind spot, same category as ECMWF's floor, per the operator decision not
-    to patch the classifier. The authoritative parity assertion is therefore
-    against the real display-prep output (like Group 2), and the test proves
-    the binary-vs-COG divergence on gradients is real, not a decode bug.
-    The fixture includes real negative weak-echo signal per the
-    sentinel/negative-clamp fix."""
-    from app.services.grid_display_prep import prepare_grid_display_values as _prep
-
-    transform, projection = _model_grid_geometry("mrms")
-    # Sharp rain edge with negative weak echo on the left, one nodata cell.
-    values = np.full((6, 6), -9.5, dtype=np.float32)
-    values[:, 3:] = 55.0
-    values[0, 0] = np.nan
-
-    display, prep_meta = _prep(model="mrms", var="reflectivity", values=values)
-    assert prep_meta is not None
-    assert prep_meta["id"] == "mrms_reflectivity_display_v2"
-    assert prep_meta["upscale_factor"] == 1
-
-    cog_path, frame_path, meta_path = _write_pair(
-        tmp_path,
-        model="mrms",
-        var="reflectivity",
-        values=values,
-        transform=transform,
-        projection=projection,
-    )
-    assert frame_path.name == "fh000.l0.u8.bin"  # the uint8 substrate
-    meta = json.loads(meta_path.read_text())
-    assert (meta["height"], meta["width"]) == values.shape
-
-    scale = float(_PACKING_BY_MODEL_VAR[("mrms", "reflectivity")]["scale"])
-    tol = scale / 2 + 0.05 + 1e-3  # packing quantization + 1-decimal rounding
-    for row_f, col_f in [(1.5, 1.5), (2.5, 2.5), (2.5, 3.5), (4.5, 4.5)]:
-        lat, lon = _lonlat_at(transform, projection, row_f, col_f)
-        raw, no_data = read_binary_sample_value(
-            frame_path, meta_path, model="mrms", var="reflectivity", lat=lat, lon=lon
-        )
-        assert no_data is False
-        assert raw is not None
-        row, col = _meta_index(meta_path, lon=lon, lat=lat)
-        expected = float(display[row, col])
-        assert raw == pytest.approx(expected, abs=tol), (
-            f"binary sample diverged from the smoothed display field at "
-            f"({row_f}, {col_f}): raw={raw} expected={expected}"
-        )
-
-    # The blind spot made concrete: adjacent to the rain edge the smoothed
-    # binary and the raw COG genuinely disagree by several dBZ — a Group 1
-    # classification whose exact-equality contract does not hold by design.
-    lat, lon = _lonlat_at(transform, projection, 2.5, 2.5)
-    cog_value = sample_point_value(cog_path, lat=lat, lon=lon)
-    raw, _ = read_binary_sample_value(
-        frame_path, meta_path, model="mrms", var="reflectivity", lat=lat, lon=lon
-    )
-    assert cog_value == pytest.approx(-9.5, abs=0.05 + 1e-3)
-    assert raw is not None
-    assert abs(raw - cog_value) > 1.0
-
-    # Nodata stays nodata on both substrates through the smoothing.
-    lat, lon = _lonlat_at(transform, projection, 0.5, 0.5)
-    assert sample_point_value(cog_path, lat=lat, lon=lon) is None
-    raw, no_data = read_binary_sample_value(
-        frame_path, meta_path, model="mrms", var="reflectivity", lat=lat, lon=lon
-    )
-    assert raw is None
-    assert no_data is True
-
-
-def test_mrms_radar_ptype_uint8_integer_categories_exact_across_substrates(
-    tmp_path: Path,
-) -> None:
-    """Categorical palette indices on the uint8 substrate: no display prep, no
-    upscale, scale=1.0 lossless packing — the two samplers must return
-    exactly equal integer categories at centers, near boundaries, and on
-    boundaries, with zero tolerance. (The classifier puts this in Group 1 —
-    there is no categorical display-prep entry like hrrr radar_ptype's
-    Group 4 one — but strict integer equality is asserted here regardless,
-    because that is what the data demands.)"""
-    from app.services.colormaps import MRMS_RADAR_PTYPE_BREAKS
-
-    transform, projection = _model_grid_geometry("mrms")
-    height = width = 6
-    # Quadrants from the four REAL category bands: rain 0-19, snow 20-35,
-    # sleet 36-51, frzr 52-67.
-    rain = float(MRMS_RADAR_PTYPE_BREAKS["rain"]["offset"]) + 5.0
-    snow = float(MRMS_RADAR_PTYPE_BREAKS["snow"]["offset"]) + 5.0
-    sleet = float(MRMS_RADAR_PTYPE_BREAKS["sleet"]["offset"]) + 4.0
-    frzr = float(MRMS_RADAR_PTYPE_BREAKS["frzr"]["offset"]) + 8.0
-    values = np.zeros((height, width), dtype=np.float32)
-    values[:3, :3] = rain
-    values[:3, 3:] = snow
-    values[3:, :3] = sleet
-    values[3:, 3:] = frzr
-
-    cog_path, frame_path, meta_path = _write_pair(
-        tmp_path,
-        model="mrms",
-        var="mrms_radar_ptype",
-        values=values,
-        transform=transform,
-        projection=projection,
-    )
-    assert frame_path.name == "fh000.l0.u8.bin"
-    meta = json.loads(meta_path.read_text())
-    assert (meta["height"], meta["width"]) == (height, width)
-
-    quadrant_centers = [(1.5, 1.5), (1.5, 4.5), (4.5, 1.5), (4.5, 4.5)]
-    near_boundary = [(2.9, 2.9), (3.1, 3.1), (2.9, 3.1), (3.1, 2.9)]
-    on_boundary = [(3.0, 3.0), (3.0, 1.5), (1.5, 3.0)]
-    for row_f, col_f in quadrant_centers + near_boundary + on_boundary:
-        lat, lon = _lonlat_at(transform, projection, row_f, col_f)
-        cog_value = sample_point_value(cog_path, lat=lat, lon=lon)
-        binary_value = sample_binary_point_value(
-            frame_path, meta_path, model="mrms", var="mrms_radar_ptype", lat=lat, lon=lon
-        )
-        assert cog_value is not None
-        assert binary_value is not None
-        assert float(cog_value).is_integer()
-        assert float(binary_value).is_integer()
-        assert int(binary_value) == int(cog_value), (
-            f"mrms/mrms_radar_ptype categorical divergence at ({row_f}, {col_f}): "
-            f"cog={cog_value} binary={binary_value}"
-        )
 
 
 def test_seek_sampler_matches_full_read_on_mrms_uint8_and_uint16(tmp_path: Path) -> None:
@@ -1159,7 +642,7 @@ def test_seek_sampler_matches_full_read_on_mrms_uint8_and_uint16(tmp_path: Path)
     }
 
     for var, values in cases.items():
-        _cog_path, frame_path, meta_path = _write_pair(
+        frame_path, meta_path = _write_pair(
             tmp_path,
             model="mrms",
             var=var,

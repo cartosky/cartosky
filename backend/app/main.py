@@ -6,14 +6,12 @@ from dotenv import load_dotenv
 load_dotenv("backend/.env.local")
 import hashlib
 import asyncio
-import io
 import json
 import logging
 import math
 import os
 import re
 import secrets
-import tempfile
 import threading
 import time
 import zoneinfo
@@ -27,7 +25,6 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 import httpx
 import numpy as np
-import rasterio
 import logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
@@ -37,11 +34,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from opentelemetry.trace import SpanKind
-from PIL import Image, ImageFilter
-from pyproj import Transformer
-from rasterio.enums import Resampling
-from rasterio.warp import transform_bounds
-from rasterio.windows import Window
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 
@@ -68,43 +60,18 @@ from .services.roads_tiles import (
     empty_mvt_response as empty_roads_mvt_response,
     lookup_mbtiles_tile as lookup_roads_mbtiles_tile,
 )
-from .services.builder.colorize import float_to_rgba
 from .services.grid import (
     expected_grid_frame_size_bytes,
     grid_frame_path,
     grid_manifest_path,
     grid_supported,
 )
-from .services.render_resampling import (
-    allow_high_quality_loop_resampling,
-    compute_loop_output_shape,
-    high_quality_loop_resampling,
-    log_fixed_loop_size_once,
-    loop_fixed_width_for_tier,
-    loop_max_dim_for_tier,
-    loop_quality_for_tier,
-    loop_webp_save_kwargs,
-    rasterio_resampling_for_loop,
-    use_value_render_for_variable,
-    variable_kind,
-    variable_color_map_id,
-)
 from .services.run_ids import RUN_ID_RE, parse_run_id_datetime, run_id_hour
 from .services.sampling import (
-    _DS_CACHE_MAX,
-    _ds_cache,
-    _ds_cache_lock,
-    _get_cached_dataset,
     _load_binary_frame_meta,
-    _read_sample_value,
     _resolve_binary_grid_frame,
     _resolve_sidecar,
-    _resolve_val_cog,
-    _sample_batch_values,
     _sample_binary_frame_index,
-    _sample_dataset_index,
-    _sample_dataset_xy,
-    _sample_transformer,
     read_binary_sample_value_seek,
     sample_binary_batch_values,
 )
@@ -2635,7 +2602,6 @@ class SampleBatchIn(BaseModel):
     forecast_hour: int = Field(..., ge=0)
     points: list[SampleBatchPointIn] = Field(..., min_length=1, max_length=500)
 
-# _ds_cache / _ds_cache_lock / _DS_CACHE_MAX moved to app.services.sampling
 # (imported above); referenced here via the re-exported names.
 _manifest_cache: dict[str, dict[str, Any]] = {}
 _sidecar_cache: dict[str, dict[str, Any]] = {}
@@ -3557,9 +3523,8 @@ def _published_var_dir(model: str, run: str, var: str, *, region: str | None = N
     return PUBLISHED_ROOT / model / run / var
 
 
-# _resolve_val_cog / _resolve_sidecar moved to app.services.sampling
-# (imported above); they delegate run/runtime-var/path resolution back to the
-# helpers defined in this module.
+# _resolve_sidecar lives in app.services.sampling (imported above); it
+# delegates run/runtime-var/path resolution back to helpers in this module.
 
 
 def _frame_has_cog(model: str, run: str, var: str, fh: int, *, ensemble_view: str | None = None, region: str | None = None) -> bool:

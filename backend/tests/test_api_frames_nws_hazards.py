@@ -25,20 +25,13 @@ os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app import main as main_module
+from app.services import sampling as sampling_module  # noqa: E402
 from app.services import nws_hazards as nws_hazards_service
 
 pytestmark = pytest.mark.anyio
 
 
 def _reset_main_caches() -> None:
-    with main_module._ds_cache_lock:
-        for ds in main_module._ds_cache.values():
-            try:
-                ds.close()
-            except Exception:
-                pass
-        main_module._ds_cache.clear()
-
     with main_module._sample_lock:
         main_module._sample_cache.clear()
         main_module._sample_inflight.clear()
@@ -47,7 +40,7 @@ def _reset_main_caches() -> None:
     main_module._manifest_cache.clear()
     main_module._sidecar_cache.clear()
     main_module._grid_manifest_cache.clear()
-    main_module._sample_transformer.cache_clear()
+    sampling_module._sample_transformer.cache_clear()
 
 
 @pytest.fixture

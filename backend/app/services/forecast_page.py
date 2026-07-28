@@ -25,7 +25,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-from .. import config
 from ..models.base import classify_ensemble_var_id
 from . import nws as nws_service
 from . import sampling
@@ -1372,7 +1371,7 @@ async def _fetch_observed_precip_mrms(lat: float, lon: float) -> dict[str, Any] 
         ("mrms_recent_precip_72h", "last_72h_in"),
     ):
         present, value = await asyncio.to_thread(
-            sampling.sample_value,
+            sampling.sample_binary_value,
             "mrms",
             run_id,
             var,
@@ -3378,7 +3377,7 @@ def _sample_variable_series_binary(
     forecast hour, frames whose artifact is absent (``present=False``) omitted,
     sidecar ``valid_time`` fallback for frames the manifest leaves blank — but
     reads the packed grid binaries via :func:`sampling.sample_binary_value`
-    instead of the value COGs via :func:`sampling.sample_value`. Result shape
+    reading the packed grid binaries. Result shape
     matches the per-variable entry in the meteogram payload:
     ``{"units": ..., "points": [{"fh", "valid_time", "value"}, ...]}`` or
     ``{"units": ..., "points": None, "error": "artifact_not_found"}``.

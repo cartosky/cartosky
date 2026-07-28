@@ -18,19 +18,14 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 import numpy as np
-import rasterio
-from PIL import Image, ImageFilter
-from rasterio.enums import Resampling
 
 from app.models.registry import MODEL_REGISTRY
 from app.config import (
-    binary_sampling_enabled,
     grid_build_enabled,
     member_publish_models,
     stats_publish_models,
 )
 from app.services import climatology
-from app.services.builder.colorize import float_to_rgba
 from app.services.builder import fetch as builder_fetch
 from app.services.admin_telemetry import record_build_duration, write_fetch_runtime_snapshot
 from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_variable, product_hour_has_any_idx
@@ -39,19 +34,7 @@ from app.services.builder.pipeline import build_frame, build_frame_bundle
 from app.services.grid import build_grid_manifests_for_run_root, grid_frame_meta_path_for_run_root
 from app.services.process_memory import current_rss_bytes, peak_rss_bytes
 from app.services.publish_utils import enforce_herbie_cache_retention
-from app.services.render_resampling import (
-    compute_loop_output_shape,
-    high_quality_loop_resampling,
-    log_fixed_loop_size_once,
-    loop_fixed_width_for_tier,
-    loop_max_dim_for_tier,
-    loop_quality_for_tier,
-    rasterio_resampling_for_loop,
-    use_value_render_for_variable,
-    variable_kind,
-    variable_color_map_id,
-)
-from app.services.run_ids import RUN_ID_RE, format_run_id, parse_run_id_datetime
+from app.services.run_ids import format_run_id, parse_run_id_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -618,21 +601,6 @@ def _frame_sidecar_path(
     return data_root / "staging" / model / run_id / runtime_var_id / f"fh{fh:03d}.json"
 
 
-def _frame_value_path(
-    data_root: Path,
-    model: str,
-    run_id: str,
-    var_id: str,
-    fh: int,
-    *,
-    region: str = CANONICAL_COVERAGE,
-) -> Path:
-    plugin = MODEL_REGISTRY.get(model)
-    runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
-    del region
-    return data_root / "staging" / model / run_id / runtime_var_id / f"fh{fh:03d}.val.cog.tif"
-
-
 def _frame_primary_artifact_path(
     data_root: Path,
     model: str,
@@ -644,22 +612,16 @@ def _frame_primary_artifact_path(
 ) -> Path:
     """The artifact whose presence marks a frame as built.
 
-    Binary-sampling models (every model unless opted out via
-    ``CARTOSKY_COG_SAMPLING_MODELS``) do not write value COGs, so the
-    equivalent completion marker is the grid frame's metadata sidecar — the
-    last artifact ``write_grid_frame_for_run_root`` writes, so its presence
-    implies the frame bytes are present too. Without this substitution the
-    build frontier would treat every binary-only frame as forever-missing and
-    runs would never promote.
+    The completion marker is the grid frame's metadata sidecar — the last
+    artifact ``write_grid_frame_for_run_root`` writes, so its presence implies
+    the frame bytes are present too.
     """
-    if binary_sampling_enabled(str(model)):
-        plugin = MODEL_REGISTRY.get(model)
-        runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
-        del region
-        return grid_frame_meta_path_for_run_root(
-            data_root / "staging" / model / run_id, runtime_var_id, fh
-        )
-    return _frame_value_path(data_root, model, run_id, var_id, fh, region=region)
+    plugin = MODEL_REGISTRY.get(model)
+    runtime_var_id = _runtime_var_id(plugin, var_id, _var_default_ensemble_view(plugin, var_id)) if plugin is not None else str(var_id)
+    del region
+    return grid_frame_meta_path_for_run_root(
+        data_root / "staging" / model / run_id, runtime_var_id, fh
+    )
 
 
 def _frame_artifacts_exist(
