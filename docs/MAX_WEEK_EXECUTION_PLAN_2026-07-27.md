@@ -25,22 +25,32 @@ Measured on prod, 2026-07-27:
 
 This retires the ~878 GB figure from earlier planning context; that number was stale and anything derived from it is void.
 
-Per-model 25 km global additions (`docs/GLOBAL_MODEL_SIZING_SPIKE_2026-07-22.md:93`):
+Per-model 25 km global additions and the AIFS/ECMWF canonical-grid conversion
+(`docs/GLOBAL_MODEL_SIZING_SPIKE_2026-07-22.md`, Sections 3–4):
 
-| Milestone | Added | Cumulative used | vda4 |
+| Milestone | Net change | Cumulative used | vda4 |
 |---|---|---|---|
 | Today | — | 584 GiB | 31% |
 | + GFS global | 390.7 GiB | ~975 GiB | ~52% |
 | + AIGFS global | 58.8 GiB | ~1034 GiB | **~55%** |
-| + AIFS + ECMWF | ~132 GiB | ~1166 GiB | **~62%** |
-| + Tier 1 NA ensemble members (signed off) | ~98 GiB | ~1264 GiB | **~67%** |
+| + AIFS + ECMWF global, canonical grids migrated to 25 km | ~−14 GiB | ~1020 GiB | **~54%** |
+| + Tier 1 NA ensemble members (signed off) | ~98 GiB | ~1118 GiB | **~59%** |
 
 > [!IMPORTANT]
-> The sizing spike's headline ~46% assumed global artifacts **replace** NA artifacts. This plan keeps both — the NA viewer must never fetch a global binary and crop client-side — so storage is additive and the planning number is ~62%, or ~67% with ensembles.
+> Canonical and global artifacts remain separate extents so the canonical viewer
+> never fetches a global binary and crops it client-side. They now share a
+> uniform 25 km grid. The ~−14 GiB AIFS/ECMWF milestone is a derived net:
+> add ~132 GiB of 25 km global artifacts, replace ~169 GiB of retained 9 km
+> canonical artifacts with approximately 23 GiB at 25 km. Verify the actual
+> disk checkpoint during each model cutover.
 
 **Storage capacity is green for all four models.** That is a capacity statement only; production readiness per model remains conditional on the gates below.
 
-Note the asymmetry: **GFS global alone is 390.7 GiB — roughly two-thirds of the entire four-model addition.** If retention or variable scope ever needs trimming, GFS global is the lever, not the smaller models. It is also the first model to ship, so the ~52% checkpoint arrives early and is the most informative one.
+Note the asymmetry: **GFS global alone is 390.7 GiB — roughly 90% of the
+four-model net increase after the AIFS/ECMWF canonical-grid conversion.** If
+retention or variable scope ever needs trimming, GFS global is the lever, not
+the smaller models. It is also the first model to ship, so the ~52% checkpoint
+arrives early and is the most informative one.
 
 No new block storage for this rollout. The entire data root stays on vda4 so staging and publish targets remain on one filesystem (atomic rename constraint).
 
@@ -68,7 +78,12 @@ A genuinely cold first request may legitimately return `MISS` — that is expect
 
 ### G3 — Performance contract (replaces the undefined "sub-100ms" gate)
 
-The 5.5× figure from the sizing spike is a **total converted-footprint multiplier across the artifact set**, not a per-request multiplier. For ECMWF/AIFS moving from 9 km NA to 25 km global, per-request bytes over a comparable view may go *down*. Do not reason from the aggregate.
+The 5.5× figure from the sizing spike is a **same-resolution extent multiplier
+across the total converted artifact set**, not a per-request multiplier.
+Migrating ECMWF/AIFS canonical artifacts from 9 km to 25 km makes their
+canonical payloads substantially smaller; selecting the separate 25 km global
+domain still expands the covered extent. Measure actual selected-LOD requests
+rather than inferring them from either aggregate.
 
 The viewer downloads an entire selected LOD frame, not a viewport subset. Seam position therefore affects rendering and GPU behavior (tested under G1) but **not** payload timing, except insofar as zoom selects an LOD.
 
@@ -338,9 +353,29 @@ Independent per-pane domains would introduce regridding, diff semantics, unequal
 
 ## Phase 3 — Global rollout at 25 km (L)
 
-NA stays at current resolutions. Global lands at 25 km, with the tier as a config value so a later step is a flip rather than a rewrite. **Nothing above 25 km ships this week.**
+### Uniform deterministic-grid policy — locked 2026-07-27
 
-Rationale for 25 km: close to the native resolution of the open ECMWF/AIFS source; keeps vda4 at ~62% (~67% with ensembles); the 9 km scenario drives the volume to ~88% with multi-hour ECMWF/AIFS bursts and observed live-service interference during the sizing run.
+- GFS, AIGFS, AIFS, and ECMWF publish at **25 km in every supported data
+  domain**. Domain selects artifact extent and variable availability; camera
+  preset selects viewport. Neither selects resolution.
+- GFS and AIGFS canonical artifacts are already 25 km. AIFS and ECMWF
+  canonical artifacts migrate from 9 km to 25 km as part of their respective
+  global rollout, not as an unrelated early production change.
+- Canonical and global artifacts remain separate. This preserves existing
+  canonical URLs and smaller canonical payloads; the viewer must not fetch a
+  global artifact merely because its camera is over NA/CONUS.
+- NA-only anomaly variables remain canonical-only until global ERA5 baselines
+  exist, but their canonical artifacts follow the same 25 km model grid.
+- The 9 km canonical grid oversamples CartoSky's 0.25° open ECMWF/AIFS source.
+  Its smoother interpolation is not additional source-resolved forecast
+  detail. The cutover nevertheless requires visual, contour, sampling, and
+  playback A/B verification because presentation can change.
+
+Rationale for 25 km: close to the delivered resolution of the open ECMWF/AIFS
+source; removes viewport/domain-dependent model resolution; reduces the
+four-model disk projection to ~54% (~59% with ensembles); and avoids the
+multi-hour ECMWF/AIFS bursts and live-service interference observed during the
+9 km global sizing run.
 
 **Order: GFS → AIGFS → AIFS → ECMWF.** GFS first — cleanest global GRIB, and it surfaces the antimeridian bugs before the pattern is repeated. ECMWF last — cycle-length asymmetry and longest burst build.
 
@@ -355,6 +390,8 @@ Per model: global retention, publication, manifest, and latest-pointer behavior;
 - [ ] G4 screenshot and GIF export verified for the new domain, both capture paths
 - [ ] G5 ran within existing caps; RSS compared against Phase 0 baselines
 - [ ] G6 both cycle types tested; anomaly variables absent from global capabilities; sanity ranges global-aware
+- [ ] Canonical and global manifests report the same 25 km model grid; changing only the camera preset does not change resolution or weather-artifact identity
+- [ ] For AIFS/ECMWF, canonical 9 km → 25 km A/B verification passes for representative small/medium/large variables: source-reference sampling, contour geometry, playback, screenshots, and GIF export
 - [ ] Domain isolation holds under load: no `LATEST`/retention/pruning crossover observed
 - [ ] Disk utilization checkpoint recorded
 - [ ] Mobile: viewer usable and performant at global extent on a real device
@@ -408,6 +445,7 @@ This track is not fully independent — it touches model fetching, API contracts
 | **RAP** | Low marginal value while HRRR exists and the RRFS transition approaches. |
 | **Animated wind barbs** | Touches `GridWebglLayerController` and the screenshot path — the same files global work is churning. Fails its own isolation criterion. |
 | **Climate / Forecast / meteogram chart additions** | Valuable but incremental. Ordinary usage, not the expensive week. |
+| **Global ERA5 climatology baseline rebuild** | Hard prerequisite for every global anomaly variable (G6 excludes them for exactly this reason). Not a refactor — `climatology.py` is already region-parameterized and paths already carry region — the cost is archive acquisition and storage, neither of which is sized, and neither appears in the disk table above. Two baseline families are in scope, not just the runbook's three pilot fields: instantaneous (`tmp2m`, `tmp850`, `hgt500`) and precip accumulation (`precip_5d/7d/10d/15d/16d_anom`), each with `__mean` variants. **Start CDS retrieval early regardless of when the rest is scheduled** — ERA5 archive pulls are slow and rate-limited, so the lead time, not the compute, is what blocks global anomalies. |
 | **True Color RGB** | Fix the service unit (Phase 0); do not launch the product. |
 | **SEO, marketing, sharing targets, mobile polish** | Phase 4 polish/freeze period. |
 | **Monetization, R2 migration, AI integrations** | Post-busy-season or too undefined. |
@@ -489,7 +527,15 @@ Paste into a fresh context. Each assumes the agent reads relevant source before 
 
 ### Phase 3 — Global model (repeat per model)
 
-> Task: add global 25 km support for **{MODEL}** in CartoSky, on top of the Phase 2A artifact-domain contract. NA artifacts and resolution are unchanged — global artifacts are **additive and region-scoped**. The NA viewer must never fetch a global binary and crop it client-side.
+> Task: add global 25 km support for **{MODEL}** in CartoSky, on top of the
+> Phase 2A artifact-domain contract. The locked policy is one 25 km model grid
+> across every supported domain: domain changes artifact extent and
+> availability, never resolution; camera changes viewport only. Canonical and
+> global artifacts remain separately region-scoped, and the canonical viewer
+> must never fetch a global binary and crop it client-side. For AIFS or ECMWF,
+> migrate the canonical grid from 9 km to 25 km within this model rollout and
+> verify the presentation cutover; GFS and AIGFS canonical grids are already
+> 25 km.
 >
 > Read the existing canonical-region publication path for this model before proposing anything. Do not assume this model shares forecast hours, cadence, variables, or cycle structure with any other model. {If ECMWF: this model has a cycle-length asymmetry — 06z/18z short-horizon, 00z/12z full-horizon. Test both.}
 >
@@ -499,7 +545,24 @@ Paste into a fresh context. Each assumes the agent reads relevant source before 
 >
 > Do not raise any scheduler `MemoryHigh` cap. Run within current caps with frame work serialized and report measured RSS against the Phase 0 baseline.
 >
-> Acceptance, all required: manifest correct against actual global availability; sampled points at 179°E, 179°W, 0°, and a spread of near-seam longitudes each agree with the source/warped reference within packing tolerance (do **not** assert 179°E equals 179°W — they are distinct locations); contours terminate or wrap correctly at the boundary with no globe-spanning polygons; world-copy rendering visually continuous; for global binaries and contour GeoJSON, the first response status recorded and a second identical request returning `CF-Cache-Status: HIT`, with no `DYNAMIC` on any binary (a cold first `MISS` is expected and is not a failure); performance contract measured per the plan's G3 definition against the NA LOD baseline, with rollout blocked pending operator signoff if materially regressed; screenshot and GIF export verified via both live-canvas and Playwright paths; no `LATEST`/retention/pruning crossover between domains; disk utilization checkpoint recorded.
+> Acceptance, all required: manifest correct against actual global
+> availability; canonical and global manifests report the same 25 km model
+> grid; changing only the camera preset leaves resolution and weather-artifact
+> identity unchanged; for AIFS/ECMWF, representative canonical variables pass
+> the 9 km → 25 km source-reference sampling, contour, playback, screenshot,
+> and GIF A/B gate; sampled points at 179°E, 179°W, 0°, and a spread of
+> near-seam longitudes each agree with the source/warped reference within
+> packing tolerance (do **not** assert 179°E equals 179°W — they are distinct
+> locations); contours terminate or wrap correctly at the boundary with no
+> globe-spanning polygons; world-copy rendering visually continuous; for
+> global binaries and contour GeoJSON, the first response status recorded and
+> a second identical request returning `CF-Cache-Status: HIT`, with no
+> `DYNAMIC` on any binary (a cold first `MISS` is expected and is not a
+> failure); performance contract measured per the plan's G3 definition against
+> the NA LOD baseline, with rollout blocked pending operator signoff if
+> materially regressed; screenshot and GIF export verified via both
+> live-canvas and Playwright paths; no `LATEST`/retention/pruning crossover
+> between domains; disk utilization checkpoint recorded.
 
 ### Parallel — Skew-T spike
 
@@ -525,6 +588,9 @@ Paste into a fresh context. Each assumes the agent reads relevant source before 
 - Any scheduler that required a cap increase, and the justification
 - Measured G3 numbers per variable — these become the baseline for any future resolution-tier argument
 - The locked Phase 2A directory layout, recorded here once decided
+- Global ERA5 baseline rebuild: sizing (raw archive + built assets, as a row in
+  the disk table), and the date CDS retrieval actually starts — global anomaly
+  variables stay blocked until both exist
 
 ---
 
