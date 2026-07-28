@@ -122,27 +122,40 @@ current UA default (`1px auto rgb(0,95,204)`) is effectively invisible on `#0410
 
 ## 3. First paint (Phase 2 — prerequisite)
 
-### Verified current state and baseline protocol
+### Verified current state
 
 The current source mounts a full-screen, fixed, **dark** `SiteLoadingOverlay` while
 `showInitialMapSkeleton` is true. A bootstrap loading surface can paint before the viewer bundle
 finishes. The overlay therefore obscures and disables the whole shell, but the repo does not support
 the earlier claim that the loading surface itself is near-white.
 
-A warmed live-browser check on 2026-07-28 showed the loading status and header immediately after
-reload, with the initial loading gate gone after roughly 549 ms. This is useful evidence that the
-historical 11.1 s observation is **not a verified current FCP baseline**, but it is not a substitute
-for a cold-cache measurement.
+The required cold baseline was captured on 2026-07-28 using Chromium 145.0.7632.6 at 1440×900,
+disabled cache, one fresh browser context per run, deterministic Fast 4G (40 ms latency, 10 Mbps
+down, 5 Mbps up), and 4× CPU slowdown. The first-run tour was marked complete so onboarding did not
+contaminate product-load interactivity. Five pinned runs each used GFS `20260728_12z` and HRRR
+`20260728_18z`, Surface Temp, FH 12, and CONUS.
 
-Phase 2 begins with a read-only baseline:
+| Metric | GFS median / p95 | HRRR median / p95 |
+|---|---:|---:|
+| TTFB | 130 / 183 ms | 131 / 135 ms |
+| Load | 461 / 659 ms | 454 / 463 ms |
+| FCP | 352 / 492 ms | 340 / 360 ms |
+| LCP | 1,364 / 2,372 ms | 1,344 / 1,432 ms |
+| Full shell in DOM | 1,878 / 3,233 ms | 1,871 / 1,964 ms |
+| Requested frame ready | 4,535 / 6,024 ms | 11,647 / 11,822 ms |
+| Chrome stably interactive | 6,220 / 7,740 ms | 13,825 / 13,967 ms |
 
-1. Use a fresh browser profile with cache and service-worker state cleared.
-2. Measure the same pinned GFS and HRRR deep links five times each.
-3. Record median and p95 TTFB, DOMContentLoaded, load, FCP, LCP, shell-interactive time, and
-   requested-frame-visible time.
-4. Save the exact URL, browser version, network/CPU profile, trace, and screenshots.
-5. Diagnose any white flash by identifying the actual painted layer; do not attribute it to the dark
-   loading overlay without evidence.
+No run produced a navigation error, requested-frame timeout, page error, or console error. The early
+paint sequence was dark; no white flash was observed or attributable to `SiteLoadingOverlay`.
+
+The result narrows Phase 2: FCP already passes. The verified defect is the chain of full-screen
+blockers and blanket toolbar disablement. Both requested-frame baselines exceed 3 seconds, so the
+implementation must keep chrome usable and show continuous, accurate frame-stage progress; it must
+not claim a speculative network-speed fix.
+
+The local Phase 2 execution plan records the exact URLs, artifact paths, implementation boundaries,
+test sequence, and stop gates. The tracked directive below remains self-contained because
+`docs/plans/` is intentionally excluded from version control.
 
 ### Spec
 
@@ -684,13 +697,13 @@ execution-plan gate in §1; approving this design document alone does not author
 > readiness gate (MapLibre `idle` + `onGridFrameReady`) alone.
 
 **Phase 2 — first paint**
-> Do not treat the historical ~11 s observation as a current baseline. First write the Phase 2
-> execution plan, then capture the five-run cold-cache
-> baseline with the URL/browser/profile/trace artifacts required by §3. Paint the shell within ~500 ms
-> of load under that profile, gate only the map canvas on the requested frame, replace the full-app
-> dark loading overlay with a dark scrim confined to the canvas, keep chrome interactive, and surface
-> the existing `Building n/N` counter in the scrim. Diagnose any white flash from the actual painted
-> layer. Re-run the fixed Phase 1 export regression.
+> **Baseline and execution plan complete; implementation not started.** First add a fixed-fixture
+> blocked-frame test that proves the Product selector remains usable while the map is gated. Paint
+> the route-aware shell within ~500 ms of load under the recorded profile, gate only the map canvas
+> on the requested frame, replace the full-app dark loading overlay with a dark scrim confined to the
+> canvas, and surface continuous frame-stage progress plus the existing `Building n/N` counter when
+> the run is incomplete. Preserve the requested-frame readiness gate, keep other routes' loading
+> overlays intact, and re-run the fixed Phase 1 export regression.
 
 **Phase 3 — colormap**
 > Write the Phase 3 execution plan, then implement MAP_VIEWER_REDESIGN §4. Start with a corrected
