@@ -283,6 +283,37 @@ Framing matters: this is **"remove legacy value-COG paths *and* extract still-li
 
 **Stop-and-verify:** backend suite green, `ruff` clean on `backend/app backend/tests backend/scripts`, Playwright green, G4 green, and manual confirmation that sampling, meteograms, city values, observed products, and binary quality gates all work.
 
+### Phase 1 completion record — 2026-07-28
+
+Landed on `main` through `8b985e4f` (inventory `cf3e230b` → extraction
+`13d2806e` → fixture migration → read path → write path → fallbacks/canary →
+flag retirement → ETag cleanup). Pre-deletion state recoverable from git
+history; the canary's audited scope classifier lives on in
+`backend/tests/helpers_variable_scope.py`.
+
+- **Backend suite:** 1709 passed, 1 skipped, 0 failed. (Started at 1865; the
+  delta is deleted COG/parity/shadow-mode/substrate-switch tests. The
+  DNS-dependent Herbie failure never reproduced this session.)
+- **ruff:** 327 errors vs 401 at the pre-Phase-1 baseline — the gate is
+  restated as "no new errors"; a zero-error cleanup is a separate task.
+- **Sweep:** zero references to `write_value_cog` / `validate_cog` /
+  `_resolve_val_cog` / `cog_writer` / `build_grid_for_run` /
+  `CARTOSKY_COG_SAMPLING_MODELS` / `binary_sampling_enabled` across backend
+  and deployment. Deliberate keeps: the `has_cog` wire field (client
+  contract), the pinned `val.cog.tif not found` 404 body, and pipeline's
+  staging-cleanup path entry.
+- **Frontend:** production build green. **Playwright: NOT run to green** —
+  collection fails on main and branch identically
+  (`compare-map-regressions.spec.ts` imports Vite-only app source;
+  pre-existing, tracked separately). G4 and the manual
+  sampling/meteogram/city-values/observed checks remain **operator
+  verification on deploy**.
+- Found and fixed in passing: the forecast-page MRMS recent-precip lookup
+  still called the COG sampler, silently returning all-None since the MRMS
+  cutover; it now samples grid binaries, with a regression pin.
+- `_resolve_val_cog` is gone, so the discarded-`region` surface Phase 2A must
+  plumb is smaller, as intended.
+
 ---
 
 ## Phase 2A — Backend artifact-domain contract — **the new blocker phase** (L)
