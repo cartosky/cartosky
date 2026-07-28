@@ -104,7 +104,47 @@ under item A6 (Release engineering audit) rather than fixed standalone,
 since "what should the gates actually check" is a real design question, not
 a one-liner.
 
-### 2.4 Reported by GPT, not independently verified this session
+### 2.4 MED — GEFS accumulation display prep appears endpoint-aligned, shifting the field by half a source cell
+
+**CONFIRMED by direct measurement 2026-07-27** (surfaced during Phase 1B of
+the value-COG removal; pre-existing behavior, unrelated to that work).
+
+`prepare_grid_display_values` applies a 3× upscale to GEFS accumulation
+variables (`gefs_precip_total_display_v1`, `gefs_snowfall_total_display_v1`);
+`pwat` and other non-accumulation variables get no display prep. The upscale
+interpolates **endpoint-aligned**: for a 3-cell source row it places source
+cell centers at output indices 0/4/8 rather than the center-aligned 1/4/7,
+while `write_grid_frame_for_run_root` deliberately holds the bbox at the
+pre-display-prep extent (`grid.py:1837-1843`). The field is therefore
+displaced relative to its stated geo-extent.
+
+Measured on a 3×3 synthetic grid sampled at the center of source cell (0,0):
+
+| Variable | Source row | Raw value | Sampled from binary |
+|---|---|---|---|
+| `precip_total` | `[0.1, 0.2, 0.3]` | 0.1 (index 0) | 0.2 (index 1) |
+| `snowfall_total` | `[1.2, 2.4, 3.6]` | 1.2 (index 0) | 2.4 (index 1) |
+
+Identical shift on both. Reproduce with
+`prepare_grid_display_values(model="gefs", var="precip_total__mean", values=...)`
+and compare `out[0]` against the source row.
+
+Why it matters: binary frames are the sole substrate for both rendering and
+point sampling, so this affects the rendered field **and** every sampled
+value / meteogram point for GEFS precip and snowfall. On a real grid the
+displacement is a fraction of a cell rather than the full cell the 3×3 case
+exaggerates, which is precisely why it would not be obvious visually.
+
+Open question — is this intentional? A deliberate smoothing/presentation
+choice is defensible for rendering, but sampling returning the display grid
+rather than the model grid is a separate decision that should be explicit.
+Check whether other models' display-prep strategies share the alignment.
+
+Assertions in `backend/tests/test_api_gefs_ensemble_contract.py` are
+annotated with the substrate reason but encode the current behavior, so they
+will need updating if the alignment is corrected.
+
+### 2.5 Reported by GPT, not independently verified this session
 
 These are plausible, specific, and worth checking, but weren't re-confirmed
 against the repo during synthesis — verify before acting:
