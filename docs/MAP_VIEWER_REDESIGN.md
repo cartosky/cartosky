@@ -650,9 +650,10 @@ Local built-bundle probe under the recorded Fast 4G / 4× CPU profile paints the
 FCP. Production FCP re-measured 2026-07-28 (pre-deploy prod build): GFS 364 ms / HRRR 348 ms median.
 Phase 2 production gate passed 2026-07-28.
 
-**Phase 3 static ramp: implementation complete 2026-07-28 — pending verification.** Not done until
-the production gate closes. Static ramp only; auto-range was not needed and remains unauthorized
-without its own plan. The approved Candidate A spectral warm band replaces
+**Phase 3 completed 2026-07-28 — production gate passed.** Brian verified all §4 gates in
+production against a freshly published GFS run (10 °F separation in the 70–95 °F band, dew point
+unchanged, exports and Compare consistent). Static ramp only; auto-range was not needed and
+remains unauthorized without its own plan. The approved Candidate A spectral warm band replaces
 `TMP2M_F_COLOR_ANCHORS` (cold end −60→49 °F unchanged); dew point is decoupled onto a verbatim
 copy (`DP2M_F_COLOR_ANCHORS`) and pinned by test. Perceptual gate
 `backend/tests/test_tmp2m_ramp_gate.py` enforces sliding-min ΔE ≥ 18 across every 10 °F pair in
@@ -666,9 +667,8 @@ and an **exact fetch pin** — precisely one grid-binary request per fixture fra
 pixel-confirmed FH1 render (each fixture frame shifts +2 °F so the step is observable). Sidecars
 bake legends at publish, so the new ramp appears only on runs built after deploy; old runs age out
 on the old ramp (tmp850_anom precedent). Export regression and Phase 2 suites green; no
-fetch/cache, exporter-legend, diff-mode, or readiness-gate code changed. **The first HRRR run
-published after deploy opens the production verification window; Brian's visual check against the
-§4 gate closes it.**
+fetch/cache, exporter-legend, diff-mode, or readiness-gate code changed. Older runs published
+before the deploy retain the previous ramp until retention ages them out — expected, not a defect.
 
 ---
 
