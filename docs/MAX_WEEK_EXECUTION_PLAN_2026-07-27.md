@@ -348,6 +348,42 @@ A universal `na | global` union would regress HRRR, NAM, NBM, MRMS, and observed
 
 **Stop-and-verify:** the coexistence and non-crossing tests above pass; no existing NA behavior changes; nothing is published globally yet.
 
+### Phase 2A design locked — 2026-07-28
+
+Full design with verified inventory, path shapes, type design, and test list:
+`docs/PHASE_2A_DOMAIN_CONTRACT_DESIGN_2026-07-28.md`. Operator decisions:
+
+- **Layout: Option B — parallel domain run tree.** Canonical paths byte-for-byte
+  unchanged; non-canonical domains under
+  `{staging|published}/{model}/domains/{d}/{run}/...`,
+  `published/{model}/domains/{d}/LATEST.json`,
+  `manifests/{model}/domains/{d}/{run}.json`. The `domains/` literal can never
+  match `RUN_ID_RE`, so every existing retention/backfill/scan already skips it.
+- **Edge-served artifact URLs carry the domain in the path** (amended after
+  adversarial review — do not rely on a query parameter to isolate immutable
+  artifact bodies): `domains/{d}` inserted immediately before `{model}` on the
+  grid-file, contour, and vector routes, e.g.
+  `/api/v4/grid/domains/{d}/{model}/{run}/{var}/{file}?v=...` and
+  `/api/v4/domains/{d}/{model}/{run}/{var}/{fh}/contours/{key}`. Canonical
+  artifact URLs remain exactly unchanged with neither a domain segment nor
+  `domain=`. `domain=` stays the mechanism on control/selection APIs and
+  permalink state only.
+- **Declaration granularity: var-level `supported_build_regions`** (existing
+  capability field) — per-variable global rollout permitted; run manifests per
+  domain are filtered to the declaring variable subset.
+- **Publish gating:** canonical promote/LATEST gated on canonical readiness
+  specifically; canonical publishes first; each non-canonical domain publishes
+  independently under its own try/except so its failure cannot abort canonical
+  promotion or the retention tail.
+- **Admin status/telemetry stay canonical-only in 2A**; per-domain surfaces are
+  Phase 3 work.
+- **frames-404 telemetry gains a `domain` column now.**
+- Adversarial design review ran 2026-07-28: approve-with-amendments; all
+  amendments (incl. the bootstrap viewport-preset trap and the non-mechanical
+  resolver-rename table) are incorporated in the design doc, §7.
+- Deferred to Phase 3: per-domain retention counts, `domain=global`
+  entitlement gating, storage placement if a separate volume is ever added.
+
 ---
 
 ## Phase 2B — Frontend data-domain / camera-preset split — **1 day** (M)
