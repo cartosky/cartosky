@@ -9,7 +9,6 @@ from pathlib import Path
 import httpx
 import numpy as np
 import pytest
-import rasterio
 from rasterio.transform import from_origin
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -29,26 +28,30 @@ os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_grid_only_contracts.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app import main as main_module
-from app.services.grid import build_grid_for_run
+from app.services.grid import build_grid_manifests_for_run_root, write_grid_frames_for_run_root
 
 pytestmark = pytest.mark.anyio
 
 
-def _write_value_cog(path: Path, values: np.ndarray, *, pixel_size: float = 3000.0) -> None:
+def _write_grid_source(path: Path, values: np.ndarray, *, pixel_size: float = 3000.0) -> None:
+    """Write the grid binary frames a published run would contain.
+
+    ``path`` keeps the historical ``<published>/<model>/<run>/<var>/fhNNN...``
+    shape so model/var/fh stay derivable from a single argument.
+    """
+    var = path.parent.name
+    run_root = path.parent.parent
+    model = run_root.parent.name
+    fh = int(path.name.split(".")[0].removeprefix("fh"))
     path.parent.mkdir(parents=True, exist_ok=True)
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=values.shape[0],
-        width=values.shape[1],
-        count=1,
-        dtype="float32",
-        crs="EPSG:3857",
+    write_grid_frames_for_run_root(
+        run_root=run_root,
+        model=model,
+        var=var,
+        fh=fh,
+        values=values.astype(np.float32),
         transform=from_origin(-14920000.0, 7362000.0, pixel_size, pixel_size),
-        nodata=np.nan,
-    ) as ds:
-        ds.write(values.astype(np.float32), 1)
+    )
 
 
 def _reset_main_caches() -> None:
@@ -115,7 +118,7 @@ async def forecast_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> As
     var_dir = published_root / model / run_id / variable
 
     values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "F", "kind": "continuous", "valid_time": "2026-03-30T12:00:00Z"})
     )
@@ -131,7 +134,7 @@ async def forecast_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> As
         frames=[{"fh": 0, "valid_time": "2026-03-30T12:00:00Z"}],
     )
 
-    build_grid_for_run(data_root=data_root, model=model, run=run_id, workers=1, variables=(variable,))
+    build_grid_manifests_for_run_root(run_root=data_root / "published" / model / run_id, model=model, run=run_id, variables=(variable,))
     _configure_main_paths(
         monkeypatch,
         data_root=data_root,
@@ -157,7 +160,7 @@ async def observed_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> As
     var_dir = published_root / model / run_id / variable
 
     values = np.array([[0.0, 12.0], [24.0, np.nan]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values, pixel_size=1000.0)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values, pixel_size=1000.0)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "dBZ", "kind": "discrete", "valid_time": "2026-03-30T12:06:00Z"})
     )
@@ -173,7 +176,7 @@ async def observed_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> As
         frames=[{"fh": 0, "valid_time": "2026-03-30T12:06:00Z"}],
     )
 
-    build_grid_for_run(data_root=data_root, model=model, run=run_id, workers=1, variables=(variable,))
+    build_grid_manifests_for_run_root(run_root=data_root / "published" / model / run_id, model=model, run=run_id, variables=(variable,))
     _configure_main_paths(
         monkeypatch,
         data_root=data_root,

@@ -11,7 +11,6 @@ from pathlib import Path
 import httpx
 import numpy as np
 import pytest
-import rasterio
 from rasterio.transform import from_origin
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -33,32 +32,37 @@ os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNk
 from app import main as main_module
 from app.services.grid import (
     _values_for_lod,
-    build_grid_for_run,
     build_grid_manifests_for_run_root,
     grid_dir,
     grid_manifest_path_for_run_root,
     resolved_grid_dir_for_run_root,
     write_contour_grid_frames_for_run_root,
     write_grid_frame_for_run_root,
+    write_grid_frames_for_run_root,
 )
 from app.services.colormaps import RADAR_PTYPE_BREAKS, RADAR_PTYPE_ORDER
 
 
-def _write_value_cog(path: Path, values: np.ndarray) -> None:
+def _write_grid_source(path: Path, values: np.ndarray) -> None:
+    """Write the grid binary frames a published run would contain.
+
+    ``path`` keeps the historical ``<data_root>/published/<model>/<run>/<var>/
+    fhNNN...`` shape so model/run/var/fh stay derivable from one argument; only
+    the directory identity is used, not the file name suffix.
+    """
+    var = path.parent.name
+    run_root = path.parent.parent
+    model = run_root.parent.name
+    fh = int(path.name.split(".")[0].removeprefix("fh"))
     path.parent.mkdir(parents=True, exist_ok=True)
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=values.shape[0],
-        width=values.shape[1],
-        count=1,
-        dtype="float32",
-        crs="EPSG:3857",
+    write_grid_frames_for_run_root(
+        run_root=run_root,
+        model=model,
+        var=var,
+        fh=fh,
+        values=values.astype(np.float32),
         transform=from_origin(-14920000.0, 7362000.0, 3000.0, 3000.0),
-        nodata=np.nan,
-    ) as ds:
-        ds.write(values.astype(np.float32), 1)
+    )
 
 
 def _grid_artifact_dir(data_root: Path, model: str, run_id: str, var: str) -> Path:
@@ -194,28 +198,25 @@ def test_grid_manifest_includes_contour_grid_companion(tmp_path: Path) -> None:
     assert (run_root / "ptype_intensity" / "grid" / "fh000.contour-mslp.l0.u16.bin").is_file()
 
 
-def test_build_grid_for_run_writes_manifest_and_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_grid_manifests_writes_manifest_and_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data_root = tmp_path / "data"
     model = "hrrr"
     run_id = "20260330_12z"
     var = "tmp2m"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "F", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -276,7 +277,7 @@ def test_build_grid_manifests_for_regioned_run_root_writes_region_manifest(tmp_p
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
-def test_build_grid_for_run_writes_regioned_manifest_and_frame(tmp_path: Path) -> None:
+def test_build_grid_manifests_writes_regioned_manifest_and_frame(tmp_path: Path) -> None:
     # Runs now use a flat, region-agnostic layout; grid_dir ignores the region param.
     data_root = tmp_path / "data"
     model = "gfs"
@@ -284,21 +285,18 @@ def test_build_grid_for_run_writes_regioned_manifest_and_frame(tmp_path: Path) -
     var = "tmp2m"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "F", "valid_time": "2026-04-22T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = grid_dir(data_root, model, run_id, var, region="na")
@@ -344,7 +342,7 @@ def test_resolved_grid_dir_prefers_new_grid_over_legacy(tmp_path: Path) -> None:
         ("nbm", "tmp2m"),
     ],
 )
-def test_build_grid_for_run_supports_temperature_family_targets(
+def test_build_grid_manifests_supports_temperature_family_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     model: str,
@@ -354,21 +352,18 @@ def test_build_grid_for_run_supports_temperature_family_targets(
     run_id = "20260330_12z"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "F", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -416,7 +411,7 @@ def test_build_grid_for_run_supports_temperature_family_targets(
         ("eps", "wspd10m__mean", "wspd10m"),
     ],
 )
-def test_build_grid_for_run_supports_wind_family_targets(
+def test_build_grid_manifests_supports_wind_family_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     model: str,
@@ -427,21 +422,18 @@ def test_build_grid_for_run_supports_wind_family_targets(
     run_id = "20260330_12z"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 12.3], [np.nan, 48.6]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "mph", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -473,7 +465,7 @@ def test_build_grid_for_run_supports_wind_family_targets(
         ("snowfall_kuchera_total", "snowfall_total"),
     ],
 )
-def test_build_grid_for_run_supports_gfs_snowfall_targets(
+def test_build_grid_manifests_supports_gfs_snowfall_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     var: str,
@@ -484,21 +476,18 @@ def test_build_grid_for_run_supports_gfs_snowfall_targets(
     run_id = "20260330_12z"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 12.3], [np.nan, 48.6]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "in", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -537,7 +526,7 @@ def test_build_grid_for_run_supports_gfs_snowfall_targets(
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
-def test_build_grid_for_run_supports_gfs_precip_total(
+def test_build_grid_manifests_supports_gfs_precip_total(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -547,21 +536,18 @@ def test_build_grid_for_run_supports_gfs_precip_total(
     var = "precip_total"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 12.3], [np.nan, 48.6]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "in", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -605,7 +591,7 @@ def test_build_grid_for_run_supports_gfs_precip_total(
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
-def test_build_grid_for_run_supports_gfs_mlcape(
+def test_build_grid_manifests_supports_gfs_mlcape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -615,21 +601,18 @@ def test_build_grid_for_run_supports_gfs_mlcape(
     var = "mlcape"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 1250.0], [np.nan, 3200.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -653,7 +636,7 @@ def test_build_grid_for_run_supports_gfs_mlcape(
 
 
 @pytest.mark.parametrize("model", ["gfs", "hrrr", "nam"])
-def test_build_grid_for_run_supports_pwat(
+def test_build_grid_manifests_supports_pwat(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     model: str,
@@ -663,21 +646,18 @@ def test_build_grid_for_run_supports_pwat(
     var = "pwat"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 1.23], [np.nan, 2.86]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "in", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -702,7 +682,7 @@ def test_build_grid_for_run_supports_pwat(
     assert manifest["grid"]["height"] == values.shape[0]
 
 
-def test_build_grid_for_run_supports_gfs_sbcape(
+def test_build_grid_manifests_supports_gfs_sbcape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -712,21 +692,18 @@ def test_build_grid_for_run_supports_gfs_sbcape(
     var = "sbcape"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 1750.0], [np.nan, 4100.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -749,7 +726,7 @@ def test_build_grid_for_run_supports_gfs_sbcape(
     assert manifest["grid"]["units"] == "J/kg"
 
 
-def test_build_grid_for_run_supports_gfs_mucape(
+def test_build_grid_manifests_supports_gfs_mucape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -759,21 +736,18 @@ def test_build_grid_for_run_supports_gfs_mucape(
     var = "mucape"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 1500.0], [np.nan, 3600.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -799,7 +773,7 @@ def test_build_grid_for_run_supports_gfs_mucape(
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
-def test_build_grid_for_run_supports_gfs_ptype_intensity(
+def test_build_grid_manifests_supports_gfs_ptype_intensity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -809,21 +783,18 @@ def test_build_grid_for_run_supports_gfs_ptype_intensity(
     var = "ptype_intensity"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 16.0], [np.nan, 42.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "in/hr", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -868,7 +839,7 @@ def test_build_grid_for_run_supports_gfs_ptype_intensity(
         ("snowfall_kuchera_total", "snowfall_total"),
     ],
 )
-def test_build_grid_for_run_supports_hrrr_accumulation_targets(
+def test_build_grid_manifests_supports_hrrr_accumulation_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     var: str,
@@ -879,21 +850,18 @@ def test_build_grid_for_run_supports_hrrr_accumulation_targets(
     run_id = "20260330_12z"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 12.3], [np.nan, 48.6]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "in", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -931,7 +899,7 @@ def test_build_grid_for_run_supports_hrrr_accumulation_targets(
         ("snowfall_kuchera_total", "snowfall_total"),
     ],
 )
-def test_build_grid_for_run_supports_nam_accumulation_targets(
+def test_build_grid_manifests_supports_nam_accumulation_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     var: str,
@@ -942,21 +910,18 @@ def test_build_grid_for_run_supports_nam_accumulation_targets(
     run_id = "20260330_12z"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 12.3], [np.nan, 48.6]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "in", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -993,7 +958,7 @@ def test_build_grid_for_run_supports_nam_accumulation_targets(
         ("snowfall_total", "snowfall_total"),
     ],
 )
-def test_build_grid_for_run_supports_nbm_accumulation_targets(
+def test_build_grid_manifests_supports_nbm_accumulation_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     var: str,
@@ -1004,21 +969,18 @@ def test_build_grid_for_run_supports_nbm_accumulation_targets(
     run_id = "20260330_12z"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 12.3], [np.nan, 48.6]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "in", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -1058,7 +1020,7 @@ def test_build_grid_for_run_supports_nbm_accumulation_targets(
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u16.bin"
 
 
-def test_build_grid_for_run_supports_nbm_sbcape(
+def test_build_grid_manifests_supports_nbm_sbcape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1068,21 +1030,18 @@ def test_build_grid_for_run_supports_nbm_sbcape(
     var = "sbcape"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 1750.0], [np.nan, 4100.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -1105,7 +1064,7 @@ def test_build_grid_for_run_supports_nbm_sbcape(
     assert manifest["grid"]["units"] == "J/kg"
 
 
-def test_build_grid_for_run_supports_hrrr_radar_ptype(
+def test_build_grid_manifests_supports_hrrr_radar_ptype(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1115,21 +1074,18 @@ def test_build_grid_for_run_supports_hrrr_radar_ptype(
     var = "radar_ptype"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 1.0], [np.nan, 15.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "dBZ", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -1168,7 +1124,7 @@ def test_build_grid_for_run_supports_hrrr_radar_ptype(
     assert "composite_layers" not in manifest
 
 
-def test_build_grid_for_run_supports_hrrr_radar_ptype_component(
+def test_build_grid_manifests_supports_hrrr_radar_ptype_component(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1178,21 +1134,18 @@ def test_build_grid_for_run_supports_hrrr_radar_ptype_component(
     var = "radar_ptype_rain"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 40.0], [0.0, 20.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "dBZ", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -1225,7 +1178,7 @@ def test_build_grid_for_run_supports_hrrr_radar_ptype_component(
     assert manifest["display_prep"]["id"] == "hrrr_radar_ptype_component_display_v1"
 
 
-def test_build_grid_for_run_supports_hrrr_mlcape(
+def test_build_grid_manifests_supports_hrrr_mlcape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1235,21 +1188,18 @@ def test_build_grid_for_run_supports_hrrr_mlcape(
     var = "mlcape"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 1250.0], [np.nan, 3200.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -1274,7 +1224,7 @@ def test_build_grid_for_run_supports_hrrr_mlcape(
     assert manifest["grid"]["units"] == "J/kg"
 
 
-def test_build_grid_for_run_supports_hrrr_sbcape(
+def test_build_grid_manifests_supports_hrrr_sbcape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1284,21 +1234,18 @@ def test_build_grid_for_run_supports_hrrr_sbcape(
     var = "sbcape"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 1750.0], [np.nan, 4100.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -1321,7 +1268,7 @@ def test_build_grid_for_run_supports_hrrr_sbcape(
     assert manifest["grid"]["units"] == "J/kg"
 
 
-def test_build_grid_for_run_supports_hrrr_mucape(
+def test_build_grid_manifests_supports_hrrr_mucape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1331,21 +1278,18 @@ def test_build_grid_for_run_supports_hrrr_mucape(
     var = "mucape"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 1500.0], [np.nan, 3600.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -1368,7 +1312,7 @@ def test_build_grid_for_run_supports_hrrr_mucape(
     assert manifest["grid"]["units"] == "J/kg"
 
 
-def test_build_grid_for_run_supports_mrms_reflectivity(
+def test_build_grid_manifests_supports_mrms_reflectivity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1378,21 +1322,18 @@ def test_build_grid_for_run_supports_mrms_reflectivity(
     var = "reflectivity"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[10.0, 20.0], [np.nan, 60.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "dBZ", "valid_time": "2026-03-30T12:05:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -1437,7 +1378,7 @@ def test_build_grid_for_run_supports_mrms_reflectivity(
     assert manifest["lods"][0]["frames"][0]["file"] == "fh000.l0.u8.bin"
 
 
-def test_build_grid_for_run_supports_nam_radar_ptype(
+def test_build_grid_manifests_supports_nam_radar_ptype(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1447,21 +1388,18 @@ def test_build_grid_for_run_supports_nam_radar_ptype(
     var = "radar_ptype"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 2.0], [np.nan, 9.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "dBZ", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -1499,7 +1437,7 @@ def test_build_grid_for_run_supports_nam_radar_ptype(
     assert "categorical_nearest" not in manifest["display_prep"]
 
 
-def test_build_grid_for_run_supports_nam_mlcape(
+def test_build_grid_manifests_supports_nam_mlcape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1509,21 +1447,18 @@ def test_build_grid_for_run_supports_nam_mlcape(
     var = "mlcape"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 1250.0], [np.nan, 3200.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -1546,7 +1481,7 @@ def test_build_grid_for_run_supports_nam_mlcape(
     assert manifest["grid"]["units"] == "J/kg"
 
 
-def test_build_grid_for_run_supports_nam_sbcape(
+def test_build_grid_manifests_supports_nam_sbcape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1556,21 +1491,18 @@ def test_build_grid_for_run_supports_nam_sbcape(
     var = "sbcape"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 1750.0], [np.nan, 4100.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -1593,7 +1525,7 @@ def test_build_grid_for_run_supports_nam_sbcape(
     assert manifest["grid"]["units"] == "J/kg"
 
 
-def test_build_grid_for_run_supports_nam_mucape(
+def test_build_grid_manifests_supports_nam_mucape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1603,21 +1535,18 @@ def test_build_grid_for_run_supports_nam_mucape(
     var = "mucape"
     var_dir = data_root / "published" / model / run_id / var
     values = np.array([[0.0, 1500.0], [np.nan, 3600.0]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "J/kg", "valid_time": "2026-03-30T12:00:00Z"})
     )
 
-    ok, fail, manifest_ok = build_grid_for_run(
-        data_root=data_root,
+    manifest_ok = build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
-    assert ok == 1
-    assert fail == 0
     assert manifest_ok == 1
 
     artifacts_dir = _grid_artifact_dir(data_root, model, run_id, var)
@@ -1653,7 +1582,7 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     var = "tmp2m"
     var_dir = published_root / model / run_id / var
     values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps(
             {
@@ -1709,11 +1638,10 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
         )
     )
 
-    build_grid_for_run(
-        data_root=data_root,
+    build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(var,),
     )
 
@@ -1875,8 +1803,9 @@ async def test_grid_frame_endpoint_serves_legacy_grid_v1_payload(tmp_path: Path,
     run_id = "20260330_12z"
     var = "tmp2m"
     var_dir = published_root / model / run_id / var
-    values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    # No modern grid artifacts: this exercises the legacy grid_v1 fallback, so
+    # the variable directory carries only its sidecar.
+    var_dir.mkdir(parents=True, exist_ok=True)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "F", "valid_time": "2026-03-30T12:00:00Z"})
     )
@@ -1941,7 +1870,7 @@ async def test_grid_frame_endpoint_rejects_undersized_frame(tmp_path: Path, monk
     var = "tmp2m"
     var_dir = published_root / model / run_id / var
     values = np.array([[32.0, 40.5], [np.nan, -12.3]], dtype=np.float32)
-    _write_value_cog(var_dir / "fh000.val.cog.tif", values)
+    _write_grid_source(var_dir / "fh000.val.cog.tif", values)
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "F", "valid_time": "2026-03-30T12:00:00Z"})
     )

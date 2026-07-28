@@ -9,7 +9,6 @@ from pathlib import Path
 import httpx
 import numpy as np
 import pytest
-import rasterio
 from rasterio.transform import from_origin
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +27,7 @@ os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_test_tokens.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app import main as main_module
-from app.services.grid import build_grid_for_run
+from app.services.grid import build_grid_manifests_for_run_root, write_grid_frames_for_run_root
 
 pytestmark = pytest.mark.anyio
 
@@ -54,6 +53,15 @@ def _reset_main_caches() -> None:
 
 
 def _write_value_raster(path: Path) -> None:
+    """Write the grid binary frames a published run would contain.
+
+    ``path`` keeps the historical ``<published>/<model>/<run>/<var>/fhNNN...``
+    shape so model/var/fh stay derivable from a single argument.
+    """
+    var = path.parent.name
+    run_root = path.parent.parent
+    model = run_root.parent.name
+    fh = int(path.name.split(".")[0].removeprefix("fh"))
     path.parent.mkdir(parents=True, exist_ok=True)
     data = np.array(
         [
@@ -63,19 +71,15 @@ def _write_value_raster(path: Path) -> None:
         ],
         dtype=np.float32,
     )
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=data.shape[0],
-        width=data.shape[1],
-        count=1,
-        dtype="float32",
-        crs="EPSG:4326",
+    write_grid_frames_for_run_root(
+        run_root=run_root,
+        model=model,
+        var=var,
+        fh=fh,
+        values=data,
         transform=from_origin(-101.0, 46.0, 1.0, 1.0),
-        nodata=float("nan"),
-    ) as ds:
-        ds.write(data, 1)
+        projection="EPSG:4326",
+    )
 
 
 @pytest.fixture
@@ -152,11 +156,10 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
         )
     )
 
-    build_grid_for_run(
-        data_root=data_root,
+    build_grid_manifests_for_run_root(
+        run_root=data_root / "published" / model / run_id,
         model=model,
         run=run_id,
-        workers=1,
         variables=(runtime_var, wind_runtime_var),
     )
 
