@@ -2,23 +2,12 @@
 GOES-East, MRMS) — enforced, mirroring test_publish_pre_encode_gate.py.
 
 Same invariants as the NDFD/WPC template:
-- ``check_pre_encode_value_sanity`` runs UNCONDITIONALLY on every fresh frame
-  write; the allowlist decides only what a failure means.
-- Enforced (model in CARTOSKY_BINARY_SAMPLING_MODELS): failure or a gate error
-  rejects BEFORE any artifact write, and passing frames skip only the value
-  COG (grid binary + sidecar still written).
-- Shadow (default): log-only, full publish proceeds.
+- ``check_pre_encode_value_sanity`` runs unconditionally on every fresh frame
+  write and is ENFORCED — failure (or a gate error) rejects the frame BEFORE
+  any artifact write.
 - Rejected frames drop cleanly out of targets/frame_count/manifest entries;
   the bundle continues past them.
-- Reuse/hardlink paths are deliberately NOT gated (byte-identical to frames
-  gated at their original fresh write) — not covered here by design.
-
-Publisher-specific coverage: current_analysis gates per (var, fh) inside the
-frame's variable loop (a rejected variable drops alone, not the whole frame);
-GOES gates per band-publish invocation (two-bands test); MRMS gates all four
-fresh-write sites, including the finalize/deferred supplemental path that
-writes directly into the published run dir, and radar_ptype is gated with its
-own indexed (ptype_breaks) spec, never reflectivity's.
+- The gate and get_color_map_spec stay REAL; everything around them is mocked.
 """
 
 from __future__ import annotations

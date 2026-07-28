@@ -1,29 +1,10 @@
-"""Pre-encode gate for the standalone publishers (NDFD, WPC) — dual mode.
+"""Pre-encode gate for the standalone publishers (NDFD, WPC).
 
-Mirrors pipeline.py::build_frame's gate exactly:
-
-- The ``check_pre_encode_value_sanity`` call runs UNCONDITIONALLY on every
-  frame write (the Phase 2 fix — the allowlist never decides whether the
-  gate runs).
-- What the allowlist decides is what a failure means. Model NOT in
-  ``CARTOSKY_BINARY_SAMPLING_MODELS`` (the default): shadow mode — failure
-  logs the Phase C warning and the frame publishes in full, value COG
-  included. Model IN the allowlist: enforced mode — failure (or a gate
-  error) REJECTS the frame before any artifact is written, and even
-  passing frames skip the value COG write (the grid binary + sidecar are
-  the complete artifact set), matching pipeline.py's binary_only branch,
-  which rejects before the sidecar and grid writes.
-- Rejection propagates the way build_frame signals a failed frame to the
-  scheduler: a status result the caller skips (here ``_write_*_frame``
-  returns False and the bundle loop drops the frame), not an exception.
-
-Variable choice mirrors the pipeline test's per-branch fixtures:
-- NDFD ``mint`` uses the real "tmp2m" colormap spec (continuous, no
-  allow_dry_frame): a flat constant field fails min == max.
-- WPC ``precip_total`` uses the real "precip_total" spec, which carries
-  allow_dry_frame=True with no discrete levels — flat fields PASS as dry
-  frames (pinned below), so its genuinely-bad input is the nodata-ratio
-  check: >95% nodata with finite pixels present.
+Mirrors pipeline.py::build_frame's gate exactly: the
+``check_pre_encode_value_sanity`` call runs unconditionally on every frame
+write and is ENFORCED — failure (or a gate error) REJECTS the frame before
+any artifact is written. The gate itself and get_color_map_spec stay REAL in
+these tests; everything around them is mocked.
 """
 
 from __future__ import annotations

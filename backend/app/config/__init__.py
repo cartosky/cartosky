@@ -84,65 +84,15 @@ def stripe_portal_return_url() -> str:
     return _env_value("STRIPE_PORTAL_RETURN_URL").strip()
 
 
-def cog_sampling_models() -> frozenset[str]:
-    """Emergency opt-OUT list for the value-COG substrate.
-
-    Comma-separated (``CARTOSKY_COG_SAMPLING_MODELS=mrms`` or ``mrms,ndfd``);
-    empty (the default) means NO model uses the COG path — binary sampling is
-    the sole pipeline. Not lru_cached: the read is trivially cheap per
-    request, and caching would make the flag unswitchable in tests without
-    cache invalidation.
-    """
-    raw = _env_value("CARTOSKY_COG_SAMPLING_MODELS").strip().lower()
-    if not raw:
-        return frozenset()
-    return frozenset(part.strip() for part in raw.split(",") if part.strip())
-
-
-_BINARY_ALLOWLIST_DEPRECATION_LOGGED = False
-
-
-def _warn_if_deprecated_binary_allowlist_set() -> None:
-    global _BINARY_ALLOWLIST_DEPRECATION_LOGGED
-    if _BINARY_ALLOWLIST_DEPRECATION_LOGGED:
-        return
-    _BINARY_ALLOWLIST_DEPRECATION_LOGGED = True
-    if _env_value("CARTOSKY_BINARY_SAMPLING_MODELS").strip():
-        logging.getLogger(__name__).warning(
-            "CARTOSKY_BINARY_SAMPLING_MODELS is deprecated and IGNORED: binary "
-            "sampling is now the default for every model (COG->binary "
-            "migration complete). Remove it from the unit files; to opt a "
-            "model back onto the COG path use CARTOSKY_COG_SAMPLING_MODELS."
-        )
-
-
-def binary_sampling_enabled(model: str) -> bool:
-    """Whether ``model`` uses grid binaries as its sole sampling/write
-    substrate. This is the DEFAULT for every model — including models added in
-    the future, with zero configuration: no COG writes, enforced pre-encode
-    gate, binary reads.
-
-    ``CARTOSKY_COG_SAMPLING_MODELS`` is a per-model emergency opt-out. Note
-    the lever is not instant: opting a model out switches reads to COGs and
-    resumes COG writes, but only runs published AFTER the change have COGs —
-    recent binary-only runs do not, so recovery starts from the next publish.
-
-    The retired opt-in allowlist (``CARTOSKY_BINARY_SAMPLING_MODELS``) is a
-    no-op; a deprecation warning is logged once if it is still set.
-    """
-    _warn_if_deprecated_binary_allowlist_set()
-    return str(model or "").strip().lower() not in cog_sampling_models()
-
-
 def member_publish_models() -> frozenset[str]:
     """Models whose scheduler runs the ensemble member publish pass.
 
     Comma-separated model allowlist (``CARTOSKY_MEMBER_PUBLISH_MODELS=gefs``);
     empty (the default) means member publishing is off everywhere. Removing a
     model is the kill switch — already-published member frames age out with
-    run retention (member pipeline plan Phase 3 / Phase 2 design R8). Same
-    per-model-list pattern and no-cache rationale as
-    :func:`cog_sampling_models`.
+    run retention (member pipeline plan Phase 3 / Phase 2 design R8).
+    Deliberately not lru_cached so tests can flip it without cache
+    invalidation; the read is trivially cheap per call.
     """
     raw = _env_value("CARTOSKY_MEMBER_PUBLISH_MODELS").strip().lower()
     if not raw:

@@ -263,7 +263,6 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
 
     # The fixture publishes COG-only frames: opt the model out of the (now
     # default) binary-only substrate.
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", "")
 
     model = "gefs"
     run_id = "20260330_12z"

@@ -1,8 +1,7 @@
 """Registry-wide grid-packing invariant.
 
-Binary sampling is the DEFAULT substrate for every model (COG->binary
-migration complete; ``binary_sampling_enabled`` returns True unless a model
-is opted out via ``CARTOSKY_COG_SAMPLING_MODELS``). That makes packing
+Grid binaries are the sole substrate for every model (the COG->binary
+migration is complete and the substrate flag is retired). That makes packing
 coverage load-bearing at model-add time: a new model without
 ``_PACKING_BY_MODEL_VAR`` entries cannot publish (the unconditional grid
 write raises "Unsupported grid pack target") — this test moves that failure
@@ -24,9 +23,6 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-import pytest
-
-from app.config import binary_sampling_enabled, cog_sampling_models
 from app.models.registry import MODEL_REGISTRY
 from app.services.grid import grid_code_supported
 
@@ -67,25 +63,3 @@ def test_every_registered_model_has_full_grid_packing_coverage() -> None:
         + "\n".join(missing)
     )
 
-
-def test_binary_sampling_default_and_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the inversion: binary is the zero-config default for every model —
-    including ids that do not exist yet — and CARTOSKY_COG_SAMPLING_MODELS is
-    the only lever, while the retired opt-in allowlist is ignored."""
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
-    monkeypatch.delenv("CARTOSKY_BINARY_SAMPLING_MODELS", raising=False)
-    assert cog_sampling_models() == frozenset()
-    for model_id in list(MODEL_REGISTRY) + ["some_future_model"]:
-        assert binary_sampling_enabled(model_id) is True
-
-    monkeypatch.setenv("CARTOSKY_COG_SAMPLING_MODELS", " MRMS , ndfd ")
-    assert binary_sampling_enabled("mrms") is False
-    assert binary_sampling_enabled("ndfd") is False
-    assert binary_sampling_enabled("gfs") is True
-
-    # The retired opt-in allowlist must have no effect in either direction.
-    monkeypatch.setenv("CARTOSKY_BINARY_SAMPLING_MODELS", "gfs,hrrr")
-    assert binary_sampling_enabled("mrms") is False
-    assert binary_sampling_enabled("gfs") is True
-    monkeypatch.delenv("CARTOSKY_COG_SAMPLING_MODELS", raising=False)
-    assert binary_sampling_enabled("mrms") is True

@@ -3382,10 +3382,7 @@ def _sample_variable_series_binary(
     ``{"units": ..., "points": [{"fh", "valid_time", "value"}, ...]}`` or
     ``{"units": ..., "points": None, "error": "artifact_not_found"}``.
 
-    Called from ``get_forecast_meteogram`` for every binary-sampling model —
-    the default for all models since the migration cutover; only a
-    ``CARTOSKY_COG_SAMPLING_MODELS`` opt-out takes the COG fan-out instead.
-    Also exercised directly by the Phase E COG-vs-binary comparison test.
+    Called from ``get_forecast_meteogram`` for every model.
     """
     frames, units = sampling.manifest_frame_entries(model, run_id, var, region=region)
     value_by_fh: dict[int, float | None] = {}

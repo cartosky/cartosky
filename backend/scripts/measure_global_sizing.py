@@ -293,7 +293,6 @@ logger.info("Reports dir        : %s", REPORTS_DIR)
 from app.models.base import RegionSpec  # noqa: E402
 from app.models.registry import MODEL_REGISTRY  # noqa: E402
 from app.models.ecmwf import ECMWF_SHORT_CUTOFF_CYCLE_HOURS  # noqa: E402
-from app.config import binary_sampling_enabled  # noqa: E402
 from app.services import climatology  # noqa: E402
 from app.services.builder import raster_grid  # noqa: E402
 from app.services.builder.raster_grid import (  # noqa: E402
@@ -707,7 +706,7 @@ def run(args: argparse.Namespace) -> int:
     for var_key, fh in targets:
         fhs_by_var.setdefault(var_key, []).append(fh)
 
-    binary_only = binary_sampling_enabled(model)
+    binary_only = True  # grid binaries are the sole substrate
 
     logger.info("=" * 70)
     logger.info("Model            : %s", model)
