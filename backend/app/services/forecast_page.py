@@ -3008,7 +3008,6 @@ def _meteogram_cache_key(
     include_members: bool,
     run_ids: dict[str, str | None],
     entitled: dict[str, bool],
-    sampling_source: str,
 ) -> str:
     def _hash(parts: list[str]) -> str:
         return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()[:12]
@@ -3020,13 +3019,9 @@ def _meteogram_cache_key(
     # Folded in (beyond the plan's key spec) so differing entitlements never
     # share a cached payload at the origin.
     entitled_hash = _hash([f"{m}:{int(bool(entitled.get(m, True)))}" for m in sorted(models)])
-    # sampling_source ("cog" | "binary") keeps a substrate change from ever
-    # serving a payload cached under the other substrate. Required (no default)
-    # so the caller can never silently omit it once the substrate can vary.
     return (
         f"meteogram:v1:{round(lat, 3)}:{round(lon, 3)}:"
-        f"{models_hash}:{vars_hash}:{policy_hash}:{int(include_members)}:{run_ids_hash}:{entitled_hash}:"
-        f"{sampling_source}"
+        f"{models_hash}:{vars_hash}:{policy_hash}:{int(include_members)}:{run_ids_hash}:{entitled_hash}"
     )
 
 
@@ -3061,16 +3056,11 @@ def _model_supports_members(model: str) -> bool:
 
     Requires the ensemble.members descriptor on the model's capability
     catalog (member pipeline Phase 2 design R7/D1 — supported_views
-    intentionally stays ["mean"] and is not consulted) AND binary sampling
-    enabled for the model (the default; only a CARTOSKY_COG_SAMPLING_MODELS
-    opt-out disables it): member frames exist only as grid binaries, so a
-    model on the COG path has no substrate to serve them from.
+    intentionally stays ["mean"] and is not consulted).
     """
     if not _MEMBER_SERIES_PAYLOAD_SUPPORTED:
         return False
     normalized = str(model or "").strip().lower()
-    if not config.binary_sampling_enabled(normalized):
-        return False
     try:
         from ..models.base import ensemble_member_descriptors
         from ..models.registry import get_model
@@ -3291,16 +3281,6 @@ def get_forecast_meteogram(
             run_ids[model] = None
             latest_complete_ids[model] = None
 
-    # Binary sampling is the default substrate (COG->binary migration
-    # complete); a model appears on the COG fan-out only via the
-    # CARTOSKY_COG_SAMPLING_MODELS opt-out. The substrate split stays folded
-    # into the cache key ("cog" when no requested model samples binary —
-    # byte-identical to the pre-allowlist key — otherwise "binary:<models>")
-    # so a substrate flip can never serve a payload cached under the other
-    # substrate.
-    active_binary = sorted(m for m in norm_models if config.binary_sampling_enabled(m))
-    sampling_source = "binary:" + ",".join(active_binary) if active_binary else "cog"
-
     cache_key = _meteogram_cache_key(
         lat=lat,
         lon=lon,
@@ -3310,7 +3290,6 @@ def get_forecast_meteogram(
         include_members=include_members,
         run_ids=run_ids,
         entitled=entitled,
-        sampling_source=sampling_source,
     )
     now = time.monotonic()
     with _meteogram_cache_lock:
@@ -3326,8 +3305,6 @@ def get_forecast_meteogram(
     # value per frame — valid_time/units come from the manifest, not a per-frame
     # sidecar — and every frame across all models/variables is sampled in one pass.
     series: dict[str, Any] = {}
-    plan: list[tuple[str, str, str, list[tuple[int, str | None]], str | None]] = []
-    sample_tasks: list[tuple[str, str, str, int]] = []
     var_results_by_model: dict[str, dict[str, Any]] = {}
     vars_with_values_by_model: dict[str, int] = {}
     for model in norm_models:
@@ -3338,75 +3315,24 @@ def get_forecast_meteogram(
         if not run_id:
             series[model] = {"status": "unavailable", "run_id": None}
             continue
-        if config.binary_sampling_enabled(model):
-            # The default: sample this model's grid binaries; the result shape
-            # matches the COG assembly below, so status/series handling is
-            # shared. Opted-out models in the same request still take the
-            # COG fan-out.
-            attach_members = include_members and _model_supports_members(model)
-            for var in norm_vars:
-                result = _sample_variable_series_binary(
-                    model, run_id, var, lat=lat, lon=lon, region=region
-                )
-                points = result.get("points")
-                if points and any(p["value"] is not None for p in points):
-                    vars_with_values_by_model[model] = (
-                        vars_with_values_by_model.get(model, 0) + 1
-                    )
-                if attach_members and points:
-                    members_block = _member_series_for_model_var(
-                        model, run_id, var,
-                        lat=lat, lon=lon, region=region, mean_result=result,
-                    )
-                    if members_block is not None:
-                        result["members"] = members_block
-                var_results_by_model.setdefault(model, {})[var] = result
-            continue
+        attach_members = include_members and _model_supports_members(model)
         for var in norm_vars:
-            frames, units = sampling.manifest_frame_entries(model, run_id, var, region=region)
-            plan.append((model, run_id, var, frames, units))
-            for fh, _vt in frames:
-                sample_tasks.append((model, run_id, var, fh))
-
-    sampled = sampling.sample_values_parallel(sample_tasks, lat=lat, lon=lon, region=region)
-    value_by_key: dict[tuple[str, str, int], tuple[bool, float | None]] = {}
-    for task, res in zip(sample_tasks, sampled):
-        value_by_key[(task[0], task[2], task[3])] = res
-
-    # Frames whose manifest omits valid_time fall back to the canonical sidecar.
-    # Normally empty (the publish pipeline writes valid_time into the manifest),
-    # so this adds no reads on the hot path.
-    vt_fallback_tasks = [
-        (model, run_id, var, fh)
-        for model, run_id, var, frames, _units in plan
-        for fh, vt in frames
-        if vt is None and value_by_key.get((model, var, fh), (False, None))[0]
-    ]
-    vt_by_key: dict[tuple[str, str, int], str | None] = {}
-    if vt_fallback_tasks:
-        for task, vt in zip(
-            vt_fallback_tasks, sampling.read_frame_valid_times(vt_fallback_tasks, region=region)
-        ):
-            vt_by_key[(task[0], task[2], task[3])] = vt
-
-    for model, run_id, var, frames, units in plan:
-        points: list[dict[str, Any]] = []
-        for fh, valid_time in frames:
-            present, value = value_by_key.get((model, var, fh), (False, None))
-            if not present:
-                continue
-            if valid_time is None:
-                valid_time = vt_by_key.get((model, var, fh))
-            points.append({"fh": fh, "valid_time": valid_time, "value": value})
-        resolved_units = _variable_units(model, var, units)
-        if points:
-            points.sort(key=lambda item: item["fh"])
-            result: dict[str, Any] = {"units": resolved_units, "points": points}
-            if any(p["value"] is not None for p in points):
-                vars_with_values_by_model[model] = vars_with_values_by_model.get(model, 0) + 1
-        else:
-            result = {"units": resolved_units, "points": None, "error": "artifact_not_found"}
-        var_results_by_model.setdefault(model, {})[var] = result
+            result = _sample_variable_series_binary(
+                model, run_id, var, lat=lat, lon=lon, region=region
+            )
+            points = result.get("points")
+            if points and any(p["value"] is not None for p in points):
+                vars_with_values_by_model[model] = (
+                    vars_with_values_by_model.get(model, 0) + 1
+                )
+            if attach_members and points:
+                members_block = _member_series_for_model_var(
+                    model, run_id, var,
+                    lat=lat, lon=lon, region=region, mean_result=result,
+                )
+                if members_block is not None:
+                    result["members"] = members_block
+            var_results_by_model.setdefault(model, {})[var] = result
 
     for model in norm_models:
         if model in series:  # already set: not_entitled / unavailable
