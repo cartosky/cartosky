@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 
 import { SiteLoadingOverlay } from "@/components/site-loading-overlay";
 
@@ -16,6 +17,11 @@ export function useBootstrapComplete(): boolean {
 
 export function BootstrapProvider({ children }: { children: ReactNode }) {
   const [complete, setComplete] = useState(false);
+  // /viewer paints its own viewer-shaped shell (static document fallback +
+  // AppLayout suspense skeleton) and gates only the map canvas; adding the
+  // full-screen overlay there would reintroduce a viewport-covering blocker.
+  // Every other route keeps the overlay.
+  const isViewerRoute = useLocation().pathname === "/viewer";
 
   const markBootstrapComplete = useCallback(() => {
     setComplete(true);
@@ -29,7 +35,7 @@ export function BootstrapProvider({ children }: { children: ReactNode }) {
   return (
     <BootstrapContext.Provider value={value}>
       {children}
-      <SiteLoadingOverlay visible={!complete} label="Loading" delayMs={0} />
+      <SiteLoadingOverlay visible={!complete && !isViewerRoute} label="Loading" delayMs={0} />
     </BootstrapContext.Provider>
   );
 }

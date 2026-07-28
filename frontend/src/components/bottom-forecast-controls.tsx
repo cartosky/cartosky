@@ -7,6 +7,7 @@ import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
+import { resolveRunBuildProgress } from "@/lib/viewer-loading-status";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
 import { SpeedButton } from "@/components/SpeedButton";
 import {
@@ -384,14 +385,12 @@ export const BottomForecastControls = memo(function BottomForecastControls({
   const controlsLayerClassName = isDesktopLayout || isTabletTouchLayout ? "z-[70]" : "z-[60]";
   const effectiveHour = previewHour ?? forecastHour;
   const sliderIndex = Math.max(0, availableFrames.indexOf(effectiveHour));
-  const availableForecastHours = useMemo(() => {
-    const finiteFrames = availableFrames.filter(Number.isFinite);
-    return finiteFrames.length > 0 ? Math.max(...finiteFrames) : 0;
-  }, [availableFrames]);
-  const freshnessTotal = Number.isFinite(totalForecastHours) ? Math.max(0, Number(totalForecastHours)) : null;
-  const cappedAvailableForecastHours = freshnessTotal !== null
-    ? Math.max(0, Math.min(availableForecastHours, freshnessTotal))
-    : availableForecastHours;
+  // Shared with the initial map scrim via resolveRunBuildProgress so both
+  // surfaces render identical `Building available/total hrs` values.
+  const { freshnessTotal, cappedAvailableForecastHours } = useMemo(
+    () => resolveRunBuildProgress(availableFrames, totalForecastHours),
+    [availableFrames, totalForecastHours],
+  );
   const hasFreshnessTotal = freshnessTotal !== null && freshnessTotal > 0;
   const showFreshnessStrip = !isDesktopLayout && timeAxisMode !== "observed" && hasFreshnessTotal;
   const freshnessProgressPercent = hasFreshnessTotal

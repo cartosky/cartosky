@@ -14,6 +14,17 @@
     <link rel="dns-prefetch" href="https://b.basemaps.cartocdn.com" />
     <link rel="dns-prefetch" href="https://c.basemaps.cartocdn.com" />
     <link rel="dns-prefetch" href="https://d.basemaps.cartocdn.com" />
+    <script>
+      // Route-aware boot shell: /viewer gets a viewer-shaped static fallback
+      // instead of the generic boot card. Synchronous and tiny so the first
+      // paint never waits on the React bundle. Without JS the generic card
+      // remains the default.
+      try {
+        if (window.location.pathname === "/viewer") {
+          document.documentElement.setAttribute("data-boot-route", "viewer");
+        }
+      } catch (routeError) {}
+    </script>
     <style>
       html,
       body {
@@ -93,6 +104,106 @@
         color: rgba(255, 255, 255, 0.76);
       }
 
+      /* Route-aware boot shells: the generic card hides on /viewer, the
+         viewer shell hides everywhere else (and without JS). */
+      html[data-boot-route="viewer"] .cartosky-boot-shell {
+        display: none;
+      }
+
+      html:not([data-boot-route="viewer"]) .cartosky-viewer-boot-shell {
+        display: none;
+      }
+
+      /* Static viewer shell — mirrors ViewerSiteHeaderFallback and
+         ViewerMapSkeleton so the React handoff does not jump or flash. */
+      .cartosky-viewer-boot-shell {
+        position: relative;
+        min-height: 100svh;
+        overflow: hidden;
+        background-image:
+          radial-gradient(900px 520px at 50% 18%, rgba(34, 211, 238, 0.05), transparent 62%),
+          radial-gradient(700px 480px at 18% 82%, rgba(37, 99, 235, 0.06), transparent 65%),
+          linear-gradient(180deg, rgba(7, 17, 31, 1), rgba(8, 18, 34, 1));
+      }
+
+      .cartosky-viewer-boot-header {
+        position: absolute;
+        inset-inline: 0;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        height: 3.5rem;
+        padding: 0 1rem;
+        border-bottom: 1px solid rgba(26, 58, 92, 0.6);
+        background: rgba(3, 14, 26, 0.85);
+        box-shadow: 0 2px 16px rgba(0, 0, 0, 0.4), inset 0 -1px 0 rgba(100, 180, 255, 0.06);
+      }
+
+      .cartosky-viewer-boot-header img {
+        display: block;
+        height: 3rem;
+        width: auto;
+      }
+
+      .cartosky-viewer-boot-center {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+        padding-top: 3.5rem;
+      }
+
+      .cartosky-viewer-boot-hex {
+        width: 2.75rem;
+        height: 2.75rem;
+        overflow: visible;
+      }
+
+      .cartosky-viewer-boot-hex .hex-ghost {
+        fill: none;
+        stroke: rgba(165, 243, 252, 0.16);
+        stroke-width: 14;
+      }
+
+      .cartosky-viewer-boot-hex .hex-comet {
+        fill: none;
+        stroke: #a5f3fc;
+        stroke-width: 18;
+        stroke-linecap: round;
+        stroke-dasharray: 110 950;
+        filter: drop-shadow(0 0 14px rgba(103, 232, 249, 0.42));
+        animation: cartosky-viewer-boot-hex-chase 2s linear infinite;
+      }
+
+      @keyframes cartosky-viewer-boot-hex-chase {
+        to {
+          stroke-dashoffset: -1060;
+        }
+      }
+
+      .cartosky-viewer-boot-timeline {
+        position: absolute;
+        inset-inline: 0;
+        bottom: 2rem;
+        display: flex;
+        justify-content: center;
+        padding: 0 1rem;
+        pointer-events: none;
+      }
+
+      .cartosky-viewer-boot-timeline > div {
+        width: min(92vw, 640px);
+        height: 3rem;
+        border-radius: 1rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(11, 21, 38, 0.72);
+        box-shadow: 0 18px 52px rgba(0, 0, 0, 0.28);
+      }
+
       .cartosky-seo-fallback {
         position: absolute;
         width: 1px;
@@ -114,6 +225,27 @@
   </head>
   <body>
     <div id="root">
+      <div
+        class="cartosky-viewer-boot-shell"
+        role="status"
+        aria-live="polite"
+        aria-label="Loading viewer"
+        data-viewer-boot-shell
+      >
+        <div class="cartosky-viewer-boot-header" data-viewer-boot-header>
+          <img src="/assets/new_logo.png?v=cartosky-20260414" alt="CartoSky" />
+        </div>
+        <div class="cartosky-viewer-boot-center">
+          <svg class="cartosky-viewer-boot-hex" viewBox="0 0 322 343" aria-hidden="true">
+            <polygon class="hex-ghost" points="161,0 320,90 320,253 161,343 2,253 2,90"></polygon>
+            <polygon class="hex-comet" points="161,0 320,90 320,253 161,343 2,253 2,90"></polygon>
+          </svg>
+          <div class="cartosky-boot-label">Loading viewer</div>
+        </div>
+        <div class="cartosky-viewer-boot-timeline" data-viewer-boot-timeline aria-hidden="true">
+          <div></div>
+        </div>
+      </div>
       <div class="cartosky-boot-shell" role="status" aria-live="polite" aria-label="Loading">
         <div class="cartosky-boot-card">
           <div class="cartosky-boot-spinner" aria-hidden="true">

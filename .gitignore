@@ -33,6 +33,8 @@ frontend/tests/e2e/*
 !frontend/tests/e2e/site-navigation.spec.ts
 !frontend/tests/e2e/share-export-baseline.fixtures.ts
 !frontend/tests/e2e/share-export-baseline.spec.ts
+!frontend/tests/e2e/viewer-first-paint.fixtures.ts
+!frontend/tests/e2e/viewer-first-paint.spec.ts
 !frontend/playwright.config.ts
 
 # Dependencies

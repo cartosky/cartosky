@@ -632,6 +632,23 @@ no-crop geometry; default normalized dimensions; and a pinned two-frame GIF. Rea
 four exact export edges, GIF structure, frame count, and chronological frame order. The focused gate
 passes 9/9 and the frontend build passes. No runtime export or readiness-gate code changed.
 
+**Phase 2 implemented 2026-07-28 (production gate pending).** A route-aware static viewer shell in
+`index.html` paints the header/map/timeline shape for `/viewer` before the React bundle; every other
+route keeps the generic boot card and `SiteLoadingOverlay`. The viewer's full-screen
+`startSiteLoading` overlay is replaced by `ViewerInitialMapScrim`, confined to the map stacking
+context (above tooltips/notices, below timeline and header) and driven by the unchanged
+requested-frame gate (`loading || !isMapReady || shouldWaitForInitialGridFrame`). Product is
+data-gated (enabled once model options exist) on desktop and mobile surfaces; Variable, Statistic,
+Run, and Region keep their existing contracts. The scrim shows truthful stages (`Loading model
+data` → `Preparing map` → `Downloading and drawing FH n`) plus the timeline's `Building
+available/total hrs` counter via a shared `resolveRunBuildProgress` helper consumed by both
+surfaces. Contract suite `tests/e2e/viewer-first-paint.spec.ts` (3/3, deferred-binary fixtures)
+proves Product opens while the frame is blocked, only the map center hit-tests to the scrim, and
+`grid_frame_ready` precedes scrim removal. Phase 1 export regression re-run green (9/9);
+`firstWeatherFramePainted` / `onGridFrameReady` / MapLibre idle / screenshot readiness untouched.
+Local built-bundle probe under the recorded Fast 4G / 4× CPU profile paints the shell at 236–264 ms
+FCP. Production FCP re-measured 2026-07-28 (pre-deploy prod build): GFS 364 ms / HRRR 348 ms median.
+
 ---
 
 ## 11. Resolved repository decisions

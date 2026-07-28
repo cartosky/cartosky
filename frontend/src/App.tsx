@@ -7,6 +7,7 @@ import { MapCanvas, type BasemapMode, type MapCaptureFormat, type VectorHazardSe
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/share/share-utils";
 import type { GifFrameDriver } from "@/components/share/useGifExport";
+import { ViewerInitialMapScrim } from "@/components/ViewerInitialMapScrim";
 import { ViewerSiteHeaderFallback } from "@/components/ViewerSiteHeaderFallback";
 
 const ViewerSiteHeader = lazy(() => import("@/components/ViewerSiteHeader"));
@@ -73,7 +74,7 @@ import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
 import { selectGridManifestLod } from "@/lib/grid-lod";
-import { useSiteLoading } from "@/lib/site-loading";
+import { resolveRunBuildProgress } from "@/lib/viewer-loading-status";
 import { useDisplaySettings } from "@/lib/use-display-settings";
 import { useFrameStatusBadge } from "@/lib/use-frame-status-badge";
 import { usePageVisibility } from "@/lib/use-page-visibility";
@@ -298,7 +299,6 @@ function pickDefaultVariableForModel(
 }
 
 export default function App() {
-  const { start: startSiteLoading } = useSiteLoading();
   const { setViewerContext, clearViewerContext, openFeedback } = useFeedbackContext();
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
   const viewerLayoutMode = useViewerLayoutMode();
@@ -1836,16 +1836,16 @@ export default function App() {
     && Boolean(activeGridFrameUrl)
     && !firstWeatherFramePainted;
   const showInitialMapSkeleton = loading || !isMapReady || shouldWaitForInitialGridFrame;
-  const initialMapSkeletonStatus = loading || !bootstrapHydrated || !isMapReady
-    ? "Loading viewer"
-    : "Preparing first frame";
-
-  useEffect(() => {
-    if (!showInitialMapSkeleton) {
-      return undefined;
-    }
-    return startSiteLoading(initialMapSkeletonStatus);
-  }, [initialMapSkeletonStatus, showInitialMapSkeleton, startSiteLoading]);
+  // Truthful cold-boot stage from state the viewer already owns. Presented by
+  // ViewerInitialMapScrim inside the map layer — never as a full-screen
+  // overlay, so chrome stays interactive while the requested frame loads.
+  const initialMapLoadingStageLabel = loading || !bootstrapHydrated
+    ? "Loading model data"
+    : !isMapReady
+      ? "Preparing map"
+      : shouldWaitForInitialGridFrame && Number.isFinite(resolvedGridDisplayHour)
+        ? `Downloading and drawing FH ${Number(resolvedGridDisplayHour)}`
+        : "Loading model data";
   const normalizeGridFrameUrl = useCallback((frameUrl: string | null | undefined): string => {
     const normalized = String(frameUrl ?? "").trim();
     if (!normalized) {
@@ -5306,6 +5306,22 @@ export default function App() {
     selectableFrameHours,
     variable,
   ]);
+  // Shares the timeline's exact `Building available/total hrs` clamping rule
+  // (resolveRunBuildProgress) and the same inputs BottomForecastControls
+  // receives, so the map scrim and the timeline cannot disagree.
+  const initialMapScrimBuildProgress = useMemo(() => {
+    if (selectedTimeAxisMode === "observed" || runAvailability?.isComplete !== false) {
+      return null;
+    }
+    const progress = resolveRunBuildProgress(
+      controlAvailableFrameHours,
+      runAvailability?.totalForecastHours ?? null,
+    );
+    if (!progress.hasFreshnessTotal || progress.freshnessTotal === null) {
+      return null;
+    }
+    return { available: progress.cappedAvailableForecastHours, total: progress.freshnessTotal };
+  }, [controlAvailableFrameHours, runAvailability, selectedTimeAxisMode]);
   const historicalRunIncomplete = useMemo(() => {
     if (RUN_AVAILABILITY_BADGE_EXCLUDED_MODELS.has(model)) {
       return null;
@@ -5974,6 +5990,12 @@ export default function App() {
             background:
               "radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.28) 100%)",
           }}
+        />
+
+        <ViewerInitialMapScrim
+          visible={showInitialMapSkeleton}
+          stageLabel={initialMapLoadingStageLabel}
+          buildProgress={initialMapScrimBuildProgress}
         />
 
         {showBufferStatus && (

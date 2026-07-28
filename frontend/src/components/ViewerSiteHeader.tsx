@@ -1091,11 +1091,14 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
         {/* Primary selectors */}
         <div data-tour-target="product-variable-run" className="flex flex-wrap items-end gap-1.5 gap-y-2">
           <HeaderSelectField label="Product" icon={Boxes}>
+            {/* Product is data-gated, not load-gated: usable as soon as model
+                options exist so a cold boot never blocks switching products
+                while the first frame downloads (Phase 2 loading contract). */}
             <ModelPicker
               value={model}
               onChange={onModelChange}
               options={models}
-              disabled={disabled}
+              disabled={models.length === 0}
               placeholder="Model"
               minWidth="min-w-[180px] max-w-[220px]"
               panelOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
@@ -1495,7 +1498,7 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
               value={model}
               onChange={(nextModel) => { onModelChange(nextModel); closeSheet(); }}
               options={models}
-              disabled={disabled}
+              disabled={models.length === 0}
               placeholder="Product"
               minWidth="w-full"
               inlinePanel={isPhoneLayout}
