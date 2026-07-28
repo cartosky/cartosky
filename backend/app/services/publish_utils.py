@@ -5,13 +5,49 @@ import logging
 import os
 import re
 import shutil
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
 from .run_ids import format_run_id, parse_run_id_datetime
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def observed_model_publish_lock(data_root: Path, model: str) -> Iterator[None]:
+    """Serialize full-replace publishes that share a model published tree.
+
+    GOES band and RGB publishers share ``published/{model}/{run_id}`` and both
+    call ``promote_run`` (full replace). Without a cross-process lock, overlapping
+    publishes for the same or adjacent run ids can drop sibling variables.
+    """
+    lock_dir = Path(data_root) / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{model}.publish.lock"
+
+    try:
+        import fcntl
+    except ImportError:
+        logger.warning(
+            "Observed publish lock requested but fcntl is unavailable; proceeding unlocked for model=%s",
+            model,
+        )
+        yield
+        return
+
+    lock_file = lock_path.open("a+")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        lock_file.close()
+
 
 def write_json_atomic(path: Path, payload: dict[str, Any], *, compact: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
