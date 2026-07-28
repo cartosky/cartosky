@@ -1071,7 +1071,7 @@ def _hrrrcmp_geometry():
     domain origin; pixel size, CRS, and grid alignment are the model's real
     ones, not GFS's."""
     from app.models.registry import MODEL_REGISTRY
-    from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params
+    from app.services.builder.raster_grid import compute_transform_and_shape, get_grid_params
 
     plugin = MODEL_REGISTRY[HRRRCMP_MODEL]
     region = str(plugin.capabilities.canonical_region)
@@ -1367,7 +1367,7 @@ def _nbmcmp_geometry():
     """NBM's real grid transform + CRS (13 km CONUS, EPSG:3857), resolved via
     the production build helpers — same pattern as the HRRR fixture."""
     from app.models.registry import MODEL_REGISTRY
-    from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params
+    from app.services.builder.raster_grid import compute_transform_and_shape, get_grid_params
 
     plugin = MODEL_REGISTRY[NBMCMP_MODEL]
     region = str(plugin.capabilities.canonical_region)
@@ -1648,7 +1648,7 @@ GEFSCMP_UNITS = {
 def _gefscmp_geometry():
     """GEFS's real grid transform + CRS (25 km, region "na", EPSG:3857)."""
     from app.models.registry import MODEL_REGISTRY
-    from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params
+    from app.services.builder.raster_grid import compute_transform_and_shape, get_grid_params
 
     plugin = MODEL_REGISTRY[GEFSCMP_MODEL]
     region = str(plugin.capabilities.canonical_region)
@@ -1907,7 +1907,7 @@ EPSCMP_COL_FRAC, EPSCMP_ROW_FRAC = 0.5, 0.5
 def _epscmp_geometry():
     """EPS's real grid transform + CRS (18 km, region "na", EPSG:3857)."""
     from app.models.registry import MODEL_REGISTRY
-    from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params
+    from app.services.builder.raster_grid import compute_transform_and_shape, get_grid_params
 
     plugin = MODEL_REGISTRY[EPSCMP_MODEL]
     region = str(plugin.capabilities.canonical_region)

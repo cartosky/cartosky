@@ -20,7 +20,7 @@ from app.models.gfs import GFS_MODEL
 from app.models.nam import NAM_MODEL
 from app.models.nbm import NBM_MODEL
 from app.services import climatology
-from app.services.builder.cog_writer import compute_transform_and_shape
+from app.services.builder.raster_grid import compute_transform_and_shape
 from app.services.builder.derive import FetchContext, derive_variable
 
 

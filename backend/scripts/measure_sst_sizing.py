@@ -335,7 +335,7 @@ from rasterio.crs import CRS  # noqa: E402
 from rasterio.transform import from_origin  # noqa: E402
 from rasterio.warp import Resampling, reproject  # noqa: E402
 
-from app.services.builder.cog_writer import compute_transform_and_shape  # noqa: E402
+from app.services.builder.raster_grid import compute_transform_and_shape  # noqa: E402
 from app.services.grid import (  # noqa: E402
     _PACKING_BY_MODEL_VAR,
     write_grid_frame_for_run_root,

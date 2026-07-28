@@ -24,7 +24,7 @@ from app.models.gfs import GFS_MODEL
 from app.models.gefs import GEFS_MODEL
 from app.models.hrrr import HRRR_MODEL
 from app.services import climatology
-from app.services.builder.cog_writer import compute_transform_and_shape
+from app.services.builder.raster_grid import compute_transform_and_shape
 from app.services.builder.derive import FetchContext, _warp_component_to_target_grid, derive_variable
 from app.services.builder.pipeline import _resolve_derive_target_grid
 

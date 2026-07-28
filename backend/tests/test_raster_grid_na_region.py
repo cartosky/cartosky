@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.builder.cog_writer import REGION_BBOX_3857, compute_transform_and_shape, get_grid_params
+from app.services.builder.raster_grid import REGION_BBOX_3857, compute_transform_and_shape, get_grid_params
 
 
 def test_get_grid_params_supports_na_with_normalized_inputs() -> None:

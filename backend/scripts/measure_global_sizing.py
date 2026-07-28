@@ -295,8 +295,8 @@ from app.models.registry import MODEL_REGISTRY  # noqa: E402
 from app.models.ecmwf import ECMWF_SHORT_CUTOFF_CYCLE_HOURS  # noqa: E402
 from app.config import binary_sampling_enabled  # noqa: E402
 from app.services import climatology  # noqa: E402
-from app.services.builder import cog_writer  # noqa: E402
-from app.services.builder.cog_writer import (  # noqa: E402
+from app.services.builder import raster_grid  # noqa: E402
+from app.services.builder.raster_grid import (  # noqa: E402
     compute_transform_and_shape,
     get_grid_params,
 )
@@ -330,13 +330,13 @@ def inject_global_region(plugin: Any, model: str) -> float:
       1. ``plugin.regions["global"]`` — build_frame validates the region via
          ``resolved_plugin.get_region(region)`` (pipeline.py:1572), which reads
          this mapping. Frozen dataclass, but the mapping object is mutable.
-      2. ``cog_writer.REGION_BBOX_3857["global"]`` — ``get_grid_params`` (used
+      2. ``raster_grid.REGION_BBOX_3857["global"]`` — ``get_grid_params`` (used
          by ``warp_to_target_grid`` and the COG/validate paths) looks the bbox
          up here.
       3. ``plugin.capabilities.grid_meters_by_region["global"]`` — the
          authoritative grid-resolution source consulted by
          ``_grid_meters_from_capabilities``; copies the model's "na" value.
-         (``cog_writer.TARGET_GRID_METERS`` is only a legacy fallback and is
+         (``raster_grid.TARGET_GRID_METERS`` is only a legacy fallback and is
          also populated for belt-and-suspenders parity.)
 
     Returns the global grid resolution in meters.
@@ -348,7 +348,7 @@ def inject_global_region(plugin: Any, model: str) -> float:
         na_grid_m = grid_map.get("na")
     if na_grid_m is None:
         # Legacy fallback table.
-        model_grids = cog_writer.TARGET_GRID_METERS.get(model, {})
+        model_grids = raster_grid.TARGET_GRID_METERS.get(model, {})
         na_grid_m = model_grids.get("na")
     if na_grid_m is None:
         raise RuntimeError(
@@ -364,12 +364,12 @@ def inject_global_region(plugin: Any, model: str) -> float:
         clip=False,
     )
     # (2) module bbox table (cog_writer)
-    cog_writer.REGION_BBOX_3857[GLOBAL_REGION_ID] = GLOBAL_BBOX_3857
-    cog_writer.REGION_BBOX_4326[GLOBAL_REGION_ID] = GLOBAL_BBOX_WGS84
+    raster_grid.REGION_BBOX_3857[GLOBAL_REGION_ID] = GLOBAL_BBOX_3857
+    raster_grid.REGION_BBOX_4326[GLOBAL_REGION_ID] = GLOBAL_BBOX_WGS84
     # (3) grid resolution — capabilities (authoritative) + legacy fallback
     if isinstance(grid_map, dict):
         grid_map[GLOBAL_REGION_ID] = na_grid_m
-    cog_writer.TARGET_GRID_METERS.setdefault(model, {})[GLOBAL_REGION_ID] = na_grid_m
+    raster_grid.TARGET_GRID_METERS.setdefault(model, {})[GLOBAL_REGION_ID] = na_grid_m
     # (4) climatology baseline grid table — reached for DERIVED vars via the
     # contour-metadata path (pipeline._build_contour_metadata_for_variable
     # hardcodes derive_component_warp_cache=True → _resolve_derive_target_grid

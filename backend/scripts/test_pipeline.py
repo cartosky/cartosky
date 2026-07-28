@@ -2,8 +2,8 @@
 """Integration test for pipeline.py validation gates and sidecar JSON.
 
 Exercises the full pipeline (minus GRIB fetch) by synthesizing data arrays,
-running them through colorize → write COGs → validate_cog → check_pixel_sanity
-→ build_sidecar_json.  This validates all the wiring without network access.
+running them through colorize → write value COG → validate_cog →
+build_sidecar_json.  This validates all the wiring without network access.
 
 Run from repo root:
     PYTHONPATH=backend .venv/bin/python backend/scripts/test_pipeline.py
@@ -23,11 +23,10 @@ import numpy as np
 # Ensure backend/ is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.services.builder.cog_writer import (
+from app.services.builder.cog_writer import write_value_cog
+from app.services.builder.raster_grid import (
     compute_transform_and_shape,
     get_grid_params,
-    write_rgba_cog,
-    write_value_cog,
 )
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.fetch import convert_units
@@ -39,7 +38,6 @@ from app.services.builder.pipeline import (
     _prepare_display_data_for_colorize,
     _run_id_from_date,
     build_sidecar_json,
-    check_pixel_sanity,
     validate_cog,
 )
 from app.services.colormaps import COLOR_MAP_SPECS, RADAR_PTYPE_BREAKS, RADAR_PTYPE_ORDER
@@ -101,46 +99,28 @@ def test_colorize_roundtrip():
 
 
 def test_validate_cog_gates():
-    """Write COGs and run both validation gates."""
+    """Write a value COG and run structural validation."""
     bbox, grid_m = get_grid_params(MODEL, REGION)
     transform, height, width = compute_transform_and_shape(bbox, grid_m)
 
     # Synthesize data
     data_k = _make_synthetic_tmp2m()
     data_f = convert_units(data_k, "tmp2m")
-    rgba, meta = float_to_rgba(data_f, "tmp2m")
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        rgba_path = Path(tmpdir) / "fh000.rgba.cog.tif"
         val_path = Path(tmpdir) / "fh000.val.cog.tif"
 
-        # Write COGs
-        write_rgba_cog(rgba, rgba_path, model=MODEL, region=REGION, kind="continuous")
         write_value_cog(data_f, val_path, model=MODEL, region=REGION)
 
-        rgba_size = rgba_path.stat().st_size / 1024
         val_size = val_path.stat().st_size / 1024
-        print(f"  COG sizes: RGBA={rgba_size:.0f}KB, Val={val_size:.0f}KB")
+        print(f"  COG sizes: Val={val_size:.0f}KB")
 
         # Gate 1: structural validation
-        assert validate_cog(
-            rgba_path, expected_bands=4, expected_dtype="Byte",
-            region=REGION, grid_meters=grid_m,
-        ), "Gate 1 failed for RGBA COG"
-        print("  Gate 1 (RGBA structural): PASS")
-
         assert validate_cog(
             val_path, expected_bands=1, expected_dtype="Float32",
             region=REGION, grid_meters=grid_m,
         ), "Gate 1 failed for value COG"
         print("  Gate 1 (Value structural): PASS")
-
-        # Gate 2: pixel sanity
-        var_spec = COLOR_MAP_SPECS["tmp2m"]
-        assert check_pixel_sanity(
-            rgba_path, val_path, var_spec,
-        ), "Gate 2 failed"
-        print("  Gate 2 (Pixel sanity): PASS")
 
 
 def test_sidecar_json():

@@ -28,7 +28,7 @@ import rasterio.crs
 from rasterio.enums import Resampling
 from rasterio.warp import calculate_default_transform, reproject
 
-from app.services.builder.cog_writer import compute_transform_and_shape, warp_to_target_grid
+from app.services.builder.raster_grid import compute_transform_and_shape, warp_to_target_grid
 from app.services.builder.fetch import convert_units, fetch_variable, inventory_lines_for_pattern
 from app.services.builder.fetch import HerbieTransientUnavailableError
 from app.services.climatology import (

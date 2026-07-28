@@ -30,7 +30,7 @@ os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNk
 
 from app import main as main_module
 from app.models.registry import MODEL_REGISTRY
-from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params
+from app.services.builder.raster_grid import compute_transform_and_shape, get_grid_params
 from app.services.grid import (
     GRID_DTYPE,
     _PACKING_BY_MODEL_VAR,

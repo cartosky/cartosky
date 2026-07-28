@@ -35,13 +35,8 @@ import numpy as np
 import rasterio
 
 from app.config import binary_sampling_enabled, grid_build_enabled
-from app.services.builder.cog_writer import (
-    _gdal,
-    compute_transform_and_shape,
-    get_grid_params,
-    write_value_cog,
-    warp_to_target_grid,
-)
+from app.services.builder.raster_grid import _gdal, compute_transform_and_shape, get_grid_params, warp_to_target_grid
+from app.services.builder.cog_writer import write_value_cog
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.derive import (
     FetchContext,

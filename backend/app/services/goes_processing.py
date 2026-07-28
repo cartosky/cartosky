@@ -12,7 +12,7 @@ from rasterio.crs import CRS
 from rasterio.transform import Affine
 from rasterio.warp import Resampling, reproject
 
-from app.services.builder.cog_writer import compute_transform_and_shape, get_grid_params
+from app.services.builder.raster_grid import compute_transform_and_shape, get_grid_params
 
 
 class GOESProcessingError(RuntimeError):

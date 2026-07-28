@@ -31,7 +31,7 @@ from app.models.gfs import GFS_MODEL
 from app.models.hrrr import HRRR_MODEL
 from app.models.nam import NAM_MODEL
 from app.models.nbm import NBM_MODEL
-from app.services.builder.cog_writer import REGION_BBOX_3857, REGION_BBOX_4326
+from app.services.builder.raster_grid import REGION_BBOX_3857, REGION_BBOX_4326
 
 
 EXPECTED_CONUS_BBOX_4326 = (-134.0, 24.0, -60.0, 55.0)

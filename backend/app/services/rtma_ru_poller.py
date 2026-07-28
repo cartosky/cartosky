@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from app.models.rtma_ru import CURRENT_ANALYSIS_MODEL
-from app.services.builder.cog_writer import warp_to_target_grid
+from app.services.builder.raster_grid import warp_to_target_grid
 from app.services.builder.fetch import (
     HerbieTransientUnavailableError,
     convert_units,

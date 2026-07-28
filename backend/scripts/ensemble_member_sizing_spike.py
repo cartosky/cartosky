@@ -157,7 +157,7 @@ from rasterio.transform import Affine, array_bounds, from_bounds
 from scipy.ndimage import zoom as ndimage_zoom
 
 from app.models.registry import MODEL_REGISTRY
-from app.services.builder.cog_writer import warp_to_target_grid
+from app.services.builder.raster_grid import warp_to_target_grid
 from app.services.builder.fetch import (
     HerbieTransientUnavailableError,
     _fetch_range_bytes,

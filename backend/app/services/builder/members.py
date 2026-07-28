@@ -88,7 +88,7 @@ from ..grid import (
     grid_frame_path_for_run_root,
     write_slim_grid_frame_for_run_root,
 )
-from .cog_writer import warp_to_target_grid
+from .raster_grid import warp_to_target_grid
 from .fetch import (
     _aggregation_subset_path,
     _download_subset_with_inventory_rows,

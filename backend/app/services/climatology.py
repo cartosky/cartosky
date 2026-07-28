@@ -8,7 +8,7 @@ import numpy as np
 import rasterio
 from rasterio.crs import CRS
 
-from .builder.cog_writer import REGION_BBOX_3857, compute_transform_and_shape
+from .builder.raster_grid import REGION_BBOX_3857, compute_transform_and_shape
 
 _configured_data_root: Path | None = None
 DEFAULT_BASELINE_SOURCE = "era5"

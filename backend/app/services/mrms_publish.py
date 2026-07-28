@@ -19,12 +19,8 @@ from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
 from ..config import binary_sampling_enabled, grid_build_enabled
 from ..models.mrms import MRMS_MODEL
 from .builder.colorize import colorize_metadata
-from .builder.cog_writer import (
-    compute_transform_and_shape,
-    get_grid_params,
-    warp_to_target_grid,
-    write_value_cog,
-)
+from .builder.raster_grid import compute_transform_and_shape, get_grid_params, warp_to_target_grid
+from .builder.cog_writer import write_value_cog
 from .builder.pipeline import build_sidecar_json, check_pre_encode_value_sanity
 from .colormaps import MRMS_RADAR_PTYPE_BREAKS, MRMS_RADAR_PTYPE_ORDER, get_color_map_spec
 from .observed_bundle_health import build_observed_bundle_health

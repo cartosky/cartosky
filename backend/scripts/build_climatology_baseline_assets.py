@@ -21,7 +21,7 @@ if str(BACKEND_ROOT) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from app.services.builder.cog_writer import compute_transform_and_shape
+from app.services.builder.raster_grid import compute_transform_and_shape
 from app.services.climatology import (
     climatology_baseline_root,
     get_baseline_grid_params,

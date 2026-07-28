@@ -12,7 +12,8 @@ import numpy as np
 from app.config import binary_sampling_enabled, grid_build_enabled
 from app.models.wpc import WPC_MODEL
 from app.services.builder.colorize import float_to_rgba
-from app.services.builder.cog_writer import warp_to_target_grid, write_value_cog
+from app.services.builder.raster_grid import warp_to_target_grid
+from app.services.builder.cog_writer import write_value_cog
 from app.services.colormaps import get_color_map_spec
 from app.services.publish_utils import promote_run, write_json_atomic, write_latest_pointer, write_run_manifest
 from app.services.run_ids import format_run_id
