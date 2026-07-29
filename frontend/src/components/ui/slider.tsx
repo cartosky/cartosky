@@ -36,23 +36,10 @@ const Slider = React.forwardRef<
         />
       ))}
     </SliderPrimitive.Track>
-    {/* Touch-target contract (§2.1): the thumb ELEMENT is the hit area
-        (32px fine / 44px coarse); the visual dot is a smaller inner child. */}
-    {/* The historical inline translateZ(0) suppressed Radix's translateX(-50%),
-        anchoring the thumb's LEFT edge at the value position; the dot center
-        therefore sits at +half-thumb-width. Compensate per regime so the
-        visual dot lands exactly where the pre-Phase-4 16px thumb put it:
-        32px thumb -> -16px, 44px thumb -> -28px (A/B-measured against the exact pre-Phase-4 rendering on the live scrubber). transform-gpu keeps the
-        compositing hint that translateZ(0) provided. */}
     <SliderPrimitive.Thumb
-      className="group flex h-8 w-8 transform-gpu items-center justify-center rounded-full -translate-x-4 disabled:pointer-events-none disabled:opacity-50 pointer-coarse:h-11 pointer-coarse:w-11 pointer-coarse:-translate-x-7"
-      style={{ willChange: "transform" }}
-    >
-      <span
-        aria-hidden="true"
-        className="block h-4 w-4 rounded-full border-2 border-cyan-900 bg-cyan-600 shadow-[0_0_0_1px_rgba(6,182,212,0.2),0_0_8px_rgba(6,182,212,0.35)] transition-[box-shadow,transform] duration-150 group-focus:shadow-[0_0_0_1px_rgba(6,182,212,0.3),0_0_12px_rgba(6,182,212,0.5)] group-active:scale-[1.08]"
-      />
-    </SliderPrimitive.Thumb>
+      className="block h-4 w-4 rounded-full border-2 border-cyan-900 bg-cyan-600 shadow-[0_0_0_1px_rgba(6,182,212,0.2),0_0_8px_rgba(6,182,212,0.35)] transition-[box-shadow] duration-150 focus:shadow-[0_0_0_1px_rgba(6,182,212,0.3),0_0_12px_rgba(6,182,212,0.5)] active:scale-[1.08] disabled:pointer-events-none disabled:opacity-50"
+      style={{ willChange: "transform", transform: "translateZ(0)" }}
+    />
   </SliderPrimitive.Root>
 ));
 Slider.displayName = SliderPrimitive.Root.displayName;

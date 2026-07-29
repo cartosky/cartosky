@@ -689,6 +689,14 @@ Verified through two adversarial review rounds; export regression, first-paint, 
 compare suites green. Known scope note: tablet-touch has no display-settings surface (the panel
 is desktop-only and the controls button is hidden there) — recorded for Phases 6/8.
 
+Production-gate follow-up (2026-07-28): the slider thumb hit-area enlargement caused two visual
+regressions (dot trailing the finger at range max on mobile; dot below the track centerline on
+desktop) because the hit box proved inseparable from Radix's wrapper positioning math. The thumb
+shipped reverted to its exact pre-Phase-4 form and **[role="slider"] carries a documented
+exception to the §2.1 size floors, owned by the Phase 5 timeline rebuild** (the audit records the
+exception inline). The 12 px field captions and 32 px icon boxes are §2-compliant and accepted
+as-is until Phase 6 restructures the header; no further density tuning before then.
+
 ---
 
 ## 11. Resolved repository decisions
