@@ -145,6 +145,7 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     // Compare and Share are peer actions in the bar.
     await expect(header.getByRole('link', { name: 'Compare' })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Compare' })).toHaveAttribute('href', /\/compare/);
+    await expect(header.getByRole('link', { name: 'Compare' })).toHaveAttribute('data-tour-target', 'compare-button');
     await expect(header.getByRole('button', { name: 'Share' })).toBeVisible();
 
     // Overflow menu contents.
@@ -166,6 +167,37 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     await expect(header.locator('[data-tour-target="product-variable-run"]')).toHaveCount(0);
     await expect(header.getByRole('button', { name: 'GFS' })).toHaveCount(0);
     await expect(header.getByRole('button', { name: 'Surface Temp' })).toHaveCount(0);
+  });
+
+  test('welcome tour spotlights Compare at its dedicated top-bar button', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openViewer(page);
+    await page.evaluate(() => localStorage.removeItem('csky_viewer_tour_v1'));
+    await page.addInitScript(() => localStorage.removeItem('csky_viewer_tour_v1'));
+    await page.reload();
+    await expect(page.getByTestId('viewer-initial-map-scrim')).toBeHidden({ timeout: 30_000 });
+
+    const welcome = page.getByRole('dialog', { name: 'Welcome to CartoSky Map Viewer' });
+    await expect(welcome).toBeVisible({ timeout: 20_000 });
+    await welcome.getByRole('button', { name: 'Get started →' }).click();
+
+    const tooltip = page.getByTestId('tour-tooltip');
+    for (let index = 0; index < 4; index += 1) {
+      await expect(tooltip).toBeVisible();
+      await tooltip.getByRole('button', { name: 'Next' }).click();
+    }
+    await expect(tooltip).toHaveAttribute('aria-label', /Compare/);
+    await expect(tooltip).toContainText(/directly from the top bar/i);
+
+    const overlap = await page.evaluate(() => {
+      const compare = document.querySelector('[data-tour-target="compare-button"]')?.getBoundingClientRect();
+      const highlight = document.querySelector('[data-testid="tour-highlight"]')?.getBoundingClientRect();
+      if (!compare || !highlight) return 0;
+      const width = Math.max(0, Math.min(compare.right, highlight.right) - Math.max(compare.left, highlight.left));
+      const height = Math.max(0, Math.min(compare.bottom, highlight.bottom) - Math.max(compare.top, highlight.top));
+      return width * height;
+    });
+    expect(overlap).toBeGreaterThan(0);
   });
 
   // ── 2. Rail expanded ──────────────────────────────────────────────────────
@@ -303,6 +335,37 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     expect(box).not.toBeNull();
     expect(box!.x).toBeGreaterThanOrEqual(0);
     expect(box!.x + box!.width).toBeLessThanOrEqual(1440);
+  });
+
+  test('model category labels remain complete and the zoom stack clears the rail edge chevron', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('twf.map.zoom_controls_visible', 'true'));
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openViewer(page);
+
+    const modelTrigger = page.getByTestId('rail-source').getByRole('button', { name: 'GFS' });
+    await modelTrigger.click();
+    const ensembles = page.getByLabel('Model picker').getByRole('button', { name: /Ensembles/ });
+    await expect(ensembles).toBeVisible();
+    const labelFit = await ensembles.locator('span').first().evaluate((element) => ({
+      text: element.textContent?.trim(),
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(labelFit.text).toBe('Ensembles');
+    expect(labelFit.scrollWidth).toBeLessThanOrEqual(labelFit.clientWidth);
+    await page.keyboard.press('Escape');
+
+    const overlap = await page.evaluate(() => {
+      const zoom = document.querySelector('[aria-label="Zoom in"]')?.getBoundingClientRect();
+      const edge = document.querySelector('[data-testid="rail-edge-tab"]')?.getBoundingClientRect();
+      if (!zoom || !edge) return null;
+      return {
+        horizontal: Math.max(0, Math.min(zoom.right, edge.right) - Math.max(zoom.left, edge.left)),
+        vertical: Math.max(0, Math.min(zoom.bottom, edge.bottom) - Math.max(zoom.top, edge.top)),
+      };
+    });
+    expect(overlap).not.toBeNull();
+    expect(overlap!.horizontal * overlap!.vertical).toBe(0);
   });
 
   test('View controls are flat switches without On/Off text or an opacity card', async ({ page }) => {

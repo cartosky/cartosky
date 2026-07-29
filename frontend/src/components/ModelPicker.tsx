@@ -336,7 +336,7 @@ export function ModelPicker({
         ) : null}
       </div>
 
-      <div className={cn("grid grid-cols-[118px_minmax(0,1fr)]", inlinePanel ? "min-h-0 flex-1" : "h-[236px]")}> 
+      <div className={cn("grid grid-cols-[118px_minmax(0,1fr)]", inlinePanel ? "min-h-0 flex-1" : "h-[236px]")}>
         <div className="min-h-0 overflow-hidden border-r border-[#1a3a5c]/55 bg-[#071422]/75 p-1.5">
           {categoryRows.map((category) => {
             const active = !hasSearch && category.id === activeCategory;
@@ -346,14 +346,14 @@ export function ModelPicker({
                 type="button"
                 onClick={() => setActiveCategory(category.id)}
                 className={cn(
-                  "flex w-full items-center justify-between gap-2 rounded-lg border-l-2 px-2 text-left text-[11px] font-semibold transition-colors",
+                  "flex w-full items-center justify-between gap-1.5 rounded-lg border-l-2 px-2 text-left text-[11px] font-semibold transition-colors",
                   inlinePanel ? "h-11" : "h-8 pointer-coarse:h-11",
                   active
                     ? "border-l-[#185FA5] bg-cyan-300/[0.10] text-cyan-50"
                     : "border-l-transparent text-white/62 hover:bg-white/[0.055] hover:text-white/86"
                 )}
               >
-                <span className="min-w-0 truncate">{category.label}</span>
+                <span className="min-w-0 whitespace-nowrap">{category.label}</span>
                 <span className="rounded-md border border-white/8 bg-white/[0.055] px-1.5 py-0.5 font-['IBM_Plex_Mono',monospace] text-[11px] font-medium text-white/44">
                   {category.count}
                 </span>

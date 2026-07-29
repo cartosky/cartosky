@@ -480,6 +480,41 @@ test.describe('Viewer timeline (Phase 5)', () => {
     expect(fit.scrollWidth).toBeLessThanOrEqual(fit.clientWidth);
   });
 
+  test('calendar date bands change at the viewer local midnight, not at 00Z', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openTimeline(page, FIXTURES.gfsLong);
+
+    const alignment = await page.evaluate(({ firstMs, lastMs }) => {
+      const track = document.querySelector('[data-testid="timeline-track"]')!.getBoundingClientRect();
+      const segments = Array.from(document.querySelectorAll('[data-testid="timeline-day-segment"]'));
+      const starts = segments.slice(1).map((element) => {
+        const rect = element.getBoundingClientRect();
+        const fraction = (rect.left - track.left) / track.width;
+        return firstMs + fraction * (lastMs - firstMs);
+      });
+      return starts.map((ms) => {
+        const date = new Date(ms);
+        const minutes = date.getHours() * 60 + date.getMinutes();
+        return Math.min(minutes, 24 * 60 - minutes);
+      });
+    }, {
+      firstMs: runMs(GFS_LONG_FHS[0]),
+      lastMs: runMs(GFS_LONG_FHS[GFS_LONG_FHS.length - 1]),
+    });
+
+    expect(alignment.length).toBeGreaterThan(2);
+    // Percent positioning lands on fractional CSS pixels, so converting the
+    // measured x back to time can be a minute either side of midnight.
+    expect(alignment.every((minutesFromMidnight) => minutesFromMidnight <= 1)).toBe(true);
+  });
+
+  test('day-indexed outlook products label the scrubber Day 1, Day 2, Day 3', async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await openTimeline(page, FIXTURES.spcDays);
+
+    await expect(page.getByTestId('timeline-day-segment')).toHaveText(['Day 1', 'Day 2', 'Day 3']);
+  });
+
   test('00Z/12Z ticks are prominent above the track and transport controls breathe', async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 768 });
     await openTimeline(page, FIXTURES.gfsLong);
@@ -596,6 +631,28 @@ test.describe('Viewer timeline (Phase 5)', () => {
     await expect.poll(() => new URL(page.url()).searchParams.get('fh')).toBe('12');
   });
 
+  test('hover readout stays adjacent to the cursor after the desktop rail offset', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openTimeline(page, FIXTURES.gfsLong);
+    await page.route('**/api/v4/sample?**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ value: 72, units: 'F', label: 'Hover probe' }),
+      });
+    });
+
+    const map = (await page.getByTestId('viewer-map-slot').boundingBox())!;
+    const cursor = { x: map.x + map.width * 0.58, y: map.y + map.height * 0.42 };
+    await page.mouse.move(cursor.x, cursor.y);
+
+    const tooltip = page.getByText('Hover probe', { exact: true });
+    await expect(tooltip).toBeVisible({ timeout: 5_000 });
+    const box = (await tooltip.boundingBox())!;
+    expect(Math.abs(box.x - (cursor.x + 14))).toBeLessThanOrEqual(4);
+    expect(Math.abs(box.y - (cursor.y - 32))).toBeLessThanOrEqual(4);
+  });
+
   test('GIF export range ends at the ready boundary', async ({ page }) => {
     const assets = trackFrameAssetRequests(page, FIXTURES.outOfOrder);
     await openTimeline(page, FIXTURES.outOfOrder);
@@ -617,6 +674,11 @@ test.describe('Viewer timeline (Phase 5)', () => {
 test.describe('Viewer timeline (Phase 5, mobile)', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'Pinned Chromium contract suite.');
   test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+
+  test('day-indexed outlooks keep Day 1-3 visible on the compact scrubber', async ({ page }) => {
+    await openTimeline(page, FIXTURES.spcDays);
+    await expect(page.getByTestId('timeline-mobile-day-label')).toHaveText(['Day 1', 'Day 2', 'Day 3']);
+  });
 
   test('mobile defaults to compact and thumb meets the coarse floor', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));

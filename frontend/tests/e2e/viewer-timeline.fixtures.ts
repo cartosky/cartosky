@@ -24,6 +24,8 @@ export type TimelineFixture = {
   omitScalars?: boolean;
   /** Optional CPC-style valid-period metadata on every frame. */
   cpcValid?: { seas: string; start: string; end: string };
+  /** Optional operational labels for day-indexed products such as SPC outlooks. */
+  dayLabels?: Record<number, string>;
   /** Per-run overrides for run-switch scenarios (keyed by concrete run id). */
   runOverrides?: Record<string, { publishedFhs: number[]; readyThroughFh?: number | null; expectedMaxFh?: number }>;
 };
@@ -133,6 +135,17 @@ export const FIXTURES: Record<string, TimelineFixture> = {
     publishedFhs: [0],
     omitScalars: true,
     cpcValid: { seas: 'ASO 2026', start: '2026-08-01', end: '2026-10-31' },
+  },
+  spcDays: {
+    name: 'spcDays',
+    model: 'spc',
+    runId: TIMELINE_RUN_ID,
+    variable: 'convective',
+    displayName: 'Convective Outlook',
+    timeAxisMode: 'valid',
+    publishedFhs: [0, 1, 2],
+    omitScalars: true,
+    dayLabels: { 0: 'Day 1', 1: 'Day 2', 2: 'Day 3' },
   },
 };
 
@@ -251,6 +264,7 @@ function frameMeta(fixture: TimelineFixture, fh: number) {
             valid_end: fixture.cpcValid.end,
           }
         : {}),
+      ...(fixture.dayLabels?.[fh] ? { day_label: fixture.dayLabels[fh] } : {}),
     },
   };
 }

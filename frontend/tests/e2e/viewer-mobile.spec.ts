@@ -377,7 +377,7 @@ test.describe('§8 State A — compact legend chip', () => {
 // ── 7. §8 State A — the 52 px bar ───────────────────────────────────────────
 
 test.describe('§8 State A — mobile bar', () => {
-  test('carries a labeled Share, ⌕ search and the decision-3 overflow', async ({ page }) => {
+  test('carries the product destinations, Share, and overflow without a location-search button', async ({ page }) => {
     await openTimelineViewer(page, FIXTURES.gfsLong);
 
     const bar = page.getByTestId('viewer-mobile-bar');
@@ -385,6 +385,11 @@ test.describe('§8 State A — mobile bar', () => {
     await expect(bar.getByRole('button', { name: 'Share' })).toBeVisible();
     const logo = bar.getByRole('img', { name: 'CartoSky' });
     expect((await logo.boundingBox())!.height).toBeGreaterThanOrEqual(39);
+    const switcher = page.getByTestId('viewer-mobile-section-switcher');
+    await expect(switcher.getByRole('link', { name: 'Viewer' })).toHaveAttribute('href', '/viewer');
+    await expect(switcher.getByRole('link', { name: 'Forecast' })).toHaveAttribute('href', '/forecast');
+    await expect(switcher.getByRole('link', { name: 'Climate' })).toHaveAttribute('href', '/climate');
+    await expect(page.getByTestId('mobile-bar-search')).toHaveCount(0);
 
     await page.getByTestId('mobile-bar-overflow-trigger').click();
     const items = await page.getByTestId('mobile-bar-overflow-menu').getByRole('menuitem').allInnerTexts();
@@ -397,12 +402,30 @@ test.describe('§8 State A — mobile bar', () => {
     ]);
     await page.keyboard.press('Escape');
 
-    await page.getByTestId('mobile-bar-search').click();
-    await expect(page.getByTestId('mobile-sheet')).toHaveAttribute('data-snap', 'half');
-    const panel = page.getByTestId('region-picker-panel');
-    await expect(panel).toBeVisible();
-    const searchInput = panel.getByPlaceholder('Search city or zip…');
-    await expect(searchInput).toBeFocused({ timeout: 5_000 });
+  });
+
+  test('mobile zoom controls clear the source card and the scrubber centers beside Play', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('twf.map.zoom_controls_visible', 'true'));
+    await openTimelineViewer(page, FIXTURES.gfsLong);
+
+    const geometry = await page.evaluate(() => {
+      const rect = (selector: string) => document.querySelector(selector)?.getBoundingClientRect() ?? null;
+      return {
+        badge: rect('[data-testid="map-source-badge"]'),
+        zoom: rect('[aria-label="Zoom in"]'),
+        play: rect('[data-testid="timeline-play-button"]'),
+        track: rect('[data-testid="timeline-track"]'),
+        thumb: rect('[data-testid="timeline-thumb"]'),
+      };
+    });
+    expect(geometry.badge).not.toBeNull();
+    expect(geometry.zoom).not.toBeNull();
+    expect(geometry.zoom!.top).toBeGreaterThanOrEqual(geometry.badge!.bottom + 8);
+    expect(Math.abs(
+      (geometry.track!.top + geometry.track!.height / 2)
+      - (geometry.play!.top + geometry.play!.height / 2),
+    )).toBeLessThanOrEqual(1);
+    expect(geometry.thumb!.left).toBeGreaterThanOrEqual(geometry.play!.right + 2);
   });
 });
 
@@ -651,6 +674,7 @@ test.describe('§8 mobile tour', () => {
     const tooltip = page.getByTestId('tour-tooltip');
     const highlight = page.getByTestId('tour-highlight');
     const seen: string[] = [];
+    const bodies: string[] = [];
 
     for (let guard = 0; guard < 20; guard += 1) {
       await expect(tooltip).toBeVisible({ timeout: 10_000 });
@@ -686,6 +710,7 @@ test.describe('§8 mobile tour', () => {
       expect(tooltipBox.x + tooltipBox.width).toBeLessThanOrEqual(VIEWPORT.width + 1);
 
       seen.push(label);
+      bodies.push((await tooltip.innerText()).replace(/\s+/g, ' '));
 
       const advance = tooltip.getByRole('button', { name: /^(Next|Done)$/ });
       const isDone = (await advance.innerText()).trim() === 'Done';
@@ -695,6 +720,7 @@ test.describe('§8 mobile tour', () => {
 
     // Every content step was walked, and the tour actually finished.
     expect(seen.length, `only reached ${seen.length} steps: ${seen.join(' | ')}`).toBe(8);
+    expect(bodies.join(' ')).not.toMatch(/magnifier in the top bar/i);
     expect(seen[seen.length - 1]).toContain('8 of 8');
     await expect(tooltip).toBeHidden();
     await expect(page.getByRole('status')).toContainText('all set', { timeout: 5_000 });

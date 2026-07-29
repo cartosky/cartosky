@@ -46,6 +46,7 @@ type BottomForecastControlsProps = {
   cpcValidStart?: string | null;
   cpcValidEnd?: string | null;
   frameDayLabel?: string | null;
+  frameDayLabelsByHour?: Record<number, string>;
   frameValidTimesByHour?: Record<number, string>;
   sourceStatusLabel?: string | null;
   sourceStatusDescription?: string | null;
@@ -301,6 +302,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
   cpcValidStart = null,
   cpcValidEnd = null,
   frameDayLabel = null,
+  frameDayLabelsByHour,
   frameValidTimesByHour,
   sourceStatusLabel = null,
   sourceStatusDescription = null,
@@ -620,6 +622,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
       frames={publishedFrameHours && publishedFrameHours.length > 0 ? publishedFrameHours : availableFrames}
       bufferedFrameHours={bufferedFrameHours}
       validTimeByHour={frameValidTimesByHour}
+      dayLabelByHour={frameDayLabelsByHour}
       runDateTimeISO={runDateTimeISO}
       forecastHour={effectiveHour}
       readyThroughFh={readyThroughFh}
@@ -762,7 +765,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                 {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-[1px]" />}
               </button>
 
-              <div className="relative h-full min-w-0 flex-1">
+              <div className="relative h-full min-w-0 flex-1 pl-4">
                 {timeline}
               </div>
             </div>

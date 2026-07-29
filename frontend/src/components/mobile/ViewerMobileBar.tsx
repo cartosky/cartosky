@@ -8,7 +8,6 @@ import {
   MessageSquareText,
   MoreHorizontal,
   PlayCircle,
-  Search,
   Share2,
   UserRound,
 } from "lucide-react";
@@ -20,12 +19,8 @@ import { cn } from "@/lib/utils";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
 
 /**
- * Phase 8 mobile bar (§8 State A): 52 px — `logo │ ⌕  [Share]  •••`.
- *
- * Decision 2: ⌕ opens LOCATION SEARCH — the sheet at its half snap, revealing
- * the View section's existing `RegionUtilitySelect` search. It maps to a real
- * capability; `⌘K Jump to…` stays deferred with no placeholder (Phase 6
- * decision 1).
+ * Phase 8 mobile bar (§8 State A): 52 px — logo, destination links, Share,
+ * and the overflow menu.
  *
  * Decision 3: Share moves here, labeled, out of the bottom controls row. The
  * `•••` overflow carries Send feedback, Compare, Replay tour, Attribution and
@@ -43,6 +38,12 @@ const BAR_MENU_ITEM_CLASSNAME =
 
 const PANEL_CLASSNAME =
   "overflow-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.92] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md";
+
+const SECTION_LINKS = [
+  { to: "/viewer", label: "Viewer" },
+  { to: "/forecast", label: "Forecast" },
+  { to: "/climate", label: "Climate" },
+] as const;
 
 export function ViewerMobileBar() {
   const toolbar = useViewerToolbar();
@@ -90,31 +91,41 @@ export function ViewerMobileBar() {
   return (
     <div
       data-testid="viewer-mobile-bar"
-      className="relative z-10 flex items-center gap-2 px-3"
+      className="relative z-10 flex items-center gap-1 px-2"
       style={{ height: `${MOBILE_BAR_PX}px` }}
     >
       <NavLink to="/" className="flex h-11 shrink-0 items-center font-semibold tracking-tight text-white">
         <img src={BRAND_LOGO_SRC} alt="CartoSky" className="block h-10 w-auto max-w-none" />
       </NavLink>
 
-      <div className="ml-auto flex items-center gap-1.5">
-        <button
-          type="button"
-          data-testid="mobile-bar-search"
-          aria-label="Search locations"
-          title="Search locations"
-          onClick={() => toolbar?.onMobileSheetRequest?.("view", { focusSearch: true })}
-          className={BAR_ICON_BUTTON_CLASSNAME}
-        >
-          <Search className="h-4 w-4" />
-        </button>
+      <nav
+        aria-label="Product sections"
+        data-testid="viewer-mobile-section-switcher"
+        className="flex min-w-0 flex-1 items-stretch self-stretch"
+      >
+        {SECTION_LINKS.map((link) => (
+          <NavLink
+            key={link.to}
+            to={link.to}
+            className={({ isActive }) => cn(
+              "relative inline-flex min-h-11 min-w-11 flex-1 items-center justify-center border-b-2 px-1 font-sans text-[11px] font-medium transition-colors",
+              isActive
+                ? "border-cyan-300/80 text-cyan-100"
+                : "border-transparent text-white/58 hover:text-white/90",
+            )}
+          >
+            {link.label}
+          </NavLink>
+        ))}
+      </nav>
 
+      <div className="flex shrink-0 items-center gap-1">
         {toolbar?.onShare ? (
           <button
             type="button"
             onClick={toolbar.onShare}
             data-tour-target="share-button"
-            className="inline-flex h-11 items-center gap-1.5 rounded-[9px] border border-cyan-300/22 bg-cyan-300/[0.10] px-3 text-[13px] font-semibold text-cyan-100 transition-colors duration-100 hover:bg-cyan-300/[0.16]"
+            className="inline-flex h-11 items-center gap-1 rounded-[9px] border border-cyan-300/22 bg-cyan-300/[0.10] px-2 text-[12px] font-semibold text-cyan-100 transition-colors duration-100 hover:bg-cyan-300/[0.16]"
           >
             <Share2 className="h-3.5 w-3.5" />
             Share

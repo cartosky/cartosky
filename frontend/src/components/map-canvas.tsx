@@ -1331,6 +1331,7 @@ type MapCanvasProps = {
   cityLabelMode?: CityLabelMode;
   showZoomControls?: boolean;
   isDesktopLayout?: boolean;
+  hasViewerRail?: boolean;
   legendButtonVisible?: boolean;
   legendButtonActive?: boolean;
   onLegendButtonClick?: () => void;
@@ -1424,6 +1425,7 @@ export function MapCanvas({
   cityLabelMode = "value",
   showZoomControls = false,
   isDesktopLayout = false,
+  hasViewerRail = false,
   legendButtonVisible = false,
   legendButtonActive = false,
   onLegendButtonClick,
@@ -3678,6 +3680,11 @@ export function MapCanvas({
     const handleMove = (e: maplibregl.MapMouseEvent) => {
       const { lng, lat } = e.lngLat;
       const { x, y } = e.point;
+      // MapLibre reports canvas-local coordinates, while viewer overlays are
+      // positioned in the surrounding chrome container. Include the map slot's
+      // rail/mobile inset so the tooltip stays next to the actual cursor.
+      const overlayX = (mapSlotRef.current?.offsetLeft ?? 0) + x;
+      const overlayY = (mapSlotRef.current?.offsetTop ?? 0) + y;
       const vectorFeatures = map.queryRenderedFeatures(e.point, {
         layers: [...VECTOR_FILL_LAYER_IDS],
       }) as Array<{ properties?: Record<string, unknown> }>;
@@ -3704,15 +3711,15 @@ export function MapCanvas({
       onMapHoverRef.current?.(
         lat,
         lng,
-        x,
-        y,
+        overlayX,
+        overlayY,
         (hoverLabel || riskLabel)
           ? {
               kind: "label",
               label: hoverLabel || riskLabel,
               color: fillColor,
-              x,
-              y,
+              x: overlayX,
+              y: overlayY,
             }
           : undefined,
       );
@@ -3828,10 +3835,12 @@ export function MapCanvas({
           style={{
             // Phase 6 geometry seam: both variables are unset outside the
             // viewer (e.g. /compare), so the defaults reproduce today's values.
-            left: "calc(1rem + var(--viewer-rail-width, 0px))",
-            top: isDesktopLayout
+            left: hasViewerRail
+              ? "calc(3rem + var(--viewer-rail-width, 0px))"
+              : "0.75rem",
+            top: hasViewerRail
               ? "calc(var(--viewer-topbar-height, 4.5rem) + 10px + var(--viewer-header-extra, 0px))"
-              : "calc(var(--viewer-topbar-height, 3.5rem) + 1rem + var(--viewer-header-extra, 0px))",
+              : "calc(var(--viewer-map-top-inset, 0px) + 3.75rem)",
           }}
         >
           {showZoomControls && (

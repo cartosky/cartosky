@@ -44,6 +44,8 @@ type TimelineTrackProps = {
   /** Frame hours already cached locally (brightens their markers). */
   bufferedFrameHours?: number[];
   validTimeByHour?: Record<number, string>;
+  /** Operational labels for day-indexed frames (for example SPC Day 1-3). */
+  dayLabelByHour?: Record<number, string>;
   runDateTimeISO: string | null;
   forecastHour: number;
   readyThroughFh?: number | null;
@@ -93,17 +95,17 @@ function formatTickLabel(ms: number, stepHours: number): string {
 function formatDayLabel(ms: number, pixelsPerDay: number, index: number): string {
   const date = new Date(ms);
   if (pixelsPerDay >= 80) {
-    const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(date);
-    return `${weekday} ${date.getUTCMonth() + 1}/${date.getUTCDate()}`;
+    const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(date);
+    return `${weekday} ${date.getMonth() + 1}/${date.getDate()}`;
   }
   if (pixelsPerDay >= 48) {
-    const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(date);
-    return `${weekday} ${date.getUTCDate()}`;
+    const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(date);
+    return `${weekday} ${date.getDate()}`;
   }
   if (pixelsPerDay >= 24) {
-    return String(date.getUTCDate());
+    return String(date.getDate());
   }
-  return index % 2 === 0 ? String(date.getUTCDate()) : "";
+  return index % 2 === 0 ? String(date.getDate()) : "";
 }
 
 function formatValueText(fh: number, ms: number | null, mode: TimeAxisMode): string {
@@ -141,6 +143,7 @@ export const TimelineTrack = memo(function TimelineTrack({
   mode,
   frames,
   validTimeByHour,
+  dayLabelByHour,
   runDateTimeISO,
   forecastHour,
   readyThroughFh,
@@ -276,17 +279,30 @@ export const TimelineTrack = memo(function TimelineTrack({
     if (spanMs <= 0) {
       return [];
     }
+    const operationalMarkers = model.markers.filter((marker) => Boolean(dayLabelByHour?.[marker.fh]?.trim()));
+    if (operationalMarkers.length > 0) {
+      return operationalMarkers.map((marker, index) => {
+        const previous = operationalMarkers[index - 1];
+        const next = operationalMarkers[index + 1];
+        return {
+          startMs: previous ? (previous.ms + marker.ms) / 2 : model.domainStartMs,
+          endMs: next ? (marker.ms + next.ms) / 2 : model.domainEndMs,
+          label: dayLabelByHour?.[marker.fh]?.trim() ?? "",
+          compactStart: false,
+        };
+      });
+    }
     const pixelsPerDay = trackWidth / (spanMs / DAY_MS);
     const out: Array<{ startMs: number; endMs: number; label: string; compactStart: boolean }> = [];
     let cursor = model.domainStartMs;
     let index = 0;
     while (cursor < model.domainEndMs) {
       const date = new Date(cursor);
-      const nextMidnight = Date.UTC(
-        date.getUTCFullYear(),
-        date.getUTCMonth(),
-        date.getUTCDate() + 1,
-      );
+      const nextMidnight = new Date(
+        date.getFullYear(),
+        date.getMonth(),
+        date.getDate() + 1,
+      ).getTime();
       const endMs = Math.min(model.domainEndMs, Math.max(cursor + 1, nextMidnight));
       const segmentWidth = ((endMs - cursor) / spanMs) * trackWidth;
       // The first GFS cell is frequently narrower than a full date label
@@ -298,7 +314,7 @@ export const TimelineTrack = memo(function TimelineTrack({
         startMs: cursor,
         endMs,
         label: compactStart
-          ? `${date.getUTCMonth() + 1}/${date.getUTCDate()}`
+          ? `${date.getMonth() + 1}/${date.getDate()}`
           : formatDayLabel(cursor, Math.min(pixelsPerDay, segmentWidth), index),
         compactStart,
       });
@@ -306,7 +322,7 @@ export const TimelineTrack = memo(function TimelineTrack({
       index += 1;
     }
     return out;
-  }, [model, trackWidth]);
+  }, [dayLabelByHour, model, trackWidth]);
 
   const ticks = useMemo(() => {
     if (!model || trackWidth <= 0) {
@@ -667,7 +683,10 @@ export const TimelineTrack = memo(function TimelineTrack({
       style={{ height: singleRow ? "100%" : height }}
       className="relative flex w-full min-w-0 items-center gap-2"
     >
-      <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
+      <div className={cn(
+        "flex min-w-0 flex-1 flex-col justify-center",
+        singleRow ? "relative h-full gap-0" : "gap-1",
+      )}>
         {singleRow ? (
           <span id={availabilityId} data-testid="timeline-availability" className="sr-only">
             {availabilityOverride || model.availabilityLine}
@@ -697,13 +716,29 @@ export const TimelineTrack = memo(function TimelineTrack({
         <div
           data-testid="timeline-tick-row"
           aria-hidden="true"
-          className={cn("relative w-full", effectiveDensity === "standard" ? "h-4" : "h-3")}
+          className={cn(
+            "relative w-full",
+            singleRow
+              ? "pointer-events-none absolute left-0 top-[calc(50%+8px)] h-3"
+              : effectiveDensity === "standard" ? "h-4" : "h-3",
+          )}
         >
           {/* On the §8 one-row layout, long-run tick labels overlap into mush.
               Marks keep the day rhythm; the active time comes from the State B
               scrub pill. */}
           {singleRow
-            ? ticks.map((tick) => (
+            ? daySegments.some((segment) => /^Day\s+\d+/i.test(segment.label))
+              ? daySegments.map((segment) => (
+                <span
+                  key={`${segment.startMs}-${segment.endMs}`}
+                  data-testid="timeline-mobile-day-label"
+                  className="absolute top-0 -translate-x-1/2 whitespace-nowrap font-sans text-[10px] font-medium leading-none text-white/48"
+                  style={{ left: pct(fractionForMs((segment.startMs + segment.endMs) / 2)) }}
+                >
+                  {segment.label}
+                </span>
+              ))
+              : ticks.map((tick) => (
               <span
                 key={tick.ms}
                 data-testid="timeline-tick"
@@ -714,7 +749,7 @@ export const TimelineTrack = memo(function TimelineTrack({
                 )}
                 style={{ left: pct(fractionForMs(tick.ms)) }}
               />
-            ))
+              ))
             : ticks.filter((tick) => tick.label).map((tick) => (
               <span
                 key={tick.ms}

@@ -159,6 +159,7 @@ export function ViewerTopBar() {
       <div className="ml-auto flex items-center gap-1.5">
         <NavLink
           to={toolbar?.compareHref ?? "/compare"}
+          data-tour-target="compare-button"
           className="inline-flex min-h-8 items-center gap-1.5 rounded-[7px] border border-white/[0.11] bg-white/[0.045] px-3 text-[13px] font-semibold text-white/76 transition-colors duration-100 hover:border-white/20 hover:bg-white/[0.08] hover:text-white pointer-coarse:min-h-11"
         >
           <GitCompareArrows className="h-3.5 w-3.5" />
