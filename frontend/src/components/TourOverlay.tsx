@@ -14,6 +14,8 @@ export type TourStepDef = {
   isWelcome?: boolean;
   /** Signal to App.tsx to open the mobile controls sheet for this step. */
   openMobileSheet?: boolean;
+  /** Signal to App.tsx to expand the Phase 6 rail so the target is on screen. */
+  expandRail?: "source" | "view";
 };
 
 type Props = {

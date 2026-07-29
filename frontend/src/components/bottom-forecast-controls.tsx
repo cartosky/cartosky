@@ -366,6 +366,20 @@ export const BottomForecastControls = memo(function BottomForecastControls({
   const isTabletTouchLayout = layoutMode === "tablet-touch";
   const controlsLayerClassName = isDesktopLayout || isTabletTouchLayout ? "z-[70]" : "z-[60]";
   const effectiveHour = previewHour ?? forecastHour;
+  const jumpHours = useMemo(
+    () => Array.from(new Set(availableFrames.filter(Number.isFinite))).sort((a, b) => a - b),
+    [availableFrames],
+  );
+  const desktopRunLabel = useMemo(() => {
+    if (timeAxisMode !== "forecast" || !modelLabel || !runDateTimeISO) {
+      return null;
+    }
+    const runDate = new Date(runDateTimeISO);
+    if (Number.isNaN(runDate.getTime())) {
+      return null;
+    }
+    return `${modelLabel} ${String(runDate.getUTCHours()).padStart(2, "0")}Z`;
+  }, [modelLabel, runDateTimeISO, timeAxisMode]);
   // Shared with the initial map scrim via resolveRunBuildProgress so both
   // surfaces render identical `Building available/total hrs` values.
   const { freshnessTotal, cappedAvailableForecastHours } = useMemo(
@@ -446,14 +460,15 @@ export const BottomForecastControls = memo(function BottomForecastControls({
         <TooltipTrigger asChild>
           <button
             type="button"
+            data-testid="timeline-play-button"
             onClick={() => setIsPlaying(!isPlaying)}
             disabled={disabled || !hasFrames || playDisabled || staticSnapshotLabel !== null}
             aria-label={isPlaying ? "Pause animation" : "Play animation"}
             className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-lg border transition-all duration-150 disabled:opacity-50 pointer-coarse:h-11 pointer-coarse:w-11",
+              "flex h-8 w-10 items-center justify-center rounded-lg border transition-all duration-150 disabled:opacity-50 pointer-coarse:h-11 pointer-coarse:w-11",
               isPlaying
-                ? "border-cyan-300/25 bg-cyan-300/10 text-cyan-200"
-                : "border-white/10 bg-white/[0.05] text-white/70 hover:bg-white/[0.09] hover:text-white",
+                ? "border-cyan-200/45 bg-cyan-300/25 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.12)]"
+                : "border-cyan-300/55 bg-cyan-400/85 text-[#03111c] shadow-[0_0_18px_rgba(34,211,238,0.18)] hover:bg-cyan-300",
             )}
           >
             {isPlaying ? (
@@ -467,13 +482,49 @@ export const BottomForecastControls = memo(function BottomForecastControls({
           {isPlaying ? "Pause" : "Play"} animation
         </TooltipContent>
       </Tooltip>
-      <SpeedButton animationDelayMs={animationDelayMs} onSpeedChange={onSpeedChange} />
+      <SpeedButton
+        animationDelayMs={animationDelayMs}
+        onSpeedChange={onSpeedChange}
+        expanded
+      />
+      {timeAxisMode === "forecast" && staticSnapshotLabel === null ? (
+        <label
+          data-testid="timeline-jump-control"
+          className="flex h-8 shrink-0 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.035] pl-3 pr-2 text-[12px] font-medium text-white/55 transition-colors hover:border-white/18 hover:bg-white/[0.06] pointer-coarse:h-11"
+        >
+          <span className="whitespace-nowrap">Jump to FH</span>
+          <select
+            data-testid="timeline-jump-select"
+            aria-label="Jump to forecast hour"
+            value={jumpHours.includes(effectiveHour) ? String(effectiveHour) : ""}
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              if (!Number.isFinite(next)) return;
+              setPreviewHour(null);
+              setIsPlaying(false);
+              onForecastHourChange(next, "scrub-commit");
+            }}
+            disabled={disabled || jumpHours.length === 0}
+            className="h-8 min-w-[54px] cursor-pointer bg-transparent text-right font-sans text-[12px] font-semibold tabular-nums text-cyan-200 outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-1 focus-visible:ring-offset-[#071522] disabled:cursor-not-allowed pointer-coarse:h-11"
+          >
+            {!jumpHours.includes(effectiveHour) ? <option value="">—</option> : null}
+            {jumpHours.map((hour) => (
+              <option key={hour} value={hour} className="bg-[#071522] text-white">
+                {hour}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       {hasFreshnessTotal
         && freshnessTotal !== null
         && timeAxisMode !== "observed"
         && !runIsComplete
         && staticSnapshotLabel === null ? (
-          <div className="flex shrink-0 items-center gap-1.5 rounded-md border border-amber-300/20 bg-amber-300/[0.07] px-2 py-1 text-[11px] font-medium leading-none text-amber-100/75">
+          <div
+            data-testid="timeline-building-status"
+            className="flex shrink-0 items-center gap-1.5 rounded-md border border-amber-300/20 bg-amber-300/[0.07] px-2 py-1 text-[11px] font-medium leading-none text-amber-100/75"
+          >
             <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-300" />
             <span>Building</span>
             <span className="tabular-nums text-white/55">
@@ -516,15 +567,24 @@ export const BottomForecastControls = memo(function BottomForecastControls({
         </div>
       ) : null}
       <div className="h-5 w-px bg-white/[0.09]" />
-      <div className="flex min-w-[190px] flex-col items-end leading-none">
+      <div className="flex min-w-[220px] flex-col items-end leading-none">
         {validTime ? (
           <>
-            <span className="text-[12px] font-semibold tracking-tight text-white">
+            <span className="text-[12px] font-semibold tracking-[-0.01em] text-white/95">
               {validTime.primary}
             </span>
             {validTime.secondary ? (
-              <span className="mt-1 text-[11px] font-medium text-cyan-200/75">
-                {validTime.secondary}
+              <span
+                data-testid={desktopRunLabel ? "timeline-run-readout" : undefined}
+                className="mt-1 flex items-center gap-1.5 text-[11px] font-medium"
+              >
+                {desktopRunLabel ? (
+                  <>
+                    <span className="text-cyan-200/85">{desktopRunLabel}</span>
+                    <span aria-hidden="true" className="text-white/25">·</span>
+                  </>
+                ) : null}
+                <span className="text-white/62">{validTime.secondary}</span>
               </span>
             ) : null}
           </>
@@ -579,10 +639,13 @@ export const BottomForecastControls = memo(function BottomForecastControls({
     <TooltipProvider delayDuration={300}>
       <div
         className={cn(
-          "pointer-events-none fixed inset-x-0 bottom-0 flex max-w-[100vw] flex-col items-center justify-end overflow-x-hidden",
-          isDesktopLayout ? "px-0 pb-0" : "px-2 pb-3 sm:px-4 sm:pb-5",
+          "pointer-events-none fixed inset-x-0 bottom-0 flex max-w-[100vw] flex-col items-center justify-end",
+          isDesktopLayout ? "overflow-visible px-0 pb-0" : "overflow-x-hidden px-2 pb-3 sm:px-4 sm:pb-5",
           controlsLayerClassName,
         )}
+        // Phase 6: center within the map area, not the viewport. The variable
+        // is unset outside the viewer, where this resolves to today's 0.
+        style={{ left: "var(--viewer-rail-width, 0px)" }}
       >
         {forecastHourFallbackNotice ? (
           <div
@@ -597,12 +660,12 @@ export const BottomForecastControls = memo(function BottomForecastControls({
           data-testid={isDesktopLayout ? "timeline-panel" : undefined}
           data-tour-target={isDesktopLayout ? "forecast-scrubber" : undefined}
           className={cn(
-            "pointer-events-auto relative flex w-full max-w-full flex-col overflow-x-hidden",
+            "pointer-events-auto relative flex w-full max-w-full flex-col",
             isDesktopLayout
-              ? "w-full max-w-none px-4 py-0"
+              ? "w-full max-w-none overflow-visible px-4 py-0"
               : isTabletTouchLayout
-                ? "w-[min(90vw,560px)] gap-1.5 rounded-3xl p-4"
-                : "w-full max-w-3xl gap-2 rounded-[1.6rem] p-5"
+                ? "w-[min(90vw,560px)] gap-1.5 overflow-x-hidden rounded-3xl p-4"
+                : "w-full max-w-3xl gap-2 overflow-x-hidden rounded-[1.6rem] p-5"
           )}
         >
           {/* Blur layer isolated on its own compositor layer — never repaints during slider drag */}

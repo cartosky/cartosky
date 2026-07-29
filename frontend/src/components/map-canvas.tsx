@@ -3783,7 +3783,13 @@ export function MapCanvas({
 
   return (
     <>
-      <div ref={mapSlotRef} className="viewer-map-slot absolute inset-0">
+      {/* Phase 6: the map area starts to the right of the rail. The variable is
+          unset outside the viewer (e.g. /compare), where this stays 0. */}
+      <div
+        ref={mapSlotRef}
+        className="viewer-map-slot absolute inset-y-0 right-0"
+        style={{ left: "var(--viewer-rail-width, 0px)" }}
+      >
         <div
           ref={mapContainerRef}
           className="h-full w-full"
@@ -3810,11 +3816,14 @@ export function MapCanvas({
 
       {(showZoomControls || legendButtonVisible) && (
         <div
-          className="pointer-events-none fixed left-4 z-50 flex flex-col gap-2"
+          className="pointer-events-none fixed z-50 flex flex-col gap-2"
           style={{
+            // Phase 6 geometry seam: both variables are unset outside the
+            // viewer (e.g. /compare), so the defaults reproduce today's values.
+            left: "calc(1rem + var(--viewer-rail-width, 0px))",
             top: isDesktopLayout
-              ? "calc(4.5rem + 10px + var(--viewer-header-extra, 0px))"
-              : "calc(3.5rem + 1rem + var(--viewer-header-extra, 0px))",
+              ? "calc(var(--viewer-topbar-height, 4.5rem) + 10px + var(--viewer-header-extra, 0px))"
+              : "calc(var(--viewer-topbar-height, 3.5rem) + 1rem + var(--viewer-header-extra, 0px))",
           }}
         >
           {showZoomControls && (

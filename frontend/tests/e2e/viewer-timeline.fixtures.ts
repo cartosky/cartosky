@@ -230,6 +230,7 @@ function manifestPayload(fixture: TimelineFixture, runSegment = 'latest') {
     model: fixture.model,
     run: runId,
     region: 'conus',
+    last_updated: new Date().toISOString(),
     variables: { [fixture.variable]: variableManifestEntry(fixture, config) },
   };
 }

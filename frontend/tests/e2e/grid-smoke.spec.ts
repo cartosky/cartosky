@@ -1013,9 +1013,11 @@ test.describe('Grid-only smoke', () => {
 
     await stubViewerGridRoutes(page);
     await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
-    await expect(page.getByText('Product', { exact: true })).toBeVisible();
+    // Phase 6: the header's 'Product' caption moved into the rail as 'Model';
+    // the rail's presence is the desktop viewer-chrome readiness signal.
+    await expect(page.getByTestId('viewer-rail')).toBeVisible({ timeout: 20_000 });
 
-    const header = page.locator('header').filter({ has: page.getByText('Product', { exact: true }) });
+    const header = page.getByTestId('viewer-top-bar');
     const logo = header.getByRole('img', { name: 'CartoSky' });
     const headerBox = await header.boundingBox();
     const logoBox = await logo.boundingBox();
@@ -1064,7 +1066,9 @@ test.describe('Grid-only smoke', () => {
     });
     await stubViewerGridRoutes(page);
     await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
-    await expect(page.getByText('Product', { exact: true })).toBeVisible();
+    // Phase 6: the header's 'Product' caption moved into the rail as 'Model';
+    // the rail's presence is the desktop viewer-chrome readiness signal.
+    await expect(page.getByTestId('viewer-rail')).toBeVisible({ timeout: 20_000 });
 
     const map = page.locator('div[role="img"][aria-label="Weather map"]').first();
     const mapDimensions = await map.evaluate((element) => ({
@@ -1187,7 +1191,9 @@ test.describe('Grid-only smoke', () => {
     await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
     await stubViewerGridRoutes(page);
     await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
-    await expect(page.getByText('Product', { exact: true })).toBeVisible();
+    // Phase 6: the header's 'Product' caption moved into the rail as 'Model';
+    // the rail's presence is the desktop viewer-chrome readiness signal.
+    await expect(page.getByTestId('viewer-rail')).toBeVisible({ timeout: 20_000 });
 
     await page.evaluate(() => {
       const probeWindow = window as typeof window & {

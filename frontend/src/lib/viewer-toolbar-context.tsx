@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import type { BasemapMode } from "@/components/map-canvas";
-import type { ObservedSourceStatusTone } from "@/lib/time-axis";
+import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
+import type { RailBreakpointClass, RailSection, RailState } from "@/lib/viewer-rail";
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import type { GroupedOption } from "@/lib/app-utils";
 import type { LegendPayload } from "@/components/map-legend";
@@ -81,6 +82,23 @@ export type ViewerToolbarProps = {
   // Mobile controls sheet
   mobileControlsOpen?: boolean;
   onMobileControlsOpenChange?: (open: boolean) => void;
+  // Keyboard shortcut sheet (Phase 6 overflow menu)
+  onOpenShortcuts?: () => void;
+  // Phase 6 rail (§6.2 §6.3 §6.4) — state stays in App.tsx; the rail and bar
+  // are presentational consumers.
+  railState?: RailState;
+  railBreakpointClass?: RailBreakpointClass;
+  onRailToggle?: () => void;
+  onRailExpandTo?: (section: RailSection) => void;
+  railPendingSection?: RailSection | null;
+  onRailPendingSectionHandled?: () => void;
+  // Phase 5 truth inputs the rail's SOURCE section speaks (§5.4 adapters).
+  timeAxisMode?: TimeAxisMode;
+  availableFrameHours?: number[];
+  readyThroughFh?: number | null;
+  expectedMaxFh?: number | null;
+  /** `RunManifestResponse.last_updated`; absent hides the freshness row. */
+  runLastUpdatedISO?: string | null;
   // Layout
   layoutMode?: ViewerLayoutMode;
 };

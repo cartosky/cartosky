@@ -716,6 +716,37 @@ exact play/pause labels, and the longer→shorter run-switch scenario after refu
 pass). The deploy needs scheduler AND API restarts; the production window opens with the first
 run baked after deploy.
 
+**Phase 6: implementation complete 2026-07-29 — pending production verification.** The 48 px top
+bar (logo → `/`, `Viewer · Forecast · Climate` switcher, labeled `Share`, `•••` overflow with
+Send feedback / Compare / Replay tour / Keyboard shortcuts / Attribution / sign-in, Clerk
+account affordance; center empty) and the 288/72 px SOURCE/VIEW rail landed together per
+`docs/plans/2026-07-29-map-viewer-redesign-phase-6-chrome.md` (see its resolved scope decisions:
+⌘K deferred with no placeholder, Statistic in SOURCE, Compare in overflow, zoom-controls toggle
+kept in VIEW, rail-level collapse only). State model `src/lib/viewer-rail.ts`: default from
+`availableMapWidth = viewportWidth − 288 − 0 ≥ 1024`, override persisted per breakpoint class at
+`twf.rail.mode.wide|narrow`, written only by user toggles — the tour's forced expansion passes
+`persist: false` (a fresh-context verification round caught both a tour↔rail re-render/scroll
+loop, fixed by depending on the stable `expandTo` callback instead of the rail memo object, and
+an under-budgeted geometry poll in the new spec). Geometry seam: `--viewer-topbar-height` +
+`--viewer-rail-width` root variables whose defaults reproduce the old literals, so `/compare`
+and other routes are pixel-unchanged; the map slot starts right of the rail; the timeline
+centers within the map area (the one intentional Phase 5 contract re-point, re-based in
+`viewer-timeline.spec.ts`). Mobile threshold moved 639 → 767 (width-only, mirrored in the
+`index.html` boot shell, which paints bar + rail pre-React from the same inlined constants and
+override keys); the mobile sheet itself is untouched; tablet-touch gains the rail and with it
+the previously missing display-settings surface. Legend: expanded rail hosts the existing
+`MapLegend` inline in the reserved `data-legend-mount="rail"` Phase 7 mount; a collapsed rail
+keeps it available as the floating map overlay (desktop gains no hide toggle until Phase 7 —
+recorded). Contract suite `tests/e2e/viewer-chrome.spec.ts` (8 tests, red-first) covers the bar,
+both rail states, §6.4 defaults from map width at five viewports, class-keyed override
+independence, zero grid-binary requests on rail toggle, and §5.4 truthfulness in the rail; the
+Phase 4 audit matrix was re-pointed to 11 surfaces (adds collapsed rail, rail VIEW, overflow
+menu, attribution dialog) with its exhaustive focus/target/type walks intact, catching three
+coarse-pointer sizing fixes (both logo links, region field trigger). Export baseline suite
+passed byte-untouched; first-paint, colormap, timeline, compare, and grid-smoke suites green
+(the first-paint Product-while-blocked test now pins a 1440×900 viewport; three grid-smoke
+readiness selectors re-pointed). No fetch, readiness-gate, permalink-sync, or backend changes.
+
 Production-gate follow-up (Phase 4, 2026-07-28): the slider thumb hit-area enlargement caused two visual
 regressions (dot trailing the finger at range max on mobile; dot below the track centerline on
 desktop) because the hit box proved inseparable from Radix's wrapper positioning math. The thumb

@@ -140,6 +140,13 @@ export const LEGEND_VISIBILITY_STORAGE_KEY = "twf.map.legend_visible";
 export const POINT_LABELS_STORAGE_KEY = "twf.map.point_labels_enabled";
 export const NWS_WARNINGS_STORAGE_KEY = "twf.map.nws_warnings_enabled";
 export const ZOOM_CONTROLS_STORAGE_KEY = "twf.map.zoom_controls_visible";
+/**
+ * Phase 6 rail width override, keyed by breakpoint class (§6.4) so a laptop
+ * preference never follows the user to an external monitor. Mirrored by the
+ * inline boot-shell script in index.html.
+ */
+export const RAIL_MODE_STORAGE_KEY_WIDE = "twf.rail.mode.wide";
+export const RAIL_MODE_STORAGE_KEY_NARROW = "twf.rail.mode.narrow";
 export const ANIMATION_DELAY_STORAGE_KEY = "cartosky_animation_delay_ms";
 export const MODEL_ORDER_BY_ID: Record<string, number> = {
   hrrr: 0,
@@ -450,6 +457,36 @@ export function readZoomControlsPreference(): boolean | null {
 
 export function writeZoomControlsPreference(visible: boolean): void {
   writeBooleanPreference(ZOOM_CONTROLS_STORAGE_KEY, visible);
+}
+
+export function readRailModePreference(
+  breakpointClass: "wide" | "narrow",
+): "expanded" | "collapsed" | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = window.localStorage.getItem(
+      breakpointClass === "wide" ? RAIL_MODE_STORAGE_KEY_WIDE : RAIL_MODE_STORAGE_KEY_NARROW,
+    );
+    if (stored === "expanded" || stored === "collapsed") return stored;
+    return null; // never explicitly set
+  } catch {
+    return null;
+  }
+}
+
+export function writeRailModePreference(
+  breakpointClass: "wide" | "narrow",
+  state: "expanded" | "collapsed",
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      breakpointClass === "wide" ? RAIL_MODE_STORAGE_KEY_WIDE : RAIL_MODE_STORAGE_KEY_NARROW,
+      state,
+    );
+  } catch {
+    // Ignore storage errors.
+  }
 }
 
 export function readAnimationDelayPreference(): number {

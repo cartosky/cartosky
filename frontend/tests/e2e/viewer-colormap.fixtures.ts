@@ -293,6 +293,7 @@ function manifestPayload() {
     model: COLORMAP_MODEL,
     run: COLORMAP_RUN_ID,
     region: 'conus',
+    last_updated: new Date().toISOString(),
     variables: {
       [COLORMAP_VARIABLE]: {
         display_name: 'Temperature 2m',

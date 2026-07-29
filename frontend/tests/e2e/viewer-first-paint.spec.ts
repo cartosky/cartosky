@@ -77,10 +77,13 @@ test.describe('Viewer first paint', () => {
     const frameGate = createDeferred();
     await stubViewerFirstPaintRoutes(page, { gridFrameGate: () => frameGate.promise });
 
+    // Phase 6: Product lives in the rail, and the rail defaults to expanded
+    // only when the map still gets >=1024px (§6.4) — 1440 is that regime.
+    await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(VIEWER_URL);
 
     // The real toolbar mounts with the frame still blocked.
-    const productTrigger = page.locator('header').getByRole('button', { name: 'GFS' });
+    const productTrigger = page.getByTestId('rail-source').getByRole('button', { name: 'GFS' });
     await expect(productTrigger).toBeVisible({ timeout: 20_000 });
     await expect(productTrigger).toBeEnabled();
 

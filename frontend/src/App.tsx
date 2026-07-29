@@ -13,8 +13,10 @@ import { ViewerInitialMapScrim } from "@/components/ViewerInitialMapScrim";
 import { ViewerSiteHeaderFallback } from "@/components/ViewerSiteHeaderFallback";
 
 const ViewerSiteHeader = lazy(() => import("@/components/ViewerSiteHeader"));
+const ViewerRail = lazy(() => import("@/components/ViewerRail"));
 import { TourOverlay, type TourStepDef } from "@/components/TourOverlay";
 import { useTour } from "@/hooks/useTour";
+import { useViewerRailState } from "@/lib/viewer-rail";
 import type { GridContourLayerConfig } from "@/lib/grid-webgl";
 import { gridValueRendersTransparent, idleWarmupFrameBudgetBytes } from "@/lib/grid-webgl";
 import { ViewerToolbarContext } from "@/lib/viewer-toolbar-context";
@@ -305,6 +307,26 @@ export default function App() {
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
   const viewerLayoutMode = useViewerLayoutMode();
   const isDesktopViewerLayout = viewerLayoutMode === "desktop";
+  // Phase 6 chrome: everything at or above 768px gets the bar + rail; below it
+  // the existing mobile sheet path is untouched (§6.4 / §8).
+  const isRailLayout = viewerLayoutMode !== "mobile";
+  const rail = useViewerRailState();
+  const railWidthPx = isRailLayout ? rail.widthPx : 0;
+
+  // One geometry seam for the whole viewer: the map slot, the scrim, the zoom
+  // stack, the MapLibre control margins and the timeline all read these two
+  // root variables instead of hard-coding the chrome geometry.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--viewer-rail-width", `${railWidthPx}px`);
+    root.style.setProperty("--viewer-topbar-height", isRailLayout ? "3rem" : "3.5rem");
+    root.setAttribute("data-viewer-rail", isRailLayout ? "on" : "off");
+    return () => {
+      root.style.removeProperty("--viewer-rail-width");
+      root.style.removeProperty("--viewer-topbar-height");
+      root.removeAttribute("data-viewer-rail");
+    };
+  }, [isRailLayout, railWidthPx]);
   const initialPermalink = useMemo(() => readPermalink(), []);
   const initialPermalinkMapView = useMemo(() => {
     if (
@@ -446,18 +468,21 @@ export default function App() {
     },
     {
       targetSelector: '[data-tour-target="product-variable-run"]',
-      title: "Product, Variable & Run Time",
-      body: "Switch between models, ensembles, forecasts, and observations. Choose your weather variable — precip, temperature, wind, snow, and derived products. Select a model run or stay pinned to the latest available",
+      title: "Source",
+      body: "Switch between models, ensembles, forecasts, and observations. Choose your weather variable — precip, temperature, wind, snow, and derived products. Step or pick a model run, or stay pinned to the latest available",
+      expandRail: "source",
     },
     {
       targetSelector: '[data-tour-target="region-selector"]',
       title: "Region",
       body: "Search for a city, use GPS to find your location, or select from predefined regions",
+      expandRail: "view",
     },
     {
       targetSelector: '[data-tour-target="legend-button"]',
       title: "Legend",
-      body: "Open the color scale legend for the current variable",
+      body: "The color scale for the current variable sits at the bottom of the rail",
+      expandRail: "view",
     },
     {
       targetSelector: '[data-tour-target="share-button"]',
@@ -468,13 +493,14 @@ export default function App() {
     },
     {
       targetSelector: '[data-tour-target="feedback-button"]',
-      title: "Feedback",
-      body: "Send us a note about missing data, display issues, or feature requests",
+      title: "More",
+      body: "Send feedback, open Compare, replay this tour, or check the keyboard shortcuts",
     },
     {
       targetSelector: '[data-tour-target="display-settings-button"]',
-      title: "Display Settings",
-      body: "Toggle city labels, zoom controls, basemap style, and overlay opacity",
+      title: "View",
+      body: "Toggle NWS warnings, city labels, zoom controls, the dark basemap, and overlay opacity",
+      expandRail: "view",
     },
     {
       targetSelector: '[data-tour-target="forecast-scrubber"]',
@@ -546,6 +572,20 @@ export default function App() {
     completionVisible: tourCompletionVisible,
     dismissCompletion: tourDismissCompletion,
   } = useTour({ isMapReady });
+
+  // On rail layouts, expand the rail for steps whose target lives inside it.
+  // Depend on the stable expandTo callback, not the rail object: the rail memo
+  // gets a new identity when pendingSection clears, and re-running this effect
+  // then would re-set pendingSection in an unbounded scroll/render loop.
+  const railExpandTo = rail.expandTo;
+  useEffect(() => {
+    if (!isRailLayout || !tourActive) return;
+    const step = tourSteps[tourCurrentStep];
+    if (step?.expandRail) {
+      // Not a user preference — never persist the tour's expansion (§6.4).
+      railExpandTo(step.expandRail, { persist: false });
+    }
+  }, [isRailLayout, railExpandTo, tourActive, tourCurrentStep, tourSteps]);
 
   // On mobile, open or close the controls sheet as the tour advances between steps
   useEffect(() => {
@@ -6008,6 +6048,18 @@ export default function App() {
     onMobileControlsOpenChange: setMobileControlsOpen,
     layoutMode: viewerLayoutMode,
     onReplayTour: replayTour,
+    onOpenShortcuts: () => setShortcutSheetOpen((open) => !open),
+    railState: rail.state,
+    railBreakpointClass: rail.breakpointClass,
+    onRailToggle: rail.toggle,
+    onRailExpandTo: rail.expandTo,
+    railPendingSection: rail.pendingSection,
+    onRailPendingSectionHandled: rail.clearPendingSection,
+    timeAxisMode: selectedTimeAxisMode,
+    availableFrameHours: controlAvailableFrameHours,
+    readyThroughFh: manifestReadyThroughFh,
+    expectedMaxFh: manifestExpectedMaxFh,
+    runLastUpdatedISO: runManifest?.last_updated ?? null,
   }), [
     region, handleRegionChange, handleLocationJump, model, handleModelChange, run, handleRunChange,
     variable, handleVariableChange, regions, models, runOptions, variables,
@@ -6018,6 +6070,8 @@ export default function App() {
     pointLabelsEnabled, nwsWarningsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
     legendPopoverOpen, displayPanelOpen, compareHref, handleOpenShareModal, viewerLayoutMode, legend,
     telemetryRunId, forecastHour, mobileControlsOpen, replayTour, openFeedback,
+    rail, selectedTimeAxisMode, controlAvailableFrameHours, manifestReadyThroughFh,
+    manifestExpectedMaxFh, runManifest,
   ]);
 
   return (
@@ -6025,11 +6079,15 @@ export default function App() {
     <div className="relative flex min-h-0 flex-1 flex-col overflow-x-hidden">
       <Suspense fallback={<ViewerSiteHeaderFallback />}>
         <ViewerSiteHeader />
+        {isRailLayout ? <ViewerRail /> : null}
       </Suspense>
 
       <div
         className="relative flex-1 min-h-0 overflow-hidden"
-        style={{ paddingTop: "calc(3.5rem + var(--viewer-header-extra, 0px))" }}
+        style={{
+          paddingTop: "calc(var(--viewer-topbar-height, 3.5rem) + var(--viewer-header-extra, 0px))",
+          paddingLeft: "var(--viewer-rail-width, 0px)",
+        }}
       >
         <MapCanvas
           productId={model}

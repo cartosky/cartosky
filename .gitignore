@@ -40,6 +40,7 @@ frontend/tests/e2e/*
 !frontend/tests/e2e/viewer-design-tokens.spec.ts
 !frontend/tests/e2e/viewer-timeline.fixtures.ts
 !frontend/tests/e2e/viewer-timeline.spec.ts
+!frontend/tests/e2e/viewer-chrome.spec.ts
 !frontend/playwright.config.ts
 
 # Dependencies

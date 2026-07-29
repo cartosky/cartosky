@@ -21,7 +21,39 @@
       // remains the default.
       try {
         if (window.location.pathname === "/viewer") {
-          document.documentElement.setAttribute("data-boot-route", "viewer");
+          var root = document.documentElement;
+          root.setAttribute("data-boot-route", "viewer");
+          // Phase 6 rail geometry, resolved before the bundle so the static
+          // shell paints the same chrome React will mount.
+          // MIRROR OF frontend/src/lib/viewer-rail.ts — keep both sides in sync
+          // (constants, formula and storage keys are duplicated deliberately).
+          var RAIL_EXPANDED_PX = 288;
+          var RAIL_COLLAPSED_PX = 72;
+          var RAIL_MOBILE_MAX_WIDTH = 767;
+          var RAIL_WIDE_MIN_MAP_WIDTH = 1024;
+          var RAIL_MAP_INSETS_PX = 0;
+          var viewportWidth = window.innerWidth;
+          var railWidth = 0;
+          if (viewportWidth > RAIL_MOBILE_MAX_WIDTH) {
+            var breakpointClass =
+              viewportWidth - RAIL_EXPANDED_PX - RAIL_MAP_INSETS_PX >= RAIL_WIDE_MIN_MAP_WIDTH
+                ? "wide"
+                : "narrow";
+            var override = null;
+            try {
+              override = window.localStorage.getItem("twf.rail.mode." + breakpointClass);
+            } catch (storageError) {}
+            var state =
+              override === "expanded" || override === "collapsed"
+                ? override
+                : breakpointClass === "wide"
+                  ? "expanded"
+                  : "collapsed";
+            railWidth = state === "expanded" ? RAIL_EXPANDED_PX : RAIL_COLLAPSED_PX;
+          }
+          root.style.setProperty("--viewer-rail-width", railWidth + "px");
+          root.style.setProperty("--viewer-topbar-height", railWidth > 0 ? "3rem" : "3.5rem");
+          root.setAttribute("data-viewer-rail", railWidth > 0 ? "on" : "off");
         }
       } catch (routeError) {}
     </script>
@@ -133,7 +165,7 @@
         z-index: 10;
         display: flex;
         align-items: center;
-        height: 3.5rem;
+        height: var(--viewer-topbar-height, 3.5rem);
         padding: 0 1rem;
         border-bottom: 1px solid rgba(26, 58, 92, 0.6);
         background: rgba(3, 14, 26, 0.85);
@@ -146,6 +178,26 @@
         width: auto;
       }
 
+      html[data-viewer-rail="on"] .cartosky-viewer-boot-header img {
+        height: 2rem;
+      }
+
+      /* Rail placeholder — width resolved by the inline boot script above. */
+      .cartosky-viewer-boot-rail {
+        position: absolute;
+        left: 0;
+        top: var(--viewer-topbar-height, 3.5rem);
+        bottom: 0;
+        z-index: 9;
+        width: var(--viewer-rail-width, 0px);
+        border-right: 1px solid rgba(26, 58, 92, 0.6);
+        background: rgba(3, 14, 26, 0.92);
+      }
+
+      html:not([data-viewer-rail="on"]) .cartosky-viewer-boot-rail {
+        display: none;
+      }
+
       .cartosky-viewer-boot-center {
         position: absolute;
         inset: 0;
@@ -154,7 +206,8 @@
         align-items: center;
         justify-content: center;
         gap: 0.75rem;
-        padding-top: 3.5rem;
+        padding-top: var(--viewer-topbar-height, 3.5rem);
+        padding-left: var(--viewer-rail-width, 0px);
       }
 
       .cartosky-viewer-boot-hex {
@@ -192,6 +245,7 @@
         display: flex;
         justify-content: center;
         padding: 0 1rem;
+        padding-left: calc(1rem + var(--viewer-rail-width, 0px));
         pointer-events: none;
       }
 
@@ -235,6 +289,7 @@
         <div class="cartosky-viewer-boot-header" data-viewer-boot-header>
           <img src="/assets/new_logo.png?v=cartosky-20260414" alt="CartoSky" />
         </div>
+        <div class="cartosky-viewer-boot-rail" data-viewer-boot-rail aria-hidden="true"></div>
         <div class="cartosky-viewer-boot-center">
           <svg class="cartosky-viewer-boot-hex" viewBox="0 0 322 343" aria-hidden="true">
             <polygon class="hex-ghost" points="161,0 320,90 320,253 161,343 2,253 2,90"></polygon>

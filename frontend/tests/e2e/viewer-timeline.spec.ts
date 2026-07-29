@@ -35,6 +35,20 @@ async function openTimeline(page: Page, fixture: TimelineFixture, fh = 0) {
   await expect(page.getByTestId('viewer-initial-map-scrim')).toBeHidden({ timeout: 30_000 });
 }
 
+/**
+ * Phase 6: the Product/Variable/Run triggers moved out of the header into the
+ * SOURCE section of the left rail, which §6.4 collapses by default below
+ * 1312 px of viewport width. Selector plumbing only — no gate semantics.
+ */
+async function expandViewerRail(page: Page) {
+  const rail = page.getByTestId('viewer-rail');
+  await expect(rail).toBeVisible({ timeout: 20_000 });
+  if ((await rail.getAttribute('data-rail-state')) === 'collapsed') {
+    await page.getByTestId('rail-expand-toggle').click();
+  }
+  await expect(rail).toHaveAttribute('data-rail-state', 'expanded');
+}
+
 const runMs = (fh: number) => new Date(validTimeIso(fh)).getTime();
 
 test.describe('Viewer timeline (Phase 5)', () => {
@@ -105,6 +119,19 @@ test.describe('Viewer timeline (Phase 5)', () => {
     await expect(page.getByTestId('timeline-availability')).toBeVisible();
     const bodyText = await page.evaluate(() => document.body.innerText);
     expect(bodyText).not.toMatch(/hours available/i);
+  });
+
+  test('track uses continuous ready/queued regions without per-frame line marks', async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await openTimeline(page, FIXTURES.building);
+    await expect(page.getByTestId('timeline-solid')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('timeline-hatch')).toBeVisible();
+
+    const markerOpacity = await page.getByTestId('timeline-marker').evaluateAll(
+      (elements) => elements.map((element) => getComputedStyle(element).opacity),
+    );
+    expect(markerOpacity.length).toBeGreaterThan(0);
+    expect(markerOpacity.every((opacity) => opacity === '0')).toBe(true);
   });
 
   test('boundary equals the scalar, not max published FH (out-of-order fixture)', async ({ page }) => {
@@ -273,7 +300,10 @@ test.describe('Viewer timeline (Phase 5)', () => {
     await expect(page.getByTestId('timeline-thumb')).toBeVisible({ timeout: 20_000 });
 
     // Space on a focused button activates the button only — playback must not start.
-    const productTrigger = page.locator('header').getByRole('button', { name: 'GFS' });
+    // Phase 6: the Product trigger lives in the rail SOURCE section, which is
+    // collapsed by default at this project's viewport.
+    await expandViewerRail(page);
+    const productTrigger = page.getByTestId('rail-source').getByRole('button', { name: 'GFS' });
     await productTrigger.focus();
     await page.keyboard.press('Space');
     await expect(page.getByLabel('Model picker')).toBeVisible();
@@ -337,6 +367,17 @@ test.describe('Viewer timeline (Phase 5)', () => {
     await expect(toggle).toBeVisible({ timeout: 20_000 });
     await expect(toggle).toHaveAttribute('aria-label', 'Collapse timeline');
 
+    const expandedToggleGeometry = await page.evaluate(() => {
+      const root = document.querySelector('[data-testid="timeline-root"]')?.getBoundingClientRect();
+      const toggle = document.querySelector('[data-testid="timeline-density-toggle"]')?.getBoundingClientRect();
+      return root && toggle
+        ? { rootTop: root.top, toggleTop: toggle.top, toggleBottom: toggle.bottom }
+        : null;
+    });
+    expect(expandedToggleGeometry).not.toBeNull();
+    expect(expandedToggleGeometry!.toggleTop).toBeLessThan(expandedToggleGeometry!.rootTop);
+    expect(expandedToggleGeometry!.toggleBottom).toBeLessThanOrEqual(expandedToggleGeometry!.rootTop + 1);
+
     const timelineHeight = () =>
       page.evaluate(
         () => document.querySelector('[data-testid="timeline-root"]')?.getBoundingClientRect().height ?? null,
@@ -374,8 +415,12 @@ test.describe('Viewer timeline (Phase 5)', () => {
             }
           : null;
       };
+      const railEl = document.querySelector('[data-testid="viewer-rail"]');
       return {
         viewport: { width: window.innerWidth, height: window.innerHeight },
+        // Phase 6 geometry seam: the rail offsets the map area the rail-mode
+        // timeline spans (0 when no rail is mounted, e.g. mobile).
+        railWidth: railEl ? railEl.getBoundingClientRect().width : 0,
         panel: rect('timeline-panel'),
         root: rect('timeline-root'),
         days: rect('timeline-day-band'),
@@ -393,9 +438,14 @@ test.describe('Viewer timeline (Phase 5)', () => {
     expect(geometry.transport).not.toBeNull();
 
     // The mockup's time rail is part of the bottom chrome, not a centered
-    // floating pill. It spans the viewer and is attached to the bottom edge.
-    expect(geometry.panel!.width).toBeGreaterThanOrEqual(geometry.viewport.width - 2);
-    expect(Math.abs(geometry.panel!.left)).toBeLessThanOrEqual(1);
+    // floating pill: it spans its full container and is attached to the bottom
+    // edge. Phase 6 re-based that container from the viewport to the MAP AREA
+    // (the plan's geometry seam gives the timeline `left: --viewer-rail-width`
+    // so it centers within the map, not the viewport). Same assertion strength,
+    // new origin.
+    const mapAreaWidth = geometry.viewport.width - geometry.railWidth;
+    expect(geometry.panel!.width).toBeGreaterThanOrEqual(mapAreaWidth - 2);
+    expect(Math.abs(geometry.panel!.left - geometry.railWidth)).toBeLessThanOrEqual(1);
     expect(Math.abs(geometry.panel!.right - geometry.viewport.width)).toBeLessThanOrEqual(1);
     expect(Math.abs(geometry.panel!.bottom - geometry.viewport.height)).toBeLessThanOrEqual(1);
 
@@ -463,10 +513,65 @@ test.describe('Viewer timeline (Phase 5)', () => {
     expect(geometry.transport!.bottom - geometry.play!.bottom).toBeGreaterThanOrEqual(3);
   });
 
+  test('timeline typography and transport match the desktop visual contract', async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await openTimeline(page, FIXTURES.gfsLong, 66);
+    await expect(page.getByTestId('timeline-track')).toBeVisible({ timeout: 20_000 });
+
+    const dayFont = await page.getByTestId('timeline-day-segment').first().evaluate(
+      (element) => getComputedStyle(element).fontFamily,
+    );
+    const tickLabels = page.locator('[data-testid="timeline-tick"] > span');
+    expect(await tickLabels.count()).toBeGreaterThan(0);
+    const tickFont = await tickLabels.first().evaluate((element) => getComputedStyle(element).fontFamily);
+    expect(dayFont).not.toMatch(/IBM Plex Mono/i);
+    expect(tickFont).not.toMatch(/IBM Plex Mono/i);
+
+    const thumbStyle = await page.getByTestId('timeline-thumb').locator('span').evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        backgroundImage: computed.backgroundImage,
+        borderColor: computed.borderColor,
+        borderWidth: computed.borderTopWidth,
+      };
+    });
+    const thumbBorderChannels = thumbStyle.borderColor.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+    expect(thumbStyle.backgroundImage).not.toBe('none');
+    expect(thumbStyle.borderWidth).toBe('1px');
+    expect(Math.min(...thumbBorderChannels.slice(0, 3))).toBeGreaterThan(180);
+
+    const play = page.getByTestId('timeline-play-button');
+    const speed = page.getByTestId('timeline-speed-control');
+    const jump = page.getByTestId('timeline-jump-select');
+    const runReadout = page.getByTestId('timeline-run-readout');
+    await expect(play).toBeVisible();
+    await expect(speed).toBeVisible();
+    await expect(jump).toBeVisible();
+    await expect(runReadout).toContainText(/GFS \d{2}Z/);
+    await expect(runReadout).toContainText(/FH 66/);
+
+    const transportGeometry = await page.evaluate(() => {
+      const rect = (testId: string) => document.querySelector(`[data-testid="${testId}"]`)?.getBoundingClientRect() ?? null;
+      const play = document.querySelector('[data-testid="timeline-play-button"]');
+      return {
+        play: rect('timeline-play-button'),
+        speed: rect('timeline-speed-control'),
+        playBackground: play ? getComputedStyle(play).backgroundColor : null,
+      };
+    });
+    expect(transportGeometry.play!.width).toBeGreaterThanOrEqual(40);
+    expect(transportGeometry.speed!.width).toBeGreaterThanOrEqual(60);
+    expect(transportGeometry.playBackground).not.toBe('rgba(0, 0, 0, 0)');
+
+    await jump.selectOption('12');
+    await expect.poll(() => new URL(page.url()).searchParams.get('fh')).toBe('12');
+  });
+
   test('GIF export range ends at the ready boundary', async ({ page }) => {
     const assets = trackFrameAssetRequests(page, FIXTURES.outOfOrder);
     await openTimeline(page, FIXTURES.outOfOrder);
-    await page.locator('header').getByLabel('Share').click();
+    // Phase 6: Share is a labeled button in the 48 px top bar (§6.1).
+    await page.getByTestId('viewer-top-bar').getByRole('button', { name: 'Share' }).click();
     await expect(page.getByRole('dialog', { name: 'Share' })).toBeVisible({ timeout: 15_000 });
     await page.getByRole('dialog', { name: 'Share' }).getByRole('tab', { name: /GIF/i }).click();
     // Generating over the full available range must not touch beyond-boundary frames.

@@ -9,6 +9,21 @@
  * Focus: exhaustive Tab-walk per surface — every stop must be
  * `:focus-visible` with the approved cyan outline token (≥2px, rgb
  * 103,232,249); mouse focus must not show it.
+ *
+ * PHASE 6 RE-TARGETING (2026-07-29, Phase 6 plan Task 4). The audited chrome
+ * moved: the desktop header trigger row and the display-settings panel no
+ * longer exist. The matrix is re-pointed, not reduced —
+ *   header trigger row      → `viewer-rail` SOURCE section (expanded)
+ *   display-settings panel  → `viewer-rail` VIEW section (toggles, opacity,
+ *                             region row)
+ *   header legend panel     → expanded-rail legend mount + the floating panel
+ *                             that still serves the collapsed rail
+ *   header attribution chips→ overflow → Attribution dialog
+ *   header Share / Feedback → 48 px top bar Share + `•••` overflow menu
+ * and two states are added that had no pre-Phase-6 equivalent: the collapsed
+ * rail (11 px captions, ≥44 coarse items) and the overflow menu. The tablet
+ * header-wrap geometry test becomes rail-at-tablet geometry: ≥768 now renders
+ * bar + rail, NOT the mobile sheet (the mobile threshold moved 639 → 767).
  */
 import { test, expect, type Page } from '@playwright/test';
 
@@ -22,12 +37,43 @@ const COMPARE_URL =
 const FOCUS_RING_RGB = '103, 232, 249';
 const FOCUS_RING_MIN_WIDTH_PX = 2;
 
+/** Kept in sync with lib/viewer-rail.ts. */
+const RAIL_EXPANDED_PX = 288;
+const RAIL_COLLAPSED_PX = 72;
+
 type Violation = { surface: string; selector: string; detail: string };
 
+const rail = (page: Page) => page.getByTestId('viewer-rail');
+const topBar = (page: Page) => page.getByTestId('viewer-top-bar');
+const railSource = (page: Page) => page.getByTestId('rail-source');
+
+async function expandRail(page: Page) {
+  if ((await rail(page).getAttribute('data-rail-state')) === 'collapsed') {
+    await page.getByTestId('rail-expand-toggle').click();
+  }
+  await expect(rail(page)).toHaveAttribute('data-rail-state', 'expanded');
+  await expect(railSource(page).getByRole('button', { name: 'GFS' })).toBeVisible();
+}
+
+async function collapseRail(page: Page) {
+  if ((await rail(page).getAttribute('data-rail-state')) === 'expanded') {
+    await page.getByTestId('rail-collapse-toggle').click();
+  }
+  await expect(rail(page)).toHaveAttribute('data-rail-state', 'collapsed');
+  await expect(page.getByTestId('rail-collapsed-source')).toBeVisible();
+}
+
+/**
+ * Loads the fixed-fixture viewer and leaves the rail EXPANDED, so the surface
+ * matrix is deterministic regardless of the project viewport's default rail
+ * state (§6.4 computes it from map width). The collapsed rail is its own
+ * audited surface below.
+ */
 async function openViewer(page: Page) {
   await stubViewerColormapRoutes(page);
   await page.goto(VIEWER_URL);
-  await expect(page.locator('header').getByRole('button', { name: 'GFS' })).toBeVisible({ timeout: 20_000 });
+  await expect(rail(page)).toBeVisible({ timeout: 30_000 });
+  await expandRail(page);
   await expect(page.getByTestId('viewer-initial-map-scrim')).toBeHidden({ timeout: 30_000 });
 }
 
@@ -43,11 +89,24 @@ const escapeTeardown = async (page: Page) => {
 };
 
 const DESKTOP_SURFACES: Surface[] = [
+  // Closed chrome = 48 px top bar + expanded rail (SOURCE, VIEW, legend mount),
+  // timeline, zoom stack, map-corner controls.
   { name: 'closed-chrome' },
+  {
+    // Successor to the pre-Phase-6 `display-settings` panel state: the VIEW
+    // section owns the toggles, the opacity slider and the region row.
+    name: 'rail-view',
+    setup: async (page) => {
+      const view = page.getByTestId('rail-view');
+      await view.scrollIntoViewIfNeeded();
+      await expect(view.getByTestId('rail-region-value')).toBeVisible();
+      await expect(view.getByTestId('rail-opacity-value')).toBeVisible();
+    },
+  },
   {
     name: 'product-panel',
     setup: async (page) => {
-      await page.locator('header').getByRole('button', { name: 'GFS' }).click();
+      await railSource(page).getByRole('button', { name: 'GFS' }).click();
       await expect(page.getByLabel('Model picker')).toBeVisible();
     },
     teardown: escapeTeardown,
@@ -56,7 +115,7 @@ const DESKTOP_SURFACES: Surface[] = [
     name: 'variable-panel',
     setup: async (page) => {
       // Trigger label is the frontend VARIABLE_UI_OVERRIDES display name.
-      await page.locator('header').getByRole('button', { name: 'Surface Temp' }).click();
+      await railSource(page).getByRole('button', { name: 'Surface Temp' }).click();
       await expect(page.getByLabel('Variable picker')).toBeVisible();
     },
     teardown: escapeTeardown,
@@ -64,7 +123,7 @@ const DESKTOP_SURFACES: Surface[] = [
   {
     name: 'statistic-popover',
     setup: async (page) => {
-      await page.locator('header').getByRole('button', { name: 'Mean' }).click();
+      await railSource(page).getByRole('button', { name: 'Mean' }).click();
       await expect(page.getByRole('button', { name: 'Percentile' })).toBeVisible();
     },
     teardown: escapeTeardown,
@@ -72,7 +131,7 @@ const DESKTOP_SURFACES: Surface[] = [
   {
     name: 'run-select',
     setup: async (page) => {
-      await page.locator('header').getByRole('combobox').first().click();
+      await railSource(page).getByRole('combobox').first().click();
       await expect(page.getByRole('listbox')).toBeVisible();
       // Radix's zoom-in open animation scales the options (~95%) for the
       // first frames; settle before measuring rects.
@@ -83,50 +142,52 @@ const DESKTOP_SURFACES: Surface[] = [
   {
     name: 'region-popover',
     setup: async (page) => {
-      await page.locator('header').locator('[aria-label^="Region:"]').click();
+      await rail(page).locator('[aria-label^="Region:"]').click();
       await expect(page.getByPlaceholder('Search city or zip…')).toBeVisible();
     },
     teardown: escapeTeardown,
   },
   {
-    name: 'legend-panel',
+    // New in Phase 6: the `•••` menu absorbed Feedback, Compare, Replay tour,
+    // Keyboard shortcuts, Attribution and the sign-in/account entry.
+    name: 'overflow-menu',
     setup: async (page) => {
-      await page.locator('header').getByLabel('Legend').click();
-      await expect(page.locator('[style*="linear-gradient"]').first()).toBeVisible();
+      await page.getByTestId('viewer-overflow-trigger').click();
+      await expect(page.getByTestId('viewer-overflow-menu')).toBeVisible();
     },
     teardown: escapeTeardown,
   },
   {
-    name: 'display-settings',
+    // Successor to the display panel's attribution chip links, which the
+    // Phase 4 audit called out explicitly (no inline-prose exemption).
+    name: 'attribution-dialog',
     setup: async (page) => {
-      // Desktop opens the display panel. Tablet-touch has NO display-settings
-      // surface at all (use-display-settings.ts force-closes the panel on
-      // non-desktop layouts, and the bottom-bar controls button is hidden on
-      // tablet-touch) — a product gap owned by Phases 6/8, not this audit.
-      // The panel's controls are audited under the fine regime, and touch
-      // settings are audited via the mobile sheet state. Skip when the
-      // layout provides no panel.
-      await page.locator('header').getByLabel('Display settings').click();
-      const opened = await page
-        .getByLabel('Close display panel')
-        .isVisible({ timeout: 1_500 })
-        .catch(() => false);
-      if (!opened) {
-        await escapeTeardown(page);
-      }
+      await page.getByTestId('viewer-overflow-trigger').click();
+      await page.getByTestId('viewer-overflow-menu').getByRole('menuitem', { name: 'Attribution' }).click();
+      await expect(page.getByRole('dialog', { name: 'Map attribution' })).toBeVisible();
     },
-    teardown: escapeTeardown,
+    teardown: async (page) => {
+      await page.getByLabel('Close attribution').click();
+      await expect(page.getByRole('dialog', { name: 'Map attribution' })).toBeHidden();
+    },
   },
   {
     name: 'share-dialog',
     setup: async (page) => {
-      await page.locator('header').getByLabel('Share').click();
+      await topBar(page).getByRole('button', { name: 'Share' }).click();
       await expect(page.getByRole('dialog', { name: 'Share' })).toBeVisible({ timeout: 15_000 });
     },
     teardown: async (page) => {
       await page.keyboard.press('Escape');
       await expect(page.getByRole('dialog', { name: 'Share' })).toBeHidden();
     },
+  },
+  {
+    // New in Phase 6 (§6.3): the 72 px rail — expand chevron plus icon+caption
+    // Source/View items — and the floating map legend that still serves it.
+    name: 'rail-collapsed',
+    setup: collapseRail,
+    teardown: expandRail,
   },
 ];
 
@@ -149,10 +210,12 @@ async function auditTargets(page: Page, surface: string, minPx: number): Promise
           el.closest('[aria-hidden="true"]')
           || el.closest('[class*="sr-only"]')
           || el.closest('[class*="maplibregl-"]')
-          // DOCUMENTED EXCEPTION — the display-panel opacity slider keeps the
-          // stock 16px Radix thumb: enlarging it re-treads the Phase 4 wrapper
-          // positioning regressions. Owned by the Phase 6 display-panel
-          // rebuild. The Phase 5 timeline thumb is fully compliant.
+          // DOCUMENTED EXCEPTION — the opacity slider (now the rail VIEW
+          // slider) keeps the stock 16px Radix thumb: enlarging it re-treads
+          // the Phase 4 wrapper positioning regressions. `ui/slider.tsx` is
+          // shared with the Phase 5 timeline thumb, which IS fully compliant;
+          // widening the shared primitive is owned by its own change, not by
+          // this audit. Exception carried forward from Phase 4 unchanged.
           || el.closest('[data-audit-exception="opacity-slider"]'),
         );
       const isVisible = (el: Element) => {
@@ -263,7 +326,7 @@ async function auditFocus(page: Page, surface: string): Promise<Violation[]> {
         outline: `${style.outlineStyle} ${style.outlineWidth} ${style.outlineColor}`,
       };
     }, rgb);
-  for (let step = 0; step < 120; step += 1) {
+  for (let step = 0; step < 160; step += 1) {
     await page.keyboard.press('Tab');
     let info = await readFocus(FOCUS_RING_RGB);
     if (!info.stop && !info.excluded && (!info.focusVisible || !info.hasToken)) {
@@ -313,44 +376,61 @@ test.describe('Viewer design tokens (Phase 4)', () => {
   });
 
   test.describe('fine pointer', () => {
+    // 1440×900: §6.4 default is the EXPANDED rail (1152 px of map width).
+    test.use({ viewport: { width: 1440, height: 900 } });
+
     test('every interactive element is at least 32x32 across all surfaces', async ({ page }) => {
+      test.slow(); // 11-surface matrix (Phase 6 added the collapsed rail, overflow menu and attribution dialog).
       await openViewer(page);
       const violations = await runSurfaces(page, (p, s) => auditTargets(p, s, 32));
       expect(violations, formatViolations(violations)).toEqual([]);
     });
 
     test('no viewer-chrome text below 11px, operational labels at least 12px', async ({ page }) => {
+      test.slow();
       await openViewer(page);
       const violations = await runSurfaces(page, (p, s) => auditTypeFloor(p, s, 11));
       expect(violations, formatViolations(violations)).toEqual([]);
 
       // Operational labels (explicit inventory list — classification is human).
+      // Phase 6: the field captions moved from the header row into the rail
+      // SOURCE section and gained the two section headers.
       const operational = await page.evaluate(() => {
-        const probes: Array<{ label: string; text: string; scope: string }> = [
-          { label: 'field-caption-product', text: 'Product', scope: 'header' },
-          { label: 'field-caption-variable', text: 'Variable', scope: 'header' },
-          { label: 'field-caption-run', text: 'Run Time', scope: 'header' },
+        const probes: Array<{ label: string; text: string }> = [
+          { label: 'rail-section-source', text: 'Source' },
+          { label: 'rail-section-view', text: 'View' },
+          { label: 'field-caption-model', text: 'Model' },
+          { label: 'field-caption-variable', text: 'Variable' },
+          { label: 'field-caption-statistic', text: 'Statistic' },
+          { label: 'field-caption-run', text: 'Run' },
+          { label: 'field-caption-region', text: 'Region' },
           // 'timeline-model' probe retired in Phase 5: the desktop timeline no
-          // longer carries a model label (identity lives in the header Product
-          // trigger; the mobile bar keeps its 12px label, covered by the
+          // longer carries a model label (identity now lives in the rail
+          // Model trigger; the mobile bar keeps its 12px label, covered by the
           // mobile audit state). Pre-Phase-5 this probe was satisfied only by
           // a display:none mobile duplicate — a latent probe bug.
         ];
         const results: Array<{ label: string; size: number | null }> = [];
-        const toolbarHeader = Array.from(document.querySelectorAll('header')).find(
-          (el) => el.querySelector('[role="combobox"]'),
-        );
+        const root = document.querySelector('[data-testid="viewer-rail"]');
         for (const probe of probes) {
-          const root = probe.scope === 'header' ? toolbarHeader ?? document.body : document.body;
-          const match = Array.from(root.querySelectorAll('span, div'))
-            .filter((el) => !el.closest('header button') || probe.scope !== 'body')
-            .find(
+          const match = root
+            ? Array.from(root.querySelectorAll('span, div')).filter(
+              (el) => {
+                const rect = el.getBoundingClientRect();
+                // The collapsed body stays mounted (display:none) so a width
+                // toggle never remounts a picker; its 11 px captions are the
+                // §6.3 contract, not operational labels. Rect-filter to the
+                // rendered, expanded section/field labels.
+                return rect.width > 0 && rect.height > 0;
+              },
+            ).find(
               (el) =>
                 (el.textContent ?? '').trim() === probe.text
                 && Array.from(el.childNodes).some(
                   (c) => c.nodeType === Node.TEXT_NODE && (c.textContent ?? '').trim().length > 0,
                 ),
-            );
+            )
+            : undefined;
           results.push({
             label: probe.label,
             size: match ? Number.parseFloat(window.getComputedStyle(match).fontSize) : null,
@@ -367,16 +447,13 @@ test.describe('Viewer design tokens (Phase 4)', () => {
     test('Product, Variable, Statistic, and Run triggers share one field contract', async ({ page }) => {
       await openViewer(page);
       const styles = await page.evaluate(() => {
-        // Two <header> elements exist (layout fallback + real toolbar); the
-        // real one is the one containing the Run combobox.
-        const header = Array.from(document.querySelectorAll('header')).find(
-          (el) => el.querySelector('[role="combobox"]'),
-        )!;
+        // Phase 6: the trigger family lives in the rail SOURCE section.
+        const source = document.querySelector('[data-testid="rail-source"]')!;
         const byText = (text: string) =>
-          Array.from(header.querySelectorAll('button')).find(
+          Array.from(source.querySelectorAll('button')).find(
             (el) => (el.textContent ?? '').trim().startsWith(text),
           ) ?? null;
-        const run = header.querySelector('[role="combobox"]');
+        const run = source.querySelector('[role="combobox"]');
         const triggers: Array<[string, Element | null]> = [
           ['product', byText('GFS')],
           ['variable', byText('Surface Temp')],
@@ -412,12 +489,13 @@ test.describe('Viewer design tokens (Phase 4)', () => {
     });
 
     test('every tabbable element shows the focus ring token; mouse focus does not', async ({ page }) => {
+      test.slow(); // exhaustive Tab-walk × 11 surfaces.
       await openViewer(page);
       const violations = await runSurfaces(page, (p, s) => auditFocus(p, s));
       expect(violations, formatViolations(violations)).toEqual([]);
 
       // Mouse focus must NOT show the ring.
-      const productTrigger = page.locator('header').getByRole('button', { name: 'GFS' });
+      const productTrigger = railSource(page).getByRole('button', { name: 'GFS' });
       await productTrigger.click();
       await page.keyboard.press('Escape');
       const mouseFocus = await page.evaluate((ringRgb) => {
@@ -432,20 +510,77 @@ test.describe('Viewer design tokens (Phase 4)', () => {
       }, FOCUS_RING_RGB);
       expect(mouseFocus.ok).toBe(true);
     });
+
+    test('collapsed rail keeps captions at the 11px floor and items above the fine floor', async ({ page }) => {
+      test.slow();
+      // 1200×800 → 912 px of map width → §6.4 default is COLLAPSED.
+      await page.setViewportSize({ width: 1200, height: 800 });
+      await stubViewerColormapRoutes(page);
+      await page.goto(VIEWER_URL);
+      await expect(rail(page)).toBeVisible({ timeout: 30_000 });
+      await expect(rail(page)).toHaveAttribute('data-rail-state', 'collapsed');
+      await expect(page.getByTestId('viewer-initial-map-scrim')).toBeHidden({ timeout: 30_000 });
+
+      const geometry = await page.evaluate(() => {
+        const railEl = document.querySelector('[data-testid="viewer-rail"]')!;
+        const measure = (testId: string) => {
+          const el = document.querySelector(`[data-testid="${testId}"]`);
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { width: r.width, height: r.height };
+        };
+        const captions = Array.from(railEl.querySelectorAll('[data-testid="rail-collapsed-caption"]')).map((el) => ({
+          text: (el.textContent ?? '').trim(),
+          fontSize: Number.parseFloat(window.getComputedStyle(el).fontSize),
+        }));
+        return {
+          railWidth: Math.round(railEl.getBoundingClientRect().width),
+          expandToggle: measure('rail-expand-toggle'),
+          source: measure('rail-collapsed-source'),
+          view: measure('rail-collapsed-view'),
+          captions,
+        };
+      });
+
+      expect(geometry.railWidth).toBe(RAIL_COLLAPSED_PX);
+      expect(geometry.captions.map((c) => c.text)).toEqual(['Source', 'View']);
+      for (const caption of geometry.captions) {
+        expect(caption.fontSize, `collapsed caption "${caption.text}" is ${caption.fontSize}px`).toBeGreaterThanOrEqual(11);
+      }
+      for (const [name, box] of [
+        ['rail-expand-toggle', geometry.expandToggle],
+        ['rail-collapsed-source', geometry.source],
+        ['rail-collapsed-view', geometry.view],
+      ] as const) {
+        expect(box, `${name} missing`).not.toBeNull();
+        expect(Math.min(box!.width, box!.height), `${name} min side ${JSON.stringify(box)} < 32`).toBeGreaterThanOrEqual(32);
+      }
+
+      // Full audits over the default-collapsed state.
+      const targets = await auditTargets(page, 'collapsed-default', 32);
+      expect(targets, formatViolations(targets)).toEqual([]);
+      const type = await auditTypeFloor(page, 'collapsed-default', 11);
+      expect(type, formatViolations(type)).toEqual([]);
+      const focus = await auditFocus(page, 'collapsed-default');
+      expect(focus, formatViolations(focus)).toEqual([]);
+    });
   });
 
   test.describe('desktop layout under a coarse pointer', () => {
-    // tablet-touch has no display panel, so the standard coarse matrix cannot
-    // reach it. A large touch display (1440x1000 exceeds both tablet-touch
-    // thresholds) keeps the DESKTOP layout while hasTouch makes
-    // (pointer: coarse) real — the touchscreen-desktop case.
+    // A large touch display (1440x1000 exceeds both tablet-touch thresholds)
+    // keeps the DESKTOP layout while hasTouch makes (pointer: coarse) real —
+    // the touchscreen-desktop case. Phase 6 closed the pre-existing gap here:
+    // tablet-touch used to have no display-settings surface at all; VIEW now
+    // lives in the rail, so every layout reaches it.
     test.use({ hasTouch: true, viewport: { width: 1440, height: 1000 } });
 
-    test('display panel controls meet the 44px floor', async ({ page }) => {
+    test('rail VIEW controls meet the 44px floor', async ({ page }) => {
       await openViewer(page);
-      await page.locator('header').getByLabel('Display settings').click();
-      await expect(page.getByLabel('Close display panel')).toBeVisible();
-      const violations = await auditTargets(page, 'display-settings-coarse', 44);
+      const view = page.getByTestId('rail-view');
+      await view.scrollIntoViewIfNeeded();
+      await expect(view.getByTestId('rail-region-value')).toBeVisible();
+      await expect(view.getByTestId('rail-opacity-value')).toBeVisible();
+      const violations = await auditTargets(page, 'rail-view-coarse', 44);
       expect(violations, formatViolations(violations)).toEqual([]);
     });
   });
@@ -454,37 +589,87 @@ test.describe('Viewer design tokens (Phase 4)', () => {
     test.use({ hasTouch: true });
 
     test('every interactive element is at least 44x44 across all surfaces', async ({ page }) => {
+      test.slow();
       await openViewer(page);
       const violations = await runSurfaces(page, (p, s) => auditTargets(p, s, 44));
       expect(violations, formatViolations(violations)).toEqual([]);
     });
 
-    test('wrapped header never overlaps map controls at tablet sizes', async ({ page }) => {
+    test('rail chrome fits tablet viewports without overlap or overflow', async ({ page }) => {
+      test.slow();
       // Zoom controls default hidden on non-desktop layouts; the geometry
       // anchor needs them, so seed the persisted preference on.
       await page.addInitScript(() => localStorage.setItem('twf.map.zoom_controls_visible', 'true'));
+      // §6.4: ≥768 gets bar + rail, NOT the mobile sheet (threshold 639 → 767).
       for (const viewport of [{ width: 768, height: 1024 }, { width: 1024, height: 768 }]) {
         await page.setViewportSize(viewport);
         await openViewer(page);
+        const label = `${viewport.width}x${viewport.height}`;
+
         const geometry = await page.evaluate(() => {
-          const header = document.querySelector('header')!;
-          const headerRect = header.getBoundingClientRect();
+          const bar = document.querySelector('[data-testid="viewer-top-bar"]')!;
+          const barRect = bar.getBoundingClientRect();
+          const railEl = document.querySelector('[data-testid="viewer-rail"]');
+          const railRect = railEl?.getBoundingClientRect() ?? null;
+          const rowRects = railEl
+            ? Array.from(railEl.querySelectorAll('button, [role="combobox"]'))
+              .map((el) => el.getBoundingClientRect())
+              .filter((r) => r.width > 0 && r.height > 0)
+            : [];
           const zoomIn = document.querySelector('[aria-label="Zoom in"]');
           const zoomRect = zoomIn?.getBoundingClientRect() ?? null;
           return {
-            headerBottom: headerRect.bottom,
-            headerOverflowX: header.scrollWidth > header.clientWidth + 1,
+            barHeight: barRect.height,
+            barBottom: barRect.bottom,
+            barOverflowX: bar.scrollWidth > bar.clientWidth + 1,
+            railPresent: Boolean(railEl),
+            railWidth: railRect ? Math.round(railRect.width) : null,
+            railTop: railRect?.top ?? null,
+            railRight: railRect?.right ?? null,
+            railRowCount: rowRects.length,
+            railRowsInViewport: rowRects.every(
+              (r) => r.left >= -1 && r.right <= window.innerWidth + 1,
+            ),
+            zoomLeft: zoomRect?.left ?? null,
             zoomTop: zoomRect?.top ?? null,
             zoomVisible: zoomRect ? zoomRect.top >= 0 && zoomRect.bottom <= window.innerHeight : false,
+            mobileSheetPresent: Boolean(document.querySelector('[data-tour-target="mobile-controls-button"]')),
+            documentOverflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
           };
         });
-        expect(geometry.zoomTop, `${viewport.width}x${viewport.height}: zoom control missing`).not.toBeNull();
+
+        // Bar geometry stays sane (48 px baseline; coarse targets may grow it,
+        // never past the mobile header's own 56 px + one wrapped row).
+        expect(geometry.barHeight, `${label}: bar height ${geometry.barHeight}`).toBeGreaterThanOrEqual(47);
+        expect(geometry.barHeight, `${label}: bar height ${geometry.barHeight}`).toBeLessThanOrEqual(112);
+        expect(geometry.barOverflowX, `${label}: top bar overflows horizontally`).toBe(false);
+
+        // The rail — not the mobile sheet — owns this band.
+        expect(geometry.railPresent, `${label}: rail missing`).toBe(true);
+        expect(geometry.mobileSheetPresent, `${label}: mobile sheet rendered above the 767 threshold`).toBe(false);
+        expect([RAIL_EXPANDED_PX, RAIL_COLLAPSED_PX]).toContain(geometry.railWidth);
+
+        // The rail starts below the bar and its rows stay inside the viewport.
+        expect(
+          geometry.railTop!,
+          `${label}: rail top ${geometry.railTop} above bar bottom ${geometry.barBottom}`,
+        ).toBeGreaterThanOrEqual(geometry.barBottom - 1);
+        expect(geometry.railRowCount, `${label}: no rail rows measured`).toBeGreaterThan(0);
+        expect(geometry.railRowsInViewport, `${label}: a rail row escapes the viewport`).toBe(true);
+
+        // Zoom stack clears both the bar and the rail.
+        expect(geometry.zoomTop, `${label}: zoom control missing`).not.toBeNull();
         expect(
           geometry.zoomTop!,
-          `${viewport.width}x${viewport.height}: header bottom ${geometry.headerBottom} overlaps zoom top ${geometry.zoomTop}`,
-        ).toBeGreaterThanOrEqual(geometry.headerBottom);
-        expect(geometry.zoomVisible).toBe(true);
-        expect(geometry.headerOverflowX).toBe(false);
+          `${label}: bar bottom ${geometry.barBottom} overlaps zoom top ${geometry.zoomTop}`,
+        ).toBeGreaterThanOrEqual(geometry.barBottom);
+        expect(
+          geometry.zoomLeft!,
+          `${label}: rail right ${geometry.railRight} overlaps zoom left ${geometry.zoomLeft}`,
+        ).toBeGreaterThanOrEqual(geometry.railRight!);
+        expect(geometry.zoomVisible, `${label}: zoom stack outside the viewport`).toBe(true);
+
+        expect(geometry.documentOverflowX, `${label}: document overflows horizontally`).toBe(false);
       }
     });
 
@@ -516,12 +701,15 @@ test.describe('Viewer design tokens (Phase 4)', () => {
   });
 
   test.describe('mobile layout (coarse)', () => {
+    // Below the §6.4 threshold (767) the mobile sheet still owns the chrome —
+    // Phase 8 territory, unchanged by Phase 6.
     test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
 
     test('mobile chrome, sheet, and inline picker meet 44x44', async ({ page }) => {
       await stubViewerColormapRoutes(page);
       await page.goto(VIEWER_URL);
       await expect(page.getByTestId('viewer-initial-map-scrim')).toBeHidden({ timeout: 30_000 });
+      await expect(page.getByTestId('viewer-rail')).toHaveCount(0);
 
       const all: Violation[] = [];
       all.push(...(await auditTargets(page, 'mobile-closed', 44)));

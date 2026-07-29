@@ -25,7 +25,10 @@ export function ViewerInitialMapScrim({ visible, stageLabel, buildProgress }: Vi
       aria-live="polite"
       aria-label={stageLabel}
       className="absolute inset-0 z-[55] flex items-center justify-center bg-[#040d18]/58 text-white backdrop-blur-[2px]"
-      style={{ paddingTop: "calc(3.5rem + var(--viewer-header-extra, 0px))" }}
+      style={{
+        paddingTop: "calc(var(--viewer-topbar-height, 3.5rem) + var(--viewer-header-extra, 0px))",
+        paddingLeft: "var(--viewer-rail-width, 0px)",
+      }}
     >
       <div className="flex flex-col items-center gap-3">
         <HexSignalRing />

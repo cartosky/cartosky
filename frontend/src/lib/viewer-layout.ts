@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 
+import { RAIL_MOBILE_MAX_WIDTH } from "@/lib/viewer-rail";
+
 export type ViewerLayoutMode = "mobile" | "tablet-touch" | "desktop";
 
-const MOBILE_MAX_WIDTH = 639;
+// §6.4 (Phase 6): 640-767 moved from the desktop header to the mobile sheet.
+// Shared with the rail state model so the two cutoffs can never disagree.
+const MOBILE_MAX_WIDTH = RAIL_MOBILE_MAX_WIDTH;
 const TOUCH_TABLET_MAX_WIDTH = 1279;
 const TOUCH_TABLET_MAX_HEIGHT = 950;
 

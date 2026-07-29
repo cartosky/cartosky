@@ -1,22 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/react";
-import { Link, NavLink } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import {
   Boxes,
   CalendarClock,
   Check,
-  GitCompareArrows,
   Layers,
   MapPin,
   MapPinSearch,
-  MessageSquareText,
   Moon,
   Palette,
   Percent,
   Search,
-  Settings,
-  Share2,
   Star,
   Sun,
   TriangleAlert,
@@ -30,6 +26,7 @@ import { MapLegend } from "@/components/map-legend";
 import { ModelPicker } from "@/components/ModelPicker";
 import { StatisticPicker } from "@/components/StatisticPicker";
 import { VariablePicker } from "@/components/VariablePicker";
+import { ViewerTopBar } from "@/components/ViewerTopBar";
 import { ViewerTopProgressBar } from "@/components/ViewerTopProgressBar";
 import {
   Select,
@@ -72,11 +69,8 @@ const MAX_VIEWER_LOCATION_FAVORITES = 5;
 
 const DESKTOP_TOPBAR_POPOVER_OFFSET = 10;
 const DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP = 74;
-const DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME = "data-[side=bottom]:translate-y-0";
-const DESKTOP_ICON_CLUSTER_CLASSNAME = "flex items-center gap-px rounded-[7px] border-[0.5px] border-white/[0.11] bg-white/[0.06] p-0.5";
 const DESKTOP_ICON_BUTTON_CLASSNAME = "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[5px] border border-transparent bg-transparent px-0 text-white/50 shadow-none transition-[background,color] duration-100 hover:bg-white/10 hover:text-white/90 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-11 pointer-coarse:w-11";
 const DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME = "bg-cyan-300/[0.12] text-cyan-200 hover:bg-cyan-300/[0.12] hover:text-cyan-200";
-const DESKTOP_ICON_CLUSTER_SEPARATOR_CLASSNAME = "mx-px h-4 w-[2px] shrink-0 rounded-full bg-cyan-300/35";
 
 function viewerLocationId(result: Pick<LocationSearchResult, "display_name" | "latitude" | "longitude">): string {
   const label = result.display_name
@@ -228,7 +222,7 @@ function spcVariableLabel(option: VariableOption): string {
   }
 }
 
-function NavbarSelect(props: {
+export function NavbarSelect(props: {
   value: string;
   onValueChange: (value: string) => void;
   options: (Option | VariableOption | GroupedOption)[];
@@ -355,64 +349,65 @@ function NavbarSelect(props: {
   );
 }
 
-function HeaderSelectField({
-  label,
-  icon: Icon,
-  children,
-  tourTarget,
-}: {
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  children: React.ReactNode;
-  tourTarget?: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1" {...(tourTarget ? { "data-tour-target": tourTarget } : {})}>
-      <span className="flex items-center gap-1.5 pl-1 text-[12px] font-medium uppercase tracking-[0.1em] text-white/44">
-        <Icon className="h-3 w-3" />
-        {label}
-      </span>
-      {children}
-    </div>
-  );
-}
-
 // ─── Display toggle row ───────────────────────────────────────────────────────
-function DisplayRow({
+export function DisplayRow({
   label,
   icon: Icon,
   checked,
   onToggle,
+  variant = "card",
 }: {
   label: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon?: React.ComponentType<{ className?: string }>;
   checked: boolean;
   onToggle: () => void;
+  variant?: "card" | "flat";
 }) {
+  const flat = variant === "flat";
   return (
     <button
       type="button"
       onClick={onToggle}
       aria-pressed={checked}
       className={cn(
-        "flex min-h-8 w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-all duration-150 pointer-coarse:min-h-11",
-        checked
-          ? "border-cyan-300/20 bg-cyan-300/[0.07] text-white hover:bg-cyan-300/[0.11]"
-          : "border-white/10 bg-white/[0.04] text-white/82 hover:bg-white/[0.07]"
+        "flex min-h-8 w-full items-center justify-between gap-3 text-left transition-colors duration-150 pointer-coarse:min-h-11",
+        flat
+          ? "rounded-md border-0 bg-transparent px-1 py-1 text-white/82 hover:bg-white/[0.045]"
+          : checked
+            ? "rounded-lg border border-cyan-300/20 bg-cyan-300/[0.07] px-3 py-2 text-white hover:bg-cyan-300/[0.11]"
+            : "rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-white/82 hover:bg-white/[0.07]"
       )}
     >
-      <div className="flex items-center gap-2 text-sm font-semibold text-white">
-        <Icon className="h-4 w-4 text-white/72" />
+      <div className={cn("flex items-center text-white", flat ? "text-[13px] font-medium" : "gap-2 text-sm font-semibold")}>
+        {Icon ? <Icon className="h-4 w-4 text-white/72" /> : null}
         {label}
       </div>
-      <span className={cn("font-['IBM_Plex_Mono',monospace] text-[11px] font-medium", checked ? "text-cyan-300/90" : "text-white/38")}>
-        {checked ? "On" : "Off"}
-      </span>
+      {flat ? (
+        <span
+          data-testid="rail-toggle-switch"
+          aria-hidden="true"
+          className={cn(
+            "relative h-5 w-9 shrink-0 rounded-full transition-colors",
+            checked ? "bg-cyan-400/75" : "bg-white/16",
+          )}
+        >
+          <span
+            className={cn(
+              "absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+              checked && "translate-x-4",
+            )}
+          />
+        </span>
+      ) : (
+        <span className={cn("font-['IBM_Plex_Mono',monospace] text-[11px] font-medium", checked ? "text-cyan-300/90" : "text-white/38")}>
+          {checked ? "On" : "Off"}
+        </span>
+      )}
     </button>
   );
 }
 
-function RegionUtilitySelect({
+export function RegionUtilitySelect({
   value,
   onValueChange,
   onLocationJump,
@@ -425,6 +420,9 @@ function RegionUtilitySelect({
   inlinePanelClassName,
   onOpenChange,
   onLocationSelected,
+  valueTestId,
+  fieldPrefix = false,
+  panelPlacement = "align-end",
 }: {
   value: string;
   onValueChange: (value: string) => void;
@@ -438,6 +436,12 @@ function RegionUtilitySelect({
   inlinePanelClassName?: string;
   onOpenChange?: (open: boolean) => void;
   onLocationSelected?: () => void;
+  /** Test hook for the §6.2 "region value visible as text" contract. */
+  valueTestId?: string;
+  /** Rail variant: put the field name inside the trigger instead of above it. */
+  fieldPrefix?: boolean;
+  /** Desktop panel placement relative to the field trigger. */
+  panelPlacement?: "align-end" | "right";
 }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -453,7 +457,7 @@ function RegionUtilitySelect({
   const [isLocating, setIsLocating] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [panelTop, setPanelTop] = useState<number>(DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP);
-  const [panelRight, setPanelRight] = useState<number>(16);
+  const [panelLeft, setPanelLeft] = useState<number>(16);
   const [currentLocation, setCurrentLocation] = useState<ViewerFavoriteLocation | null>(null);
   const { favorites, isFavorite, toggleFavorite } = useViewerLocationFavorites();
 
@@ -470,9 +474,15 @@ function RegionUtilitySelect({
     if (!rect) {
       return;
     }
+    const panelWidth = 296;
+    const viewportGutter = 16;
+    const preferredLeft = panelPlacement === "right"
+      ? rect.right + DESKTOP_TOPBAR_POPOVER_OFFSET
+      : rect.right - panelWidth;
+    const maxLeft = Math.max(viewportGutter, window.innerWidth - panelWidth - viewportGutter);
     setPanelTop(rect.bottom + DESKTOP_TOPBAR_POPOVER_OFFSET);
-    setPanelRight(Math.max(window.innerWidth - rect.right, 16));
-  }, []);
+    setPanelLeft(Math.min(Math.max(preferredLeft, viewportGutter), maxLeft));
+  }, [panelPlacement]);
 
   const clearInlineError = useCallback(() => {
     if (errorTimerRef.current) {
@@ -704,6 +714,7 @@ function RegionUtilitySelect({
   const locationPanel = (
     <div
       ref={panelRef}
+      data-testid="region-picker-panel"
       className={cn(
         inlinePanel
           ? "mt-2 flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border bg-[#04101e]/[0.92] shadow-[inset_0_1px_0_rgba(100,180,255,0.08)]"
@@ -711,7 +722,7 @@ function RegionUtilitySelect({
         activeSearch ? "border-[rgba(55,138,221,0.35)]" : "border-[#1a3a5c]/60",
         inlinePanel ? inlinePanelClassName : null
       )}
-      style={inlinePanel ? undefined : { top: panelTop, right: panelRight }}
+      style={inlinePanel ? undefined : { top: panelTop, left: panelLeft }}
       role={inlinePanel ? "dialog" : undefined}
       aria-label={inlinePanel ? "Region picker" : undefined}
     >
@@ -955,16 +966,30 @@ function RegionUtilitySelect({
         }}
         className={cn(
           variant === "field"
-            ? cn("flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/[0.045] px-3 text-left text-sm font-medium text-white/88 transition hover:border-cyan-300/22 hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-50", inlinePanel ? "h-11" : "h-9")
+            ? cn("flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/[0.045] px-3 text-left text-sm font-medium text-white/88 transition hover:border-cyan-300/22 hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-50", inlinePanel ? "h-11" : "h-9 pointer-coarse:h-11")
             : DESKTOP_ICON_BUTTON_CLASSNAME,
           open && (variant === "field" ? "border-cyan-300/28 bg-cyan-300/[0.08] text-cyan-50" : DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME)
         )}
       >
         {variant === "field" ? (
-          <>
-            <span className="truncate">{currentRegionLabel}</span>
-            <MapPinSearch className="h-3.5 w-3.5 shrink-0 text-cyan-100/70" />
-          </>
+          fieldPrefix ? (
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="shrink-0 text-white/48">Region</span>
+              <span
+                aria-hidden="true"
+                data-testid="region-prefix-dot"
+                className="h-1 w-1 shrink-0 rounded-full bg-cyan-300/70"
+              />
+              <span className="truncate text-white/88" {...(valueTestId ? { "data-testid": valueTestId } : {})}>
+                {currentRegionLabel}
+              </span>
+            </span>
+          ) : (
+            <>
+              <span className="truncate" {...(valueTestId ? { "data-testid": valueTestId } : {})}>{currentRegionLabel}</span>
+              <MapPinSearch className="h-3.5 w-3.5 shrink-0 text-cyan-100/70" />
+            </>
+          )
         ) : (
           <span className="flex h-full w-full items-center justify-center">
             <MapPinSearch className="h-3.5 w-3.5" />
@@ -973,400 +998,6 @@ function RegionUtilitySelect({
       </button>
 
       {panel}
-    </div>
-  );
-}
-
-// ─── Viewer toolbar inline (desktop) ─────────────────────────────────────────
-function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
-  const toolbar = useViewerToolbar();
-  const settingsRef = useRef<HTMLDivElement>(null);
-  const settingsPanelRef = useRef<HTMLDivElement>(null);
-  const legendRef = useRef<HTMLDivElement>(null);
-  const legendPanelRef = useRef<HTMLDivElement>(null);
-  const [legendPanelOpen, setLegendPanelOpen] = useState(false);
-  const [settingsPanelTop, setSettingsPanelTop] = useState<number>(DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP);
-  const [legendPanelTop, setLegendPanelTop] = useState<number>(DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP);
-
-  const updateSettingsPanelTop = useCallback(() => {
-    const rect = settingsRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setSettingsPanelTop(rect.bottom + DESKTOP_TOPBAR_POPOVER_OFFSET);
-  }, []);
-
-  const updateLegendPanelTop = useCallback(() => {
-    const rect = legendRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setLegendPanelTop(rect.bottom + DESKTOP_TOPBAR_POPOVER_OFFSET);
-  }, []);
-
-  useEffect(() => {
-    if (!toolbar?.displayPanelOpen) return;
-    updateSettingsPanelTop();
-    function onPointerDown(e: MouseEvent | TouchEvent) {
-      if (!(e.target instanceof Node)) return;
-      if (settingsRef.current?.contains(e.target)) return;
-      if (settingsPanelRef.current?.contains(e.target)) return;
-      toolbar?.onDisplayPanelOpenChange(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") toolbar?.onDisplayPanelOpenChange(false);
-    }
-    window.addEventListener("resize", updateSettingsPanelTop);
-    window.addEventListener("scroll", updateSettingsPanelTop, true);
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("touchstart", onPointerDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("resize", updateSettingsPanelTop);
-      window.removeEventListener("scroll", updateSettingsPanelTop, true);
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("touchstart", onPointerDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [toolbar?.displayPanelOpen, updateSettingsPanelTop]);
-
-  useEffect(() => {
-    if (!legendPanelOpen) return;
-    updateLegendPanelTop();
-    function onPointerDown(e: MouseEvent | TouchEvent) {
-      if (!(e.target instanceof Node)) return;
-      if (legendRef.current?.contains(e.target)) return;
-      if (legendPanelRef.current?.contains(e.target)) return;
-      setLegendPanelOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setLegendPanelOpen(false);
-    }
-    window.addEventListener("resize", updateLegendPanelTop);
-    window.addEventListener("scroll", updateLegendPanelTop, true);
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("touchstart", onPointerDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("resize", updateLegendPanelTop);
-      window.removeEventListener("scroll", updateLegendPanelTop, true);
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("touchstart", onPointerDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [legendPanelOpen, updateLegendPanelTop]);
-
-  if (!toolbar) return null;
-
-  const {
-    variable, onVariableChange, variables, variableCatalog, supportedVariableIds, model, onModelChange, models,
-    ensembleProducts, product, onProductChange, productAvailability,
-    run, onRunChange, runs, region, onRegionChange, onLocationJump, regions,
-    disabled, runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel,
-    onViewLatestRun, runSelectionLocked,
-    compareHref, onShare, displayPanelOpen, onDisplayPanelOpenChange,
-    pointLabelsEnabled, onPointLabelsEnabledChange,
-    nwsWarningsEnabled, onNwsWarningsEnabledChange,
-    basemapMode, onBasemapModeChange, opacity, onOpacityChange,
-    zoomControlsVisible, onZoomControlsVisibleChange, legend,
-  } = toolbar;
-  // Ensemble stats product options (stats design §7): only products the
-  // current run actually serves; the selector hides entirely when the run
-  // offers nothing beyond the mean (e.g. stats still publishing).
-  const availableProductOptions = (ensembleProducts ?? [])
-    .filter((entry) => entry.key === "mean" || productAvailability?.[entry.key])
-    .map((entry) => ({ value: entry.key, label: entry.label ?? entry.key, longLabel: entry.long_label ?? entry.label ?? entry.key }));
-  const showProductSelect = availableProductOptions.length > 1;
-
-
-  const runMenuOptions = useMemo(() => {
-    if (!hasNewerRunAvailable) return runs;
-    return runs.filter((o) => o.value !== "latest");
-  }, [hasNewerRunAvailable, runs]);
-  const displayVariableCatalog = model === "spc"
-    ? variables.map((option) => ({ ...option, label: spcVariableLabel(option) }))
-    : variables;
-  const selectedRegionLabel = regions.find((option) => option.value === region)?.label ?? "Region";
-
-  return (
-    /* flex-1 so this fills all space after the logo; justify-end right-aligns
-       controls while still allowing the row to wrap onto a second line
-       instead of overflowing at narrow (tablet) widths. */
-    <div className="flex h-full flex-1 flex-wrap items-end justify-end gap-1.5">
-      {/* Controls group: selectors + divider + icons — all right-aligned */}
-      <div className="flex flex-wrap items-end gap-1.5">
-        {/* Primary selectors */}
-        <div data-tour-target="product-variable-run" className="flex flex-wrap items-end gap-1.5 gap-y-2">
-          <HeaderSelectField label="Product" icon={Boxes}>
-            {/* Product is data-gated, not load-gated: usable as soon as model
-                options exist so a cold boot never blocks switching products
-                while the first frame downloads (Phase 2 loading contract). */}
-            <ModelPicker
-              value={model}
-              onChange={onModelChange}
-              options={models}
-              disabled={models.length === 0}
-              placeholder="Model"
-              minWidth="min-w-[180px] max-w-[220px]"
-              panelOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
-            />
-          </HeaderSelectField>
-          <HeaderSelectField label="Variable" icon={Layers}>
-            <VariablePicker
-              modelId={model}
-              value={variable}
-              onChange={onVariableChange}
-              variableCatalog={displayVariableCatalog}
-              supportedVariableIds={supportedVariableIds}
-              disabled={disabled}
-              placeholder="Variable"
-              legend={legend}
-              minWidth="min-w-[180px] max-w-[320px]"
-              panelOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
-            />
-          </HeaderSelectField>
-          {showProductSelect ? (
-            <HeaderSelectField label="Statistic" icon={Percent}>
-              <StatisticPicker
-                value={product ?? "mean"}
-                onValueChange={(value) => onProductChange?.(value)}
-                options={availableProductOptions}
-                disabled={disabled}
-                minWidth="min-w-[120px] max-w-[200px]"
-              />
-            </HeaderSelectField>
-          ) : null}
-          <HeaderSelectField label="Run Time" icon={CalendarClock}>
-            <NavbarSelect
-              value={run}
-              onValueChange={onRunChange}
-              options={runMenuOptions}
-              disabled={disabled || runSelectionLocked}
-              placeholder="Run"
-              selectedLabelOverride={runDisplayLabel}
-              highlightState={!runSelectionLocked && hasNewerRunAvailable}
-              menuActionLabel={!runSelectionLocked && hasNewerRunAvailable ? "View latest run" : null}
-              menuActionDescription={
-                !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
-                  ? `${latestAvailableRunLabel} available`
-                  : null
-              }
-              onMenuAction={!runSelectionLocked && hasNewerRunAvailable ? onViewLatestRun : undefined}
-              minWidth="min-w-[148px] max-w-[220px]"
-              contentOffset={DESKTOP_TOPBAR_POPOVER_OFFSET}
-              contentClassName={DESKTOP_TOPBAR_SELECT_CONTENT_CLASSNAME}
-            />
-          </HeaderSelectField>
-        </div>
-
-        <div className={DESKTOP_ICON_CLUSTER_CLASSNAME}>
-          <RegionUtilitySelect
-            value={region}
-            onValueChange={onRegionChange}
-            onLocationJump={onLocationJump}
-            options={regions}
-            disabled={disabled}
-            currentRegionLabel={selectedRegionLabel}
-            tourTarget="region-selector"
-          />
-
-          <div aria-hidden="true" className={DESKTOP_ICON_CLUSTER_SEPARATOR_CLASSNAME} />
-
-          {/* Legend button */}
-          <div className="relative shrink-0" ref={legendRef} data-tour-target="legend-button">
-            <button
-              type="button"
-              onClick={() => {
-                updateLegendPanelTop();
-                setLegendPanelOpen((v) => !v);
-              }}
-              aria-expanded={legendPanelOpen}
-              title="Legend"
-              aria-label="Legend"
-              className={cn(
-                DESKTOP_ICON_BUTTON_CLASSNAME,
-                legendPanelOpen ? DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME : ""
-              )}
-            >
-              <Palette className="h-3.5 w-3.5" />
-            </button>
-
-            {legendPanelOpen ? createPortal(
-              <div
-                ref={legendPanelRef}
-                className="fixed right-[3.25rem] z-[70] w-[220px] max-h-[calc(100vh-5rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
-                style={{ top: legendPanelTop }}
-              >
-                <MapLegend
-                  legend={legend}
-                  defaultExpanded={true}
-                  inline={true}
-                />
-              </div>
-            , document.body) : null}
-          </div>
-
-          {onShare ? (
-            <button
-              type="button"
-              onClick={onShare}
-              title="Share"
-              aria-label="Share"
-              data-tour-target="share-button"
-              className={DESKTOP_ICON_BUTTON_CLASSNAME}
-            >
-              <Share2 className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-
-          {compareHref ? (
-            <Link
-              to={compareHref}
-              title="Compare"
-              aria-label="Compare"
-              className={DESKTOP_ICON_BUTTON_CLASSNAME}
-            >
-              <GitCompareArrows className="h-3.5 w-3.5" />
-            </Link>
-          ) : null}
-
-          {onFeedback ? (
-            <button
-              type="button"
-              onClick={onFeedback}
-              title="Send feedback"
-              aria-label="Send feedback"
-              data-tour-target="feedback-button"
-              className={DESKTOP_ICON_BUTTON_CLASSNAME}
-            >
-              <MessageSquareText className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-
-          <div aria-hidden="true" className={DESKTOP_ICON_CLUSTER_SEPARATOR_CLASSNAME} />
-
-          {/* Settings / Display panel */}
-          <div className="relative shrink-0" ref={settingsRef} data-tour-target="display-settings-button">
-            <button
-              type="button"
-              onClick={() => {
-                updateSettingsPanelTop();
-                onDisplayPanelOpenChange(!displayPanelOpen);
-              }}
-              aria-expanded={displayPanelOpen}
-              title="Display settings"
-              aria-label="Display settings"
-              className={cn(
-                DESKTOP_ICON_BUTTON_CLASSNAME,
-                displayPanelOpen ? DESKTOP_ICON_BUTTON_ACTIVE_CLASSNAME : ""
-              )}
-            >
-              <Settings className="h-3.5 w-3.5" />
-            </button>
-
-          {displayPanelOpen ? createPortal(
-            <div
-              ref={settingsPanelRef}
-              className="fixed right-4 z-[70] w-[232px] overflow-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
-              style={{ top: settingsPanelTop }}
-            >
-              {/* Panel header */}
-              <div className="flex items-center justify-between border-b border-[#1a3a5c]/50 px-4 py-3">
-                <div>
-                  <div className="font-['IBM_Plex_Mono',monospace] text-[12px] font-medium uppercase tracking-[0.14em] text-cyan-300/60">
-                    Display
-                  </div>
-                  <div className="mt-0.5 text-[11px] text-white/52">Map overlays &amp; reference aids</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onDisplayPanelOpenChange(false)}
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-white/32 transition-colors hover:text-white/72 pointer-coarse:h-11 pointer-coarse:w-11"
-                  aria-label="Close display panel"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-
-              <div className="space-y-1.5 px-3 py-3">
-                <DisplayRow
-                  label="City Labels"
-                  icon={MapPin}
-                  checked={pointLabelsEnabled}
-                  onToggle={() => onPointLabelsEnabledChange(!pointLabelsEnabled)}
-                />
-                {supportsNwsWarningsOverlay(model, variable) ? (
-                  <DisplayRow
-                    label="NWS Warnings"
-                    icon={TriangleAlert}
-                    checked={nwsWarningsEnabled}
-                    onToggle={() => onNwsWarningsEnabledChange(!nwsWarningsEnabled)}
-                  />
-                ) : null}
-                <DisplayRow
-                  label="Zoom Controls"
-                  icon={ZoomIn}
-                  checked={zoomControlsVisible}
-                  onToggle={() => onZoomControlsVisibleChange(!zoomControlsVisible)}
-                />
-                <button
-                  type="button"
-                  onClick={() => onBasemapModeChange(basemapMode === "dark" ? "light" : "dark")}
-                  className="flex min-h-8 w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left transition-all duration-150 hover:bg-white/[0.07] pointer-coarse:min-h-11"
-                >
-                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                    {basemapMode === "dark"
-                      ? <Moon className="h-4 w-4 text-white/60" />
-                      : <Sun className="h-4 w-4 text-white/60" />}
-                    Basemap
-                  </div>
-                  <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium text-cyan-300/80">
-                    {basemapMode === "dark" ? "Dark" : "Light"}
-                  </span>
-                </button>
-
-                <div className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-sm font-semibold text-white">Opacity</span>
-                    <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium text-cyan-300/80">
-                      {Math.round(opacity * 100)}%
-                    </span>
-                  </div>
-                  <Slider
-                    value={[Math.round(opacity * 100)]}
-                    onValueChange={([v]) => onOpacityChange((v ?? 100) / 100)}
-                    min={0}
-                    max={100}
-                    step={1}
-                    data-audit-exception="opacity-slider"
-                    className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
-                  />
-                </div>
-
-                {toolbar.onReplayTour ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      toolbar.onReplayTour?.();
-                      onDisplayPanelOpenChange(false);
-                    }}
-                    className="flex min-h-8 w-full items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left transition-all duration-150 hover:bg-white/[0.07] pointer-coarse:min-h-11"
-                  >
-                    <span className="text-sm font-semibold text-white">Replay Tour</span>
-                    <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium text-cyan-300/70">?</span>
-                  </button>
-                ) : null}
-
-                <div className="flex flex-wrap items-center gap-1 border-t border-white/8 pt-2 text-[11px] leading-relaxed text-white/32">
-                  Maps:{" "}
-                  <a href="https://www.maplibre.org/" target="_blank" rel="noreferrer" className="inline-flex min-h-8 items-center justify-center rounded-md px-1.5 underline underline-offset-2 transition-colors hover:text-white/60 pointer-coarse:min-h-11 pointer-coarse:min-w-11">MapLibre</a>
-                  {" "}·{" "}
-                  <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="inline-flex min-h-8 items-center justify-center rounded-md px-1.5 underline underline-offset-2 transition-colors hover:text-white/60 pointer-coarse:min-h-11 pointer-coarse:min-w-11">OSM</a>
-                  {" "}·{" "}
-                  <a href="https://carto.com/attributions" target="_blank" rel="noreferrer" className="inline-flex min-h-8 items-center justify-center rounded-md px-1.5 underline underline-offset-2 transition-colors hover:text-white/60 pointer-coarse:min-h-11 pointer-coarse:min-w-11">CARTO</a>
-                </div>
-              </div>
-            </div>
-          , document.body) : null}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -1863,15 +1494,15 @@ export default function ViewerSiteHeader() {
   const isViewerMobile = !isViewerDesktop;
   const headerRef = useRef<HTMLElement>(null);
 
-  // Measured header-height contract (Phase 4): under a coarse pointer the
-  // 44px triggers can wrap the header taller than its layout baseline
-  // (desktop 4.5rem, otherwise 3.5rem). Publish only the growth beyond the
-  // baseline so default layouts stay pixel-identical; map padding, the
-  // scrim, the zoom stack, and header panels consume the variable.
+  // Measured header-height contract (Phase 4, baselines re-based in Phase 6):
+  // the rail-mode bar is 48px, the mobile header stays 56px. Under a coarse
+  // pointer a 44px target can still wrap the bar taller than its baseline, so
+  // publish only the growth beyond it — map padding, the rail top, the scrim,
+  // the zoom stack, and header panels consume the variable.
   useEffect(() => {
     const element = headerRef.current;
     if (!element) return undefined;
-    const baseline = isViewerDesktop ? 72 : 56;
+    const baseline = isViewerDesktop ? 48 : 56;
     const apply = () => {
       const extra = Math.max(0, Math.round(element.getBoundingClientRect().height - baseline));
       document.documentElement.style.setProperty("--viewer-header-extra", `${extra}px`);
@@ -1886,37 +1517,26 @@ export default function ViewerSiteHeader() {
   }, [isViewerDesktop]);
 
   return (
-    <header ref={headerRef} className="fixed inset-x-0 top-0 z-[80]">
+    <header ref={headerRef} data-testid="viewer-top-bar" className="fixed inset-x-0 top-0 z-[80]">
       <div
         aria-hidden="true"
         className="absolute inset-0 border-b border-[#1a3a5c]/60 bg-[#030e1a]/[0.85] shadow-[0_2px_16px_rgba(0,0,0,0.4),inset_0_-1px_0_rgba(100,180,255,0.06)] backdrop-blur-md"
         style={{ willChange: "transform" }}
       />
-      <div
-        className={cn(
-          "relative z-10",
-          isViewerDesktop
-            ? "flex min-h-[4.5rem] items-end gap-3 px-4 pb-2 md:px-5"
-            : "flex h-14 items-center gap-3 px-4 md:px-5",
-        )}
-      >
-        <NavLink
-          to="/"
-          className={cn(
-            "flex shrink-0 items-center font-semibold tracking-tight text-white",
-            isViewerDesktop ? "self-center translate-y-1" : "",
-          )}
-        >
-          <img
-            src={BRAND_LOGO_SRC}
-            alt="CartoSky"
-            className="block h-12 w-auto max-w-none"
-          />
-        </NavLink>
-
-        {isViewerDesktop ? <ViewerNavDesktop onFeedback={openFeedback} /> : null}
-        {isViewerMobile ? <ViewerNavMobile onFeedback={openFeedback} /> : null}
-      </div>
+      {/* Rail layouts get the Phase 6 bar; the mobile sheet path is untouched. */}
+      {isViewerDesktop ? <ViewerTopBar /> : null}
+      {isViewerMobile ? (
+        <div className="relative z-10 flex h-14 items-center gap-3 px-4 md:px-5">
+          <NavLink to="/" className="flex shrink-0 items-center font-semibold tracking-tight text-white">
+            <img
+              src={BRAND_LOGO_SRC}
+              alt="CartoSky"
+              className="block h-12 w-auto max-w-none"
+            />
+          </NavLink>
+          <ViewerNavMobile onFeedback={openFeedback} />
+        </div>
+      ) : null}
       <ViewerTopProgressBar visible={Boolean(toolbar?.isFrameSwitching)} />
     </header>
   );

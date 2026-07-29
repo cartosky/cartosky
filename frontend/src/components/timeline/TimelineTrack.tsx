@@ -132,7 +132,6 @@ function nearestMarkerFh(model: TimelineViewModel, targetMs: number): number {
 export const TimelineTrack = memo(function TimelineTrack({
   mode,
   frames,
-  bufferedFrameHours,
   validTimeByHour,
   runDateTimeISO,
   forecastHour,
@@ -161,7 +160,6 @@ export const TimelineTrack = memo(function TimelineTrack({
   const snapBackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draggingRef = useRef(false);
   const availabilityId = "timeline-availability-line";
-  const bufferedSet = useMemo(() => new Set(bufferedFrameHours ?? []), [bufferedFrameHours]);
 
   const model = useMemo(
     () => buildTimelineViewModel({
@@ -472,16 +470,7 @@ export const TimelineTrack = memo(function TimelineTrack({
           data-testid="timeline-marker"
           data-fh={marker.fh}
           aria-hidden="true"
-          className={cn(
-            "pointer-events-none absolute top-1/2 w-px -translate-x-1/2 -translate-y-1/2 rounded-full",
-            docked
-              ? model.boundaryFh !== null && marker.fh <= model.boundaryFh
-                ? bufferedSet.has(marker.fh) ? "h-[18px] bg-cyan-100/55" : "h-[18px] bg-white/32"
-                : "h-3.5 bg-white/18"
-              : model.boundaryFh !== null && marker.fh <= model.boundaryFh
-                ? bufferedSet.has(marker.fh) ? "h-2.5 bg-cyan-200/70" : "h-2.5 bg-white/45"
-                : "h-2 bg-white/20",
-          )}
+          className="pointer-events-none absolute top-1/2 h-px w-px -translate-x-1/2 -translate-y-1/2 opacity-0"
           style={{ left: pct(fractionForMs(marker.ms)) }}
         />
       ))}
@@ -514,10 +503,10 @@ export const TimelineTrack = memo(function TimelineTrack({
         <span
           aria-hidden="true"
           className={cn(
-            "block rounded-full border-2 border-[#061523] bg-cyan-400",
+            "block rounded-full border border-white/80 bg-[linear-gradient(145deg,#ffffff_0%,#dce7ef_52%,#91a9ba_100%)]",
             docked
-              ? "h-[15px] w-[15px] shadow-[0_0_0_2px_rgba(103,232,249,0.2),0_0_12px_rgba(34,211,238,0.7)]"
-              : "h-4 w-4 shadow-[0_0_0_1px_rgba(6,182,212,0.25),0_0_10px_rgba(6,182,212,0.45)]",
+              ? "h-[15px] w-[15px] shadow-[0_1px_7px_rgba(0,0,0,0.42),0_0_0_2px_rgba(103,232,249,0.13),inset_0_1px_0_rgba(255,255,255,0.9)]"
+              : "h-4 w-4 shadow-[0_1px_7px_rgba(0,0,0,0.38),0_0_0_2px_rgba(103,232,249,0.11),inset_0_1px_0_rgba(255,255,255,0.9)]",
           )}
         />
       </div>
@@ -533,9 +522,9 @@ export const TimelineTrack = memo(function TimelineTrack({
       title={density === "standard" ? "Collapse timeline" : "Expand timeline"}
       onClick={handleDensityToggle}
       className={cn(
-        "flex shrink-0 items-start justify-center text-white/60 transition-colors hover:text-white",
+        "flex shrink-0 justify-center text-white/60 transition-colors hover:text-white",
         hasDesktopTransport
-          ? "absolute right-4 top-0 z-20 h-8 w-9 pointer-coarse:h-11 pointer-coarse:w-11"
+          ? "absolute -top-8 right-4 z-20 h-8 w-9 items-end pointer-coarse:-top-11 pointer-coarse:h-11 pointer-coarse:w-11"
           : "h-8 w-8 items-center rounded-lg border border-white/10 bg-[#0a1825]/95 shadow-sm hover:bg-[#102334] pointer-coarse:h-11 pointer-coarse:w-11",
       )}
     >
@@ -544,7 +533,7 @@ export const TimelineTrack = memo(function TimelineTrack({
         className={cn(
           "flex items-center justify-center",
           hasDesktopTransport
-            ? "h-5 w-9 rounded-b-lg border border-t-0 border-white/10 bg-[#0a1825]/95 shadow-sm hover:bg-[#102334]"
+            ? "h-5 w-9 rounded-t-lg border border-b-0 border-white/[0.11] bg-[#0a1825]/90 shadow-[0_-2px_9px_rgba(0,0,0,0.28),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-md hover:bg-[#102334]/95"
             : "h-full w-full",
         )}
       >
@@ -557,7 +546,6 @@ export const TimelineTrack = memo(function TimelineTrack({
 
   if (hasDesktopTransport) {
     const availabilityText = availabilityOverride || model.availabilityLine;
-    const availabilityIsBuilding = model.hatch !== null;
     return (
       <div
         data-testid="timeline-root"
@@ -578,7 +566,7 @@ export const TimelineTrack = memo(function TimelineTrack({
                   key={`${segment.startMs}-${segment.endMs}`}
                   data-testid="timeline-day-segment"
                   className={cn(
-                    "absolute inset-y-0 flex items-center overflow-hidden border-r border-white/[0.07] px-2 font-['IBM_Plex_Mono',monospace] text-[11px] font-medium text-white/50",
+                    "absolute inset-y-0 flex items-center overflow-hidden border-r border-white/[0.07] px-2 font-sans text-[11px] font-medium tracking-[0.01em] text-white/52",
                     index % 2 === 1 && "bg-white/[0.025]",
                   )}
                   style={{
@@ -607,7 +595,7 @@ export const TimelineTrack = memo(function TimelineTrack({
                   style={{ left: pct(fractionForMs(tick.ms)) }}
                 >
                   {tick.label ? (
-                    <span className="absolute bottom-[5px] left-1/2 -translate-x-1/2 whitespace-nowrap font-['IBM_Plex_Mono',monospace] text-[11px] leading-none text-white/48">
+                    <span className="absolute bottom-[5px] left-1/2 -translate-x-1/2 whitespace-nowrap font-sans text-[11px] font-medium leading-none tracking-[0.015em] text-white/55">
                       {tick.label}
                     </span>
                   ) : null}
@@ -624,22 +612,13 @@ export const TimelineTrack = memo(function TimelineTrack({
           className="relative flex h-10 min-w-0 items-center gap-2 border-t border-white/[0.07]"
         >
           {desktopTransportStart}
-          <div
+          <span
             id={availabilityId}
             data-testid="timeline-availability"
-            className={cn(
-              "flex min-w-0 items-center gap-1.5 truncate rounded-md border px-2 py-1 text-[11px] font-medium leading-none",
-              availabilityIsBuilding
-                ? "border-amber-300/20 bg-amber-300/[0.07] text-amber-100/75"
-                : "border-white/[0.08] bg-white/[0.035] text-white/50",
-            )}
+            className="sr-only"
           >
-            <span
-              aria-hidden="true"
-              className={cn("h-1.5 w-1.5 shrink-0 rounded-full", availabilityIsBuilding ? "bg-amber-300" : "bg-cyan-300/75")}
-            />
-            <span className="truncate">{availabilityText}</span>
-          </div>
+            {availabilityText}
+          </span>
           {ghostFh !== null ? (
             <span className="shrink-0 text-[11px] font-medium leading-none text-amber-300">
               FH {ghostFh} — not published yet
@@ -693,7 +672,7 @@ export const TimelineTrack = memo(function TimelineTrack({
             <span
               key={tick.ms}
               data-testid="timeline-tick"
-              className="absolute top-0 -translate-x-1/2 whitespace-nowrap font-['IBM_Plex_Mono',monospace] text-[11px] leading-none text-white/35"
+              className="absolute top-0 -translate-x-1/2 whitespace-nowrap font-sans text-[11px] font-medium leading-none tracking-[0.015em] text-white/40"
               style={{ left: pct(fractionForMs(tick.ms)) }}
             >
               {tick.label}

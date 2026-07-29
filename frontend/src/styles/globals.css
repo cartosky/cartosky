@@ -670,6 +670,35 @@
     -webkit-backdrop-filter: blur(16px) saturate(1.8);
   }
 
+  /* Static viewer chrome backdrop (ViewerSiteHeaderFallback). Defaults are
+     the pre-Phase-6 geometry so non-viewer routes are untouched; the viewer
+     opts in via `data-viewer-rail` (index.html boot script + App.tsx). */
+  .viewer-chrome-fallback-row {
+    height: 3.5rem;
+  }
+
+  .viewer-chrome-fallback-logo {
+    height: 3rem;
+  }
+
+  .viewer-chrome-fallback-rail {
+    display: none;
+    top: var(--viewer-topbar-height, 3.5rem);
+    width: var(--viewer-rail-width, 0px);
+  }
+
+  html[data-viewer-rail="on"] .viewer-chrome-fallback-row {
+    height: 3rem;
+  }
+
+  html[data-viewer-rail="on"] .viewer-chrome-fallback-logo {
+    height: 2rem;
+  }
+
+  html[data-viewer-rail="on"] .viewer-chrome-fallback-rail {
+    display: block;
+  }
+
   /* Keep map controls above map overlays, but below top nav menus. */
   .maplibregl-ctrl-top-left,
   .maplibregl-ctrl-top-right,
@@ -680,7 +709,7 @@
 
   /* Offset zoom control below the fixed viewer toolbar. */
   .maplibregl-ctrl-top-left .maplibregl-ctrl {
-    margin: calc(4.5rem + 10px + var(--viewer-header-extra, 0px)) 0 0 0.75rem;
+    margin: calc(var(--viewer-topbar-height, 4.5rem) + 10px + var(--viewer-header-extra, 0px)) 0 0 0.75rem;
   }
 
   .maplibregl-ctrl-top-left .maplibregl-ctrl-group button {
@@ -728,7 +757,7 @@
 
   @media (min-width: 640px) {
     .maplibregl-ctrl-top-left .maplibregl-ctrl {
-      margin: calc(4.5rem + 10px + var(--viewer-header-extra, 0px)) 0 0 1rem;
+      margin: calc(var(--viewer-topbar-height, 4.5rem) + 10px + var(--viewer-header-extra, 0px)) 0 0 1rem;
     }
 
     .maplibregl-ctrl-bottom-left .maplibregl-ctrl-attrib {
