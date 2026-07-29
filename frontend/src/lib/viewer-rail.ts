@@ -27,7 +27,8 @@ export const RAIL_MAP_INSETS_PX = 0;
 
 export type RailBreakpointClass = "wide" | "narrow";
 export type RailState = "expanded" | "collapsed";
-export type RailSection = "source" | "view";
+/** Phase 7 (§6.3 / §7.2): the collapsed rail's third item targets the legend. */
+export type RailSection = "source" | "view" | "legend";
 
 export const RAIL_MODE_STORAGE_KEYS: Record<RailBreakpointClass, string> = {
   wide: "twf.rail.mode.wide",

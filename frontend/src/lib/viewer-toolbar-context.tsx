@@ -4,7 +4,7 @@ import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
 import type { RailBreakpointClass, RailSection, RailState } from "@/lib/viewer-rail";
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import type { GroupedOption } from "@/lib/app-utils";
-import type { LegendPayload } from "@/components/map-legend";
+import type { CompositeLegendLayer, LegendPayload } from "@/components/map-legend";
 import type { EnsembleProductOption } from "@/lib/api";
 
 type Option = { value: string; label: string };
@@ -71,6 +71,11 @@ export type ViewerToolbarProps = {
   onDisplayPanelOpenChange: (next: boolean) => void;
   // Legend
   legend: LegendPayload | null;
+  /**
+   * Phase 7 (§7.1 decision 5): component-layer legends for composite products,
+   * built from grid manifests App.tsx has already fetched. Never a new request.
+   */
+  compositeLegendLayers?: CompositeLegendLayer[];
   // Compare
   compareHref?: string;
   // Share

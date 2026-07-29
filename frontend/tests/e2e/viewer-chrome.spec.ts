@@ -16,9 +16,20 @@
  *   [data-testid="rail-availability"]             §5.4 truthful availability line
  *   [data-testid="rail-region-value"]             region display name as text
  *   [data-testid="rail-opacity-value"]            opacity % readout
- *   [data-legend-mount="rail"]                    reserved Phase 7 legend mount
- *   [data-testid="rail-collapsed-source"|"rail-collapsed-view"]  collapsed items
+ *   [data-legend-mount="rail"]                    Phase 7 legend mount
+ *   [data-testid="rail-collapsed-source"|"rail-collapsed-view"|"rail-collapsed-legend"]
+ *                                                 collapsed items (§6.3 + §7.2)
+ *   [data-testid="compact-legend-chip"]           §7.2 collapsed-state legend
  *   [data-testid="rail-collapse-toggle"|"rail-expand-toggle"]    width toggle
+ *
+ * PHASE 7 RE-POINT (2026-07-29, Phase 7 plan Task 5a). The collapsed-state
+ * legend assertion in test 3 moved from the Phase 6 interim floating full
+ * `MapLegend` portal to the §7.2 compact chip, which is now what satisfies
+ * §6.3's "the legend survives the collapse" — §6.3 forward-references §7.2 for
+ * exactly this. The assertion is re-pointed at `compact-legend-chip` by test id
+ * rather than by the shared `role="complementary"` name (the chip carries the
+ * same role/label, so a role-only assertion would pass without testing the real
+ * contract). The collapsed rail also gained its third item, `Legend`.
  */
 import { test, expect, type Page } from '@playwright/test';
 
@@ -312,7 +323,7 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
   });
 
   // ── 3. Rail collapsed ─────────────────────────────────────────────────────
-  test('collapsed rail (1200×800) shows captioned icons, expands to a section, keeps the map legend', async ({ page }) => {
+  test('collapsed rail (1200×800) shows three captioned icons, expands to a section, keeps the legend via the compact chip', async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 800 });
     await openViewer(page);
 
@@ -320,8 +331,11 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     await expect(rail).toHaveAttribute('data-rail-state', 'collapsed');
     expect(await railWidth(page)).toBe(RAIL_COLLAPSED_PX);
 
+    // §6.3 + §7.2: exactly three items — Source / View / Legend.
+    await expect(rail.getByTestId('rail-collapsed-caption')).toHaveText(['Source', 'View', 'Legend']);
+
     // Icon + ≥11 px caption per section (§6.3 / §2.2).
-    for (const testId of ['rail-collapsed-source', 'rail-collapsed-view']) {
+    for (const testId of ['rail-collapsed-source', 'rail-collapsed-view', 'rail-collapsed-legend']) {
       const caption = page.getByTestId(testId).getByTestId('rail-collapsed-caption');
       await expect(caption).toBeVisible();
       const fontSize = await caption.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
@@ -329,11 +343,28 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     }
     await expect(page.getByTestId('rail-collapsed-source').getByTestId('rail-collapsed-caption')).toHaveText('Source');
     await expect(page.getByTestId('rail-collapsed-view').getByTestId('rail-collapsed-caption')).toHaveText('View');
+    await expect(page.getByTestId('rail-collapsed-legend').getByTestId('rail-collapsed-caption')).toHaveText('Legend');
 
-    // §6.3: the current map legend survives the collapse.
-    await expect(page.getByRole('complementary', { name: 'Map legend' })).toBeVisible();
-    const legendBox = await page.getByRole('complementary', { name: 'Map legend' }).boundingBox();
+    // §6.3 via §7.2: the legend survives the collapse as the compact chip.
+    // Re-pointed by test id, not by role/name — the chip carries the same
+    // `complementary`/"Map legend" pair, so a role-only assertion would pass
+    // without proving the chip is what renders.
+    const chip = page.getByTestId('compact-legend-chip');
+    await expect(chip).toBeVisible({ timeout: 20_000 });
+    const legendBox = await chip.boundingBox();
     expect(legendBox!.x).toBeGreaterThan(RAIL_COLLAPSED_PX);
+    // §7.3 exclusion marker — a future DOM-rasterizing capture fails loudly.
+    await expect(chip).toHaveAttribute('data-export-exclude', 'legend-chip');
+    // The tmp2m fixture is a continuous legend: mini gradient + endpoints/units.
+    await expect(chip.locator('[data-testid="legend-presentation"]')).toHaveAttribute(
+      'data-legend-mode',
+      'continuous',
+      { timeout: 20_000 },
+    );
+    await expect(chip.getByTestId('legend-gradient')).toBeVisible();
+    await expect(chip.getByTestId('compact-legend-chip-toggle')).toBeVisible();
+    // Never a floating full legend behind the chip in the collapsed state.
+    await expect(page.locator('[data-legend-mount="rail"] [data-testid="legend-presentation"]')).toHaveCount(0);
 
     // Clicking a caption expands scrolled to that section.
     await page.getByTestId('rail-collapsed-view').click();
@@ -453,7 +484,7 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
         const box = await locator.boundingBox();
         return box ? Math.min(box.width, box.height) : 0;
       };
-      for (const testId of ['rail-collapsed-source', 'rail-collapsed-view', 'rail-expand-toggle']) {
+      for (const testId of ['rail-collapsed-source', 'rail-collapsed-view', 'rail-collapsed-legend', 'rail-expand-toggle']) {
         expect(await measure(page.getByTestId(testId)), `${testId} min side`).toBeGreaterThanOrEqual(44);
       }
       expect(

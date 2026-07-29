@@ -2139,6 +2139,22 @@ export default function App() {
       && (presentedGridFrameUrl || compositeGridLayers.length > 0)
     );
   }, [compositeGridLayers.length, gridManifest, presentedGridFrameUrl, selectedGridLod]);
+  /**
+   * Phase 7 (§7.1 decision 5): per-layer legends for composite products, taken
+   * from grid manifests already fetched for rendering. No new request fan-out.
+   */
+  const compositeLegendLayers = useMemo(() => {
+    if (!isGridLowMidActive) {
+      return [] as Array<{ id: string; label: string; legend: LegendPayload | null }>;
+    }
+    return compositeGridLayers
+      .filter((layer) => layer.legend)
+      .map((layer) => ({
+        id: layer.id,
+        label: layer.manifest?.display_name ?? layer.legend?.title ?? layer.id,
+        legend: layer.legend,
+      }));
+  }, [compositeGridLayers, isGridLowMidActive]);
   const idleWarmupReadyRatio = useMemo(() => {
     if (gridFrameHours.length === 0) {
       return 1;
@@ -6041,6 +6057,7 @@ export default function App() {
     displayPanelOpen,
     onDisplayPanelOpenChange: setDisplayPanelOpen,
     legend,
+    compositeLegendLayers,
     compareHref,
     onShare: handleOpenShareModal,
     onFeedback: openFeedback,
@@ -6069,6 +6086,7 @@ export default function App() {
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
     pointLabelsEnabled, nwsWarningsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
     legendPopoverOpen, displayPanelOpen, compareHref, handleOpenShareModal, viewerLayoutMode, legend,
+    compositeLegendLayers,
     telemetryRunId, forecastHour, mobileControlsOpen, replayTour, openFeedback,
     rail, selectedTimeAxisMode, controlAvailableFrameHours, manifestReadyThroughFh,
     manifestExpectedMaxFh, runManifest,

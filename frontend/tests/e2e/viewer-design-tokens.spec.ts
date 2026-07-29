@@ -24,6 +24,18 @@
  * rail (11 px captions, ≥44 coarse items) and the overflow menu. The tablet
  * header-wrap geometry test becomes rail-at-tablet geometry: ≥768 now renders
  * bar + rail, NOT the mobile sheet (the mobile threshold moved 639 → 767).
+ *
+ * PHASE 7 EXTENSION (2026-07-29, Phase 7 plan Task 5b). Two states join the
+ * matrix, both new surfaces rather than re-points:
+ *   legend-chip           the §7.2 compact map-corner chip that now serves the
+ *                         collapsed rail (it replaced the Phase 6 interim
+ *                         floating full legend, which the `rail-collapsed`
+ *                         state audited only incidentally)
+ *   legend-chip-expanded  the chip's in-place expanded panel (full inline
+ *                         legend), reachable from no other surface
+ * and `rail-collapsed` now carries the third rail item (`rail-collapsed-legend`,
+ * §6.3). Thresholds are unchanged: ≥32 fine / ≥44 coarse targets, ≥11 px type
+ * floor, exhaustive focus walk with the cyan outline token.
  */
 import { test, expect, type Page } from '@playwright/test';
 
@@ -183,11 +195,39 @@ const DESKTOP_SURFACES: Surface[] = [
     },
   },
   {
-    // New in Phase 6 (§6.3): the 72 px rail — expand chevron plus icon+caption
-    // Source/View items — and the floating map legend that still serves it.
+    // New in Phase 6 (§6.3), extended in Phase 7: the 72 px rail — expand
+    // chevron plus icon+caption Source/View/**Legend** items.
     name: 'rail-collapsed',
-    setup: collapseRail,
-    teardown: expandRail,
+    setup: async (page) => {
+      await collapseRail(page);
+      await expect(page.getByTestId('rail-collapsed-legend')).toBeVisible();
+    },
+    // Left collapsed for the two chip surfaces below; `legend-chip-expanded`
+    // restores the expanded rail at the end of the matrix.
+  },
+  {
+    // New in Phase 7 (§7.2): the compact map-corner chip that serves the
+    // collapsed rail. It replaced the Phase 6 interim floating full legend.
+    name: 'legend-chip',
+    setup: async (page) => {
+      const chip = page.getByTestId('compact-legend-chip');
+      await expect(chip).toBeVisible({ timeout: 20_000 });
+      await expect(chip.getByTestId('compact-legend-chip-toggle')).toBeVisible();
+    },
+  },
+  {
+    // New in Phase 7 (§7.2 decision 3): the chip expanded in place into the
+    // full inline legend — a surface reachable from nowhere else.
+    name: 'legend-chip-expanded',
+    setup: async (page) => {
+      await page.getByTestId('compact-legend-chip').getByTestId('compact-legend-chip-toggle').click();
+      await expect(page.getByTestId('compact-legend-chip-panel')).toBeVisible();
+    },
+    teardown: async (page) => {
+      await page.getByTestId('compact-legend-chip').getByTestId('compact-legend-chip-toggle').click();
+      await expect(page.getByTestId('compact-legend-chip-panel')).toBeHidden();
+      await expandRail(page);
+    },
   },
 ];
 
@@ -380,7 +420,7 @@ test.describe('Viewer design tokens (Phase 4)', () => {
     test.use({ viewport: { width: 1440, height: 900 } });
 
     test('every interactive element is at least 32x32 across all surfaces', async ({ page }) => {
-      test.slow(); // 11-surface matrix (Phase 6 added the collapsed rail, overflow menu and attribution dialog).
+      test.slow(); // 13-surface matrix (Phase 7 added the compact chip and its expanded panel).
       await openViewer(page);
       const violations = await runSurfaces(page, (p, s) => auditTargets(p, s, 32));
       expect(violations, formatViolations(violations)).toEqual([]);
@@ -489,7 +529,7 @@ test.describe('Viewer design tokens (Phase 4)', () => {
     });
 
     test('every tabbable element shows the focus ring token; mouse focus does not', async ({ page }) => {
-      test.slow(); // exhaustive Tab-walk × 11 surfaces.
+      test.slow(); // exhaustive Tab-walk × 13 surfaces.
       await openViewer(page);
       const violations = await runSurfaces(page, (p, s) => auditFocus(p, s));
       expect(violations, formatViolations(violations)).toEqual([]);
@@ -538,12 +578,15 @@ test.describe('Viewer design tokens (Phase 4)', () => {
           expandToggle: measure('rail-expand-toggle'),
           source: measure('rail-collapsed-source'),
           view: measure('rail-collapsed-view'),
+          legend: measure('rail-collapsed-legend'),
+          chipToggle: measure('compact-legend-chip-toggle'),
           captions,
         };
       });
 
       expect(geometry.railWidth).toBe(RAIL_COLLAPSED_PX);
-      expect(geometry.captions.map((c) => c.text)).toEqual(['Source', 'View']);
+      // Phase 7 (§6.3): the third rail item joined Source and View.
+      expect(geometry.captions.map((c) => c.text)).toEqual(['Source', 'View', 'Legend']);
       for (const caption of geometry.captions) {
         expect(caption.fontSize, `collapsed caption "${caption.text}" is ${caption.fontSize}px`).toBeGreaterThanOrEqual(11);
       }
@@ -551,18 +594,31 @@ test.describe('Viewer design tokens (Phase 4)', () => {
         ['rail-expand-toggle', geometry.expandToggle],
         ['rail-collapsed-source', geometry.source],
         ['rail-collapsed-view', geometry.view],
+        ['rail-collapsed-legend', geometry.legend],
+        // The §7.2 chip serves this state; its toggle is a first-class target.
+        ['compact-legend-chip-toggle', geometry.chipToggle],
       ] as const) {
         expect(box, `${name} missing`).not.toBeNull();
         expect(Math.min(box!.width, box!.height), `${name} min side ${JSON.stringify(box)} < 32`).toBeGreaterThanOrEqual(32);
       }
 
-      // Full audits over the default-collapsed state.
+      // Full audits over the default-collapsed state (chip included).
       const targets = await auditTargets(page, 'collapsed-default', 32);
       expect(targets, formatViolations(targets)).toEqual([]);
       const type = await auditTypeFloor(page, 'collapsed-default', 11);
       expect(type, formatViolations(type)).toEqual([]);
       const focus = await auditFocus(page, 'collapsed-default');
       expect(focus, formatViolations(focus)).toEqual([]);
+
+      // …and over the chip expanded in place into the full inline legend.
+      await page.getByTestId('compact-legend-chip').getByTestId('compact-legend-chip-toggle').click();
+      await expect(page.getByTestId('compact-legend-chip-panel')).toBeVisible();
+      const panelTargets = await auditTargets(page, 'collapsed-chip-expanded', 32);
+      expect(panelTargets, formatViolations(panelTargets)).toEqual([]);
+      const panelType = await auditTypeFloor(page, 'collapsed-chip-expanded', 11);
+      expect(panelType, formatViolations(panelType)).toEqual([]);
+      const panelFocus = await auditFocus(page, 'collapsed-chip-expanded');
+      expect(panelFocus, formatViolations(panelFocus)).toEqual([]);
     });
   });
 
@@ -590,6 +646,11 @@ test.describe('Viewer design tokens (Phase 4)', () => {
 
     test('every interactive element is at least 44x44 across all surfaces', async ({ page }) => {
       test.slow();
+      // The legend follows the existing `twf.map.legend_visible` preference,
+      // whose default is OFF on non-desktop layouts (use-display-settings.ts).
+      // Opt in explicitly so the Phase 7 chip surfaces exist under the coarse
+      // regime too, rather than silently dropping them from the matrix.
+      await page.addInitScript(() => localStorage.setItem('twf.map.legend_visible', 'true'));
       await openViewer(page);
       const violations = await runSurfaces(page, (p, s) => auditTargets(p, s, 44));
       expect(violations, formatViolations(violations)).toEqual([]);

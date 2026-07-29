@@ -2,31 +2,34 @@ import { useEffect, useRef, useState, type Ref } from "react";
 import { AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import {
+  formatValue,
+  rampEndpointsLabel,
+  resolveLegendPresentation,
+  sharedScaleTicks,
+  swatchSummaryLabel,
+  type CompositeLegendLayer,
+  type LegendPresentation,
+  type LegendRamp,
+  type LegendSharedScale,
+  type LegendSwatchRow,
+} from "@/lib/legend-model";
 
-export type LegendEntry = {
-  value: number;
-  color: string;
-  label?: string;
-};
+export type { LegendEntry, LegendPayload, CompositeLegendLayer } from "@/lib/legend-model";
 
-export type LegendPayload = {
-  title: string;
-  units?: string;
-  kind?: string;
-  id?: string;
-  note?: string;
-  ptype_breaks?: Record<string, { offset: number; count: number }>;
-  ptype_order?: string[];
-  bins_per_ptype?: number;
-  entries: LegendEntry[];
-  opacity: number;
-};
+import type { LegendPayload } from "@/lib/legend-model";
 
-function formatValue(value: number): string {
-  if (Number.isInteger(value)) return value.toString();
-  if (Math.abs(value) < 0.1) return value.toFixed(2);
-  return value.toFixed(1);
-}
+/**
+ * Phase 7 (§7.1 / §7.2): this component is the *rendering* of the legend
+ * model; every branch selection, every number and every ramp comes from
+ * `resolveLegendPresentation`. The compact chip renders the same model through
+ * `LegendPresentationBody` with `variant="compact"`, so the two surfaces can
+ * never disagree about what a product's legend says.
+ */
+
+const LEGEND_COLLAPSED_STORAGE_KEY = "twf.legend.collapsed";
+/** Above this many swatches the compact form summarizes instead of listing. */
+const COMPACT_SWATCH_LIST_MAX = 4;
 
 function formatLegendTitle(title: string, units?: string): string {
   const resolvedUnits = (units ?? "").trim();
@@ -41,6 +44,24 @@ function formatLegendTitle(title: string, units?: string): string {
   return `${title} (${resolvedUnits})`;
 }
 
+export function splitLegendTitle(title: string, units?: string): { title: string; unitsSuffix: string | null } {
+  const formattedTitle = formatLegendTitle(title, units);
+  const resolvedUnits = (units ?? "").trim();
+  if (!resolvedUnits) {
+    return { title: formattedTitle, unitsSuffix: null };
+  }
+
+  const unitsSuffix = `(${resolvedUnits})`;
+  if (!formattedTitle.endsWith(unitsSuffix)) {
+    return { title: formattedTitle, unitsSuffix: null };
+  }
+
+  return {
+    title: formattedTitle.slice(0, -unitsSuffix.length).trimEnd(),
+    unitsSuffix,
+  };
+}
+
 function UnavailablePlaceholder() {
   return (
     <div className="flex items-center gap-1.5 rounded-xl glass px-2.5 py-2">
@@ -48,37 +69,6 @@ function UnavailablePlaceholder() {
       <span className="text-xs font-medium text-muted-foreground/80">Legend unavailable</span>
     </div>
   );
-}
-
-const RADAR_GROUP_LABELS = ["Rain", "Snow", "Sleet", "Freezing Rain"];
-const DEFAULT_PTYPE_ORDER = ["rain", "snow", "sleet", "frzr"];
-const LEGEND_COLLAPSED_STORAGE_KEY = "twf.legend.collapsed";
-
-type RadarLegendGroup = {
-  label: string;
-  entries: LegendEntry[];
-};
-
-type PtypeIntensityLegendRow = {
-  label: string;
-  min: number;
-  max: number;
-  colors: string[];
-};
-
-type RadarLegendRow = {
-  label: string;
-  colors: string[];
-};
-
-function radarGroupLabelForCode(code: string, index: number): string {
-  const normalized = code.toLowerCase();
-  if (normalized === "rain") return "Rain";
-  if (normalized === "snow") return "Snow";
-  if (normalized === "sleet") return "Sleet";
-  if (normalized === "ice") return "Ice";
-  if (normalized === "frzr") return "Freezing Rain";
-  return RADAR_GROUP_LABELS[index] ?? `Type ${index + 1}`;
 }
 
 function readCollapsedPreference(): boolean {
@@ -101,121 +91,65 @@ function writeCollapsedPreference(value: boolean): void {
   }
 }
 
-function isRadarPtypeLegend(legend: LegendPayload): boolean {
-  const kind = legend.kind?.toLowerCase() ?? "";
-  const id = legend.id?.toLowerCase() ?? "";
-  return (
-    kind.includes("radar_ptype") ||
-    kind.includes("radar_ptype_combo") ||
-    id.includes("radar") ||
-    id === "radar_ptype"
-  );
+function rampBackground(colors: string[]): { backgroundImage?: string; backgroundColor?: string } {
+  if (colors.length === 0) return {};
+  if (colors.length === 1) return { backgroundColor: colors[0] };
+  return { backgroundImage: `linear-gradient(to right, ${colors.join(", ")})` };
 }
 
-function isPtypeIntensityLegend(legend: LegendPayload): boolean {
-  const id = legend.id?.toLowerCase() ?? "";
-  return id === "ptype_intensity";
-}
+// ── Continuous ─────────────────────────────────────────────────────────────
 
-function isCategoricalLegend(legend: LegendPayload): boolean {
-  const kind = legend.kind?.toLowerCase() ?? "";
-  if (kind === "categorical") {
-    return true;
+function ContinuousBody({
+  presentation,
+  compact,
+}: {
+  presentation: Extract<LegendPresentation, { mode: "continuous" }>;
+  compact: boolean;
+}) {
+  const { entries, gradientStops, ticks } = presentation;
+  const gradientStyle =
+    entries.length === 1
+      ? { backgroundColor: entries[0]?.color }
+      : { backgroundImage: `linear-gradient(to right, ${gradientStops})` };
+
+  if (compact) {
+    const first = entries[0];
+    const last = entries[entries.length - 1];
+    return (
+      <div className="flex flex-col gap-1">
+        <div
+          data-testid="legend-gradient"
+          className="h-2.5 rounded-[5px] ring-1 ring-inset ring-white/12"
+          style={gradientStyle}
+        />
+        <div className="flex items-center justify-between font-mono text-[11px] font-semibold leading-none tabular-nums text-foreground/90">
+          <span>{first ? formatValue(first.value) : ""}</span>
+          <span>{last ? formatValue(last.value) : ""}</span>
+        </div>
+      </div>
+    );
   }
-  return legend.entries.length > 0 && legend.entries.every((entry) => typeof entry.label === "string" && entry.label.trim().length > 0);
-}
-
-function buildDenseLegendTicks(entries: LegendEntry[], targetCount = 6): LegendEntry[] {
-  const displayed = entries;
-  if (displayed.length === 0) return [];
-
-  const lastIndex = displayed.length - 1;
-  const indices = Array.from({ length: targetCount }, (_, index) => {
-    const ratio = targetCount === 1 ? 0 : index / (targetCount - 1);
-    return Math.round(ratio * lastIndex);
-  }).filter((value, index, arr) => index === 0 || value !== arr[index - 1]);
-
-  return indices.map((index) => displayed[index]);
-}
-
-function sortLegendEntriesAscending(entries: LegendEntry[]): LegendEntry[] {
-  return entries
-    .map((entry, index) => ({ entry, index }))
-    .sort((left, right) => {
-      const byValue = left.entry.value - right.entry.value;
-      return byValue !== 0 ? byValue : left.index - right.index;
-    })
-    .map(({ entry }) => entry);
-}
-
-function formatDenseTickValue(value: number): string {
-  const absValue = Math.abs(value);
-  // For small values, preserve actual precision rather than collapsing to "0"
-  if (absValue < 1) {
-    return formatValue(value);
-  }
-  if (absValue >= 20) {
-    return formatValue(Math.round(value / 10) * 10);
-  }
-  if (absValue >= 5) {
-    return formatValue(Math.round(value / 5) * 5);
-  }
-  return formatValue(Math.round(value));
-}
-
-function splitLegendTitle(title: string, units?: string): { title: string; unitsSuffix: string | null } {
-  const formattedTitle = formatLegendTitle(title, units);
-  const resolvedUnits = (units ?? "").trim();
-  if (!resolvedUnits) {
-    return { title: formattedTitle, unitsSuffix: null };
-  }
-
-  const unitsSuffix = `(${resolvedUnits})`;
-  if (!formattedTitle.endsWith(unitsSuffix)) {
-    return { title: formattedTitle, unitsSuffix: null };
-  }
-
-  return {
-    title: formattedTitle.slice(0, -unitsSuffix.length).trimEnd(),
-    unitsSuffix,
-  };
-}
-
-function HorizontalGradientLegend({ entries }: { entries: LegendEntry[] }) {
-  const displayed = sortLegendEntriesAscending(entries);
-  const ticks = buildDenseLegendTicks(displayed, 6)
-    .map((tick) => displayed.findIndex((e) => e === tick))
-    .filter((i) => i !== -1)
-    .map((i) => ({ entry: displayed[i]!, displayedIndex: i }));
-  const stopCount = Math.max(displayed.length - 1, 1);
-  const gradientStops = displayed
-    .map((entry, index) => `${entry.color} ${(index / stopCount) * 100}%`)
-    .join(", ");
 
   return (
     <div className="px-0.5 py-1.5">
       <div className="rounded-[14px] bg-black/14 p-[3px] ring-1 ring-inset ring-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_6px_16px_rgba(0,0,0,0.18)]">
         <div
+          data-testid="legend-gradient"
           className="h-3 rounded-[7px] shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]"
-          style={{
-            backgroundImage:
-              displayed.length === 1 ? undefined : `linear-gradient(to right, ${gradientStops})`,
-            backgroundColor: displayed.length === 1 ? displayed[0]?.color : undefined,
-          }}
+          style={gradientStyle}
         />
       </div>
       {/* Tick marks */}
       <div className="relative mt-[3px] h-[5px]">
-        {ticks.map(({ entry, displayedIndex }, index) => {
-          const offset = stopCount === 0 ? 0 : (displayedIndex / stopCount) * 100;
+        {ticks.map((tick, index) => {
           const isFirst = index === 0;
           const isLast = index === ticks.length - 1;
           return (
             <div
-              key={`tick-${entry.value}-${index}`}
+              key={`tick-${tick.value}-${index}`}
               className="absolute top-0 h-full w-px bg-white/40"
               style={{
-                left: `${offset}%`,
+                left: `${tick.offsetPercent}%`,
                 transform: isFirst ? "none" : isLast ? "translateX(-100%)" : "translateX(-50%)",
               }}
             />
@@ -224,21 +158,23 @@ function HorizontalGradientLegend({ entries }: { entries: LegendEntry[] }) {
       </div>
       {/* Tick labels */}
       <div className="relative mt-0.5 h-4">
-        {ticks.map(({ entry, displayedIndex }, index) => {
-          const offset = stopCount === 0 ? 0 : (displayedIndex / stopCount) * 100;
+        {ticks.map((tick, index) => {
           const isFirst = index === 0;
           const isLast = index === ticks.length - 1;
           return (
             <div
-              key={`label-${entry.value}-${index}`}
+              key={`label-${tick.value}-${index}`}
               className="absolute top-0"
               style={{
-                left: `${offset}%`,
+                left: `${tick.offsetPercent}%`,
                 transform: isFirst ? "none" : isLast ? "translateX(-100%)" : "translateX(-50%)",
               }}
             >
-              <span className="font-mono text-[11px] font-semibold leading-none tabular-nums tracking-tight text-foreground/95 whitespace-nowrap">
-                {formatDenseTickValue(entry.value)}
+              <span
+                data-testid="legend-tick"
+                className="font-mono text-[11px] font-semibold leading-none tabular-nums tracking-tight text-foreground/95 whitespace-nowrap"
+              >
+                {tick.label}
               </span>
             </div>
           );
@@ -248,176 +184,255 @@ function HorizontalGradientLegend({ entries }: { entries: LegendEntry[] }) {
   );
 }
 
-function CategoricalLegendEntries({ entries }: { entries: LegendEntry[] }) {
+// ── Swatch kinds (discrete / categorical / indexed) ─────────────────────────
+
+function SwatchRow({ row }: { row: LegendSwatchRow }) {
   return (
-    <div className="legend-scroll max-h-[45vh] space-y-px overflow-y-auto scroll-smooth">
-      {entries.slice().reverse().map((entry, index) => (
+    <div
+      data-testid="legend-swatch-row"
+      className="flex items-center gap-1.5 rounded-[2px] px-0.5 py-0.5 transition-colors duration-150"
+    >
+      <div
+        className="h-3 w-3 shrink-0 rounded-[2px] border border-border/30 shadow-sm"
+        style={{ backgroundColor: row.color }}
+      />
+      <span className="text-[11px] font-medium leading-none tracking-tight text-foreground/95">
+        {row.label}
+      </span>
+      {row.value !== undefined ? (
+        <span
+          data-testid="legend-swatch-value"
+          className="ml-auto font-mono text-[11px] font-medium leading-none tabular-nums text-foreground/72"
+        >
+          {formatValue(row.value)}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function SwatchBody({
+  presentation,
+  compact,
+}: {
+  presentation: Extract<LegendPresentation, { mode: "discrete" | "categorical" | "indexed" }>;
+  compact: boolean;
+}) {
+  const { rows, mode } = presentation;
+
+  // §7.2: a truthful summary count, never a silent truncation.
+  if (compact && rows.length > COMPACT_SWATCH_LIST_MAX) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <div className="flex h-2.5 flex-1 overflow-hidden rounded-[5px] ring-1 ring-inset ring-white/12">
+          {rows
+            .slice()
+            .reverse()
+            .map((row, index) => (
+              <div key={`${row.color}-${index}`} className="h-full flex-1" style={{ backgroundColor: row.color }} />
+            ))}
+        </div>
+        <span
+          data-testid="legend-summary-count"
+          className="shrink-0 text-[11px] font-medium leading-none text-foreground/80"
+        >
+          {swatchSummaryLabel(mode, rows.length)}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("space-y-px", compact ? "" : "legend-scroll max-h-[45vh] overflow-y-auto scroll-smooth")}>
+      {rows.map((row, index) => (
+        <SwatchRow key={`${row.label}-${row.color}-${index}`} row={row} />
+      ))}
+    </div>
+  );
+}
+
+// ── Precipitation-type modes ───────────────────────────────────────────────
+
+function SharedScaleRow({ scale, compact }: { scale: LegendSharedScale; compact: boolean }) {
+  const ticks = sharedScaleTicks(scale, compact ? 4 : 6);
+  return (
+    <div
+      data-testid="legend-shared-scale"
+      className={cn(
+        "flex items-center justify-between gap-1 font-mono text-[11px] font-semibold leading-none tabular-nums text-foreground/88",
+        compact ? "mt-1" : "mt-2 border-t border-border/18 pt-1.5",
+      )}
+    >
+      {ticks.map((value, index) => (
+        <span key={`shared-${value}-${index}`}>{formatValue(value)}</span>
+      ))}
+      {scale.units ? <span className="text-foreground/62">{scale.units}</span> : null}
+    </div>
+  );
+}
+
+function RampRow({
+  ramp,
+  units,
+  showEndpoints,
+  showAdjuncts,
+  compact,
+  isFirst,
+}: {
+  ramp: LegendRamp;
+  units?: string;
+  showEndpoints: boolean;
+  showAdjuncts: boolean;
+  compact: boolean;
+  isFirst: boolean;
+}) {
+  const endpoints = showEndpoints ? rampEndpointsLabel(ramp, units) : null;
+  return (
+    <div
+      data-testid="legend-ramp"
+      data-ramp-key={ramp.key}
+      className={cn(compact ? (isFirst ? "" : "mt-1.5") : isFirst ? "" : "mt-2 border-t border-border/18 pt-2")}
+    >
+      <div className="mb-1 flex items-center justify-between gap-2 px-0.5">
+        <span
+          data-testid="legend-ramp-label"
+          className={cn(
+            "font-medium uppercase tracking-[0.08em] text-foreground/72",
+            compact ? "text-[11px] leading-none" : "text-[12px]",
+          )}
+        >
+          {ramp.label}
+        </span>
+        {endpoints ? (
+          <span
+            data-testid="legend-ramp-endpoints"
+            className="shrink-0 font-mono text-[11px] font-medium leading-none tabular-nums text-foreground/90"
+          >
+            {endpoints}
+          </span>
+        ) : null}
+      </div>
+      <div
+        className={cn(
+          "rounded-[5px] ring-1 ring-inset ring-white/10",
+          compact ? "h-2.5" : "h-3",
+        )}
+        style={rampBackground(ramp.colors)}
+      />
+      {showAdjuncts ? (
+        <div className="mt-1 flex items-center justify-between px-0.5 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-foreground/58">
+          <span>Light</span>
+          <span>Heavy</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PtypeBody({
+  presentation,
+  compact,
+  tight,
+}: {
+  presentation: Extract<LegendPresentation, { mode: "ptype-intensity" | "radar-ptype" }>;
+  compact: boolean;
+  /** §7.2 width pressure: drop the repeated break labels, never a ramp. */
+  tight: boolean;
+}) {
+  const { ramps, sharedScale, units } = presentation;
+  // The shared ladder already carries the numbers; repeating them per ramp
+  // would be noise, and under width pressure the repetition goes first.
+  const showEndpoints = !sharedScale && !tight;
+  return (
+    <div>
+      {ramps.map((ramp, index) => (
+        <RampRow
+          key={`${ramp.key}-${index}`}
+          ramp={ramp}
+          units={units}
+          showEndpoints={showEndpoints}
+          showAdjuncts={!compact && presentation.mode === "radar-ptype"}
+          compact={compact}
+          isFirst={index === 0}
+        />
+      ))}
+      {sharedScale ? <SharedScaleRow scale={sharedScale} compact={compact} /> : null}
+    </div>
+  );
+}
+
+// ── Composite groups ───────────────────────────────────────────────────────
+
+function CompositeBody({
+  presentation,
+  compact,
+  tight,
+}: {
+  presentation: Extract<LegendPresentation, { mode: "composite-group" }>;
+  compact: boolean;
+  tight: boolean;
+}) {
+  return (
+    <div className={compact ? "space-y-1.5" : "space-y-2"}>
+      {presentation.groups.map((group, index) => (
         <div
-          key={`${entry.value}-${entry.color}-${index}`}
-          className="flex items-center gap-1.5 rounded-[2px] px-0.5 py-0.5 transition-colors duration-150"
+          key={`${group.layerLabel}-${index}`}
+          data-testid="legend-group"
+          className={cn(index > 0 && !compact ? "border-t border-border/18 pt-2" : "")}
         >
           <div
-            className="h-3 w-3 shrink-0 rounded-[2px] border border-border/30 shadow-sm"
-            style={{ backgroundColor: entry.color }}
-          />
-          <span
-            className={
-              entry.label
-                ? "text-[11px] font-medium leading-none tracking-tight text-foreground/95"
-                : "font-mono text-[11px] font-medium leading-none tabular-nums tracking-tight text-foreground/95"
-            }
+            data-testid="legend-group-label"
+            className={cn(
+              "mb-1 px-0.5 font-medium tracking-[0.02em] text-foreground/78",
+              compact ? "text-[11px] leading-none" : "text-[12px]",
+            )}
           >
-            {entry.label?.trim() || formatValue(entry.value)}
-          </span>
+            {group.layerLabel}
+          </div>
+          <LegendPresentationBody
+            presentation={group.presentation}
+            variant={compact ? "compact" : "full"}
+            tight={tight}
+          />
         </div>
       ))}
     </div>
   );
 }
 
-function groupRadarEntries(
-  entries: LegendEntry[],
-  ptypeBreaks?: Record<string, { offset: number; count: number }>,
-  ptypeOrder?: string[]
-): RadarLegendGroup[] {
-  const isZero = (value: number) => Math.abs(value) < 1e-9;
+// ── Shared body renderer ───────────────────────────────────────────────────
 
-  if (ptypeBreaks) {
-    const orderedTypes = (Array.isArray(ptypeOrder) && ptypeOrder.length > 0 ? ptypeOrder : DEFAULT_PTYPE_ORDER).filter(
-      (ptype) => ptypeBreaks[ptype]
-    );
-    const groupedByMeta: RadarLegendGroup[] = [];
-
-    for (let index = 0; index < orderedTypes.length; index += 1) {
-      const ptype = orderedTypes[index];
-      const boundary = ptypeBreaks[ptype];
-      if (!boundary) continue;
-      const offset = Number(boundary.offset);
-      const count = Number(boundary.count);
-      if (!Number.isFinite(offset) || !Number.isFinite(count) || offset < 0 || count <= 0) {
-        continue;
-      }
-      const slice = entries.slice(offset, offset + count);
-      if (slice.length === 0) continue;
-      groupedByMeta.push({
-        label: radarGroupLabelForCode(ptype, index),
-        entries: slice,
-      });
+export function LegendPresentationBody({
+  presentation,
+  variant = "full",
+  tight = false,
+}: {
+  presentation: LegendPresentation;
+  variant?: "full" | "compact";
+  tight?: boolean;
+}) {
+  const compact = variant === "compact";
+  const body = (() => {
+    switch (presentation.mode) {
+      case "continuous":
+        return <ContinuousBody presentation={presentation} compact={compact} />;
+      case "ptype-intensity":
+      case "radar-ptype":
+        return <PtypeBody presentation={presentation} compact={compact} tight={tight} />;
+      case "composite-group":
+        return <CompositeBody presentation={presentation} compact={compact} tight={tight} />;
+      default:
+        return <SwatchBody presentation={presentation} compact={compact} />;
     }
-
-    if (groupedByMeta.length > 0) {
-      return groupedByMeta;
-    }
-  }
-
-  // Fallback: split sequence on zero-value delimiters in native order.
-  // Reversing here flips group labels (rain↔frzr, snow↔sleet) when
-  // sidecars don't provide ptype metadata.
-  const displayed = entries.slice();
-  const fallbackGroups: RadarLegendGroup[] = [];
-  let current: LegendEntry[] = [];
-
-  for (const entry of displayed) {
-    if (isZero(entry.value)) {
-      if (current.length > 0) {
-        fallbackGroups.push({
-          label: RADAR_GROUP_LABELS[fallbackGroups.length] ?? `Type ${fallbackGroups.length + 1}`,
-          entries: current,
-        });
-        current = [];
-      }
-      continue;
-    }
-    current.push(entry);
-  }
-
-  if (current.length > 0) {
-    fallbackGroups.push({
-      label: RADAR_GROUP_LABELS[fallbackGroups.length] ?? `Type ${fallbackGroups.length + 1}`,
-      entries: current,
-    });
-  }
-
-  return fallbackGroups;
-}
-
-function groupPtypeIntensityRows(
-  entries: LegendEntry[],
-  ptypeBreaks?: Record<string, { offset: number; count: number }>,
-  ptypeOrder?: string[]
-): PtypeIntensityLegendRow[] {
-  if (!ptypeBreaks) return [];
-  const orderedTypes = (Array.isArray(ptypeOrder) && ptypeOrder.length > 0 ? ptypeOrder : []).filter(
-    (ptype) => ptypeBreaks[ptype]
-  );
-  if (orderedTypes.length === 0) return [];
-
-  const rows: PtypeIntensityLegendRow[] = [];
-  for (let index = 0; index < orderedTypes.length; index += 1) {
-    const ptype = orderedTypes[index];
-    const boundary = ptypeBreaks[ptype];
-    if (!boundary) continue;
-    const offset = Number(boundary.offset);
-    const count = Number(boundary.count);
-    if (!Number.isFinite(offset) || !Number.isFinite(count) || offset < 0 || count <= 0) {
-      continue;
-    }
-    const segment = entries.slice(offset, offset + count);
-    if (segment.length === 0) continue;
-    const colors = segment.map((entry) => entry.color).filter(Boolean);
-    if (colors.length === 0) continue;
-    const min = Number(segment[0]?.value);
-    const max = Number(segment[segment.length - 1]?.value);
-    if (!Number.isFinite(min) || !Number.isFinite(max)) continue;
-    rows.push({
-      label: radarGroupLabelForCode(ptype, index),
-      min,
-      max,
-      colors,
-    });
-  }
-
-  return rows;
-}
-
-function buildRadarLegendRows(groups: RadarLegendGroup[]): RadarLegendRow[] {
-  return groups
-    .map((group) => ({
-      label: group.label,
-      colors: group.entries.map((entry) => entry.color).filter(Boolean),
-    }))
-    .filter((row) => row.colors.length > 0);
-}
-
-function RadarGradientRows({ groups }: { groups: RadarLegendGroup[] }) {
-  const rows = buildRadarLegendRows(groups);
-
+  })();
   return (
-    <div className="space-y-2">
-      {rows.map((row, index) => (
-        <div key={`${row.label}-${index}`} className={cn(index > 0 ? "border-t border-border/18 pt-2" : "")}>
-          <div className="mb-1 px-0.5 text-[12px] font-semibold uppercase tracking-[0.12em] text-foreground/78">
-            {row.label}
-          </div>
-          <div className="rounded-lg bg-black/16 p-[3px] ring-1 ring-inset ring-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
-            <div
-              className="h-3 rounded-[5px]"
-              style={{
-                backgroundImage:
-                  row.colors.length === 1 ? undefined : `linear-gradient(to right, ${row.colors.join(", ")})`,
-                backgroundColor: row.colors.length === 1 ? row.colors[0] : undefined,
-              }}
-            />
-          </div>
-          <div className="mt-1 flex items-center justify-between px-0.5 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-foreground/58">
-            <span>Light</span>
-            <span>Heavy</span>
-          </div>
-        </div>
-      ))}
+    <div data-testid="legend-presentation" data-legend-mode={presentation.mode}>
+      {body}
     </div>
   );
 }
+
+// ── MapLegend ──────────────────────────────────────────────────────────────
 
 type MapLegendProps = {
   legend: LegendPayload | null;
@@ -425,6 +440,8 @@ type MapLegendProps = {
   defaultExpanded?: boolean;
   /** When true, renders inline (no fixed positioning). Use inside popovers/portals. */
   inline?: boolean;
+  /** Component layers of a composite product, already resolved by the App seam. */
+  compositeLayers?: CompositeLegendLayer[] | null;
 };
 
 export function MapLegend({
@@ -432,6 +449,7 @@ export function MapLegend({
   containerRef,
   defaultExpanded = false,
   inline = false,
+  compositeLayers = null,
 }: MapLegendProps) {
   const [collapsed, setCollapsed] = useState<boolean>(() => defaultExpanded ? false : readCollapsedPreference());
   const [isSmallScreen, setIsSmallScreen] = useState(false);
@@ -461,7 +479,9 @@ export function MapLegend({
     }
   }, [legend?.title]);
 
-  if (!legend) {
+  const presentation = resolveLegendPresentation(legend, compositeLayers);
+
+  if (!legend || !presentation) {
     // In inline mode (popover), render a simple inline placeholder — not a fixed overlay
     if (inline) {
       return (
@@ -481,15 +501,6 @@ export function MapLegend({
   }
 
   const { title: legendTitle, unitsSuffix } = splitLegendTitle(legend.title, legend.units);
-  const ptypeIntensityRows = isPtypeIntensityLegend(legend)
-    ? groupPtypeIntensityRows(legend.entries, legend.ptype_breaks, legend.ptype_order)
-    : [];
-  const showPtypeIntensityRows = ptypeIntensityRows.length > 0;
-  const groupedRadarEntries = isRadarPtypeLegend(legend)
-    ? groupRadarEntries(legend.entries, legend.ptype_breaks, legend.ptype_order)
-    : [];
-  const showGroupedRadar = groupedRadarEntries.length > 0;
-  const showCategoricalLegend = isCategoricalLegend(legend);
 
   return (
     <div
@@ -540,33 +551,7 @@ export function MapLegend({
       >
         <div className="overflow-hidden">
           <div key={fadeKey} className="flex flex-col gap-1.5 px-1.5 py-1.5 animate-in fade-in duration-200">
-            <div>
-              {showPtypeIntensityRows
-                ? ptypeIntensityRows.map((row, rowIndex) => (
-                    <div
-                      key={`precip-row-${row.label}-${rowIndex}`}
-                      className={cn(rowIndex > 0 ? "mt-2 border-t border-border/20 pt-2" : "")}
-                    >
-                      <div className="mb-1 flex items-center justify-between gap-2 px-0.5">
-                        <span className="text-[12px] font-medium uppercase tracking-wide text-foreground/62">
-                          {row.label}
-                        </span>
-                        <span className="font-mono text-[11px] font-medium tabular-nums text-foreground/90">
-                          {formatValue(row.min)}-{formatValue(row.max)} {legend.units ?? ""}
-                        </span>
-                      </div>
-                      <div
-                        className="h-3 rounded-[2px] border border-border/40 shadow-sm"
-                        style={{ backgroundImage: `linear-gradient(to right, ${row.colors.join(", ")})` }}
-                      />
-                    </div>
-                  ))
-                : showGroupedRadar
-                ? <RadarGradientRows groups={groupedRadarEntries} />
-                : showCategoricalLegend
-                ? <CategoricalLegendEntries entries={legend.entries} />
-                : <HorizontalGradientLegend entries={legend.entries} />}
-            </div>
+            <LegendPresentationBody presentation={presentation} variant="full" />
 
             {legend.note ? (
               <p className="border-t border-border/25 pt-1 text-[12px] font-medium leading-snug text-foreground/68">

@@ -747,6 +747,39 @@ passed byte-untouched; first-paint, colormap, timeline, compare, and grid-smoke 
 (the first-paint Product-while-blocked test now pins a 1440×900 viewport; three grid-smoke
 readiness selectors re-pointed). No fetch, readiness-gate, permalink-sync, or backend changes.
 
+**Phase 7: implementation complete 2026-07-29 — pending production verification.** One pure
+model (`src/lib/legend-model.ts`) now derives every legend rendering per
+`docs/plans/2026-07-29-map-viewer-redesign-phase-7-legend.md`; `map-legend.tsx` is
+rendering-only; no backend changes, no new kinds (§11.3). The three derived modes come from
+existing metadata: ptype-intensity and radar-ptype from `id` + `ptype_order`/`ptype_breaks`
+(with a ≥2-ramp guard on the legacy zero-delimiter fallback — a fresh-context verification
+round caught single-type HRRR/NAM `radar_ptype_*` continuous ladders being fabricated into a
+"Rain 1.2–75 dBZ" ramp; they now fall through to continuous, fixture-pinned), and
+composite-group from the per-layer legends the App seam already holds (no new fetches).
+**Numeric truth:** the §7.1 shared scale renders exactly once iff per-type ladders are
+identical; real MRMS ladders diverge (rain 5–70 dBZ, others 0–60) so real products render
+truthful per-ramp endpoints — the `(dBZ)`/`(in/hr)` titles are backed by rendered numbers
+either way; nominal categoricals invent nothing; bare 0..n indexed codes are not presented as
+measurements; continuous endpoint ticks no longer round past the metadata range (a 0–75
+ladder no longer advertises "80" — interior ticks may still round). The §7.2 compact chip
+(`CompactLegendChip.tsx`) replaces the Phase 6 interim floating legend in the collapsed-rail
+state: all applicable ramps always (never "dominant + N more"), width pressure drops repeated
+labels before ramps, tap expands in place to the full body (rendered directly — no nested
+duplicate title/landmark), `data-export-exclude="legend-chip"`. Collapsed rail is now
+Source/View/**Legend** (§6.3 closed); the Legend item and the expanded-rail legend mount work
+independently of `twf.map.legend_visible`, so touch-tablet users (where the chip pref
+defaults off) keep a one-tap path to the full legend. Contract suite
+`tests/e2e/viewer-legend.spec.ts` (18 tests, red-first) covers all four raw kinds, all three
+derived modes, the fabrication regression, chip behavior under both pointer regimes, and an
+export-exclusion proof that decodes the real composed Share PNG (chip visible over the map,
+probe anchors unreachable from fixture data, centre-crop remapping — not a screen-position
+argument). Audit matrix 11 → 13 surfaces (chip + expanded chip). Exporter, GIF, LUT,
+permalink, fetch, and readiness paths untouched; `share-export-baseline.spec.ts` passed
+byte-untouched; chrome, first-paint, colormap, timeline, compare, and grid-smoke suites
+green. Known interim quirks, recorded: `twf.legend.collapsed` now governs only `/compare`
+and the mobile popover; the exporter keeps its own duplicated ptype rendering helpers
+(deliberate — export pixels must not change; candidate post-redesign cleanup).
+
 Production-gate follow-up (Phase 4, 2026-07-28): the slider thumb hit-area enlargement caused two visual
 regressions (dot trailing the finger at range max on mobile; dot below the track centerline on
 desktop) because the hit box proved inseparable from Radix's wrapper positioning math. The thumb

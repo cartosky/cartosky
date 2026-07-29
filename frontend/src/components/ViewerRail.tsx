@@ -4,9 +4,11 @@ import {
   Boxes,
   ChevronLeft,
   ChevronRight,
+  Palette,
   SlidersHorizontal,
 } from "lucide-react";
 
+import { CompactLegendChip } from "@/components/CompactLegendChip";
 import { MapLegend } from "@/components/map-legend";
 import { ModelPicker } from "@/components/ModelPicker";
 import { StatisticPicker } from "@/components/StatisticPicker";
@@ -58,6 +60,7 @@ export function ViewerRail() {
   const toolbar = useViewerToolbar();
   const sourceRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<HTMLDivElement | null>(null);
+  const legendRef = useRef<HTMLDivElement | null>(null);
   const expanded = toolbar?.railState !== "collapsed";
   const pendingSection = toolbar?.railPendingSection ?? null;
   const onRailPendingSectionHandled = toolbar?.onRailPendingSectionHandled;
@@ -68,7 +71,11 @@ export function ViewerRail() {
   useEffect(() => {
     if (!expanded || !pendingSection) return undefined;
     const frame = window.requestAnimationFrame(() => {
-      const target = pendingSection === "view" ? viewRef.current : sourceRef.current;
+      const target = pendingSection === "legend"
+        ? legendRef.current
+        : pendingSection === "view"
+          ? viewRef.current
+          : sourceRef.current;
       target?.scrollIntoView({ block: "nearest" });
       onRailPendingSectionHandled?.();
     });
@@ -84,7 +91,7 @@ export function ViewerRail() {
     run, onRunChange, runs, runDisplayLabel, runSelectionLocked,
     hasNewerRunAvailable, latestAvailableRunLabel, onViewLatestRun,
     region, onRegionChange, onLocationJump, regions,
-    disabled, legend, legendVisible,
+    disabled, legend, legendVisible, compositeLegendLayers,
     pointLabelsEnabled, onPointLabelsEnabledChange,
     nwsWarningsEnabled, onNwsWarningsEnabledChange,
     zoomControlsVisible, onZoomControlsVisibleChange,
@@ -166,6 +173,17 @@ export function ViewerRail() {
         >
           <SlidersHorizontal className="h-[18px] w-[18px]" />
           <span data-testid="rail-collapsed-caption" className="text-[11px] font-medium leading-none">View</span>
+        </button>
+        {/* §6.3 / §7.2: the Legend item expands the rail to the full legend —
+            the compact chip in the map corner is the other path to density. */}
+        <button
+          type="button"
+          data-testid="rail-collapsed-legend"
+          onClick={() => onRailExpandTo?.("legend")}
+          className={COLLAPSED_ITEM_CLASSNAME}
+        >
+          <Palette className="h-[18px] w-[18px]" />
+          <span data-testid="rail-collapsed-caption" className="text-[11px] font-medium leading-none">Legend</span>
         </button>
       </div>
 
@@ -364,14 +382,22 @@ export function ViewerRail() {
           </div>
         </div>
 
-        {/* Reserved Phase 7 legend mount (plan decision 2): the existing
-            MapLegend rendering, unmodified, in a stable bottom slot. */}
+        {/* Phase 7 legend mount (§7.1): the normalized MapLegend rendering in
+            a stable bottom slot; the collapsed rail's Legend item scrolls here. */}
         <div
+          ref={legendRef}
           data-legend-mount="rail"
           data-tour-target="legend-button"
           className="mt-auto rounded-xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.72] px-1 py-1"
         >
-          {expanded ? <MapLegend legend={legend} defaultExpanded={true} inline={true} /> : null}
+          {expanded ? (
+            <MapLegend
+              legend={legend}
+              compositeLayers={compositeLegendLayers}
+              defaultExpanded={true}
+              inline={true}
+            />
+          ) : null}
         </div>
       </div>
     </aside>
@@ -381,11 +407,13 @@ export function ViewerRail() {
     <>
       {rail}
       {edgeToggle}
-      {/* §6.3: until Phase 7 the current map legend keeps serving the collapsed
-          rail — the same MapLegend the map corner has always rendered, portaled
-          out of the rail's backdrop-filter containing block. */}
+      {/* §7.2: the collapsed rail is served by the compact map-corner chip,
+          portaled out of the rail's backdrop-filter containing block. */}
       {!expanded && legendVisible
-        ? createPortal(<MapLegend legend={legend} />, document.body)
+        ? createPortal(
+            <CompactLegendChip legend={legend} compositeLayers={compositeLegendLayers} />,
+            document.body,
+          )
         : null}
     </>
   );
