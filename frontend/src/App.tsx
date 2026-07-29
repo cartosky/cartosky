@@ -3,6 +3,8 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { AlertCircle } from "lucide-react";
 
 import { BottomForecastControls } from "@/components/bottom-forecast-controls";
+import { ShortcutSheet } from "@/components/timeline/ShortcutSheet";
+import { useViewerKeyboard } from "@/hooks/useViewerKeyboard";
 import { MapCanvas, type BasemapMode, type MapCaptureFormat, type VectorHazardSelection } from "@/components/map-canvas";
 import type { LegendPayload } from "@/components/map-legend";
 import type { SharePayload } from "@/components/share/share-utils";
@@ -323,9 +325,9 @@ export default function App() {
   const [regions, setRegions] = useState<Option[]>([]);
   const [runs, setRuns] = useState<string[]>([]);
   const [variables, setVariables] = useState<VariableOption[]>([]);
-  const [frameRows, setFrameRows] = useState<FrameRow[]>([]);
+  const [rawFrameRows, setFrameRows] = useState<FrameRow[]>([]);
   const [runManifest, setRunManifest] = useState<RunManifestResponse | null>(null);
-  const [gridManifest, setGridManifest] = useState<GridManifestResponse | null>(null);
+  const [rawGridManifest, setGridManifest] = useState<GridManifestResponse | null>(null);
   const [rgbManifest, setRgbManifest] = useState<RgbManifestResponse | null>(null);
   const [compositeGridManifests, setCompositeGridManifests] = useState<Record<string, GridManifestResponse | null>>({});
   const [resolvedGridLatestRunId, setResolvedGridLatestRunId] = useState<string | null>(null);
@@ -433,6 +435,7 @@ export default function App() {
   const [mapViewTick, setMapViewTick] = useState(0);
   const [geolocationMarker, setGeolocationMarker] = useState<{ lat: number; lon: number } | null>(null);
   const [isMapReady, setIsMapReady] = useState(false);
+  const [shortcutSheetOpen, setShortcutSheetOpen] = useState(false);
 
   const desktopTourSteps: TourStepDef[] = useMemo(() => [
     {
@@ -472,6 +475,11 @@ export default function App() {
       targetSelector: '[data-tour-target="display-settings-button"]',
       title: "Display Settings",
       body: "Toggle city labels, zoom controls, basemap style, and overlay opacity",
+    },
+    {
+      targetSelector: '[data-tour-target="forecast-scrubber"]',
+      title: "Timeline & Keyboard",
+      body: "Position on the timeline is valid time — solid means published, hatched means still building. Arrow keys step frames, Space plays, and ? opens the full shortcut sheet",
     },
   ], []);
 
@@ -832,10 +840,96 @@ export default function App() {
     }
   }, [ensembleProducts, product, selectionCapabilitiesResolved]);
 
+  // ── Phase 5 Task 4: ONE readiness boundary per selection identity ────────
+  // `ready_through_fh` is authoritative; max(published fh) is NOT, because
+  // out-of-order publishers (SLR rebuild, member backfill, stats rebuilds)
+  // can publish past a hole. The guards key the boundary to
+  // model/run/variable/region so a selection switch can never reuse the
+  // previous selection's boundary. `undefined` = no boundary known
+  // (pre-Phase-5 manifest, or observed/valid axes) → today's behaviour.
+  const manifestVariableForBoundary = useMemo(() => {
+    if (selectedTimeAxisMode !== "forecast") {
+      return null;
+    }
+    if (!runManifest || runManifest.model !== model) {
+      return null;
+    }
+    if (run !== "latest" && runManifest.run !== run) {
+      return null;
+    }
+    if (runManifest.region && dataRegion && runManifest.region !== dataRegion) {
+      return null;
+    }
+    return runManifest.variables?.[requestVariable] ?? null;
+  }, [dataRegion, model, requestVariable, run, runManifest, selectedTimeAxisMode]);
+
+  const manifestReadyThroughFh = useMemo<number | null | undefined>(() => {
+    const entry = manifestVariableForBoundary;
+    if (!entry || !("ready_through_fh" in entry)) {
+      return undefined;
+    }
+    const value = entry.ready_through_fh;
+    if (value === null) {
+      return null;
+    }
+    return Number.isFinite(value) ? Number(value) : undefined;
+  }, [manifestVariableForBoundary]);
+
+  const manifestExpectedMaxFh = useMemo<number | null>(() => {
+    const value = manifestVariableForBoundary?.expected_max_fh;
+    return Number.isFinite(value) ? Number(value) : null;
+  }, [manifestVariableForBoundary]);
+
+  /**
+   * Drops every entry past the boundary. With `ready_through_fh: null`
+   * nothing is ready, but a committed selection still has to resolve
+   * somewhere — policy is the earliest published frame, and nothing beyond it.
+   */
+  const clampHoursToBoundary = useCallback(function clampHoursToBoundary<T>(
+    items: T[],
+    hourOf: (item: T) => number,
+  ): T[] {
+    if (manifestReadyThroughFh === undefined) {
+      return items;
+    }
+    const ordered = [...items].sort((left, right) => hourOf(left) - hourOf(right));
+    if (manifestReadyThroughFh === null) {
+      return ordered.slice(0, 1);
+    }
+    return ordered.filter((item) => hourOf(item) <= manifestReadyThroughFh);
+  }, [manifestReadyThroughFh]);
+
+  const frameRows = useMemo(
+    () => clampHoursToBoundary(rawFrameRows, (row) => Number(row.fh)),
+    [clampHoursToBoundary, rawFrameRows],
+  );
+
+  // Defense in depth: the boundary is applied to the grid manifest itself, so
+  // an ineligible frame can never become a URL in any consumer (visible-frame
+  // fetch, warm queue, map-canvas prefetch builder, GIF driver).
+  const gridManifest = useMemo<GridManifestResponse | null>(() => {
+    if (!rawGridManifest || manifestReadyThroughFh === undefined) {
+      return rawGridManifest;
+    }
+    return {
+      ...rawGridManifest,
+      lods: (rawGridManifest.lods ?? []).map((lod) => ({
+        ...lod,
+        frames: clampHoursToBoundary(Array.isArray(lod?.frames) ? lod.frames : [], (frame) => Number(frame?.fh)),
+      })),
+    };
+  }, [clampHoursToBoundary, manifestReadyThroughFh, rawGridManifest]);
+
   const frameHours = useMemo(() => {
     const hours = frameRows.map((row) => Number(row.fh)).filter(Number.isFinite);
     return Array.from(new Set(hours)).sort((a, b) => a - b);
   }, [frameRows]);
+
+  /** Unclamped published hours — the timeline draws a marker for each. */
+  const publishedFrameHours = useMemo(() => {
+    const hours = rawFrameRows.map((row) => Number(row.fh)).filter(Number.isFinite);
+    return Array.from(new Set(hours)).sort((a, b) => a - b);
+  }, [rawFrameRows]);
 
   const selectableFrameHours = useMemo(
     () => selectableFramesForVariable(frameHours, selectedVariableDefaultFh),
@@ -2158,6 +2252,28 @@ export default function App() {
     targetForecastHourRef.current = nextHour;
     setTargetForecastHour((prev) => (prev === nextHour ? prev : nextHour));
   }, []);
+
+  // A committed hour past the boundary can only arrive from a cold deep link
+  // resolved before the manifest landed, or a longer→shorter selection
+  // switch. Snap it back onto the eligible list before anything fetches it.
+  useEffect(() => {
+    if (manifestReadyThroughFh === undefined || controlAvailableFrameHours.length === 0) {
+      return;
+    }
+    if (isScrubbingRef.current || isPlaying) {
+      return;
+    }
+    if (controlAvailableFrameHours.includes(forecastHour)) {
+      return;
+    }
+    const resolved = nearestFrame(controlAvailableFrameHours, forecastHour);
+    if (!Number.isFinite(resolved) || resolved === forecastHour) {
+      return;
+    }
+    forecastHourRef.current = resolved;
+    setForecastHour(resolved);
+    applyTargetForecastHour(resolved);
+  }, [applyTargetForecastHour, controlAvailableFrameHours, forecastHour, isPlaying, manifestReadyThroughFh]);
 
   const showForecastHourFallbackNotice = useCallback((
     requestedHour: number,
@@ -5758,6 +5874,20 @@ export default function App() {
     runDateTimeISO,
   ]);
 
+  useViewerKeyboard({
+    enabled: true,
+    frameHours: controlAvailableFrameHours,
+    forecastHour,
+    onForecastHour: (fh) => requestForecastHour(fh, "standard"),
+    onTogglePlay: () => handleSetIsPlaying(!controlsIsPlaying),
+    runValues: runOptions.map((option) => option.value),
+    currentRun: run,
+    onRunChange: handleRunChange,
+    shortcutSheetOpen,
+    onShortcutSheetOpenChange: setShortcutSheetOpen,
+    getMap: () => mapInstanceRef.current,
+  });
+
   usePermalinkSync({
     bootstrapHydrated,
     mapViewHydratedRef,
@@ -6071,6 +6201,7 @@ export default function App() {
           forecastHour={forecastHour}
           availableFrames={controlAvailableFrameHours}
           bufferedFrameHours={gridReadyHours}
+          publishedFrameHours={publishedFrameHours}
           onForecastHourChange={requestForecastHour}
           onScrubStateChange={setIsScrubbing}
           isPlaying={controlsIsPlaying}
@@ -6102,6 +6233,8 @@ export default function App() {
           runIncompleteLabel={historicalRunIncomplete?.label ?? null}
           runIncompleteDescription={historicalRunIncomplete?.description ?? null}
           runIncompleteTone={historicalRunIncomplete?.tone ?? null}
+          readyThroughFh={manifestReadyThroughFh}
+          expectedMaxFh={manifestExpectedMaxFh}
         />
       </div>
 
@@ -6139,6 +6272,8 @@ export default function App() {
           />
         </Suspense>
       ) : null}
+
+      {shortcutSheetOpen ? <ShortcutSheet onClose={() => setShortcutSheetOpen(false)} /> : null}
 
       <TourOverlay
         steps={tourSteps}

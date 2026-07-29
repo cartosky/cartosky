@@ -3,6 +3,10 @@ import { HexSignalRing } from "@/components/HexSignalRing";
 export function ViewerMapSkeleton() {
   return (
     <div
+      // Carries the map-scrim testid so a suite waiting for the scrim to hide
+      // waits through the lazy viewer chunk too, instead of passing on an
+      // element that has not mounted yet.
+      data-testid="viewer-suspense-skeleton"
       className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#07111f] pt-14"
       role="status"
       aria-live="polite"

@@ -148,7 +148,12 @@ async function auditTargets(page: Page, surface: string, minPx: number): Promise
         Boolean(
           el.closest('[aria-hidden="true"]')
           || el.closest('[class*="sr-only"]')
-          || el.closest('[class*="maplibregl-"]'),
+          || el.closest('[class*="maplibregl-"]')
+          // DOCUMENTED EXCEPTION — the display-panel opacity slider keeps the
+          // stock 16px Radix thumb: enlarging it re-treads the Phase 4 wrapper
+          // positioning regressions. Owned by the Phase 6 display-panel
+          // rebuild. The Phase 5 timeline thumb is fully compliant.
+          || el.closest('[data-audit-exception="opacity-slider"]'),
         );
       const isVisible = (el: Element) => {
         const style = window.getComputedStyle(el);
@@ -158,13 +163,8 @@ async function auditTargets(page: Page, surface: string, minPx: number): Promise
         const rect = el.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
       };
-      // DOCUMENTED EXCEPTION — [role="slider"] is excluded from the size
-      // floors: enlarging the Radix thumb's hit box proved inseparable from
-      // its wrapper positioning math (two production regressions: trailing
-      // dot, off-centerline dot), so the pre-Phase-4 thumb ships unchanged
-      // and slider ergonomics are owned by the Phase 5 timeline rebuild.
       const candidates = document.querySelectorAll(
-        'button, a[href], [role="button"], [role="tab"], [role="option"], [role="menuitem"], input, select',
+        'button, a[href], [role="button"], [role="slider"], [role="tab"], [role="option"], [role="menuitem"], input, select',
       );
       for (const el of candidates) {
         if (seen.has(el) || excluded(el) || !isVisible(el)) continue;
@@ -330,7 +330,11 @@ test.describe('Viewer design tokens (Phase 4)', () => {
           { label: 'field-caption-product', text: 'Product', scope: 'header' },
           { label: 'field-caption-variable', text: 'Variable', scope: 'header' },
           { label: 'field-caption-run', text: 'Run Time', scope: 'header' },
-          { label: 'timeline-model', text: 'GFS', scope: 'body' },
+          // 'timeline-model' probe retired in Phase 5: the desktop timeline no
+          // longer carries a model label (identity lives in the header Product
+          // trigger; the mobile bar keeps its 12px label, covered by the
+          // mobile audit state). Pre-Phase-5 this probe was satisfied only by
+          // a display:none mobile duplicate — a latent probe bug.
         ];
         const results: Array<{ label: string; size: number | null }> = [];
         const toolbarHeader = Array.from(document.querySelectorAll('header')).find(

@@ -3,6 +3,16 @@ import type { PermalinkState } from "@/lib/permalink-read";
 export type { PermalinkState } from "@/lib/permalink-read";
 export { readPermalink } from "@/lib/permalink-read";
 
+/**
+ * Fixed-precision without the padding: `39.83` stays `39.83` instead of
+ * becoming `39.83000`, so a hand-written or shared permalink round-trips
+ * byte-identically and the first URL write-back is a no-op rather than
+ * gratuitous churn.
+ */
+function fixed(value: number, digits: number): string {
+  return Number(value).toFixed(digits).replace(/\.?0+$/, "");
+}
+
 export function buildPermalinkSearch(state: PermalinkState): string {
   const params = new URLSearchParams();
 
@@ -28,13 +38,13 @@ export function buildPermalinkSearch(state: PermalinkState): string {
     params.set("reg", state.region);
   }
   if (Number.isFinite(state.lat) && Number(state.lat) >= -90 && Number(state.lat) <= 90) {
-    params.set("lat", Number(state.lat).toFixed(5));
+    params.set("lat", fixed(Number(state.lat), 5));
   }
   if (Number.isFinite(state.lon) && Number(state.lon) >= -180 && Number(state.lon) <= 180) {
-    params.set("lon", Number(state.lon).toFixed(5));
+    params.set("lon", fixed(Number(state.lon), 5));
   }
   if (Number.isFinite(state.z) && Number(state.z) >= 0 && Number(state.z) <= 24) {
-    params.set("z", Number(state.z).toFixed(2));
+    params.set("z", fixed(Number(state.z), 2));
   }
   const encoded = params.toString();
   return encoded ? `?${encoded}` : "";

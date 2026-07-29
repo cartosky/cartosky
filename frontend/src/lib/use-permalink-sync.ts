@@ -52,6 +52,9 @@ export function usePermalinkSync({
   suspended = false,
 }: UsePermalinkSyncParams): void {
   const [permalinkHydrated, setPermalinkHydrated] = useState(false);
+  // Bumped once after the initial write is suppressed so state that changed
+  // before hydration still reaches the URL (see below).
+  const [postHydrationFlushTick, setPostHydrationFlushTick] = useState(0);
 
   const permalinkHydratedRef = useRef(false);
   const lastSyncedPermalinkSearchRef = useRef("");
@@ -82,6 +85,12 @@ export function usePermalinkSync({
     if (suppressNextUrlSyncRef.current) {
       suppressNextUrlSyncRef.current = false;
       lastSyncedPermalinkSearchRef.current = window.location.search;
+      // Hydration can land AFTER state has already moved (a deep link
+      // resolving onto a different frame, an early keyboard step). Re-run
+      // once so that divergence still reaches the URL; the write itself
+      // no-ops when the built search already matches the address bar, so the
+      // initial permalink is still never clobbered.
+      setPostHydrationFlushTick((tick) => tick + 1);
       return;
     }
     if (suspended) {
@@ -132,5 +141,6 @@ export function usePermalinkSync({
     region,
     mapViewTick,
     suspended,
+    postHydrationFlushTick,
   ]);
 }

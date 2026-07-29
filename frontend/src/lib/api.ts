@@ -304,6 +304,14 @@ export type RunManifestVariable = {
   expected_frames?: number;
   available_frames?: number;
   frames?: RunManifestFrame[];
+  /**
+   * Greatest expected FH with every expected FH ≤ it published (`null` when
+   * none are). Absent on pre-Phase-5 manifests and on observed/valid
+   * variables — absence means "no boundary known", not "nothing ready".
+   */
+  ready_through_fh?: number | null;
+  /** Authoritative run horizon for this variable (forecast axis only). */
+  expected_max_fh?: number;
 };
 
 export type RunManifestResponse = {

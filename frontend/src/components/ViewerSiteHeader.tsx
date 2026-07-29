@@ -1334,6 +1334,7 @@ function ViewerNavDesktop({ onFeedback }: { onFeedback?: () => void }) {
                     min={0}
                     max={100}
                     step={1}
+                    data-audit-exception="opacity-slider"
                     className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
                   />
                 </div>
@@ -1699,7 +1700,8 @@ function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
           min={0}
           max={100}
           step={1}
-          className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
+          data-audit-exception="opacity-slider"
+                    className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
         />
       </div>
 

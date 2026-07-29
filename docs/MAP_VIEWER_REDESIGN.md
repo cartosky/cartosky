@@ -235,8 +235,8 @@ x = (validTime(frame) − validTime(first))
     (validTime(last) − validTime(first))
 ```
 
-**Position maps to valid time, never to frame index.** GFS is hourly to FH 120 then 3-hourly to
-FH 384; HRRR is sub-hourly in places. Index-based spacing reintroduces a non-linear time axis.
+**Position maps to valid time, never to frame index.** GFS is 3-hourly to FH 240 then 6-hourly to
+FH 384 (`GFS_INITIAL_FHS`, verified 2026-07-28); HRRR is sub-hourly in places. Index-based spacing reintroduces a non-linear time axis.
 
 Frame markers will therefore be visibly unevenly spaced where cadence changes. **That is correct and
 must not be normalized away.**
@@ -285,7 +285,7 @@ readyThroughFh: number | null
 
 The publisher computes it from that variable's authoritative expected target-hour list: the greatest
 scheduled FH for which every scheduled frame from the start through that FH is published. A cadence
-change such as GFS 120 → 123 is not a hole because 121 and 122 are not scheduled targets. `null`
+change such as GFS 240 → 246 is not a hole because 241–245 are not scheduled targets. `null`
 means no contiguous frame is ready. The frontend must consume this scalar; it must not reconstruct it
 from `max(frame.fh)`.
 
@@ -565,7 +565,7 @@ Assert the compact legend chip is absent from exported images from Phase 7 onwar
 ```
 For any two frames A, B in a run:
   |x(B) − x(A)| / |validTime(B) − validTime(A)|  constant within 1 px across the whole track.
-Test explicitly on GFS across the hourly → 3-hourly transition at FH 120.
+Test explicitly on GFS across the 3-hourly → 6-hourly transition at FH 240 → 246.
 ```
 
 **Availability truthfulness (Phase 5)**
@@ -670,7 +670,8 @@ on the old ramp (tmp850_anom precedent). Export regression and Phase 2 suites gr
 fetch/cache, exporter-legend, diff-mode, or readiness-gate code changed. Older runs published
 before the deploy retain the previous ramp until retention ages them out — expected, not a defect.
 
-**Phase 4: implementation complete 2026-07-28 — pending verification.** Tokens: a `pointer-coarse`
+**Phase 4 completed 2026-07-28 — production gate passed** (after one follow-up round: slider
+thumb reverted, see below; captions/icons accepted until Phase 6). Tokens: a `pointer-coarse`
 Tailwind variant (§2.1 sizing: 32px fine / 44px coarse floors applied across header icons,
 triggers, picker internals, zoom, play/speed, slider thumb, Share dialog, display panel,
 attribution chips); one designed `:focus-visible` outline token (2px cyan, ~10:1 on the dark
@@ -689,7 +690,33 @@ Verified through two adversarial review rounds; export regression, first-paint, 
 compare suites green. Known scope note: tablet-touch has no display-settings surface (the panel
 is desktop-only and the controls button is hidden there) — recorded for Phases 6/8.
 
-Production-gate follow-up (2026-07-28): the slider thumb hit-area enlargement caused two visual
+**Phase 5: implementation complete 2026-07-28 — pending verification.** Backend: additive
+per-variable `ready_through_fh` + `expected_max_fh` scalars baked in `_write_run_manifest` from
+the authoritative expected-hour list (7 tests incl. the out-of-order-publisher fixture where
+`max(frame.fh)` gives the provably wrong boundary; keys absent for observed/valid modes; old
+runs lack the fields until aged out — the frontend falls back to solid-only rendering, never
+reconstructing from max FH). Frontend: a purpose-built valid-time `TimelineTrack` (per-marker
+linearity ≤1 px across the real GFS 240→246 cadence change; solid→boundary, hatched→horizon
+with beyond-boundary published frames shown dimmed and uncommittable; §5.2 dated ticks; 88/64 px
+density toggle persisted at `twf.timeline.density`; single focusable thumb meeting 32/44
+natively — the Phase 4 `[role=slider]` exception is closed; amber ghost + snap-back past the
+boundary); ONE identity-keyed eligible-frame list clamps every commit/fetch path including the
+cold-deep-link seam (race-probed: a 4 s manifest delay leaks nothing); MapLibre keyboard off
+with the full §5.6 map reimplemented in `useViewerKeyboard` (interactive-focus/IME/modifier
+deference, directional Shift/Alt snapping, `[`/`]` run stepping, `?` shortcut sheet + tour
+step); mode-truthful availability adapters; slider a11y (name/valuetext/describedby). Deviations
+from plan, all reviewed: eligibility enforced at one manifest-level seam instead of a second
+grid-webgl guard (verified stronger); the display-panel opacity slider keeps its stock 16 px
+thumb under a narrowly-scoped audit exception owned by Phase 6 (enlarging Radix thumbs re-treads
+the Phase 4 regressions); desktop timeline panel widened 45rem→min(96vw,90rem) per §5.2's width
+assumptions; buffered frames render as brightened markers (index-space fill couldn't survive
+valid-time positioning); a genuine pre-hydration URL-sync drop was fixed and permalink floats no
+longer emit trailing zeros. Contract suite: 16 tests (verification round added tick-rendering,
+exact play/pause labels, and the longer→shorter run-switch scenario after refuting the first
+pass). The deploy needs scheduler AND API restarts; the production window opens with the first
+run baked after deploy.
+
+Production-gate follow-up (Phase 4, 2026-07-28): the slider thumb hit-area enlargement caused two visual
 regressions (dot trailing the finger at range max on mobile; dot below the track centerline on
 desktop) because the hit box proved inseparable from Radix's wrapper positioning math. The thumb
 shipped reverted to its exact pre-Phase-4 form and **[role="slider"] carries a documented
@@ -795,7 +822,7 @@ execution-plan gate in §1; approving this design document alone does not author
 **Phase 5 — timeline**
 > Write the Phase 5 execution plan, then implement MAP_VIEWER_REDESIGN §5. Critical: horizontal
 > position maps linearly to **valid time**,
-> never frame index — GFS is hourly to FH 120 then 3-hourly to FH 384, so frame markers will be
+> never frame index — GFS is 3-hourly to FH 240 then 6-hourly to FH 384, so frame markers will be
 > visibly unevenly spaced. That is correct; do not normalize it. Write a Phase 5 execution plan that
 > includes the backend `readyThroughFh` manifest scalar from §5.4. Compute it from the authoritative
 > expected target list and consume it directly; never substitute max published FH. Implement

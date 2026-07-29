@@ -5,7 +5,7 @@ import { AlertCircle, GitCompareArrows, MessageSquareText, Pause, Play, Share2, 
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
 import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
+import { TimelineTrack } from "@/components/timeline/TimelineTrack";
 import { cn } from "@/lib/utils";
 import { resolveRunBuildProgress } from "@/lib/viewer-loading-status";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
@@ -28,6 +28,12 @@ type BottomForecastControlsProps = {
   availableFrames: number[];
   /** Frame hours whose data is already cached locally (drives the buffered track). */
   bufferedFrameHours?: number[];
+  /**
+   * Every PUBLISHED frame hour (unclamped). The timeline renders a marker per
+   * published frame and a ghost when the user drags past the ready boundary,
+   * so it needs the full list — `availableFrames` is the committable subset.
+   */
+  publishedFrameHours?: number[];
   onForecastHourChange: (fh: number, reason?: "standard" | "scrub-live" | "scrub-commit") => void;
   onScrubStateChange?: (isScrubbing: boolean) => void;
   isPlaying: boolean;
@@ -59,38 +65,11 @@ type BottomForecastControlsProps = {
   runIncompleteLabel?: string | null;
   runIncompleteDescription?: string | null;
   runIncompleteTone?: ObservedSourceStatusTone | null;
+  /** Manifest readiness boundary; `undefined` = pre-Phase-5 manifest. */
+  readyThroughFh?: number | null;
+  /** Authoritative run horizon (hatch target). */
+  expectedMaxFh?: number | null;
 };
-
-/**
- * Map buffered frame hours onto slider-track fractions. The slider operates in
- * index space (value = index into `frames`), so contiguous runs of buffered
- * indices become [start, end] fractions; each index covers a half-step either
- * side so single buffered frames stay visible.
- */
-function computeBufferedRanges(frames: number[], buffered: number[] | undefined): Array<[number, number]> {
-  if (!buffered || buffered.length === 0 || frames.length === 0) {
-    return [];
-  }
-  const bufferedSet = new Set(buffered);
-  const count = frames.length;
-  if (count === 1) {
-    return bufferedSet.has(frames[0]) ? [[0, 1]] : [];
-  }
-  const ranges: Array<[number, number]> = [];
-  let runStart: number | null = null;
-  for (let index = 0; index <= count; index += 1) {
-    const isBuffered = index < count && bufferedSet.has(frames[index]);
-    if (isBuffered && runStart === null) {
-      runStart = index;
-    } else if (!isBuffered && runStart !== null) {
-      const left = Math.max(0, runStart - 0.5) / (count - 1);
-      const right = Math.min(count - 1, index - 0.5) / (count - 1);
-      ranges.push([left, right]);
-      runStart = null;
-    }
-  }
-  return ranges;
-}
 
 function formatCpcIssuedDisplay(iso: string | null | undefined): string | null {
   if (!iso) {
@@ -309,6 +288,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
   forecastHour,
   availableFrames,
   bufferedFrameHours,
+  publishedFrameHours,
   onForecastHourChange,
   onScrubStateChange,
   isPlaying,
@@ -340,6 +320,8 @@ export const BottomForecastControls = memo(function BottomForecastControls({
   runIncompleteLabel = null,
   runIncompleteDescription = null,
   runIncompleteTone = null,
+  readyThroughFh,
+  expectedMaxFh = null,
 }: BottomForecastControlsProps) {
   const toolbar = useViewerToolbar();
   const onShare = toolbar?.onShare;
@@ -384,7 +366,6 @@ export const BottomForecastControls = memo(function BottomForecastControls({
   const isTabletTouchLayout = layoutMode === "tablet-touch";
   const controlsLayerClassName = isDesktopLayout || isTabletTouchLayout ? "z-[70]" : "z-[60]";
   const effectiveHour = previewHour ?? forecastHour;
-  const sliderIndex = Math.max(0, availableFrames.indexOf(effectiveHour));
   // Shared with the initial map scrim via resolveRunBuildProgress so both
   // surfaces render identical `Building available/total hrs` values.
   const { freshnessTotal, cappedAvailableForecastHours } = useMemo(
@@ -396,47 +377,6 @@ export const BottomForecastControls = memo(function BottomForecastControls({
   const freshnessProgressPercent = hasFreshnessTotal
     ? Math.max(0, Math.min(100, (cappedAvailableForecastHours / freshnessTotal) * 100))
     : 0;
-  const enhancedAvailabilityTrack = hasFreshnessTotal && timeAxisMode !== "observed";
-  const desktopEnhancedTrack = isDesktopLayout && hasFreshnessTotal && timeAxisMode !== "observed";
-  const showDesktopBuildingStrip = desktopEnhancedTrack && !runIsComplete && staticSnapshotLabel === null;
-  const publishedFrames = useMemo(() => {
-    if (!enhancedAvailabilityTrack) {
-      return availableFrames;
-    }
-    const published = availableFrames.filter((frame) => Number.isFinite(frame) && frame <= cappedAvailableForecastHours);
-    return published.length > 0 ? published : availableFrames.slice(0, 1);
-  }, [availableFrames, cappedAvailableForecastHours, enhancedAvailabilityTrack]);
-  const availableBufferedRanges = useMemo(
-    () => computeBufferedRanges(availableFrames, bufferedFrameHours),
-    [availableFrames, bufferedFrameHours],
-  );
-  const publishedBufferedRanges = useMemo(
-    () => computeBufferedRanges(publishedFrames, bufferedFrameHours),
-    [bufferedFrameHours, publishedFrames],
-  );
-  const publishedSliderIndex = Math.max(0, publishedFrames.indexOf(effectiveHour));
-  const desktopInteractiveTrackPercent = desktopEnhancedTrack
-    ? runIsComplete
-      ? 100
-      : Math.max(0.5, freshnessProgressPercent)
-    : 100;
-  const mobileEnhancedTrack = !isDesktopLayout && enhancedAvailabilityTrack;
-  const mobileInteractiveTrackPercent = mobileEnhancedTrack
-    ? runIsComplete
-      ? 100
-      : Math.max(0.5, freshnessProgressPercent)
-    : 100;
-  const trackHatchStyle = {
-    backgroundImage:
-      "repeating-linear-gradient(135deg, rgba(148,163,184,0.18) 0px, rgba(148,163,184,0.18) 3px, rgba(15,23,42,0.2) 3px, rgba(15,23,42,0.2) 7px)",
-  };
-  const desktopSliderClassName = cn(
-    "absolute inset-x-0 top-1/2 w-full -translate-y-1/2 transition-opacity duration-150 [&>*:first-child]:h-2 [&>*:nth-child(2)]:h-4 [&>*:nth-child(2)]:w-4",
-    desktopEnhancedTrack
-      ? "[&>*:first-child]:bg-transparent [&>*:first-child>*:first-child]:bg-transparent"
-      : "[&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
-  );
-
   useEffect(() => {
     setPreviewHour(null);
   }, [forecastHour]);
@@ -500,9 +440,150 @@ export const BottomForecastControls = memo(function BottomForecastControls({
     }
   };
 
+  const desktopTransportStart = isDesktopLayout ? (
+    <div className="flex shrink-0 items-center gap-2">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={() => setIsPlaying(!isPlaying)}
+            disabled={disabled || !hasFrames || playDisabled || staticSnapshotLabel !== null}
+            aria-label={isPlaying ? "Pause animation" : "Play animation"}
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-lg border transition-all duration-150 disabled:opacity-50 pointer-coarse:h-11 pointer-coarse:w-11",
+              isPlaying
+                ? "border-cyan-300/25 bg-cyan-300/10 text-cyan-200"
+                : "border-white/10 bg-white/[0.05] text-white/70 hover:bg-white/[0.09] hover:text-white",
+            )}
+          >
+            {isPlaying ? (
+              <Pause className="h-4 w-4" />
+            ) : (
+              <Play className="h-4 w-4 translate-x-px" />
+            )}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="border-white/10 bg-[#07111f] text-white">
+          {isPlaying ? "Pause" : "Play"} animation
+        </TooltipContent>
+      </Tooltip>
+      <SpeedButton animationDelayMs={animationDelayMs} onSpeedChange={onSpeedChange} />
+      {hasFreshnessTotal
+        && freshnessTotal !== null
+        && timeAxisMode !== "observed"
+        && !runIsComplete
+        && staticSnapshotLabel === null ? (
+          <div className="flex shrink-0 items-center gap-1.5 rounded-md border border-amber-300/20 bg-amber-300/[0.07] px-2 py-1 text-[11px] font-medium leading-none text-amber-100/75">
+            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-300" />
+            <span>Building</span>
+            <span className="tabular-nums text-white/55">
+              {cappedAvailableForecastHours}/{freshnessTotal} hrs
+            </span>
+          </div>
+        ) : null}
+    </div>
+  ) : undefined;
+
+  const desktopTransportEnd = isDesktopLayout ? (
+    <div className="flex shrink-0 items-center gap-2">
+      {sourceStatusLabel ? (
+        <div
+          data-tour-target="freshness-indicator"
+          title={sourceStatusDescription ?? sourceStatusLabel}
+          className={cn(
+            "flex h-8 shrink-0 items-center rounded-lg border px-2.5 font-['IBM_Plex_Mono',monospace] text-[11px] font-medium uppercase tracking-[0.14em]",
+            statusBadgeClass(sourceStatusTone),
+          )}
+        >
+          {sourceStatusLabel}
+        </div>
+      ) : runIncompleteLabel ? (
+        <div
+          data-tour-target="freshness-indicator"
+          title={runIncompleteDescription ?? runIncompleteLabel}
+          className={cn(
+            "flex h-8 shrink-0 items-center rounded-lg border px-2.5 font-['IBM_Plex_Mono',monospace] text-[11px] font-medium uppercase tracking-[0.14em]",
+            statusBadgeClass(runIncompleteTone),
+          )}
+        >
+          {runIncompleteLabel}
+        </div>
+      ) : null}
+      {transientStatus ? (
+        <div className="flex items-center gap-1.5 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[11px] text-amber-100">
+          <AlertCircle className="h-3 w-3" />
+          {transientStatus}
+        </div>
+      ) : null}
+      <div className="h-5 w-px bg-white/[0.09]" />
+      <div className="flex min-w-[190px] flex-col items-end leading-none">
+        {validTime ? (
+          <>
+            <span className="text-[12px] font-semibold tracking-tight text-white">
+              {validTime.primary}
+            </span>
+            {validTime.secondary ? (
+              <span className="mt-1 text-[11px] font-medium text-cyan-200/75">
+                {validTime.secondary}
+              </span>
+            ) : null}
+          </>
+        ) : (
+          <span className="text-[11px] text-white/50">
+            {timeAxisMode === "observed" ? "Observed time unavailable" : "Valid time unavailable"}
+          </span>
+        )}
+      </div>
+    </div>
+  ) : undefined;
+
+  // One purpose-built valid-time track replaces both Radix timeline sliders.
+  // Exactly one instance is mounted (the hidden branch would otherwise
+  // duplicate the single-focusable-thumb contract).
+  const timeline = (
+    <TimelineTrack
+      mode={timeAxisMode}
+      frames={publishedFrameHours && publishedFrameHours.length > 0 ? publishedFrameHours : availableFrames}
+      bufferedFrameHours={bufferedFrameHours}
+      validTimeByHour={frameValidTimesByHour}
+      runDateTimeISO={runDateTimeISO}
+      forecastHour={effectiveHour}
+      readyThroughFh={readyThroughFh}
+      expectedMaxFh={expectedMaxFh}
+      validPeriodLabel={staticSnapshotLabel}
+      issuedLabel={modelId === "cpc" ? formatCpcIssuedDisplay(runDateTimeISO) : null}
+      availabilityOverride={
+        staticSnapshotLabel
+          ? [staticSnapshotLabel, modelId === "cpc" ? formatCpcIssuedDisplay(runDateTimeISO) : null]
+            .filter(Boolean)
+            .join(" · ")
+          : null
+      }
+      layoutMode={layoutMode}
+      desktopTransportStart={desktopTransportStart}
+      desktopTransportEnd={desktopTransportEnd}
+      disabled={disabled || isPlaying || !hasFrames || staticSnapshotLabel !== null}
+      onScrubLive={(next) => {
+        setPreviewHour(next);
+        emitForecastHour(next, false);
+      }}
+      onScrubCommit={(next) => {
+        setPreviewHour(null);
+        emitForecastHour(next, true);
+      }}
+      onScrubStateChange={setIsScrubbing}
+    />
+  );
+
   return (
     <TooltipProvider delayDuration={300}>
-      <div className={cn("pointer-events-none fixed inset-x-0 bottom-0 flex max-w-[100vw] flex-col items-center justify-end overflow-x-hidden px-2 pb-3 sm:px-4 sm:pb-5", controlsLayerClassName)}>
+      <div
+        className={cn(
+          "pointer-events-none fixed inset-x-0 bottom-0 flex max-w-[100vw] flex-col items-center justify-end overflow-x-hidden",
+          isDesktopLayout ? "px-0 pb-0" : "px-2 pb-3 sm:px-4 sm:pb-5",
+          controlsLayerClassName,
+        )}
+      >
         {forecastHourFallbackNotice ? (
           <div
             data-testid="forecast-hour-fallback-notice"
@@ -513,10 +594,12 @@ export const BottomForecastControls = memo(function BottomForecastControls({
           </div>
         ) : null}
         <div
+          data-testid={isDesktopLayout ? "timeline-panel" : undefined}
+          data-tour-target={isDesktopLayout ? "forecast-scrubber" : undefined}
           className={cn(
             "pointer-events-auto relative flex w-full max-w-full flex-col overflow-x-hidden",
             isDesktopLayout
-              ? cn("w-full max-w-[45rem] gap-2 rounded-2xl px-5 py-[15px]", showDesktopBuildingStrip && "pb-[22px]")
+              ? "w-full max-w-none px-4 py-0"
               : isTabletTouchLayout
                 ? "w-[min(90vw,560px)] gap-1.5 rounded-3xl p-4"
                 : "w-full max-w-3xl gap-2 rounded-[1.6rem] p-5"
@@ -527,12 +610,15 @@ export const BottomForecastControls = memo(function BottomForecastControls({
             aria-hidden="true"
             className={cn(
               "viewer-mobile-control-surface pointer-events-none absolute inset-0",
-              isDesktopLayout ? "rounded-2xl" : isTabletTouchLayout ? "rounded-3xl" : "rounded-[1.6rem]"
+              isDesktopLayout ? "border-x-0 border-b-0" : isTabletTouchLayout ? "rounded-3xl" : "rounded-[1.6rem]"
             )}
             style={{ willChange: "transform" }}
           />
-          {/* Content sits above the blur layer */}
-          <div className={cn("relative z-10", isDesktopLayout ? "hidden" : "block")}>
+          {/* Content sits above the blur layer. Rendered conditionally, not
+              CSS-hidden: a display:none duplicate of the transport controls
+              leaves two elements sharing every aria-label. */}
+          {!isDesktopLayout ? (
+          <div className="relative z-10">
             {/* Row 1: context (model/variable) + action buttons */}
             <div className={cn("flex items-center justify-between gap-2 px-1", isTabletTouchLayout ? "mb-1.5" : "mb-2")}>
               <div className="min-w-0 flex-1">
@@ -664,102 +750,17 @@ export const BottomForecastControls = memo(function BottomForecastControls({
 
               <SpeedButton animationDelayMs={animationDelayMs} onSpeedChange={onSpeedChange} touch />
 
-              {staticSnapshotLabel ? (
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 py-1">
-                    <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-cyan-400" />
-                    <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium uppercase tracking-[0.18em] text-white/40">
-                      {staticSnapshotLabel}
-                    </span>
-                  </div>
-                  {validTime ? (
-                    <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[12px] font-medium tracking-[0.06em] text-white/50">
-                      {validTime.shortDate}
-                      {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
-                        <span className="ml-1.5 text-white/32">· {validTime.secondary}</span>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="min-w-0 flex-1">
-                  <div className="relative h-8">
-                    {mobileEnhancedTrack ? (
-                      <>
-                        <div
-                          aria-hidden="true"
-                          className="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-white/[0.08]"
-                        >
-                          <div
-                            className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-cyan-400 via-sky-300 to-slate-200"
-                            style={{ width: `${freshnessProgressPercent}%` }}
-                          />
-                          {!runIsComplete ? (
-                            <div
-                              className="absolute inset-y-0 right-0 bg-slate-500/[0.12]"
-                              style={{ left: `${freshnessProgressPercent}%`, ...trackHatchStyle }}
-                            />
-                          ) : null}
-                        </div>
-                        {!runIsComplete ? (
-                          <div
-                            aria-hidden="true"
-                            className="pointer-events-none absolute top-1/2 z-20 h-3.5 w-px -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]"
-                            style={{ left: `${freshnessProgressPercent}%` }}
-                          />
-                        ) : null}
-                      </>
+              <div className="min-w-0 flex-1">
+                {!isDesktopLayout ? timeline : null}
+                {validTime ? (
+                  <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[12px] font-medium tracking-[0.06em] text-white/50">
+                    {validTime.shortDate}
+                    {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
+                      <span className="ml-1.5 text-white/32">· {validTime.secondary}</span>
                     ) : null}
-                    <div
-                      className="absolute inset-y-0 left-0"
-                      style={{ width: mobileEnhancedTrack ? `${mobileInteractiveTrackPercent}%` : "100%" }}
-                    >
-                      <Slider
-                        value={[mobileEnhancedTrack ? publishedSliderIndex : sliderIndex]}
-                        onValueChange={([value]) => {
-                          const frames = mobileEnhancedTrack ? publishedFrames : availableFrames;
-                          const next = frames[Math.round(value ?? 0)];
-                          if (Number.isFinite(next)) {
-                            if (!isScrubbing) {
-                              setIsScrubbing(true);
-                            }
-                            setPreviewHour(next);
-                            emitForecastHour(next, false);
-                          }
-                        }}
-                        onValueCommit={([value]) => {
-                          const frames = mobileEnhancedTrack ? publishedFrames : availableFrames;
-                          const next = frames[Math.round(value ?? 0)];
-                          if (Number.isFinite(next)) {
-                            setPreviewHour(null);
-                            setIsScrubbing(false);
-                            emitForecastHour(next, true);
-                          }
-                        }}
-                        min={0}
-                        max={Math.max(0, (mobileEnhancedTrack ? publishedFrames : availableFrames).length - 1)}
-                        step={1}
-                        bufferedRanges={mobileEnhancedTrack ? publishedBufferedRanges : availableBufferedRanges}
-                        disabled={disabled || isPlaying || !hasFrames || (mobileEnhancedTrack && publishedFrames.length === 0)}
-                        className={cn(
-                          "absolute inset-x-0 top-1/2 w-full -translate-y-1/2 transition-opacity duration-150 [&>*:first-child]:h-1.5",
-                          mobileEnhancedTrack
-                            ? "[&>*:first-child]:bg-transparent [&>*:first-child>*:first-child]:bg-transparent"
-                            : "[&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
-                        )}
-                      />
-                    </div>
                   </div>
-                  {validTime ? (
-                    <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[12px] font-medium tracking-[0.06em] text-white/50">
-                      {validTime.shortDate}
-                      {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
-                        <span className="ml-1.5 text-white/32">· {validTime.secondary}</span>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              )}
+                ) : null}
+              </div>
             </div>
 
             {showFreshnessStrip && freshnessTotal !== null ? (
@@ -791,179 +792,13 @@ export const BottomForecastControls = memo(function BottomForecastControls({
               </>
             ) : null}
           </div>
+          ) : null}
 
-            <div data-tour-target="forecast-scrubber" className={isDesktopLayout ? "relative z-10 flex items-center gap-3" : "hidden"}>
-              <div className="flex shrink-0 items-center gap-2">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => setIsPlaying(!isPlaying)}
-                      disabled={disabled || !hasFrames || playDisabled || staticSnapshotLabel !== null}
-                      aria-label={isPlaying ? "Pause animation" : "Play animation"}
-                      className={cn(
-                        "flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-150 disabled:opacity-50 pointer-coarse:h-11 pointer-coarse:w-11",
-                        isPlaying
-                          ? "bg-cyan-300/10 text-cyan-200 border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
-                          : "bg-white/[0.06] text-white/70 border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:text-white hover:bg-white/[0.1]"
-                      )}
-                    >
-                      {isPlaying ? (
-                        <Pause className="h-[17px] w-[17px]" />
-                      ) : (
-                        <Play className="h-[17px] w-[17px] translate-x-[1px]" />
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="bg-[#07111f] border-white/10 text-white">
-                    {isPlaying ? "Pause" : "Play"} animation
-                  </TooltipContent>
-                </Tooltip>
-                <SpeedButton animationDelayMs={animationDelayMs} onSpeedChange={onSpeedChange} />
-              </div>
-
-              {staticSnapshotLabel ? (
-                <div className="flex flex-1 items-center">
-                  <div className="flex items-center gap-2 px-0.5">
-                    <span aria-hidden="true" className="h-2 w-2 rounded-full bg-cyan-400 shrink-0" />
-                    <span className="font-['IBM_Plex_Mono',monospace] text-[11px] font-medium uppercase tracking-[0.18em] text-white/40">
-                      {staticSnapshotLabel}
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-1 items-center">
-                  <div className="relative w-full px-0.5">
-                    <div className="relative h-10">
-                      {desktopEnhancedTrack ? (
-                        <>
-                          <div
-                            aria-hidden="true"
-                            className="pointer-events-none absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 overflow-hidden rounded-full bg-white/[0.08]"
-                          >
-                            <div
-                              className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-cyan-400 via-sky-300 to-slate-200"
-                              style={{ width: `${freshnessProgressPercent}%` }}
-                            />
-                            {!runIsComplete ? (
-                              <div
-                                className="absolute inset-y-0 right-0 bg-slate-500/[0.12]"
-                                style={{ left: `${freshnessProgressPercent}%`, ...trackHatchStyle }}
-                              />
-                            ) : null}
-                          </div>
-                        </>
-                      ) : null}
-                      <div
-                        className="absolute inset-y-0 left-0"
-                        style={{ width: desktopEnhancedTrack ? `${desktopInteractiveTrackPercent}%` : "100%" }}
-                      >
-                        <Slider
-                          value={[desktopEnhancedTrack ? publishedSliderIndex : sliderIndex]}
-                          onValueChange={([value]) => {
-                            const frames = desktopEnhancedTrack ? publishedFrames : availableFrames;
-                            const next = frames[Math.round(value ?? 0)];
-                            if (Number.isFinite(next)) {
-                              if (!isScrubbing) {
-                                setIsScrubbing(true);
-                              }
-                              setPreviewHour(next);
-                              emitForecastHour(next, false);
-                            }
-                          }}
-                          onValueCommit={([value]) => {
-                            const frames = desktopEnhancedTrack ? publishedFrames : availableFrames;
-                            const next = frames[Math.round(value ?? 0)];
-                            if (Number.isFinite(next)) {
-                              setPreviewHour(null);
-                              setIsScrubbing(false);
-                              emitForecastHour(next, true);
-                            }
-                          }}
-                          min={0}
-                          max={Math.max(0, (desktopEnhancedTrack ? publishedFrames : availableFrames).length - 1)}
-                          step={1}
-                          bufferedRanges={desktopEnhancedTrack ? publishedBufferedRanges : availableBufferedRanges}
-                          disabled={disabled || isPlaying || !hasFrames || (desktopEnhancedTrack && publishedFrames.length === 0)}
-                          className={desktopSliderClassName}
-                        />
-                      </div>
-                    </div>
-                    {showDesktopBuildingStrip && freshnessTotal !== null ? (
-                      <div className="pointer-events-none absolute inset-x-0.5 top-full flex items-center gap-1.5 pt-0.5 text-[11px] font-medium leading-none">
-                        <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-                        <span className="shrink-0 text-amber-300/90">Building</span>
-                        <span className="shrink-0 tabular-nums text-white/50">
-                          {cappedAvailableForecastHours}/{freshnessTotal} hrs
-                        </span>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              )}
-
-              {sourceStatusLabel ? (
-                <>
-                  <div className="h-9 w-px shrink-0 bg-white/[0.08]" />
-                  <div
-                    data-tour-target={isDesktopLayout ? "freshness-indicator" : undefined}
-                    title={sourceStatusDescription ?? sourceStatusLabel}
-                    className={cn(
-                      "flex h-9 shrink-0 items-center rounded-xl border px-2.5 font-['IBM_Plex_Mono',monospace] text-[11px] font-medium uppercase tracking-[0.16em]",
-                      statusBadgeClass(sourceStatusTone)
-                    )}
-                  >
-                    {sourceStatusLabel}
-                  </div>
-                </>
-              ) : runIncompleteLabel ? (
-                <>
-                  <div className="h-9 w-px shrink-0 bg-white/[0.08]" />
-                  <div
-                    data-tour-target={isDesktopLayout ? "freshness-indicator" : undefined}
-                    title={runIncompleteDescription ?? runIncompleteLabel}
-                    className={cn(
-                      "flex h-9 shrink-0 items-center rounded-xl border px-2.5 font-['IBM_Plex_Mono',monospace] text-[11px] font-medium uppercase tracking-[0.16em]",
-                      statusBadgeClass(runIncompleteTone)
-                    )}
-                  >
-                    {runIncompleteLabel}
-                  </div>
-                </>
-              ) : null}
-
-              {hasFreshnessTotal ? (
-                <div className="h-9 w-px shrink-0 bg-white/[0.08]" />
-              ) : null}
-
-              <div className="flex shrink-0 flex-col items-end gap-0.5 pl-3 sm:min-w-[160px]">
-                {transientStatus ? (
-                  <div className="flex items-center gap-1.5 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[11px] text-amber-100">
-                    <AlertCircle className="h-3 w-3" />
-                    {transientStatus}
-                  </div>
-                ) : null}
-                {validTime ? (
-                  <>
-                    <span className="text-[12px] font-semibold tracking-tight text-white transition-all duration-200">
-                      {validTime.primary}
-                    </span>
-                    {validTime.secondary ? (
-                      <span className="text-[11px] font-medium text-cyan-200/80 transition-all duration-200">
-                        {validTime.secondary}
-                      </span>
-                    ) : null}
-                  </>
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    <AlertCircle className="h-3 w-3 text-white/50" />
-                    <span className="text-[11px] text-white/50">
-                      {timeAxisMode === "observed" ? "Observed time unavailable" : "Valid time unavailable"}
-                    </span>
-                  </div>
-                )}
-              </div>
-          </div>
+          {isDesktopLayout ? (
+            <div className="relative z-10 w-full">
+              {timeline}
+            </div>
+          ) : null}
 
         </div>
       </div>

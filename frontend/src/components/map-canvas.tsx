@@ -2579,6 +2579,10 @@ export function MapCanvas({
       pitchWithRotate: false,
       dragRotate: false,
       touchPitch: false,
+      // Whole-handler-off (Phase 5 locked decision): MapLibre has no
+      // arrow-only disable, and arrows must step frames instead of panning.
+      // +/- zoom and WASD pan are reimplemented in useViewerKeyboard.
+      keyboard: false,
       attributionControl: false,
       // Deterministic headless captures: no tile/symbol cross-fades to land in.
       ...(SCREENSHOT_MODE ? { fadeDuration: 0 } : {}),

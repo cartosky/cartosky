@@ -16,6 +16,13 @@ export default defineConfig({
   testDir: './tests/e2e',
   /* Run tests in files in parallel */
   fullyParallel: true,
+  /**
+   * The viewer suites drive a software-rendered (swiftshader) WebGL map; the
+   * heaviest contract tests chain 25+ sequential UI waits and exceed
+   * Playwright's 30 s default once several workers share one dev server.
+   * 60 s only buys headroom — no assertion is relaxed by it.
+   */
+  timeout: 60_000,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
   /* Retry on CI only */

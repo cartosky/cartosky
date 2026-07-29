@@ -1532,12 +1532,27 @@ def _write_run_manifest(
                 frame_entry["valid_time"] = valid_time
             frames.append(frame_entry)
 
+        # Timeline boundary scalars (forecast variables only — observed/valid
+        # models contribute no expected fhs and never reach this loop). The
+        # boundary is the contiguity edge over the EXPECTED list order, not
+        # max(published): out-of-order publishers (SLR rebuild, member
+        # backfill, stats rebuilds) can land later fhs first, and a cadence
+        # change (240 -> 246) is not a hole.
+        published_fhs = {int(frame["fh"]) for frame in frames}
+        ready_through_fh: int | None = None
+        for fh in expected_fhs:
+            if fh not in published_fhs:
+                break
+            ready_through_fh = fh
+
         variables[var_id] = {
             "display_name": display_name,
             "kind": kind,
             "units": units,
             "expected_frames": len(expected_fhs),
             "available_frames": len(frames),
+            "ready_through_fh": ready_through_fh,
+            "expected_max_fh": expected_fhs[-1],
             "frames": sorted(frames, key=lambda item: item["fh"]),
         }
         ensemble_view = _var_default_ensemble_view(plugin, var_id) if plugin is not None else None
