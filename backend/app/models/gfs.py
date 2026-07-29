@@ -181,6 +181,14 @@ GFS_REGIONS: dict[str, RegionSpec] = {
         bbox_wgs84=(-134.0, 24.0, -60.0, 55.0),
         clip=True,
     ),
+    # Phase 3 — the whole globe at 25 km. Latitude bounds are the EPSG:3857
+    # pole clip; no source clipping (the GFS grid already covers the domain).
+    "global": RegionSpec(
+        id="global",
+        name="Global",
+        bbox_wgs84=(-180.0, -85.05112877980659, 180.0, 85.05112877980659),
+        clip=False,
+    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -1188,6 +1196,20 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.it
     GFS_CONSTRAINTS_BY_VAR_KEY[_precip_anom_key] = _precip_anom_constraint
 
 
+# Phase 3 (plan §2): every buildable GFS grid variable also builds the 25 km
+# ``global`` domain. Anomaly variables are the one exclusion — their ERA5
+# baselines are North-America-only, so a global anomaly has no climatology to
+# depart from. The exclusion is by omission below (never a runtime check) and
+# is pinned by a test over the real catalog.
+GFS_GLOBAL_BUILD_REGIONS: tuple[str, ...] = ("na", "global")
+
+
+def _declares_global_build_region(var_key: str, var_spec: VarSpec) -> bool:
+    if str(var_key).endswith("_anom"):
+        return False
+    return "anomaly" not in str(var_spec.derive or "")
+
+
 def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapability:
     is_buildable = bool(var_spec.primary or var_spec.derived)
     hints = getattr(getattr(var_spec, "selectors", None), "hints", {}) or {}
@@ -1208,10 +1230,22 @@ def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapabi
         frontend["allow_dry_frame"] = True
         is_buildable = False
         constraints["internal_only"] = 1
+    # Companion component vars (ptype_intensity_*) are non-buildable but are
+    # scheduled through their own _build_regions_for_var call, so they must
+    # carry the same declaration as their composite parent — otherwise a
+    # global ptype_intensity manifest advertises component layers whose
+    # frames were never built in the global domain.
+    is_companion_component = str(var_key).startswith("ptype_intensity_")
+    supported_build_regions = (
+        list(GFS_GLOBAL_BUILD_REGIONS)
+        if (is_buildable or is_companion_component) and _declares_global_build_region(var_key, var_spec)
+        else []
+    )
     return VariableCapability(
         var_key=var_key,
         name=var_spec.name,
         selectors=var_spec.selectors,
+        supported_build_regions=supported_build_regions,
         primary=var_spec.primary,
         derived=var_spec.derived,
         derive_strategy_id=var_spec.derive,
@@ -1242,6 +1276,7 @@ GFS_CAPABILITIES = ModelCapabilities(
         "conus": 25_000.0,
         "na": 25_000.0,
         "pnw": 25_000.0,
+        "global": 25_000.0,
     },
     run_discovery={
         "probe_var_key": "tmp2m",

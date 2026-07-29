@@ -67,6 +67,8 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "conus": 25000.0,
         "na": 25000.0,
         "pnw": 25000.0,
+        # Phase 3: the global domain shares GFS's 25 km grid.
+        "global": 25000.0,
     }
 
     from app.services.grid import _PACKING_BY_MODEL_VAR

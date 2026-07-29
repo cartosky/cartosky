@@ -120,17 +120,34 @@ def _grid_params_available(model_id: str, domain: DomainId) -> bool:
     return True
 
 
+def non_canonical_domains_enabled(model_id: Any) -> bool:
+    """Whether this model's declared non-canonical domains are live.
+
+    The Phase 3 dark-rollout gate: ``CARTOSKY_GLOBAL_DOMAIN_MODELS`` must name
+    the model, otherwise its ``supported_build_regions`` extras are ignored
+    everywhere (builds, publishes, capability payload).
+    """
+    from ..config import global_domain_models
+
+    return _normalize_token(model_id) in global_domain_models()
+
+
 def declared_domains_for_var(plugin: Any, var_key: str) -> tuple[DomainId, ...]:
     """Domains a variable is declared buildable for — canonical first.
 
     Extras come from ``VariableCapability.supported_build_regions`` and are
-    kept only when the plugin actually defines the region and grid params
-    exist for it. In the 2A shipping state no model declares extras, so this
-    returns exactly ``(canonical,)``.
+    kept only when the model is allowlisted by
+    :func:`non_canonical_domains_enabled`, the plugin actually defines the
+    region, and grid params exist for it. With the allowlist empty (the
+    default) this returns exactly ``(canonical,)``.
     """
     resolved = _resolve_plugin(plugin)
     canonical = canonical_domain(resolved)
     domains: list[DomainId] = [canonical]
+
+    model_id = _normalize_token(getattr(resolved, "id", ""))
+    if not non_canonical_domains_enabled(model_id):
+        return tuple(domains)
 
     get_var_capability = getattr(resolved, "get_var_capability", None)
     capability = get_var_capability(var_key) if callable(get_var_capability) else None
@@ -138,7 +155,6 @@ def declared_domains_for_var(plugin: Any, var_key: str) -> tuple[DomainId, ...]:
     if not isinstance(declared, (list, tuple)):
         return tuple(domains)
 
-    model_id = _normalize_token(getattr(resolved, "id", ""))
     get_region = getattr(resolved, "get_region", None)
     for raw in declared:
         token = _normalize_token(raw)

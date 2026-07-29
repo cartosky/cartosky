@@ -997,6 +997,33 @@ VORT500_COLOR_ANCHORS = list(VORT500_LEGEND_STOPS)
 VORT500_COLORS = [color for _, color in VORT500_LEGEND_STOPS]
 VORT500_RANGE = (0.0, 85.0)
 
+# ---------------------------------------------------------------------------
+# Global-domain sanity envelopes (Phase 3 §4)
+#
+# `range` is the DISPLAY ramp, tuned to North-American climatology, and the
+# build pipeline's warn-only sanity gate checks against it ± 20%. On the
+# global domain the same fields legitimately reach world records — Vostok
+# −128 °F, Death Valley 134 °F, Antarctic-plateau dew points near −111 °F,
+# tropical-cyclone rainfall totals — so these entries widen the GATE only,
+# via `range_by_region["global"]`. Display ramps are untouched.
+# ---------------------------------------------------------------------------
+TMP2M_F_GLOBAL_RANGE = (-130.0, 135.0)
+# Only the floor moves: the spike observed −111 °F Antarctic-plateau dew
+# points tripping the NA envelope. The top stays at the shared temperature
+# ceiling so the global gate is never tighter than the canonical one.
+DP2M_F_GLOBAL_RANGE = (-115.0, 120.0)
+TMP850_GLOBAL_RANGE = (-90.0, 45.0)
+PWAT_GLOBAL_RANGE = (0.0, 4.5)
+PRECIP_TOTAL_GLOBAL_RANGE = (0.0, 60.0)
+SNOWFALL_TOTAL_GLOBAL_RANGE = (0.0, 120.0)
+MLCAPE_GLOBAL_RANGE = (0.0, 9000.0)
+WSPD10M_GLOBAL_RANGE = (0.0, 250.0)
+WSPD300_GLOBAL_RANGE = (0.0, 300.0)
+# Intense polar-vortex lobes and typhoon-adjacent maxima exceed the NA envelope.
+VORT500_GLOBAL_RANGE = (0.0, 110.0)
+# Severe global icing accumulations (Sea of Okhotsk / Southern Ocean events).
+ICE_TOTAL_GLOBAL_RANGE = (0.0, 4.0)
+
 # Palette/LUT catalog keyed by color_map_id.
 # Variable identity/metadata lives in model plugin capabilities.
 COLOR_MAP_SPECS: dict[str, dict] = {
@@ -1093,6 +1120,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_palette_kind": "discrete",
         "units": "in",
         "range": (0.0, 25.0),
+        "range_by_region": {"global": PRECIP_TOTAL_GLOBAL_RANGE},
         "anchors": PRECIP_TOTAL_COLOR_ANCHORS,
         "colors": precip_colors,
         "display_name": "Total Precipitation",
@@ -1183,6 +1211,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_palette_kind": "discrete",
         "units": "in",
         "range": (0.0, 3.0),
+        "range_by_region": {"global": PWAT_GLOBAL_RANGE},
         "anchors": PWAT_COLOR_ANCHORS,
         "colors": PWAT_COLORS,
         "display_name": "Precipitable Water",
@@ -1249,6 +1278,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_palette_kind": "discrete",
         "units": "in",
         "range": SNOWFALL_TOTAL_RANGE,
+        "range_by_region": {"global": SNOWFALL_TOTAL_GLOBAL_RANGE},
         "anchors": SNOWFALL_TOTAL_COLOR_ANCHORS,
         "power_norm_gamma": 0.72,
         "display_name": "Total Snowfall (10:1)",
@@ -1260,6 +1290,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "type": "discrete",
         "units": "in",
         "range": (0.0, 2.0),
+        "range_by_region": {"global": ICE_TOTAL_GLOBAL_RANGE},
         "levels": ICE_TOTAL_LEVELS,
         "colors": ICE_TOTAL_COLORS,
         "display_name": "Total Ice",
@@ -1273,6 +1304,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "type": "continuous",
         "units": "F",
         "range": TMP2M_F_RANGE,
+        "range_by_region": {"global": TMP2M_F_GLOBAL_RANGE},
         "anchors": TMP2M_F_COLOR_ANCHORS,
         "display_name": "2m Temperature",
         "legend_title": "Temperature (°F)",
@@ -1327,6 +1359,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "type": "continuous",
         "units": "F",
         "range": TMP2M_F_RANGE,
+        "range_by_region": {"global": DP2M_F_GLOBAL_RANGE},
         "anchors": DP2M_F_COLOR_ANCHORS,
         "display_name": "2m Dew Point",
         "legend_title": "Dew Point (°F)",
@@ -1347,6 +1380,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "type": "continuous",
         "units": "C",
         "range": TMP850_RANGE,
+        "range_by_region": {"global": TMP850_GLOBAL_RANGE},
         "anchors": TMP850_COLOR_ANCHORS,
         "display_name": "850mb Temperature",
         "legend_title": "850mb Temperature (°C)",
@@ -1356,6 +1390,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_palette_kind": "discrete",
         "units": "10^-5 s^-1",
         "range": VORT500_RANGE,
+        "range_by_region": {"global": VORT500_GLOBAL_RANGE},
         "anchors": VORT500_COLOR_ANCHORS,
         "colors": VORT500_COLORS,
         "display_name": "500mb Heights + Vorticity",
@@ -1369,6 +1404,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_palette_kind": "discrete",
         "units": "J/kg",
         "range": MLCAPE_RANGE,
+        "range_by_region": {"global": MLCAPE_GLOBAL_RANGE},
         "anchors": MLCAPE_COLOR_ANCHORS,
         "display_name": "Mixed-Layer CAPE",
         "legend_title": "Mixed-Layer CAPE (J/kg)",
@@ -1379,6 +1415,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "type": "continuous",
         "units": "mph",
         "range": WSPD10M_RANGE,
+        "range_by_region": {"global": WSPD10M_GLOBAL_RANGE},
         "anchors": WSPD10M_COLOR_ANCHORS,
         "display_name": "10m Wind Speed",
         "legend_title": "Wind Speed (mph)",
@@ -1387,6 +1424,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "type": "continuous",
         "units": "kt",
         "range": WSPD300_RANGE,
+        "range_by_region": {"global": WSPD300_GLOBAL_RANGE},
         "anchors": WSPD300_COLOR_ANCHORS,
         "display_name": "850mb Heights & Winds",
         "legend_title": "850mb Wind Speed (kt)",
@@ -1395,6 +1433,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "type": "continuous",
         "units": "kt",
         "range": WSPD300_RANGE,
+        "range_by_region": {"global": WSPD300_GLOBAL_RANGE},
         "anchors": WSPD300_COLOR_ANCHORS,
         "display_name": "300mb Heights & Winds",
         "legend_title": "300mb Wind Speed (kt)",
@@ -1403,6 +1442,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "type": "continuous",
         "units": "mph",
         "range": WSPD10M_RANGE,
+        "range_by_region": {"global": WSPD10M_GLOBAL_RANGE},
         "anchors": WSPD10M_COLOR_ANCHORS,
         "display_name": "10m Wind Gust",
         "legend_title": "Wind Gust (mph)",

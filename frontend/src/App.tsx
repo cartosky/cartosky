@@ -118,8 +118,7 @@ import {
   withUpdatedLatestRun,
   pickPreferred,
   makeRegionLabel,
-  filterRegionOptionsByCoverage,
-  filterRegionOptionsForVariable,
+  filterRegionOptionsForDataDomain,
   buildFallbackSharePayload,
   toNumberOrNull,
   makeModelOptions,
@@ -3618,10 +3617,11 @@ export default function App() {
           ?? modelCapability?.canonical_region
           ?? MAP_VIEW_DEFAULTS.region
         ).trim();
-        const regionOptions = filterRegionOptionsForVariable(
+        const nextDataDomain = resolveDataDomain(domain, modelCapability, nextVariableCapability);
+        const regionOptions = filterRegionOptionsForDataDomain(
           regionPresetData,
           canonicalRegion,
-          nextVariableCapability?.supported_build_regions,
+          nextDataDomain,
         );
         const allowedRegionIds = regionOptions.map((option) => option.value);
         setRegions(regionOptions);
@@ -3680,10 +3680,10 @@ export default function App() {
       ?? selectedModelCapability?.canonical_region
       ?? MAP_VIEW_DEFAULTS.region
     ).trim();
-    const nextRegionOptions = filterRegionOptionsForVariable(
+    const nextRegionOptions = filterRegionOptionsForDataDomain(
       regionPresets,
       canonicalRegion,
-      selectedVariableCapability?.supported_build_regions,
+      dataDomain,
     );
     setRegions(nextRegionOptions);
     const allowedRegionIds = nextRegionOptions.map((option) => option.value);
@@ -3695,7 +3695,7 @@ export default function App() {
         ? currentRegion
         : pickPreferred(allowedRegionIds, canonicalRegion || MAP_VIEW_DEFAULTS.region)
     ));
-  }, [regionPresets, selectedModelCapability, selectedVariableCapability]);
+  }, [regionPresets, selectedModelCapability, selectedVariableCapability, dataDomain]);
 
   useEffect(() => {
     const anchorsReadyToLoad = deferNonCriticalBootstrapEnabled

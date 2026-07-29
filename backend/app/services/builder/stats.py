@@ -369,6 +369,7 @@ def _process_stats_unit(
                 prob_colormap if is_prob else ctx.base_colormap_spec,
                 var_spec_model=None if is_prob else ctx.var_spec,
                 var_capability=None if is_prob else ctx.capability,
+                region=plan.region,
                 label=f"{plan.model_id}/{var_id}/fh{fh:03d} (stats pass)",
             )
             if not ok:

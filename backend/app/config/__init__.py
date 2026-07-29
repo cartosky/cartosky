@@ -100,6 +100,25 @@ def member_publish_models() -> frozenset[str]:
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
+def global_domain_models() -> frozenset[str]:
+    """Models whose non-canonical artifact domains (e.g. ``global``) are live.
+
+    Comma-separated model allowlist (``CARTOSKY_GLOBAL_DOMAIN_MODELS=gfs``);
+    empty (the default) means every model is canonical-only — declared
+    ``supported_build_regions`` extras are dropped both at the scheduler
+    chokepoint (``domains.declared_domains_for_var``) and in the capability
+    payload, so a deploy with the flag unset is behaviourally identical to
+    pre-Phase-3. Removing a model is the kill switch: already-published domain
+    trees age out with run retention (Phase 3 plan §3).
+    Deliberately not lru_cached so tests can flip it without cache
+    invalidation; the read is trivially cheap per call.
+    """
+    raw = _env_value("CARTOSKY_GLOBAL_DOMAIN_MODELS").strip().lower()
+    if not raw:
+        return frozenset()
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
 def stats_publish_models() -> frozenset[str]:
     """Models whose scheduler runs the ensemble STATS publish pass (member
     pipeline Phase 6 / Tier 2 — percentile + probability map products).

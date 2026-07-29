@@ -186,8 +186,12 @@ def declared_global(monkeypatch: pytest.MonkeyPatch) -> None:
     """Declare a `global` domain for HRRR ``tmp2m`` — capability data only.
 
     This is exactly the Phase 3 activation switch: a RegionSpec, grid params,
-    and ``supported_build_regions`` on the variable. No code changes.
+    ``supported_build_regions`` on the variable, and the model named in
+    ``CARTOSKY_GLOBAL_DOMAIN_MODELS`` (Phase 3 §3 — the dark-rollout
+    allowlist, which drops declared extras everywhere while unset). No code
+    changes.
     """
+    monkeypatch.setenv("CARTOSKY_GLOBAL_DOMAIN_MODELS", MODEL)
     monkeypatch.setitem(HRRR_REGIONS, GLOBAL, RegionSpec(id=GLOBAL, name="Global"))
     monkeypatch.setitem(
         raster_grid.REGION_BBOX_3857,

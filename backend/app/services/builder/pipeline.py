@@ -613,6 +613,16 @@ def _build_pressure_center_metadata_for_variable(
 # ---------------------------------------------------------------------------
 
 
+def _spec_range_for_region(var_spec: dict[str, Any], region: str | None) -> Any:
+    """The physical-range envelope to check against for ``region``."""
+    by_region = var_spec.get("range_by_region")
+    if region and isinstance(by_region, dict):
+        scoped = by_region.get(str(region).strip().lower())
+        if scoped:
+            return scoped
+    return var_spec.get("range")
+
+
 def _check_value_array_sanity(
     values: np.ndarray,
     var_spec: dict[str, Any],
@@ -621,9 +631,17 @@ def _check_value_array_sanity(
     *,
     label: str,
     gate_name: str,
+    region: str | None = None,
     pass_name: str | None = None,
 ) -> bool:
-    """Sanity-check pixel statistics of a value array."""
+    """Sanity-check pixel statistics of a value array.
+
+    ``region`` selects the physical-range envelope: a spec may carry a
+    ``range_by_region`` map whose entry for the build region wins over the
+    default ``range`` (Phase 3 §4 — global domains see Vostok/Death Valley
+    extremes that trip North-American climatology). Absent region or absent
+    entry falls back to ``range``, so canonical builds are unchanged.
+    """
     ok = True
     spec_type = str(var_spec.get("type", "")).lower()
     model_kind = str(getattr(var_spec_model, "kind", "") or "").lower()
@@ -717,7 +735,7 @@ def _check_value_array_sanity(
                 ok = False
 
         # Value range within VarSpec.range ± 20% (for physical continuous vars)
-        spec_range = var_spec.get("range")
+        spec_range = _spec_range_for_region(var_spec, region)
         if not skip_physical_range_checks and spec_range and len(spec_range) == 2:
             spec_min, spec_max = float(spec_range[0]), float(spec_range[1])
             span = spec_max - spec_min
@@ -742,6 +760,7 @@ def check_pre_encode_value_sanity(
     var_capability: Any | None = None,
     *,
     label: str = "pre-encode array",
+    region: str | None = None,
 ) -> bool:
     """Sanity-check the array that will be encoded into a grid binary."""
     return _check_value_array_sanity(
@@ -751,6 +770,7 @@ def check_pre_encode_value_sanity(
         var_capability=var_capability,
         label=label,
         gate_name="Pre-encode value sanity",
+        region=region,
     )
 
 
@@ -1733,6 +1753,7 @@ def build_frame(
             var_spec_model=var_spec_model,
             var_capability=var_capability,
             label=f"{model}/{var_key}/fh{int(fh):03d}",
+            region=region,
         ):
             logger.error("Pre-encode value sanity failed — rejecting frame")
             _cleanup_artifacts(val_path, sidecar_path, contour_geojson_path, grid_frame_path, grid_frame_meta_path)

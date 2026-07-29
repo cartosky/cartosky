@@ -1251,6 +1251,7 @@ def _gate_and_write(
         ctx.colormap_spec,
         var_spec_model=ctx.var_spec,
         var_capability=ctx.capability,
+        region=plan.region,
         label=f"{plan.model_id}/{var_id}/fh{fh:03d} (member pass)",
     ):
         logger.error(

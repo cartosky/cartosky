@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..services.domains import non_canonical_domains_enabled
 from ..services.render_resampling import display_resampling_override
 from .base import ensemble_stats_product_ids, parse_prob_threshold
 
@@ -94,6 +95,12 @@ def serialize_variable_capability(model_id: str, capability: Any) -> dict[str, A
         for region in supported_build_regions
         if str(region).strip()
     ] if isinstance(supported_build_regions, list) else []
+    # Phase 3 dark rollout: a non-canonical build-region declaration is only
+    # observable once the model is allowlisted. While dark the model publishes
+    # its canonical domain only, which every model encodes today as the empty
+    # list — so the payload stays byte-identical to pre-Phase-3.
+    if supported_build_regions_payload and not non_canonical_domains_enabled(model_id):
+        supported_build_regions_payload = []
     var_key = str(getattr(capability, "var_key", ""))
     ensemble = getattr(capability, "ensemble", None)
     ensemble_payload = dict(ensemble) if isinstance(ensemble, dict) else {}

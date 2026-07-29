@@ -916,25 +916,22 @@ export function filterRegionOptionsByCoverage(
   }));
 }
 
-export function filterRegionOptionsForVariable(
+/**
+ * Camera-preset options for the ACTIVE data domain (Phase 3, §5).
+ *
+ * A non-canonical effective data domain (e.g. `global`) covers every camera
+ * preset, so no coverage filtering applies. Canonical selections (dataDomain
+ * `null`) keep the canonical-region coverage filter. Build-region declarations
+ * (`supported_build_regions`) never constrain the camera list — they describe
+ * which domains can be *requested*, not where the camera may point.
+ */
+export function filterRegionOptionsForDataDomain(
   regionPresets: Record<string, RegionPreset>,
   canonicalRegionId: string | null | undefined,
-  supportedBuildRegions: readonly string[] | null | undefined,
+  dataDomain: string | null | undefined,
 ): Option[] {
-  const normalizedSupportedRegions = Array.isArray(supportedBuildRegions)
-    ? supportedBuildRegions
-      .map((regionId) => String(regionId ?? "").trim().toLowerCase())
-      .filter((regionId, index, items) => Boolean(regionId) && items.indexOf(regionId) === index)
-    : [];
-  if (normalizedSupportedRegions.length === 0) {
-    return filterRegionOptionsByCoverage(regionPresets, canonicalRegionId);
-  }
-  return sortRegionIds(normalizedSupportedRegions)
-    .filter((regionId) => Boolean(regionPresets[regionId]))
-    .map((id) => ({
-      value: id,
-      label: makeRegionLabel(id, regionPresets[id]),
-    }));
+  const domain = String(dataDomain ?? "").trim().toLowerCase();
+  return filterRegionOptionsByCoverage(regionPresets, domain ? null : canonicalRegionId);
 }
 
 /**

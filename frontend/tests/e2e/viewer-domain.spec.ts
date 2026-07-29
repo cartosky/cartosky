@@ -112,6 +112,32 @@ test.describe('Viewer data-domain routing', () => {
     await expect.poll(() => page.evaluate(() => window.location.search)).toContain('domain=mars');
   });
 
+  /**
+   * Phase 3 §5: `supported_build_regions` (the fixture variable declares
+   * ["conus", "global"]) describes which DATA domains may be requested and must
+   * never constrain the CAMERA option list. Observable without touching the
+   * region control: if the options collapsed to the declared build regions,
+   * `midwest` would leave the allowed set and the viewer would snap the camera
+   * back to `conus` — rewriting `reg=` in the permalink.
+   */
+  test('camera presets never collapse to supported_build_regions', async ({ page }) => {
+    const recorded: string[] = [];
+    await stubViewerDomainRoutes(page, recorded);
+
+    for (const search of [
+      `?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_VARIABLE}&fh=0&reg=midwest&domain=${DOMAIN_ID}`,
+      `?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_VARIABLE}&fh=0&reg=midwest`,
+    ]) {
+      await page.goto(`/viewer${search}`);
+      await page.waitForRequest((request) => request.url().includes('/grid-manifest'));
+      await page.waitForLoadState('networkidle');
+      expect(
+        new URL(page.url()).searchParams.get('reg'),
+        `camera preset must survive on ${search}`,
+      ).toBe('midwest');
+    }
+  });
+
   test('region= alone still changes only the viewport, with or without domain=', async ({ page }) => {
     const recorded: string[] = [];
     await stubViewerDomainRoutes(page, recorded);
