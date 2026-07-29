@@ -780,6 +780,47 @@ green. Known interim quirks, recorded: `twf.legend.collapsed` now governs only `
 and the mobile popover; the exporter keeps its own duplicated ptype rendering helpers
 (deliberate — export pixels must not change; candidate post-redesign cleanup).
 
+**Phase 8: implementation complete 2026-07-29 — pending production verification. Final phase.**
+Mobile (<768) restructured into the three §8 states per
+`docs/plans/2026-07-29-map-viewer-redesign-phase-8-mobile.md`. **State A:** 52 px bar (logo, ⌕
+location search, labeled Share, `•••` with Send feedback/Compare/Replay tour/Attribution/
+sign-in — no keyboard-shortcuts item on touch, the recorded §6.1 divergence); map element
+truly 644 px = 76.3% at 390×844 via constant `--viewer-map-top/bottom-inset` vars (unset → 0
+off-mobile; desktop/tablet pixel-unchanged, proven); `MapSourceBadge` owns `MODEL · Variable`;
+compact chip mounted (position variant only); 64 px single-row timeline (`TimelineTrack
+singleRow`, density locked, tick marks not labels; speed moved to the sheet's Source section
+per the 44 px audit); 84 px persistent peek owning run state only — run label + compact
+freshness + the full §5.4 availability line on its own line (verified unclipped at 390; the
+old "X/Y hrs available" strip is deleted). The 72% floor uses a floored clamp (rounding
+overspend fixed; numerically swept H=480-1200) and documents the exact hard-minimum collision:
+bar 52 + peek 64 + timeline 48 = 164 → the floor is reachable only for viewports ≥ ~586 px,
+below which minimum usable control sizes win. **State B:** day strip + bottom-center-of-map
+target readout as absolute overlays, gone 400 ms after pointerup; the map box is bit-identical
+through the gesture by construction (one clip bug found by screenshot — `overflow-x-hidden`
+computing `overflow-y: auto` silently swallowed both overlays while rect assertions passed;
+the suite now asserts IntersectionObserver visibility). **State C:** snaps peek 84 / half
+50vh-equivalent / full 62vh-equivalent computed from `innerHeight` (no vh/dvh — safer under
+iOS dynamic toolbars, flagged for real-device eyeballing); never "closed"; ≥180 px map above
+the full sheet; timeline hides via visibility with its valid time in the sheet header;
+sections Source → View → Legend (tabs retired; Legend = full inline legend, replacing the
+mobile popover). Tour rebuilt for the new chrome and proven completable end-to-end (a
+verification round caught below-the-fold section steps wedging the tour — fixed via
+`requestMobileSheetSection` + TourOverlay re-measure-after-scroll + capture-phase scroll
+listener; bottom offset now derives from the 148 px stack). Two verification rounds ran:
+round 1 REFUTED on six defects (untracked contract suite via the `.gitignore` deny-list, the
+tour wedge, the 130 px tooltip offset, a 4 px boot/fallback header seam at 56-vs-52, the
+short-viewport floor, unreadable availability); all six fixed and independently CONFIRMED
+(production-build seam probe: boot 52 = React 52 = slot 52; real-touchscreen tour walk; clamp
+sweep). Contract suite `tests/e2e/viewer-mobile.spec.ts` (19 tests, red-first, git-tracked)
+covers §9 geometry at 844/660/568, the no-reflow gesture contract, all three states, no
+duplication, §5.4 truthfulness + readability, the tour walk, and the boot-handoff seam. Scrub
+emit contract byte-equivalent; no fetch/readiness/permalink/exporter/backend changes;
+`share-export-baseline` byte-untouched and green; all suites green (known pre-existing
+grid-smoke glass-surface failure predates this phase — its regex asserts a stale 0.88 alpha
+vs the 0.93 token on main). Known interim: tablet-touch (≥768) legend popover dead-end from
+Phase 6 left as-is; slider thumb at 100% slightly overlaps the readout's first character
+(cosmetic).
+
 Production-gate follow-up (Phase 4, 2026-07-28): the slider thumb hit-area enlargement caused two visual
 regressions (dot trailing the finger at range max on mobile; dot below the track centerline on
 desktop) because the hit box proved inseparable from Radix's wrapper positioning math. The thumb

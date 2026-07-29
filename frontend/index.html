@@ -32,6 +32,12 @@
           var RAIL_MOBILE_MAX_WIDTH = 767;
           var RAIL_WIDE_MIN_MAP_WIDTH = 1024;
           var RAIL_MAP_INSETS_PX = 0;
+          // MIRROR OF frontend/src/lib/viewer-mobile.ts MOBILE_BAR_PX — the
+          // Phase 8 mobile viewer bar. The boot shell must publish the same
+          // top-bar height React will publish, or the static header paints
+          // 3.5rem and then snaps to 52px when the bundle mounts (and the
+          // AppLayout backdrop row shows a 4 px strip in the meantime).
+          var MOBILE_BAR_PX = 52;
           var viewportWidth = window.innerWidth;
           var railWidth = 0;
           if (viewportWidth > RAIL_MOBILE_MAX_WIDTH) {
@@ -52,7 +58,14 @@
             railWidth = state === "expanded" ? RAIL_EXPANDED_PX : RAIL_COLLAPSED_PX;
           }
           root.style.setProperty("--viewer-rail-width", railWidth + "px");
-          root.style.setProperty("--viewer-topbar-height", railWidth > 0 ? "3rem" : "3.5rem");
+          root.style.setProperty(
+            "--viewer-topbar-height",
+            railWidth > 0
+              ? "3rem"
+              : viewportWidth <= RAIL_MOBILE_MAX_WIDTH
+                ? MOBILE_BAR_PX + "px"
+                : "3.5rem"
+          );
           root.setAttribute("data-viewer-rail", railWidth > 0 ? "on" : "off");
         }
       } catch (routeError) {}

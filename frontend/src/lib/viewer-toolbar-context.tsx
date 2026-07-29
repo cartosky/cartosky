@@ -2,6 +2,7 @@ import { createContext, useContext } from "react";
 import type { BasemapMode } from "@/components/map-canvas";
 import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
 import type { RailBreakpointClass, RailSection, RailState } from "@/lib/viewer-rail";
+import type { MobileSheetRequest, MobileSheetSection, MobileSheetSnap } from "@/lib/viewer-mobile";
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import type { GroupedOption } from "@/lib/app-utils";
 import type { CompositeLegendLayer, LegendPayload } from "@/components/map-legend";
@@ -87,6 +88,20 @@ export type ViewerToolbarProps = {
   // Mobile controls sheet
   mobileControlsOpen?: boolean;
   onMobileControlsOpenChange?: (open: boolean) => void;
+  // Phase 8 mobile three states (§8). State lives in App.tsx; the bar, the
+  // sheet and the timeline row are presentational consumers, exactly like the
+  // Phase 6 rail. `mobileControlsOpen` still exists and maps open → half.
+  mobileSheetSnap?: MobileSheetSnap;
+  onMobileSheetSnapChange?: (snap: MobileSheetSnap) => void;
+  /** One-shot "expand and reveal this section" request (⌕ and the tour). */
+  mobileSheetRequest?: MobileSheetRequest | null;
+  onMobileSheetRequestHandled?: () => void;
+  onMobileSheetRequest?: (section: MobileSheetSection, options?: { focusSearch?: boolean }) => void;
+  /** §8 State C: the hidden timeline's valid-time readout, shown in the sheet header. */
+  mobileValidTimeLabel?: string | null;
+  /** §8: the speed control lives in the sheet, not in the 64 px row (Task 2 audit). */
+  animationDelayMs?: number;
+  onSpeedChange?: (delayMs: number) => void;
   // Keyboard shortcut sheet (Phase 6 overflow menu)
   onOpenShortcuts?: () => void;
   // Phase 6 rail (§6.2 §6.3 §6.4) — state stays in App.tsx; the rail and bar

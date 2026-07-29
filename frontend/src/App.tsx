@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { AlertCircle } from "lucide-react";
 
-import { BottomForecastControls } from "@/components/bottom-forecast-controls";
+import { BottomForecastControls, formatTimelineDisplay } from "@/components/bottom-forecast-controls";
 import { ShortcutSheet } from "@/components/timeline/ShortcutSheet";
 import { useViewerKeyboard } from "@/hooks/useViewerKeyboard";
 import { MapCanvas, type BasemapMode, type MapCaptureFormat, type VectorHazardSelection } from "@/components/map-canvas";
@@ -14,9 +14,19 @@ import { ViewerSiteHeaderFallback } from "@/components/ViewerSiteHeaderFallback"
 
 const ViewerSiteHeader = lazy(() => import("@/components/ViewerSiteHeader"));
 const ViewerRail = lazy(() => import("@/components/ViewerRail"));
+const ViewerMobileSheet = lazy(() => import("@/components/mobile/ViewerMobileSheet"));
 import { TourOverlay, type TourStepDef } from "@/components/TourOverlay";
 import { useTour } from "@/hooks/useTour";
+import { CompactLegendChip } from "@/components/CompactLegendChip";
+import { MapSourceBadge } from "@/components/mobile/MapSourceBadge";
 import { useViewerRailState } from "@/lib/viewer-rail";
+import {
+  MOBILE_BAR_PX,
+  mobileChromeGeometry,
+  type MobileSheetRequest,
+  type MobileSheetSection,
+  type MobileSheetSnap,
+} from "@/lib/viewer-mobile";
 import type { GridContourLayerConfig } from "@/lib/grid-webgl";
 import { gridValueRendersTransparent, idleWarmupFrameBudgetBytes } from "@/lib/grid-webgl";
 import { ViewerToolbarContext } from "@/lib/viewer-toolbar-context";
@@ -307,26 +317,78 @@ export default function App() {
   const deferNonCriticalBootstrapEnabled = isDeferredNonCriticalBootstrapEnabled();
   const viewerLayoutMode = useViewerLayoutMode();
   const isDesktopViewerLayout = viewerLayoutMode === "desktop";
+  // Phase 8 (§8 decision 4): on mobile the compact chip plus the sheet's
+  // Legend section replace the map-button legend popover; tablet-touch (which
+  // has no Phase 8 sheet) keeps the popover it has today.
+  const isTabletTouchLayout = viewerLayoutMode === "tablet-touch";
   // Phase 6 chrome: everything at or above 768px gets the bar + rail; below it
   // the existing mobile sheet path is untouched (§6.4 / §8).
   const isRailLayout = viewerLayoutMode !== "mobile";
   const rail = useViewerRailState();
   const railWidthPx = isRailLayout ? rail.widthPx : 0;
 
+  // Phase 8 (§8): the mobile chrome budget. Tracked only while the mobile
+  // layout is mounted so a desktop window resize never re-renders the viewer.
+  const [mobileViewportHeight, setMobileViewportHeight] = useState(
+    () => (typeof window === "undefined" ? 844 : window.innerHeight),
+  );
+  useEffect(() => {
+    if (isRailLayout || typeof window === "undefined") return undefined;
+    const update = () => setMobileViewportHeight(window.innerHeight);
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+    };
+  }, [isRailLayout]);
+  const mobileGeometry = useMemo(
+    () => mobileChromeGeometry(mobileViewportHeight),
+    [mobileViewportHeight],
+  );
+
   // One geometry seam for the whole viewer: the map slot, the scrim, the zoom
-  // stack, the MapLibre control margins and the timeline all read these two
-  // root variables instead of hard-coding the chrome geometry.
+  // stack, the MapLibre control margins and the timeline all read these root
+  // variables instead of hard-coding the chrome geometry.
+  //
+  // Phase 8 adds the mobile map insets. They are the whole §9 no-reflow story:
+  // the map element is inset by a CONSTANT `bar` on top and
+  // `timeline + peek` on the bottom, so a sheet snap or a scrub gesture cannot
+  // resize the map (and therefore cannot trigger a MapLibre resize under the
+  // user's finger). Outside the mobile viewer both insets are unset and every
+  // consumer falls back to 0 — desktop and tablet geometry is untouched.
   useEffect(() => {
     const root = document.documentElement;
     root.style.setProperty("--viewer-rail-width", `${railWidthPx}px`);
-    root.style.setProperty("--viewer-topbar-height", isRailLayout ? "3rem" : "3.5rem");
+    root.style.setProperty("--viewer-topbar-height", isRailLayout ? "3rem" : `${MOBILE_BAR_PX}px`);
     root.setAttribute("data-viewer-rail", isRailLayout ? "on" : "off");
+    const mobileProperties = [
+      "--viewer-mobile-timeline-height",
+      "--viewer-mobile-sheet-peek",
+      "--viewer-mobile-bottom-inset",
+      "--viewer-map-top-inset",
+      "--viewer-map-bottom-inset",
+    ];
+    if (isRailLayout) {
+      for (const property of mobileProperties) root.style.removeProperty(property);
+    } else {
+      root.style.setProperty("--viewer-mobile-timeline-height", `${mobileGeometry.timelinePx}px`);
+      root.style.setProperty("--viewer-mobile-sheet-peek", `${mobileGeometry.peekPx}px`);
+      root.style.setProperty("--viewer-mobile-bottom-inset", `${mobileGeometry.bottomInsetPx}px`);
+      root.style.setProperty(
+        "--viewer-map-top-inset",
+        `calc(var(--viewer-topbar-height, ${MOBILE_BAR_PX}px) + var(--viewer-header-extra, 0px))`,
+      );
+      root.style.setProperty("--viewer-map-bottom-inset", `${mobileGeometry.bottomInsetPx}px`);
+    }
     return () => {
       root.style.removeProperty("--viewer-rail-width");
       root.style.removeProperty("--viewer-topbar-height");
+      for (const property of mobileProperties) root.style.removeProperty(property);
       root.removeAttribute("data-viewer-rail");
     };
-  }, [isRailLayout, railWidthPx]);
+  }, [isRailLayout, mobileGeometry, railWidthPx]);
   const initialPermalink = useMemo(() => readPermalink(), []);
   const initialPermalinkMapView = useMemo(() => {
     if (
@@ -404,6 +466,30 @@ export default function App() {
   } = useDisplaySettings(viewerLayoutMode, isDesktopViewerLayout);
   const [legendPopoverOpen, setLegendPopoverOpen] = useState(false);
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
+  // Phase 8 (§8 decision 7): the sheet is never "closed" on the viewer — State
+  // A includes the 84 px peek — and `mobileControlsOpen` maps open → half.
+  const [mobileSheetSnap, setMobileSheetSnap] = useState<MobileSheetSnap>("peek");
+  const [mobileSheetRequest, setMobileSheetRequest] = useState<MobileSheetRequest | null>(null);
+  const mobileSheetRequestTokenRef = useRef(0);
+  // Primitive dependency only. Depending on a memo object here would re-fire
+  // on every identity change — the loop trap documented on the rail tour
+  // effect below.
+  useEffect(() => {
+    setMobileSheetSnap(mobileControlsOpen ? "half" : "peek");
+  }, [mobileControlsOpen]);
+  const requestMobileSheetSection = useCallback(
+    (section: MobileSheetSection, options?: { focusSearch?: boolean }) => {
+      mobileSheetRequestTokenRef.current += 1;
+      setMobileSheetSnap("half");
+      setMobileSheetRequest({
+        section,
+        focusSearch: options?.focusSearch === true,
+        token: mobileSheetRequestTokenRef.current,
+      });
+    },
+    [],
+  );
+  const handleMobileSheetRequestHandled = useCallback(() => setMobileSheetRequest(null), []);
   const skipBasemapAutoDefaultRef = useRef(
     typeof window !== "undefined"
       && (() => {
@@ -525,37 +611,49 @@ export default function App() {
     },
     {
       targetSelector: '[data-tour-target="feedback-button"]',
-      title: "Feedback",
-      body: "Send us a note about missing data, display issues, or feature requests",
+      title: "More",
+      body: "Send feedback, open Compare, replay this tour, or check the map attribution",
     },
+    // Phase 8 (§8): the controls button is gone — the sheet peek IS the
+    // affordance, and it shows the run's state while it sits there.
     {
-      targetSelector: '[data-tour-target="mobile-controls-button"]',
-      title: "Controls Panel",
-      body: "Tap here to open the controls panel and configure your product, variable, run time, and display options",
+      targetSelector: '[data-tour-target="mobile-sheet-peek"]',
+      title: "Run & Controls",
+      body: "The peek shows which run you are looking at and how fresh it is. Tap it — or drag it up — to open the controls; the arrows step between runs without opening anything",
     },
     {
       targetSelector: '[data-tour-target="mobile-bottom-sheet"]',
       title: "Controls Panel",
-      body: "All your model and display settings live here",
+      body: "Drag between three heights. Source, View, and Legend all live here",
       openMobileSheet: true,
     },
     {
       targetSelector: '[data-tour-target="mobile-product-variable-run"]',
-      title: "Product, Variable & Run Time",
+      title: "Source",
       body: "Switch between models, ensembles, forecasts, and observations. Choose your weather variable — precip, temperature, wind, snow, and derived products. Select a model run or stay pinned to the latest available",
       openMobileSheet: true,
+      mobileSheetSection: "source",
     },
     {
       targetSelector: '[data-tour-target="mobile-region-row"]',
       title: "Region",
-      body: "Search for a city, use GPS to find your location, or select from predefined regions",
+      body: "Search for a city, use GPS to find your location, or select from predefined regions. The magnifier in the top bar lands you here",
       openMobileSheet: true,
+      mobileSheetSection: "view",
     },
     {
-      targetSelector: '[data-tour-target="mobile-display-tab"]',
-      title: "Display Settings",
-      body: "Switch to the Display tab to toggle the legend, city labels, and basemap style",
+      targetSelector: '[data-tour-target="mobile-view-section"]',
+      title: "View",
+      body: "Toggle NWS warnings, city labels, zoom controls, the dark basemap, the legend chip, and overlay opacity",
       openMobileSheet: true,
+      mobileSheetSection: "view",
+    },
+    {
+      targetSelector: '[data-tour-target="mobile-legend-section"]',
+      title: "Legend",
+      body: "The full color scale for the current variable. The compact chip in the map corner is the at-rest version",
+      openMobileSheet: true,
+      mobileSheetSection: "legend",
     },
   ], []);
 
@@ -587,16 +685,35 @@ export default function App() {
     }
   }, [isRailLayout, railExpandTo, tourActive, tourCurrentStep, tourSteps]);
 
-  // On mobile, open or close the controls sheet as the tour advances between steps
+  // On mobile, open or close the controls sheet as the tour advances between
+  // steps — and scroll the sheet to the step's section. Opening alone is not
+  // enough: at 390×844 the View and Legend sections sit below the half snap's
+  // scroll fold, so their targets stayed off-screen and the tooltip (with its
+  // Next/Done button) was positioned from an off-screen rect and left the
+  // viewport, wedging the tour.
+  //
+  // Deps are PRIMITIVES plus stable callbacks only — `tourSteps` is a
+  // constant-dependency memo and `requestMobileSheetSection` is a `useCallback([])`.
+  // Depending on a changing memo object here would re-fire the request on every
+  // identity change (the loop trap documented on the rail tour effect above).
   useEffect(() => {
     if (isDesktopViewerLayout) return;
     const step = tourSteps[tourCurrentStep];
     if (tourActive && step) {
       setMobileControlsOpen(step.openMobileSheet === true);
+      if (step.mobileSheetSection) {
+        requestMobileSheetSection(step.mobileSheetSection);
+      }
     } else if (!tourActive) {
       setMobileControlsOpen(false);
     }
-  }, [tourActive, tourCurrentStep, tourSteps, isDesktopViewerLayout]);
+  }, [
+    tourActive,
+    tourCurrentStep,
+    tourSteps,
+    isDesktopViewerLayout,
+    requestMobileSheetSection,
+  ]);
 
   const [selectionEpoch, setSelectionEpoch] = useState(0);
   const [gridReadyVersion, setGridReadyVersion] = useState(0);
@@ -5996,6 +6113,35 @@ export default function App() {
     setProduct(key === "mean" ? "" : key.trim().toLowerCase());
   }, []);
 
+  // §8 State C: the timeline hides at half/full, so its valid-time readout has
+  // to appear in the sheet header. Same formatter the timeline row uses — one
+  // string, two surfaces, never two implementations.
+  const mobileValidTimeLabel = useMemo(() => {
+    if (isRailLayout) {
+      return null;
+    }
+    const display = formatTimelineDisplay({
+      modelId: model,
+      runDateISO: runDateTimeISO,
+      forecastHour,
+      timeAxisMode: selectedTimeAxisMode,
+      variableId: variable,
+      frameDayLabel,
+      validTimeISO: selectedTimeAxisMode === "observed"
+        ? frameValidTimesByHour?.[forecastHour] ?? displayedValidTimeISO
+        : displayedValidTimeISO,
+    });
+    if (!display) {
+      return null;
+    }
+    return display.secondary && display.secondary !== display.shortDate
+      ? `${display.shortDate} · ${display.secondary}`
+      : display.shortDate;
+  }, [
+    isRailLayout, model, runDateTimeISO, forecastHour, selectedTimeAxisMode, variable,
+    frameDayLabel, frameValidTimesByHour, displayedValidTimeISO,
+  ]);
+
   const toolbarContextValue = useMemo(() => ({
     region,
     onRegionChange: handleRegionChange,
@@ -6063,6 +6209,14 @@ export default function App() {
     onFeedback: openFeedback,
     mobileControlsOpen,
     onMobileControlsOpenChange: setMobileControlsOpen,
+    mobileSheetSnap,
+    onMobileSheetSnapChange: setMobileSheetSnap,
+    mobileSheetRequest,
+    onMobileSheetRequestHandled: handleMobileSheetRequestHandled,
+    onMobileSheetRequest: requestMobileSheetSection,
+    mobileValidTimeLabel,
+    animationDelayMs,
+    onSpeedChange: handleAnimationSpeedChange,
     layoutMode: viewerLayoutMode,
     onReplayTour: replayTour,
     onOpenShortcuts: () => setShortcutSheetOpen((open) => !open),
@@ -6090,6 +6244,8 @@ export default function App() {
     telemetryRunId, forecastHour, mobileControlsOpen, replayTour, openFeedback,
     rail, selectedTimeAxisMode, controlAvailableFrameHours, manifestReadyThroughFh,
     manifestExpectedMaxFh, runManifest,
+    mobileSheetSnap, mobileSheetRequest, handleMobileSheetRequestHandled,
+    requestMobileSheetSection, mobileValidTimeLabel, animationDelayMs, handleAnimationSpeedChange,
   ]);
 
   return (
@@ -6098,7 +6254,22 @@ export default function App() {
       <Suspense fallback={<ViewerSiteHeaderFallback />}>
         <ViewerSiteHeader />
         {isRailLayout ? <ViewerRail /> : null}
+        {/* Phase 8 (§8): below 768 the sheet owns the chrome. It is an
+            overlay — the map element's box never depends on its snap. */}
+        {!isRailLayout ? <ViewerMobileSheet peekPx={mobileGeometry.peekPx} /> : null}
       </Suspense>
+
+      {/* §8 State A map overlays. The badge owns source identity; the chip is
+          the at-rest legend (its rendering and export exclusion are frozen —
+          only its mount position is Phase 8's). */}
+      {!isRailLayout ? (
+        <>
+          <MapSourceBadge modelLabel={selectedModelLabel} variableLabel={selectedVariableLabel} />
+          {legendVisible ? (
+            <CompactLegendChip legend={legend} compositeLayers={compositeLegendLayers} position="mobile" />
+          ) : null}
+        </>
+      ) : null}
 
       <div
         className="relative flex-1 min-h-0 overflow-hidden"
@@ -6183,9 +6354,9 @@ export default function App() {
           }
           showZoomControls={zoomControlsVisible}
           isDesktopLayout={isDesktopViewerLayout}
-          legendButtonVisible={!isDesktopViewerLayout && legendVisible}
-          legendButtonActive={!isDesktopViewerLayout && legendVisible && legendPopoverOpen}
-          onLegendButtonClick={!isDesktopViewerLayout ? () => setLegendPopoverOpen(v => !v) : undefined}
+          legendButtonVisible={isTabletTouchLayout && legendVisible}
+          legendButtonActive={isTabletTouchLayout && legendVisible && legendPopoverOpen}
+          onLegendButtonClick={isTabletTouchLayout ? () => setLegendPopoverOpen(v => !v) : undefined}
           manualLocationJumpRef={manualLocationJumpRef}
           geolocationMarker={geolocationMarker}
           viewResetSignal={regionViewResetSignal}

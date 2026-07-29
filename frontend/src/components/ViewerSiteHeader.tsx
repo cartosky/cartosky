@@ -1,31 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/react";
-import { NavLink } from "react-router-dom";
 import {
-  Boxes,
-  CalendarClock,
   Check,
-  Layers,
   MapPin,
   MapPinSearch,
-  Moon,
-  Palette,
-  Percent,
   Search,
   Star,
-  Sun,
-  TriangleAlert,
   X,
-  ZoomIn,
 } from "lucide-react";
 
 import { HexSignalRing } from "@/components/HexSignalRing";
 import { viewerFieldTriggerClassName } from "@/components/ui/viewer-field-trigger";
-import { MapLegend } from "@/components/map-legend";
-import { ModelPicker } from "@/components/ModelPicker";
-import { StatisticPicker } from "@/components/StatisticPicker";
-import { VariablePicker } from "@/components/VariablePicker";
+import { ViewerMobileBar } from "@/components/mobile/ViewerMobileBar";
 import { ViewerTopBar } from "@/components/ViewerTopBar";
 import { ViewerTopProgressBar } from "@/components/ViewerTopProgressBar";
 import {
@@ -37,12 +24,10 @@ import {
   SelectSeparator,
   SelectTrigger,
 } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
-import { supportsNwsWarningsOverlay, type GroupedOption } from "@/lib/app-utils";
-import { BRAND_LOGO_SRC } from "@/lib/branding";
+import type { GroupedOption } from "@/lib/app-utils";
 import { API_V4_BASE } from "@/lib/config";
-import { useFeedbackContext } from "@/lib/feedback-context";
 import { cn } from "@/lib/utils";
+import { MOBILE_BAR_PX } from "@/lib/viewer-mobile";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
 
 // ─── Shared types ────────────────────────────────────────────────────────────
@@ -423,6 +408,7 @@ export function RegionUtilitySelect({
   valueTestId,
   fieldPrefix = false,
   panelPlacement = "align-end",
+  openSignal = 0,
 }: {
   value: string;
   onValueChange: (value: string) => void;
@@ -442,6 +428,13 @@ export function RegionUtilitySelect({
   fieldPrefix?: boolean;
   /** Desktop panel placement relative to the field trigger. */
   panelPlacement?: "align-end" | "right";
+  /**
+   * Phase 8 (§8 decision 2): a monotonically increasing token that opens the
+   * panel programmatically, so the mobile bar's ⌕ can land the user in
+   * location search. `0` (the default) never opens anything, so every existing
+   * mount behaves exactly as before.
+   */
+  openSignal?: number;
 }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -518,6 +511,17 @@ export function RegionUtilitySelect({
   useEffect(() => {
     openRef.current = open;
   }, [open]);
+
+  // Programmatic open (§8 ⌕). Keyed on the token alone: adding the setter
+  // callbacks would re-open the panel every time the parent re-renders.
+  useEffect(() => {
+    if (!openSignal) {
+      return;
+    }
+    updatePanelPosition();
+    setOpenState(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal]);
 
   useEffect(() => {
     if (!open) {
@@ -1002,490 +1006,8 @@ export function RegionUtilitySelect({
   );
 }
 
-// ─── Viewer toolbar mobile/tablet (slide-up sheet) ───────────────────────────
-function ViewerNavMobile({ onFeedback }: { onFeedback?: () => void }) {
-  const toolbar = useViewerToolbar();
-  const [sheetSnap, setSheetSnap] = useState<"closed" | "peek" | "full">("closed");
-  const [activeTab, setActiveTab] = useState<"selection" | "display">("selection");
-  const [mobileModelPickerOpen, setMobileModelPickerOpen] = useState(false);
-  const [mobileVariablePickerOpen, setMobileVariablePickerOpen] = useState(false);
-  const [mobileRegionPickerOpen, setMobileRegionPickerOpen] = useState(false);
-  const dragStartY = useRef<number | null>(null);
-  const pickerReturnSnap = useRef<"peek" | "full" | null>(null);
-
-  if (!toolbar) return null;
-
-  const {
-    variable, onVariableChange, variables, variableCatalog, supportedVariableIds, model, onModelChange, models,
-    ensembleProducts, product, onProductChange, productAvailability,
-    run, onRunChange, runs, region, onRegionChange, onLocationJump, regions, disabled,
-    runDisplayLabel, hasNewerRunAvailable, latestAvailableRunLabel, onViewLatestRun,
-    runSelectionLocked, onShare, pointLabelsEnabled, onPointLabelsEnabledChange,
-    nwsWarningsEnabled, onNwsWarningsEnabledChange, legendVisible,
-    onLegendVisibleChange, basemapMode, onBasemapModeChange, opacity, onOpacityChange,
-    zoomControlsVisible, onZoomControlsVisibleChange, legendPopoverOpen, onLegendPopoverOpenChange,
-    layoutMode, legend, mobileControlsOpen, onMobileControlsOpenChange,
-  } = toolbar;
-  // Ensemble stats product options (stats design §7): only products the
-  // current run actually serves; the selector hides entirely when the run
-  // offers nothing beyond the mean (e.g. stats still publishing).
-  const availableProductOptions = (ensembleProducts ?? [])
-    .filter((entry) => entry.key === "mean" || productAvailability?.[entry.key])
-    .map((entry) => ({ value: entry.key, label: entry.label ?? entry.key, longLabel: entry.long_label ?? entry.label ?? entry.key }));
-  const showProductSelect = availableProductOptions.length > 1;
-
-
-  const isTabletTouchLayout = layoutMode === "tablet-touch";
-  const isPhoneLayout = !isTabletTouchLayout;
-  const sheetOpen = sheetSnap !== "closed";
-  const mobilePickerOpen = mobileModelPickerOpen || mobileVariablePickerOpen || mobileRegionPickerOpen;
-
-  // Sync external open requests (e.g. from the bottom bar) into local sheetSnap
-  useEffect(() => {
-    if (mobileControlsOpen && sheetSnap === "closed") {
-      setSheetSnap("peek");
-    } else if (!mobileControlsOpen && sheetSnap !== "closed") {
-      setSheetSnap("closed");
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mobileControlsOpen]);
-
-  const displayVariables = model === "spc"
-    ? variables.map((o) => ({ ...o, label: spcVariableLabel(o) }))
-    : variables;
-
-  const runMenuOptions = hasNewerRunAvailable
-    ? runs.filter((o) => o.value !== "latest")
-    : runs;
-
-  const selectedVariableLabel = displayVariables.find((o) => o.value === variable)?.label ?? "Variable";
-  const selectedModelLabel = models.find((o) => o.value === model)?.label ?? "Model";
-  const selectedRegionLabel = regions.find((option) => option.value === region)?.label ?? "Region";
-
-  useEffect(() => {
-    if (!sheetOpen) {
-      document.body.style.removeProperty("overflow");
-      document.body.style.removeProperty("overflow-x");
-      return;
-    }
-    const previousOverflow = document.body.style.overflow;
-    const previousOverflowX = document.body.style.overflowX;
-    document.body.style.overflow = "hidden";
-    document.body.style.overflowX = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.body.style.overflowX = previousOverflowX;
-    };
-  }, [sheetOpen]);
-
-  const closeSheet = () => {
-    setSheetSnap("closed");
-    pickerReturnSnap.current = null;
-    setMobileModelPickerOpen(false);
-    setMobileVariablePickerOpen(false);
-    setMobileRegionPickerOpen(false);
-    onMobileControlsOpenChange?.(false);
-  };
-
-  const restorePickerReturnSnap = () => {
-    const returnSnap = pickerReturnSnap.current;
-    pickerReturnSnap.current = null;
-    if (returnSnap) {
-      setSheetSnap(returnSnap);
-    }
-  };
-
-  const rememberPickerReturnSnap = () => {
-    if (!mobilePickerOpen && pickerReturnSnap.current == null) {
-      pickerReturnSnap.current = sheetSnap === "closed" ? "peek" : sheetSnap;
-    }
-  };
-
-  // Drag-to-snap gesture handlers (phone only)
-  const handleDragStart = (e: React.TouchEvent) => {
-    dragStartY.current = e.touches[0]?.clientY ?? null;
-  };
-  const handleDragEnd = (e: React.TouchEvent) => {
-    if (dragStartY.current == null) return;
-    const deltaY = (e.changedTouches[0]?.clientY ?? 0) - dragStartY.current;
-    dragStartY.current = null;
-    if (sheetSnap === "peek") {
-      if (deltaY < -40) setSheetSnap("full");
-      else if (deltaY > 40) closeSheet();
-    } else if (sheetSnap === "full") {
-      if (deltaY > 60) setSheetSnap("peek");
-    }
-  };
-  const handleHandleClick = () => {
-    if (sheetSnap === "peek") setSheetSnap("full");
-    else if (sheetSnap === "full") setSheetSnap("peek");
-  };
-
-  const selectionContent = (
-    <>
-      <div className="flex h-full min-h-0 flex-col gap-3">
-        <div data-tour-target="mobile-product-variable-run" className={cn("flex flex-col gap-3", mobileRegionPickerOpen ? "hidden" : "")}>
-          <div className={cn("space-y-1.5", mobileModelPickerOpen ? "min-h-0 flex-1" : "") }>
-            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.16em] text-white/44">
-              <Boxes className="h-3 w-3" /> Product
-            </span>
-            <ModelPicker
-              value={model}
-              onChange={(nextModel) => { onModelChange(nextModel); closeSheet(); }}
-              options={models}
-              disabled={models.length === 0}
-              placeholder="Product"
-              minWidth="w-full"
-              inlinePanel={isPhoneLayout}
-              inlinePanelClassName="max-h-[calc(90dvh-12rem)]"
-              onOpenChange={(nextOpen) => {
-                if (!isPhoneLayout) {
-                  setMobileModelPickerOpen(false);
-                  return;
-                }
-                setMobileModelPickerOpen(nextOpen);
-                if (nextOpen) {
-                  rememberPickerReturnSnap();
-                  setMobileVariablePickerOpen(false);
-                  setMobileRegionPickerOpen(false);
-                  setSheetSnap("full");
-                } else if (!mobileVariablePickerOpen && !mobileRegionPickerOpen) {
-                  restorePickerReturnSnap();
-                }
-              }}
-            />
-          </div>
-
-          <div className={cn("space-y-1.5", mobileModelPickerOpen ? "hidden" : mobileVariablePickerOpen ? "min-h-0 flex-1" : "") }>
-            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.16em] text-white/44">
-              <Layers className="h-3 w-3" /> Variable
-            </span>
-            <VariablePicker
-              modelId={model}
-              value={variable}
-              onChange={(v) => { onVariableChange(v); closeSheet(); }}
-              variableCatalog={displayVariables}
-              supportedVariableIds={supportedVariableIds}
-              disabled={disabled}
-              placeholder="Variable"
-              selectedLabelOverride={selectedVariableLabel}
-              legend={legend}
-              minWidth="w-full"
-              inlinePanel={isPhoneLayout}
-              inlinePanelClassName="max-h-[calc(90dvh-17rem)]"
-              onOpenChange={(open) => {
-                if (!isPhoneLayout) {
-                  setMobileVariablePickerOpen(false);
-                  return;
-                }
-                setMobileVariablePickerOpen(open);
-                if (open) {
-                  rememberPickerReturnSnap();
-                  setMobileModelPickerOpen(false);
-                  setMobileRegionPickerOpen(false);
-                  setSheetSnap("full");
-                } else if (!mobileModelPickerOpen && !mobileRegionPickerOpen) {
-                  restorePickerReturnSnap();
-                }
-              }}
-            />
-          </div>
-
-          {showProductSelect ? (
-            <div className={cn("space-y-1.5", mobilePickerOpen ? "hidden" : "") }>
-              <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.16em] text-white/44">
-                <Percent className="h-3 w-3" /> Statistic
-              </span>
-              <StatisticPicker
-                value={product ?? "mean"}
-                onValueChange={(value) => { onProductChange?.(value); closeSheet(); }}
-                options={availableProductOptions}
-                disabled={disabled}
-                minWidth="w-full"
-              />
-            </div>
-          ) : null}
-          <div className={cn("space-y-1.5", mobilePickerOpen ? "hidden" : "") }>
-            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.16em] text-white/44">
-              <CalendarClock className="h-3 w-3" /> Run Time
-            </span>
-            <NavbarSelect
-              value={run}
-              onValueChange={(v) => { onRunChange(v); closeSheet(); }}
-              options={runMenuOptions}
-              disabled={disabled || runSelectionLocked}
-              placeholder="Run Time"
-              selectedLabelOverride={runDisplayLabel}
-              highlightState={!runSelectionLocked && hasNewerRunAvailable}
-              menuActionLabel={!runSelectionLocked && hasNewerRunAvailable ? "View latest run" : null}
-              menuActionDescription={
-                !runSelectionLocked && hasNewerRunAvailable && latestAvailableRunLabel
-                  ? `${latestAvailableRunLabel} available`
-                  : null
-              }
-              onMenuAction={
-                !runSelectionLocked && hasNewerRunAvailable
-                  ? () => { onViewLatestRun?.(); closeSheet(); }
-                  : undefined
-              }
-              minWidth="w-full"
-            />
-          </div>
-        </div>
-
-        <div
-          data-tour-target="mobile-region-row"
-          className={cn(
-            "space-y-1.5",
-            mobileRegionPickerOpen ? "flex min-h-0 flex-1 flex-col" : "",
-            mobilePickerOpen && !mobileRegionPickerOpen ? "hidden" : ""
-          )}
-        >
-          <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.16em] text-white/44">
-            <MapPinSearch className="h-3 w-3" /> Region
-          </span>
-          <RegionUtilitySelect
-            value={region}
-            onValueChange={(v) => { onRegionChange(v); closeSheet(); }}
-            onLocationJump={onLocationJump}
-            options={regions}
-            disabled={disabled}
-            currentRegionLabel={selectedRegionLabel}
-            variant="field"
-            inlinePanel={isPhoneLayout}
-            inlinePanelClassName="max-h-[calc(90dvh-12rem)]"
-            onOpenChange={(nextOpen) => {
-              if (!isPhoneLayout) {
-                setMobileRegionPickerOpen(false);
-                return;
-              }
-              setMobileRegionPickerOpen(nextOpen);
-              if (nextOpen) {
-                rememberPickerReturnSnap();
-                setMobileModelPickerOpen(false);
-                setMobileVariablePickerOpen(false);
-                setSheetSnap("full");
-              } else if (!mobileModelPickerOpen && !mobileVariablePickerOpen) {
-                restorePickerReturnSnap();
-              }
-            }}
-            onLocationSelected={closeSheet}
-          />
-        </div>
-      </div>
-    </>
-  );
-
-  const displayContent = (
-    <>
-      <div className="grid grid-cols-1 gap-2">
-        <DisplayRow
-          label="City Labels"
-          icon={MapPin}
-          checked={pointLabelsEnabled}
-          onToggle={() => onPointLabelsEnabledChange(!pointLabelsEnabled)}
-        />
-        {supportsNwsWarningsOverlay(model, variable) ? (
-          <DisplayRow
-            label="NWS Warnings"
-            icon={TriangleAlert}
-            checked={nwsWarningsEnabled}
-            onToggle={() => onNwsWarningsEnabledChange(!nwsWarningsEnabled)}
-          />
-        ) : null}
-        <DisplayRow
-          label="Legend"
-          icon={Palette}
-          checked={legendVisible}
-          onToggle={() => onLegendVisibleChange(!legendVisible)}
-        />
-        <DisplayRow
-          label="Zoom Controls"
-          icon={ZoomIn}
-          checked={zoomControlsVisible}
-          onToggle={() => onZoomControlsVisibleChange(!zoomControlsVisible)}
-        />
-        <button
-          type="button"
-          onClick={() => onBasemapModeChange(basemapMode === "dark" ? "light" : "dark")}
-          className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07]"
-        >
-          <div className="flex items-center gap-2 text-sm font-semibold text-white">
-            {basemapMode === "dark" ? <Moon className="h-4 w-4 text-white/72" /> : <Sun className="h-4 w-4 text-white/72" />}
-            Basemap
-          </div>
-          <span className="text-xs font-semibold text-[#98c9b2]">
-            {basemapMode === "dark" ? "Dark" : "Light"}
-          </span>
-        </button>
-      </div>
-
-      <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] px-3.5 py-3">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-sm font-semibold text-white">Opacity</span>
-          <span className="font-mono text-[11px] text-white/62">{Math.round(opacity * 100)}%</span>
-        </div>
-        <Slider
-          value={[Math.round(opacity * 100)]}
-          onValueChange={([v]) => onOpacityChange((v ?? 100) / 100)}
-          min={0}
-          max={100}
-          step={1}
-          data-audit-exception="opacity-slider"
-                    className="w-full transition-opacity duration-150 [&>*:first-child]:h-1.5 [&>*:first-child]:bg-white/[0.12] [&>*:first-child>*:first-child]:bg-gradient-to-r [&>*:first-child>*:first-child]:from-cyan-400 [&>*:first-child>*:first-child]:via-sky-300 [&>*:first-child>*:first-child]:to-slate-200"
-        />
-      </div>
-
-      {toolbar.onReplayTour ? (
-        <button
-          type="button"
-          onClick={() => {
-            toolbar.onReplayTour?.();
-            closeSheet();
-          }}
-          className="mt-2 flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07]"
-        >
-          <span className="text-sm font-semibold text-white">Replay Tour</span>
-          <span className="text-xs font-medium text-cyan-300/70">?</span>
-        </button>
-      ) : null}
-    </>
-  );
-
-  return (
-    <>
-      {/* Spacer so logo stays left-aligned with nothing on the right */}
-      <div className="flex-1" />
-
-      {/* Slide-up sheet */}
-      {sheetOpen ? createPortal(
-        <>
-          {/* Backdrop — subtler in peek, full blur when expanded */}
-          <div
-            className={cn(
-              "fixed inset-0 z-[65] transition-[background-color,backdrop-filter] duration-300",
-              sheetSnap === "full"
-                ? "bg-black/42 backdrop-blur-[6px]"
-                : "bg-black/20"
-            )}
-            onClick={closeSheet}
-            aria-hidden="true"
-          />
-
-          {/* Sheet panel */}
-          <div
-            data-tour-target="mobile-bottom-sheet"
-            style={isPhoneLayout ? {
-              maxHeight: sheetSnap === "full" ? "90dvh" : "60dvh",
-              transition: "max-height 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
-            } : undefined}
-            className={cn(
-              "viewer-mobile-surface fixed z-[66] flex max-w-full flex-col overflow-x-hidden overflow-y-hidden",
-              isTabletTouchLayout
-                ? "right-3 top-[calc(4.5rem+var(--viewer-header-extra,0px))] max-h-[calc(100svh-5.5rem)] w-[min(19rem,56vw)] rounded-[1.4rem]"
-                : "bottom-0 left-0 right-0 rounded-t-[1.5rem] [border-left:none] [border-right:none] [border-bottom:none] pb-[env(safe-area-inset-bottom)]"
-            )}
-          >
-            {/* Drag handle — phone only, tap to toggle peek/full */}
-            {isPhoneLayout ? (
-              <div
-                className="flex min-h-11 touch-none select-none items-center justify-center active:opacity-70"
-                onTouchStart={handleDragStart}
-                onTouchEnd={handleDragEnd}
-                onClick={handleHandleClick}
-                aria-label={sheetSnap === "peek" ? "Expand controls" : "Collapse controls"}
-                role="button"
-              >
-                <div className="h-1 w-10 rounded-full bg-white/25" />
-              </div>
-            ) : null}
-
-            {/* Header: underline tabs + close button */}
-            <div className={cn(
-              "flex shrink-0 items-center justify-between border-b border-white/[0.08]",
-              isTabletTouchLayout ? "px-5 pt-4" : "px-4 pt-2"
-            )}>
-              <div className="flex">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("selection")}
-                  className={cn(
-                    "relative flex min-h-11 items-center pr-5 text-sm font-semibold transition-colors duration-150",
-                    activeTab === "selection" ? "text-white" : "text-white/40 hover:text-white/65"
-                  )}
-                >
-                  Selection
-                  {activeTab === "selection" && (
-                    <span className="absolute bottom-0 left-0 right-5 h-[2px] rounded-full bg-cyan-400" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("display")}
-                  data-tour-target="mobile-display-tab"
-                  className={cn(
-                    "relative flex min-h-11 items-center pr-5 text-sm font-semibold transition-colors duration-150",
-                    activeTab === "display" ? "text-white" : "text-white/40 hover:text-white/65"
-                  )}
-                >
-                  Display
-                  {activeTab === "display" && (
-                    <span className="absolute bottom-0 left-0 right-5 h-[2px] rounded-full bg-cyan-400" />
-                  )}
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={closeSheet}
-                className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/60 hover:text-white"
-                aria-label="Close controls"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Scrollable content — explicit max-height keeps container content-sized (no dead space) */}
-            <div
-              style={isPhoneLayout ? {
-                maxHeight: sheetSnap === "full" ? "calc(90dvh - 5.5rem)" : "calc(60dvh - 5.5rem)",
-              } : undefined}
-              className={cn(
-                "min-h-0",
-                mobilePickerOpen ? "flex flex-1 flex-col overflow-hidden" : "overflow-y-auto",
-                isTabletTouchLayout ? "max-h-[calc(100svh-10rem)] px-5 pb-5 pt-3" : "px-4 pb-6 pt-3"
-              )}
-            >
-              {activeTab === "selection" ? selectionContent : displayContent}
-            </div>
-          </div>
-        </>
-      , document.body) : null}
-
-      {/* Legend popover — opens to the right of the zoom control cluster */}
-      {legendVisible && legendPopoverOpen && legend ? createPortal(
-        <>
-          <div
-            className="fixed inset-0 z-[54]"
-            onClick={() => onLegendPopoverOpenChange(false)}
-            aria-hidden="true"
-          />
-          <div className="fixed left-[58px] top-[calc(3.5rem+1rem+var(--viewer-header-extra,0px))] z-[55] w-[220px] max-h-[calc(100svh-6rem)] overflow-y-auto overflow-x-hidden rounded-2xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.88] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md">
-            <MapLegend
-              legend={legend}
-              defaultExpanded={true}
-              inline={true}
-            />
-          </div>
-        </>
-      , document.body) : null}
-    </>
-  );
-}
-
 export default function ViewerSiteHeader() {
   const toolbar = useViewerToolbar();
-  const { openFeedback } = useFeedbackContext();
   const isViewerDesktop = (
     toolbar?.layoutMode === "desktop"
     || toolbar?.layoutMode === "tablet-touch"
@@ -1494,15 +1016,16 @@ export default function ViewerSiteHeader() {
   const isViewerMobile = !isViewerDesktop;
   const headerRef = useRef<HTMLElement>(null);
 
-  // Measured header-height contract (Phase 4, baselines re-based in Phase 6):
-  // the rail-mode bar is 48px, the mobile header stays 56px. Under a coarse
+  // Measured header-height contract (Phase 4, baselines re-based in Phase 6,
+  // mobile re-based in Phase 8): the rail-mode bar is 48px, the Phase 8 mobile
+  // bar is 52px (§8 State A). Under a coarse
   // pointer a 44px target can still wrap the bar taller than its baseline, so
   // publish only the growth beyond it — map padding, the rail top, the scrim,
   // the zoom stack, and header panels consume the variable.
   useEffect(() => {
     const element = headerRef.current;
     if (!element) return undefined;
-    const baseline = isViewerDesktop ? 48 : 56;
+    const baseline = isViewerDesktop ? 48 : MOBILE_BAR_PX;
     const apply = () => {
       const extra = Math.max(0, Math.round(element.getBoundingClientRect().height - baseline));
       document.documentElement.style.setProperty("--viewer-header-extra", `${extra}px`);
@@ -1523,20 +1046,9 @@ export default function ViewerSiteHeader() {
         className="absolute inset-0 border-b border-[#1a3a5c]/60 bg-[#030e1a]/[0.85] shadow-[0_2px_16px_rgba(0,0,0,0.4),inset_0_-1px_0_rgba(100,180,255,0.06)] backdrop-blur-md"
         style={{ willChange: "transform" }}
       />
-      {/* Rail layouts get the Phase 6 bar; the mobile sheet path is untouched. */}
+      {/* Rail layouts get the Phase 6 bar; <768 gets the Phase 8 three states. */}
       {isViewerDesktop ? <ViewerTopBar /> : null}
-      {isViewerMobile ? (
-        <div className="relative z-10 flex h-14 items-center gap-3 px-4 md:px-5">
-          <NavLink to="/" className="flex shrink-0 items-center font-semibold tracking-tight text-white">
-            <img
-              src={BRAND_LOGO_SRC}
-              alt="CartoSky"
-              className="block h-12 w-auto max-w-none"
-            />
-          </NavLink>
-          <ViewerNavMobile onFeedback={openFeedback} />
-        </div>
-      ) : null}
+      {isViewerMobile ? <ViewerMobileBar /> : null}
       <ViewerTopProgressBar visible={Boolean(toolbar?.isFrameSwitching)} />
     </header>
   );

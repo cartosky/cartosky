@@ -104,6 +104,20 @@ export function railFreshnessLabel(iso: string | null | undefined, nowMs = Date.
   return `Updated ${Math.floor(hours / 24)} d ago`;
 }
 
+/**
+ * Compact peek variant of `railFreshnessLabel` — `18 min ago`, no `Updated `
+ * prefix (§8: the mobile peek line must share its 390 px row with the run
+ * label). Derived from the same function so the §5.4 vocabulary cannot drift:
+ * only the prefix differs.
+ */
+export function railFreshnessShortLabel(
+  iso: string | null | undefined,
+  nowMs = Date.now(),
+): string | null {
+  const label = railFreshnessLabel(iso, nowMs);
+  return label === null ? null : label.replace(/^Updated /, "");
+}
+
 export type ViewerRailStateReturn = {
   breakpointClass: RailBreakpointClass;
   state: RailState;

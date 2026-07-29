@@ -55,9 +55,15 @@ function computeChipWidth(): number {
 type CompactLegendChipProps = {
   legend: LegendPayload | null;
   compositeLayers?: CompositeLegendLayer[] | null;
+  /**
+   * Phase 8 (§8 State A): the mobile mount. POSITION ONLY — the rendering, the
+   * density model and `data-export-exclude` are frozen. `desktop` keeps the
+   * collapsed-rail corner offset byte-for-byte.
+   */
+  position?: "desktop" | "mobile";
 };
 
-export function CompactLegendChip({ legend, compositeLayers = null }: CompactLegendChipProps) {
+export function CompactLegendChip({ legend, compositeLayers = null, position = "desktop" }: CompactLegendChipProps) {
   const [expanded, setExpanded] = useState(false);
   const [tight, setTight] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -123,11 +129,16 @@ export function CompactLegendChip({ legend, compositeLayers = null }: CompactLeg
       role="complementary"
       aria-label="Map legend"
       className={cn(
-        "fixed right-4 top-[7.75rem] z-[55] flex flex-col overflow-hidden rounded-xl",
+        "fixed right-4 z-[55] flex flex-col overflow-hidden rounded-xl",
         "border border-[#1a3a5c]/60 bg-[#04101e]/[0.82] shadow-[0_8px_32px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md",
+        position === "mobile" ? "right-3" : "top-[7.75rem]",
       )}
       style={{
         width: expanded ? `${EXPANDED_WIDTH_PX}px` : chipWidthCss,
+        // §8 State A: top-right of the MAP, mirroring the desktop corner.
+        ...(position === "mobile"
+          ? { top: "calc(var(--viewer-map-top-inset, 0px) + 0.75rem)", maxHeight: "calc(100vh - var(--viewer-map-top-inset, 0px) - var(--viewer-map-bottom-inset, 0px) - 1.5rem)" }
+          : null),
       }}
     >
       <button

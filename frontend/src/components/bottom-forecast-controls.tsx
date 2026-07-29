@@ -1,13 +1,13 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { AlertCircle, GitCompareArrows, MessageSquareText, Pause, Play, Share2, Settings } from "lucide-react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, Pause, Play } from "lucide-react";
 
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
-import { Button } from "@/components/ui/button";
 import { TimelineTrack } from "@/components/timeline/TimelineTrack";
 import { cn } from "@/lib/utils";
 import { resolveRunBuildProgress } from "@/lib/viewer-loading-status";
+import { buildTimelineViewModel } from "@/lib/timeline-availability";
+import { MOBILE_SCRUB_REVERT_MS } from "@/lib/viewer-mobile";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
 import { SpeedButton } from "@/components/SpeedButton";
 import {
@@ -161,7 +161,7 @@ function formatCpcValidSeasDisplay(
   return `VALID: ${startStr} - ${endStr}`;
 }
 
-function formatTimelineDisplay(params: {
+export function formatTimelineDisplay(params: {
   modelId?: string | null;
   runDateISO: string | null;
   forecastHour: number;
@@ -324,10 +324,6 @@ export const BottomForecastControls = memo(function BottomForecastControls({
   expectedMaxFh = null,
 }: BottomForecastControlsProps) {
   const toolbar = useViewerToolbar();
-  const onShare = toolbar?.onShare;
-  const compareHref = toolbar?.compareHref;
-  const onFeedback = toolbar?.onFeedback;
-  const onOpenControls = toolbar?.onMobileControlsOpenChange;
   const DRAG_UPDATE_MS = 48;
   const [previewHour, setPreviewHour] = useState<number | null>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -363,8 +359,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
 
   const hasFrames = availableFrames.length > 0;
   const isDesktopLayout = layoutMode === "desktop" || layoutMode === "tablet-touch";
-  const isTabletTouchLayout = layoutMode === "tablet-touch";
-  const controlsLayerClassName = isDesktopLayout || isTabletTouchLayout ? "z-[70]" : "z-[60]";
+  const controlsLayerClassName = isDesktopLayout ? "z-[70]" : "z-[60]";
   const effectiveHour = previewHour ?? forecastHour;
   const jumpHours = useMemo(
     () => Array.from(new Set(availableFrames.filter(Number.isFinite))).sort((a, b) => a - b),
@@ -387,10 +382,10 @@ export const BottomForecastControls = memo(function BottomForecastControls({
     [availableFrames, totalForecastHours],
   );
   const hasFreshnessTotal = freshnessTotal !== null && freshnessTotal > 0;
-  const showFreshnessStrip = !isDesktopLayout && timeAxisMode !== "observed" && hasFreshnessTotal;
-  const freshnessProgressPercent = hasFreshnessTotal
-    ? Math.max(0, Math.min(100, (cappedAvailableForecastHours / freshnessTotal) * 100))
-    : 0;
+  // Phase 8 (§8): the mobile freshness strip is retired. Run state belongs to
+  // the sheet peek, spoken through the §5.4 railFreshnessLabel /
+  // railAvailabilityLine adapters — the strip's "X/Y hrs available" sentence
+  // was the last surface that could claim availability on an incomplete run.
   useEffect(() => {
     setPreviewHour(null);
   }, [forecastHour]);
@@ -417,6 +412,102 @@ export const BottomForecastControls = memo(function BottomForecastControls({
       }
     };
   }, []);
+
+  // ── §8 State B ───────────────────────────────────────────────────────────
+  // The day strip and the target readout are raised on pointerdown and revert
+  // 400 ms after pointerup. Both are ABSOLUTE OVERLAYS: §9 forbids inserting a
+  // flex row into the gesture path, because resizing the map mid-drag triggers
+  // a MapLibre resize and a visible jump under the finger. (The map element's
+  // box is additionally pinned by --viewer-map-bottom-inset, so this is belt
+  // and braces.) The scrub emit contract itself is untouched — `isScrubbing`
+  // is consumed here, never redefined.
+  const [scrubOverlayVisible, setScrubOverlayVisible] = useState(false);
+  useEffect(() => {
+    if (isScrubbing) {
+      setScrubOverlayVisible(true);
+      return undefined;
+    }
+    if (!scrubOverlayVisible) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setScrubOverlayVisible(false), MOBILE_SCRUB_REVERT_MS);
+    return () => window.clearTimeout(timer);
+  }, [isScrubbing, scrubOverlayVisible]);
+
+  // The strip spans exactly the track's box, so its label density is decided
+  // from the measured track width — the same input TimelineTrack's own day
+  // band uses. Measured with a callback ref because the row does not exist
+  // until the run data lands.
+  const [mobileTrackWidth, setMobileTrackWidth] = useState(0);
+  const mobileTrackObserverRef = useRef<ResizeObserver | null>(null);
+  const attachMobileTrackWrapper = useCallback((element: HTMLDivElement | null) => {
+    mobileTrackObserverRef.current?.disconnect();
+    mobileTrackObserverRef.current = null;
+    if (!element || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    setMobileTrackWidth(element.getBoundingClientRect().width);
+    const observer = new ResizeObserver((entries) => {
+      setMobileTrackWidth(entries[0]?.contentRect.width ?? 0);
+    });
+    observer.observe(element);
+    mobileTrackObserverRef.current = observer;
+  }, []);
+  useEffect(() => () => mobileTrackObserverRef.current?.disconnect(), []);
+
+  // Day boundaries for the strip, from the SAME view model the track builds —
+  // no second time model, no track-model change.
+  const dayStripSegments = useMemo(() => {
+    if (isDesktopLayout) {
+      return [] as Array<{ leftPct: number; widthPct: number; label: string }>;
+    }
+    const stripModel = buildTimelineViewModel({
+      mode: timeAxisMode,
+      frames: publishedFrameHours && publishedFrameHours.length > 0 ? publishedFrameHours : availableFrames,
+      validTimeByHour: frameValidTimesByHour,
+      runDateTimeISO,
+      readyThroughFh,
+      expectedMaxFh,
+      validPeriodLabel: staticSnapshotLabel,
+    });
+    if (!stripModel) {
+      return [];
+    }
+    const spanMs = stripModel.domainEndMs - stripModel.domainStartMs;
+    if (spanMs <= 0) {
+      return [];
+    }
+    const segments: Array<{ leftPct: number; widthPct: number; label: string }> = [];
+    let cursor = stripModel.domainStartMs;
+    while (cursor < stripModel.domainEndMs && segments.length < 32) {
+      const date = new Date(cursor);
+      const nextMidnight = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1);
+      const endMs = Math.min(stripModel.domainEndMs, Math.max(cursor + 1, nextMidnight));
+      const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(date);
+      segments.push({
+        leftPct: ((cursor - stripModel.domainStartMs) / spanMs) * 100,
+        widthPct: ((endMs - cursor) / spanMs) * 100,
+        label: `${weekday} ${date.getUTCMonth() + 1}/${date.getUTCDate()}`,
+      });
+      cursor = endMs;
+    }
+    // A 264 h run is 11 day cells in ~180 px. Rather than truncate every label
+    // into two illegible characters, label every Nth boundary at full width and
+    // let the cell borders carry the rhythm between them.
+    const DAY_LABEL_MIN_PX = 56;
+    const narrowestCellPx = mobileTrackWidth > 0
+      ? Math.min(...segments.map((segment) => (segment.widthPct / 100) * mobileTrackWidth))
+      : DAY_LABEL_MIN_PX;
+    const labelEvery = narrowestCellPx >= DAY_LABEL_MIN_PX
+      ? 1
+      : Math.max(1, Math.ceil(DAY_LABEL_MIN_PX / Math.max(1, narrowestCellPx)));
+    return segments.map((segment, index) => (
+      index % labelEvery === 0 ? segment : { ...segment, label: "" }
+    ));
+  }, [
+    availableFrames, expectedMaxFh, frameValidTimesByHour, isDesktopLayout, mobileTrackWidth,
+    publishedFrameHours, readyThroughFh, runDateTimeISO, staticSnapshotLabel, timeAxisMode,
+  ]);
 
   const emitForecastHour = (next: number, force: boolean) => {
     const now = Date.now();
@@ -620,6 +711,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
           : null
       }
       layoutMode={layoutMode}
+      singleRow={!isDesktopLayout}
       desktopTransportStart={desktopTransportStart}
       desktopTransportEnd={desktopTransportEnd}
       disabled={disabled || isPlaying || !hasFrames || staticSnapshotLabel !== null}
@@ -635,37 +727,83 @@ export const BottomForecastControls = memo(function BottomForecastControls({
     />
   );
 
+  const timelineHiddenBySheet = !isDesktopLayout && (toolbar?.mobileSheetSnap ?? "peek") !== "peek";
+
   return (
     <TooltipProvider delayDuration={300}>
       <div
         className={cn(
-          "pointer-events-none fixed inset-x-0 bottom-0 flex max-w-[100vw] flex-col items-center justify-end",
-          isDesktopLayout ? "overflow-visible px-0 pb-0" : "overflow-x-hidden px-2 pb-3 sm:px-4 sm:pb-5",
+          "pointer-events-none fixed inset-x-0 flex max-w-[100vw] flex-col items-center justify-end",
+          // Mobile MUST NOT clip: `overflow-x: hidden` on a 64 px box computes
+          // overflow-y to auto, which silently clips the State B overlays that
+          // deliberately render ABOVE the row (`bottom-full`). Nothing here can
+          // overflow horizontally — every child is min-w-0/truncate — and the
+          // §9 geometry test asserts that.
+          isDesktopLayout ? "bottom-0 overflow-visible px-0 pb-0" : "overflow-visible px-0",
           controlsLayerClassName,
         )}
         // Phase 6: center within the map area, not the viewport. The variable
         // is unset outside the viewer, where this resolves to today's 0.
-        style={{ left: "var(--viewer-rail-width, 0px)" }}
+        // Phase 8 (§8): on mobile the row is pinned ABOVE the sheet peek at a
+        // fixed 64 px, and it hides at the half/full snaps with
+        // visibility/opacity — never display or height, because the map's
+        // bottom inset must not move (§9).
+        style={isDesktopLayout ? { left: "var(--viewer-rail-width, 0px)" } : {
+          left: 0,
+          right: 0,
+          bottom: "var(--viewer-mobile-sheet-peek, 84px)",
+          height: "var(--viewer-mobile-timeline-height, 64px)",
+          visibility: timelineHiddenBySheet ? "hidden" : "visible",
+          opacity: timelineHiddenBySheet ? 0 : 1,
+          transition: "opacity 0.2s ease",
+        }}
       >
+        {/* Notices are absolute overlays on mobile: the 64 px row is fixed. */}
         {forecastHourFallbackNotice ? (
           <div
             data-testid="forecast-hour-fallback-notice"
-            className="pointer-events-none mb-2 flex max-w-[min(92vw,36rem)] items-center gap-2 rounded-md border border-amber-300/40 bg-slate-950/85 px-3 py-2 text-xs text-amber-100 shadow-lg backdrop-blur-md"
+            className={cn(
+              "pointer-events-none flex max-w-[min(92vw,36rem)] items-center gap-2 rounded-md border border-amber-300/40 bg-slate-950/85 px-3 py-2 text-xs text-amber-100 shadow-lg backdrop-blur-md",
+              isDesktopLayout ? "mb-2" : "absolute bottom-full left-1/2 mb-2 -translate-x-1/2",
+            )}
           >
             <AlertCircle className="h-3.5 w-3.5 shrink-0" />
             <span>{forecastHourFallbackNotice}</span>
           </div>
         ) : null}
+
+        {!isDesktopLayout && transientStatus ? (
+          <div className="pointer-events-none absolute bottom-full left-1/2 mb-2 flex -translate-x-1/2 items-center gap-1 rounded-md border border-amber-300/25 bg-slate-950/85 px-2 py-1 text-[12px] text-amber-100">
+            <AlertCircle className="h-3 w-3" />
+            {transientStatus}
+          </div>
+        ) : null}
+
+        {/* §8 State B: the target readout sits over the BOTTOM-CENTER OF THE
+            MAP, above the timeline — a readout under the track cannot be read
+            while the user's thumb is setting it. */}
+        {!isDesktopLayout && scrubOverlayVisible && validTime ? (
+          <div
+            data-testid="mobile-scrub-readout"
+            className="pointer-events-none absolute bottom-full left-1/2 mb-3 flex -translate-x-1/2 flex-col items-center gap-0.5 rounded-xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.92] px-3 py-2 shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-md"
+          >
+            <span className="whitespace-nowrap text-[13px] font-semibold tracking-[-0.01em] text-white/95">
+              {validTime.primary}
+            </span>
+            {validTime.secondary ? (
+              <span className="whitespace-nowrap text-[12px] font-medium text-cyan-200/75">
+                {validTime.secondary}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
         <div
-          data-testid={isDesktopLayout ? "timeline-panel" : undefined}
-          data-tour-target={isDesktopLayout ? "forecast-scrubber" : undefined}
+          data-testid={isDesktopLayout ? "timeline-panel" : "mobile-timeline-row"}
+          data-tour-target={isDesktopLayout ? "forecast-scrubber" : "mobile-timeline"}
           className={cn(
             "pointer-events-auto relative flex w-full max-w-full flex-col",
-            isDesktopLayout
-              ? "w-full max-w-none overflow-visible px-4 py-0"
-              : isTabletTouchLayout
-                ? "w-[min(90vw,560px)] gap-1.5 overflow-x-hidden rounded-3xl p-4"
-                : "w-full max-w-3xl gap-2 overflow-x-hidden rounded-[1.6rem] p-5"
+            isDesktopLayout ? "w-full max-w-none overflow-visible px-4 py-0" : "h-full overflow-visible",
           )}
         >
           {/* Blur layer isolated on its own compositor layer — never repaints during slider drag */}
@@ -673,188 +811,69 @@ export const BottomForecastControls = memo(function BottomForecastControls({
             aria-hidden="true"
             className={cn(
               "viewer-mobile-control-surface pointer-events-none absolute inset-0",
-              isDesktopLayout ? "border-x-0 border-b-0" : isTabletTouchLayout ? "rounded-3xl" : "rounded-[1.6rem]"
+              isDesktopLayout ? "border-x-0 border-b-0" : "border-x-0 border-b-0",
             )}
             style={{ willChange: "transform" }}
           />
-          {/* Content sits above the blur layer. Rendered conditionally, not
-              CSS-hidden: a display:none duplicate of the transport controls
-              leaves two elements sharing every aria-label. */}
+
+          {/* §8 State A mobile: ONE 64 px row — [▶] track  valid-time readout.
+              The speed control did not survive the 44 px audit at 390 px
+              (play 44 + track + readout leaves no room for a second target),
+              so it lives in the sheet's Source section. Share, Compare,
+              Feedback and the controls button moved to the 52 px bar. */}
           {!isDesktopLayout ? (
-          <div className="relative z-10">
-            {/* Row 1: context (model/variable) + action buttons */}
-            <div className={cn("flex items-center justify-between gap-2 px-1", isTabletTouchLayout ? "mb-1.5" : "mb-2")}>
-              <div className="min-w-0 flex-1">
-                {(modelLabel || variableLabel) ? (
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        {runDateTimeISO ? (
-                          <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[12px] font-semibold uppercase tracking-[0.18em] text-cyan-300/55">
-                            {`${new Date(runDateTimeISO).getUTCHours()}z`}
-                          </span>
-                        ) : null}
-                        {runDateTimeISO && modelLabel ? (
-                          <span className="text-[12px] text-cyan-300/30">·</span>
-                        ) : null}
-                        {modelLabel ? (
-                          <span className="shrink-0 font-['IBM_Plex_Mono',monospace] text-[12px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
-                            {modelLabel}
-                          </span>
-                        ) : null}
-                      </div>
-                      {variableLabel ? (
-                        <span className="block min-w-0 truncate text-[11px] font-medium text-cyan-200/70 mt-0.5">
-                          {variableLabel}
-                        </span>
-                      ) : null}
-                  </div>
-                ) : null}
-              </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                {sourceStatusLabel ? (
+            <div className="relative z-10 flex h-full items-center gap-2 px-2">
+              <button
+                type="button"
+                data-testid="timeline-play-button"
+                onClick={() => setIsPlaying(!isPlaying)}
+                disabled={disabled || !hasFrames || playDisabled || staticSnapshotLabel !== null}
+                aria-label={isPlaying ? "Pause animation" : "Play animation"}
+                className={cn(
+                  "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition-all duration-150 disabled:opacity-50",
+                  isPlaying
+                    ? "border-cyan-300/30 bg-cyan-300/[0.12] text-cyan-200"
+                    : "border-white/10 bg-white/[0.05] text-white/80 hover:bg-white/[0.09] hover:text-white",
+                )}
+              >
+                {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-[1px]" />}
+              </button>
+
+              <div ref={attachMobileTrackWrapper} className="relative h-full min-w-0 flex-1">
+                {/* §8 State B day strip — an absolute overlay ALIGNED TO THE
+                    TRACK, fading in on pointerdown. */}
+                {scrubOverlayVisible && dayStripSegments.length > 0 ? (
                   <div
-                    data-tour-target={!isDesktopLayout ? "freshness-indicator" : undefined}
-                    title={sourceStatusDescription ?? sourceStatusLabel}
-                    className={cn(
-                      "rounded-md border px-2 py-1 font-['IBM_Plex_Mono',monospace] text-[12px] font-medium uppercase tracking-[0.2em]",
-                      statusBadgeClass(sourceStatusTone)
-                    )}
-                  >
-                    {sourceStatusLabel}
-                  </div>
-                ) : runIncompleteLabel ? (
-                  <div
-                    data-tour-target={!isDesktopLayout ? "freshness-indicator" : undefined}
-                    title={runIncompleteDescription ?? runIncompleteLabel}
-                    className={cn(
-                      "rounded-md border px-2 py-1 font-['IBM_Plex_Mono',monospace] text-[12px] font-medium uppercase tracking-[0.2em]",
-                      statusBadgeClass(runIncompleteTone)
-                    )}
-                  >
-                    {runIncompleteLabel}
-                  </div>
-                ) : null}
-                {onShare ? (
-                  <button
-                    type="button"
-                    onClick={onShare}
-                    aria-label="Share"
-                    data-tour-target="share-button"
-                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
-                  >
-                    <Share2 className="h-3.5 w-3.5" />
-                  </button>
-                ) : null}
-                {compareHref ? (
-                  <Link
-                    to={compareHref}
-                    aria-label="Compare"
-                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
-                  >
-                    <GitCompareArrows className="h-3.5 w-3.5" />
-                  </Link>
-                ) : null}
-                {onFeedback ? (
-                  <button
-                    type="button"
-                    onClick={onFeedback}
-                    aria-label="Send feedback"
-                    data-tour-target="feedback-button"
-                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
-                  >
-                    <MessageSquareText className="h-3.5 w-3.5" />
-                  </button>
-                ) : null}
-                {onOpenControls ? (
-                  <button
-                    type="button"
-                    onClick={() => onOpenControls(true)}
-                    aria-label="Open controls"
-                    data-tour-target="mobile-controls-button"
-                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/60 transition-colors hover:bg-white/[0.09] hover:text-white"
-                  >
-                    <Settings className="h-3.5 w-3.5" />
-                  </button>
-                ) : null}
-              </div>
-            </div>
-
-            {transientStatus ? (
-              <div className="mb-2 flex items-center gap-1 rounded-md border border-amber-300/25 bg-amber-300/[0.08] px-2 py-1 text-[12px] text-amber-100">
-                <AlertCircle className="h-3 w-3" />
-                {transientStatus}
-              </div>
-            ) : null}
-
-            {/* Row 2: play + slider + compact time/FH below */}
-            <div className={cn("flex items-center", isTabletTouchLayout ? "gap-2.5" : "gap-3")}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => setIsPlaying(!isPlaying)}
-                    disabled={disabled || !hasFrames || playDisabled || staticSnapshotLabel !== null}
-                    aria-label={isPlaying ? "Pause animation" : "Play animation"}
-                    className={cn(
-                      "flex shrink-0 items-center justify-center border transition-all duration-150 disabled:opacity-50 disabled:hover:scale-100",
-                      "h-11 w-11 rounded-xl",
-                      isPlaying
-                        ? "bg-cyan-300/[0.12] text-cyan-200 border-cyan-300/30"
-                        : "bg-white/[0.05] text-white/80 border-white/10 hover:bg-white/[0.09] hover:text-white"
-                    )}
-                  >
-                    {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-[1px]" />}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="bg-[#07111f] border-white/10 text-white">
-                  {isPlaying ? "Pause" : "Play"} animation
-                </TooltipContent>
-              </Tooltip>
-
-              <SpeedButton animationDelayMs={animationDelayMs} onSpeedChange={onSpeedChange} touch />
-
-              <div className="min-w-0 flex-1">
-                {!isDesktopLayout ? timeline : null}
-                {validTime ? (
-                  <div className="-mt-0.5 text-right font-['IBM_Plex_Mono',monospace] text-[12px] font-medium tracking-[0.06em] text-white/50">
-                    {validTime.shortDate}
-                    {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
-                      <span className="ml-1.5 text-white/32">· {validTime.secondary}</span>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-            {showFreshnessStrip && freshnessTotal !== null ? (
-              <>
-                <div className="mt-2 border-t border-white/[0.08]" />
-                <div className="flex items-center gap-2 px-0.5 pt-2 font-['IBM_Plex_Mono',monospace] text-[12px] font-medium text-white/55">
-                  <span
+                    data-testid="mobile-day-strip"
                     aria-hidden="true"
-                    className={cn(
-                      "h-1.5 w-1.5 shrink-0 rounded-full",
-                      runIsComplete ? "bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.45)]" : "bg-emerald-400"
-                    )}
-                  />
-                  <span className="shrink-0 tabular-nums text-emerald-100/80">
-                    {runIsComplete
-                      ? `${cappedAvailableForecastHours}/${freshnessTotal} hrs complete`
-                      : `${cappedAvailableForecastHours}/${freshnessTotal} hrs available`}
-                  </span>
-                  <div className="h-px min-w-[3rem] flex-1 overflow-hidden rounded-full bg-white/[0.12]">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-emerald-500/55 via-emerald-400 to-emerald-300"
-                      style={{ width: `${freshnessProgressPercent}%` }}
-                    />
+                    className="pointer-events-none absolute bottom-full left-0 right-0 mb-1 h-6 overflow-hidden rounded-md border border-white/[0.09] bg-[#04101e]/[0.92] backdrop-blur-md"
+                  >
+                    {dayStripSegments.map((segment) => (
+                      <span
+                        key={segment.leftPct}
+                        data-testid="mobile-day-segment"
+                        className="absolute inset-y-0 flex items-center whitespace-nowrap border-r border-white/[0.09] px-1.5 text-[11px] font-medium text-white/62"
+                        style={{ left: `${segment.leftPct}%`, width: `${segment.widthPct}%` }}
+                      >
+                        {segment.label}
+                      </span>
+                    ))}
                   </div>
-                  {!runIsComplete ? (
-                    <span className="shrink-0 text-emerald-300/75">building...</span>
+                ) : null}
+                {timeline}
+              </div>
+
+              {validTime ? (
+                <div className="flex max-w-[38%] shrink-0 flex-col items-end justify-center leading-tight">
+                  <span className="truncate font-['IBM_Plex_Mono',monospace] text-[12px] font-medium tracking-[0.02em] text-white/72">
+                    {validTime.shortDate}
+                  </span>
+                  {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
+                    <span className="truncate text-[11px] font-medium text-white/45">{validTime.secondary}</span>
                   ) : null}
                 </div>
-              </>
-            ) : null}
-          </div>
+              ) : null}
+            </div>
           ) : null}
 
           {isDesktopLayout ? (
@@ -862,7 +881,6 @@ export const BottomForecastControls = memo(function BottomForecastControls({
               {timeline}
             </div>
           ) : null}
-
         </div>
       </div>
     </TooltipProvider>

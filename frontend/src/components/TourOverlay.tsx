@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { MOBILE_PEEK_PX, MOBILE_TIMELINE_PX } from "@/lib/viewer-mobile";
+
 export type TourStepDef = {
   /** CSS selector for the spotlight target. null = dim only, no cutout. */
   targetSelector: string | null;
@@ -14,6 +16,13 @@ export type TourStepDef = {
   isWelcome?: boolean;
   /** Signal to App.tsx to open the mobile controls sheet for this step. */
   openMobileSheet?: boolean;
+  /**
+   * Signal to App.tsx to scroll the mobile sheet to a section so this step's
+   * target is inside the sheet's scroll fold. `openMobileSheet` alone only
+   * opens the sheet — anything below the half snap's fold stays off-screen and
+   * the tooltip (and its Done button) gets positioned from an off-screen rect.
+   */
+  mobileSheetSection?: "source" | "view" | "legend";
   /** Signal to App.tsx to expand the Phase 6 rail so the target is on screen. */
   expandRail?: "source" | "view";
 };
@@ -35,7 +44,14 @@ type Rect = { x: number; y: number; width: number; height: number };
 const PADDING = 8;
 const TOOLTIP_WIDTH = 260;
 const TOOLTIP_MARGIN = 14;
-const MOBILE_BOTTOM_OFFSET = 130;
+/**
+ * Bottom-anchored tooltips must clear the Phase 8 persistent bottom stack —
+ * the one-row timeline plus the sheet peek (64 + 84 = 148 px) — not the
+ * pre-Phase-8 single bar. A hard-coded 130 put the card 18 px INSIDE the peek.
+ * Derived from the constants so a geometry change cannot silently re-open the
+ * overlap; the extra is the same visual breathing room as TOOLTIP_MARGIN.
+ */
+const MOBILE_BOTTOM_OFFSET = MOBILE_TIMELINE_PX + MOBILE_PEEK_PX + 12;
 
 // Site's cyan palette (matches Tailwind cyan-300 / cyan-100)
 const CYAN = "rgb(103,232,249)";
@@ -93,8 +109,12 @@ export function TourOverlay({
     }
     const rect = queryTargetRect(step.targetSelector);
     setTargetRect(rect);
-    // Element not in DOM yet (e.g. mobile sheet still animating open) — retry
-    if (!rect && step.targetSelector) {
+    // Always re-measure once the mobile sheet's 320 ms height transition and
+    // any programmatic scrollIntoView have settled. The first measurement can
+    // be missing (element not mounted yet) OR stale (element mounted but the
+    // sheet has not scrolled it into the fold yet) — both produce a tooltip
+    // anchored to the wrong place, so neither can be treated as final.
+    if (step.targetSelector) {
       retryTimerRef.current = setTimeout(() => {
         retryTimerRef.current = null;
         setTargetRect(queryTargetRect(step.targetSelector));
@@ -114,7 +134,13 @@ export function TourOverlay({
   useEffect(() => {
     if (!isActive) return;
     window.addEventListener("resize", refreshRect);
-    return () => window.removeEventListener("resize", refreshRect);
+    // Capture phase: the mobile sheet scrolls its own inner container, which
+    // does not bubble a scroll event to window.
+    document.addEventListener("scroll", refreshRect, true);
+    return () => {
+      window.removeEventListener("resize", refreshRect);
+      document.removeEventListener("scroll", refreshRect, true);
+    };
   }, [isActive, refreshRect]);
 
   // Keyboard navigation
@@ -338,6 +364,7 @@ export function TourOverlay({
       {highlightRect ? (
         <div
           aria-hidden="true"
+          data-testid="tour-highlight"
           style={{
             position: "fixed",
             left: highlightRect.x,
@@ -356,6 +383,7 @@ export function TourOverlay({
       {/* Tooltip card */}
       <div
         role="dialog"
+        data-testid="tour-tooltip"
         aria-label={`Tour step ${contentIndex + 1} of ${contentTotal}: ${step.title}`}
         style={{
           ...tooltipStyle,

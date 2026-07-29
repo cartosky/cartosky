@@ -13,7 +13,7 @@ test('mobile viewer and comparison controls share an opaque glass surface', asyn
     readFile(compareMobileDrawer, 'utf8'),
   ]);
 
-  expect(styles).toMatch(/\.viewer-mobile-control-surface\s*\{[\s\S]*?background-color:\s*rgba\(4, 16, 30, 0\.88\)/);
+  expect(styles).toMatch(/\.viewer-mobile-control-surface\s*\{[\s\S]*?background-color:\s*rgba\(4, 16, 30, 0\.93\)/);
   expect(styles).toMatch(/\.viewer-mobile-control-surface\s*\{[\s\S]*?backdrop-filter:\s*blur\(12px\) saturate\(1\.6\)/);
   expect(viewerControls).toContain('viewer-mobile-control-surface');
   expect(compareControls).toContain('viewer-mobile-control-surface');
@@ -1386,15 +1386,25 @@ test.describe('Grid-only smoke', () => {
     await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
     await stubViewerGridRoutes(page);
     await page.goto('/viewer?m=hrrr&r=latest&v=tmp2m&reg=conus');
-    await expect(page.getByRole('button', { name: 'Open controls' })).toBeVisible();
+    // PHASE 8 RE-POINT: the mobile chrome is now the §8 three states — a 52 px
+    // bar owning a labeled Share plus a `•••` overflow (Compare and Send
+    // feedback moved into it), an always-present 84 px sheet peek in place of
+    // the old "Open controls" bottom-row button, Source/View/Legend sections in
+    // place of the Selection/Display tabs, and a 64 px one-row timeline whose
+    // speed control moved into the sheet's Source section.
+    const bar = page.getByTestId('viewer-mobile-bar');
+    await expect(bar).toBeVisible();
+    const peekHandle = page.getByTestId('mobile-sheet-peek').getByTestId('mobile-sheet-handle');
+    await expect(peekHandle).toBeVisible();
 
     const viewerTargets = [
-      page.getByRole('button', { name: 'Share' }),
-      page.getByRole('link', { name: 'Compare' }),
-      page.getByRole('button', { name: 'Send feedback' }),
-      page.getByRole('button', { name: 'Open controls' }),
+      bar.getByRole('button', { name: 'Share' }),
+      page.getByTestId('mobile-bar-search'),
+      page.getByTestId('mobile-bar-overflow-trigger'),
+      peekHandle,
+      page.getByTestId('mobile-run-step-older'),
+      page.getByTestId('mobile-run-step-newer'),
       page.getByRole('button', { name: 'Play animation' }),
-      page.getByRole('button', { name: 'Animation speed 1×' }),
     ];
     for (const target of viewerTargets) {
       const box = await target.boundingBox();
@@ -1403,11 +1413,27 @@ test.describe('Grid-only smoke', () => {
       expect(box!.height).toBeGreaterThanOrEqual(44);
     }
 
-    await page.getByRole('button', { name: 'Open controls' }).click();
+    // Compare and Send feedback now live in the bar's overflow menu.
+    await page.getByTestId('mobile-bar-overflow-trigger').click();
+    const overflow = page.getByTestId('mobile-bar-overflow-menu');
+    await expect(overflow).toBeVisible();
     for (const target of [
-      page.getByRole('button', { name: 'Selection' }),
-      page.getByRole('button', { name: 'Display' }),
+      overflow.getByRole('menuitem', { name: 'Compare' }),
+      overflow.getByRole('menuitem', { name: 'Send feedback' }),
+    ]) {
+      const box = await target.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+    }
+    await page.keyboard.press('Escape');
+    await expect(overflow).toBeHidden();
+
+    // Peek → half opens the sheet; its sections replace the old tabs.
+    await peekHandle.click();
+    await expect(page.getByTestId('mobile-sheet')).toHaveAttribute('data-snap', 'half');
+    for (const target of [
       page.getByRole('button', { name: 'Close controls' }),
+      page.getByRole('button', { name: 'Animation speed 1×' }),
     ]) {
       const box = await target.boundingBox();
       expect(box).not.toBeNull();

@@ -762,26 +762,87 @@ test.describe('Viewer design tokens (Phase 4)', () => {
   });
 
   test.describe('mobile layout (coarse)', () => {
-    // Below the §6.4 threshold (767) the mobile sheet still owns the chrome —
-    // Phase 8 territory, unchanged by Phase 6.
+    // Below the §6.4 threshold (767) the mobile sheet owns the chrome.
+    //
+    // PHASE 8 RE-TARGETING (2026-07-29, Phase 8 plan Task 4). The audited
+    // mobile chrome moved into the §8 three states; the matrix is re-pointed
+    // and widened, not reduced —
+    //   56 px header + ViewerNavMobile tabs → 52 px `viewer-mobile-bar`
+    //                             (labeled Share + `•••` overflow)
+    //   `mobile-controls-button`  → the always-present 84 px sheet peek
+    //                             (`mobile-sheet-peek`, tap to expand)
+    //   Selection / Display tabs  → scrollable Source → View → Legend sections
+    //   bottom controls row       → the 64 px one-row `mobile-timeline-row`
+    // and the single pre-Phase-8 open state becomes BOTH sheet snaps (half and
+    // full), since the sections scroll differently at each. Thresholds are
+    // unchanged: ≥44 coarse targets, ≥11 px type floor, exhaustive focus walk.
     test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
 
-    test('mobile chrome, sheet, and inline picker meet 44x44', async ({ page }) => {
+    /** The handle advances peek → half → full → peek. */
+    async function snapTo(page: Page, snap: 'peek' | 'half' | 'full') {
+      const sheet = page.getByTestId('mobile-sheet');
+      for (let guard = 0; guard < 4; guard += 1) {
+        if ((await sheet.getAttribute('data-snap')) === snap) return;
+        await page.getByTestId('mobile-sheet-handle').click();
+      }
+      await expect(sheet).toHaveAttribute('data-snap', snap);
+    }
+
+    async function openMobileViewer(page: Page) {
       await stubViewerColormapRoutes(page);
       await page.goto(VIEWER_URL);
       await expect(page.getByTestId('viewer-initial-map-scrim')).toBeHidden({ timeout: 30_000 });
       await expect(page.getByTestId('viewer-rail')).toHaveCount(0);
+      await expect(page.getByTestId('viewer-mobile-bar')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('mobile-sheet')).toHaveAttribute('data-snap', 'peek');
+    }
+
+    test('mobile bar, peek, timeline row, sheet sections and inline picker meet 44x44', async ({ page }) => {
+      test.slow();
+      await openMobileViewer(page);
+
+      // State A surfaces are all mounted at rest.
+      await expect(page.getByTestId('mobile-sheet-peek')).toBeVisible();
+      await expect(page.getByTestId('mobile-timeline-row')).toBeVisible();
+      await expect(page.getByTestId('viewer-mobile-bar').getByRole('button', { name: 'Share' })).toBeVisible();
 
       const all: Violation[] = [];
-      all.push(...(await auditTargets(page, 'mobile-closed', 44)));
+      all.push(...(await auditTargets(page, 'mobile-rest', 44)));
 
-      await page.locator('[data-tour-target="mobile-controls-button"]').click();
+      // The bar's `•••` overflow is reachable from no other surface.
+      await page.getByTestId('mobile-bar-overflow-trigger').click();
+      await expect(page.getByTestId('mobile-bar-overflow-menu')).toBeVisible();
+      all.push(...(await auditTargets(page, 'mobile-bar-overflow', 44)));
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('mobile-bar-overflow-menu')).toBeHidden();
+
+      await snapTo(page, 'half');
       await expect(page.getByLabel('Close controls')).toBeVisible();
-      all.push(...(await auditTargets(page, 'mobile-sheet', 44)));
+      all.push(...(await auditTargets(page, 'mobile-sheet-half', 44)));
+
+      await snapTo(page, 'full');
+      await expect(page.getByTestId('mobile-section-heading').first()).toBeVisible();
+      all.push(...(await auditTargets(page, 'mobile-sheet-full', 44)));
 
       await page.getByRole('button', { name: 'GFS' }).first().click();
       await expect(page.getByLabel('Model picker')).toBeVisible();
       all.push(...(await auditTargets(page, 'mobile-product-panel', 44)));
+
+      expect(all, formatViolations(all)).toEqual([]);
+    });
+
+    test('mobile chrome holds the 11px type floor and the focus-ring token', async ({ page }) => {
+      test.slow();
+      await openMobileViewer(page);
+
+      const all: Violation[] = [];
+      all.push(...(await auditTypeFloor(page, 'mobile-rest', 11)));
+      all.push(...(await auditFocus(page, 'mobile-rest')));
+
+      await snapTo(page, 'full');
+      await expect(page.getByTestId('mobile-section-heading').first()).toBeVisible();
+      all.push(...(await auditTypeFloor(page, 'mobile-sheet-full', 11)));
+      all.push(...(await auditFocus(page, 'mobile-sheet-full')));
 
       expect(all, formatViolations(all)).toEqual([]);
     });

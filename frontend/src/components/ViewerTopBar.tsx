@@ -44,7 +44,8 @@ const SECTION_LINKS = [
   { to: "/climate", label: "Climate" },
 ] as const;
 
-function AttributionDialog({ onClose }: { onClose: () => void }) {
+/** Shared with the Phase 8 mobile bar's `•••` overflow (§8 decision 3). */
+export function AttributionDialog({ onClose }: { onClose: () => void }) {
   return createPortal(
     <>
       <div className="fixed inset-0 z-[95]" aria-hidden="true" onClick={onClose} />

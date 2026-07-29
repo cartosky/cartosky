@@ -3785,10 +3785,18 @@ export function MapCanvas({
     <>
       {/* Phase 6: the map area starts to the right of the rail. The variable is
           unset outside the viewer (e.g. /compare), where this stays 0. */}
+      {/* Phase 8 (§8/§9): the top/bottom insets are 0 everywhere except the
+          mobile viewer, where they fix the map element's box across all three
+          states. THE map element for the §9 geometry contract. */}
       <div
         ref={mapSlotRef}
-        className="viewer-map-slot absolute inset-y-0 right-0"
-        style={{ left: "var(--viewer-rail-width, 0px)" }}
+        data-testid="viewer-map-slot"
+        className="viewer-map-slot absolute right-0"
+        style={{
+          left: "var(--viewer-rail-width, 0px)",
+          top: "var(--viewer-map-top-inset, 0px)",
+          bottom: "var(--viewer-map-bottom-inset, 0px)",
+        }}
       >
         <div
           ref={mapContainerRef}

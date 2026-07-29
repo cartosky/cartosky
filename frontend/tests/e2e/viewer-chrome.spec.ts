@@ -386,10 +386,11 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     }
 
     // §6.4 threshold moved 639 → 767: below it the mobile sheet owns the chrome.
+    // §8 State A shrank that mobile bar from 56 → 52 px.
     await page.setViewportSize({ width: 700, height: 900 });
     await expect(page.getByTestId('viewer-rail')).toHaveCount(0);
     const headerBox = await page.getByTestId('viewer-top-bar').boundingBox();
-    expect(Math.abs(headerBox!.height - 56)).toBeLessThanOrEqual(1);
+    expect(Math.abs(headerBox!.height - 52)).toBeLessThanOrEqual(1);
   });
 
   // ── 5. Override keyed by breakpoint class ─────────────────────────────────

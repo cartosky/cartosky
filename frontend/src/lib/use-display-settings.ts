@@ -38,6 +38,10 @@ export interface UseDisplaySettingsReturn {
  * Zoom controls and legend default behaviour by layout:
  *   - Desktop:        default ON  (null preference → true)
  *   - Mobile/tablet:  default OFF (null preference → false)
+ *   - Legend on MOBILE (<768): default ON — Phase 8 (§8 State A decision 6)
+ *     shows the compact chip at rest. Tablet keeps its current default. This
+ *     is a READ-SIDE fallback only: nothing new is written to storage, so the
+ *     rollback condition stays "revert the commits".
  *
  * Once a user explicitly toggles either setting on any layout, that choice is
  * persisted and restored on the next load — including on mobile/tablet. The
@@ -63,8 +67,10 @@ export function useDisplaySettings(
   const [opacity, setOpacity] = useState(OVERLAY_DEFAULT_OPACITY);
 
   // Resolve null → layout default. Explicit true/false is always honoured.
+  const isMobileLayout = viewerLayoutMode === "mobile";
   const zoomControlsVisible = zoomPreference ?? (isDesktopViewerLayout ? true : false);
-  const legendVisible = legendPreference ?? (isDesktopViewerLayout ? true : false);
+  const legendDefault = isDesktopViewerLayout || isMobileLayout;
+  const legendVisible = legendPreference ?? legendDefault;
 
   const setZoomControlsVisible: React.Dispatch<React.SetStateAction<boolean>> = (value) => {
     setZoomPreference((current) => {
@@ -75,7 +81,7 @@ export function useDisplaySettings(
 
   const setLegendVisible: React.Dispatch<React.SetStateAction<boolean>> = (value) => {
     setLegendPreference((current) => {
-      const effective = current ?? (isDesktopViewerLayout ? true : false);
+      const effective = current ?? legendDefault;
       return typeof value === "function" ? value(effective) : value;
     });
   };

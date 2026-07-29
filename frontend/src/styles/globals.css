@@ -653,6 +653,27 @@
   .viewer-map-slot {
     position: absolute;
     inset: 0;
+    top: var(--viewer-map-top-inset, 0px);
+    bottom: var(--viewer-map-bottom-inset, 0px);
+  }
+
+  /*
+   * Phase 8 (§8): the mobile map element is inset by a CONSTANT bottom stack —
+   * the 64 px timeline row plus the 84 px sheet peek — so nothing occludes the
+   * map and, more importantly, the map's box cannot change when the sheet snaps
+   * or the user scrubs (the §9 no-reflow contract holds by construction; the
+   * day strip, target readout, badge, chip and sheet are all overlays).
+   *
+   *   844 − 52 (bar) − 148 (inset) = 644 px = 76.3% ≥ the §8 72% floor.
+   *
+   * 72% is the floor, not the target: App.tsx shrinks the peek first and then
+   * the timeline on short viewports (§8 "shrink the sheet peek first").
+   * Both variables are unset outside the mobile viewer, where they resolve to 0.
+   */
+  :root {
+    --viewer-mobile-timeline-height: 64px;
+    --viewer-mobile-sheet-peek: 84px;
+    --viewer-mobile-bottom-inset: 0px;
   }
 
   .viewer-map-slot .maplibregl-map {
@@ -673,8 +694,13 @@
   /* Static viewer chrome backdrop (ViewerSiteHeaderFallback). Defaults are
      the pre-Phase-6 geometry so non-viewer routes are untouched; the viewer
      opts in via `data-viewer-rail` (index.html boot script + App.tsx). */
+  /* The backdrop row must be exactly as tall as whatever header paints on top
+     of it, or it shows as a strip below that header's bottom edge. Reading the
+     same seam variable the real header uses is what keeps them equal: the
+     mobile viewer publishes 52px (Phase 8), the rail viewer 3rem, and every
+     other route leaves it unset and resolves the pre-Phase-6 3.5rem default. */
   .viewer-chrome-fallback-row {
-    height: 3.5rem;
+    height: var(--viewer-topbar-height, 3.5rem);
   }
 
   .viewer-chrome-fallback-logo {
@@ -685,10 +711,6 @@
     display: none;
     top: var(--viewer-topbar-height, 3.5rem);
     width: var(--viewer-rail-width, 0px);
-  }
-
-  html[data-viewer-rail="on"] .viewer-chrome-fallback-row {
-    height: 3rem;
   }
 
   html[data-viewer-rail="on"] .viewer-chrome-fallback-logo {

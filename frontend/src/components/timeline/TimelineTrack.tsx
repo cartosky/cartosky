@@ -53,6 +53,14 @@ type TimelineTrackProps = {
   /** Static-snapshot selections (CPC, hazards) speak their own sentence. */
   availabilityOverride?: string | null;
   layoutMode: ViewerLayoutMode;
+  /**
+   * Phase 8 (§8 State A): the mobile 64 px one-row timeline. Locks the
+   * existing compact density (a user-toggled 88 px density would break the
+   * constant map inset), retires the density toggle, and moves the
+   * availability sentence to the accessibility layer — the sheet peek owns
+   * run state on mobile now. The track MODEL is untouched.
+   */
+  singleRow?: boolean;
   /** Desktop-only transport groups rendered inside the 40 px rail row. */
   desktopTransportStart?: ReactNode;
   desktopTransportEnd?: ReactNode;
@@ -141,6 +149,7 @@ export const TimelineTrack = memo(function TimelineTrack({
   issuedLabel,
   availabilityOverride = null,
   layoutMode,
+  singleRow = false,
   desktopTransportStart,
   desktopTransportEnd,
   disabled = false,
@@ -216,7 +225,8 @@ export const TimelineTrack = memo(function TimelineTrack({
     });
   }, []);
 
-  const height = (isMobileLayout ? MOBILE_TIMELINE_HEIGHT_PX : TIMELINE_HEIGHT_PX)[density];
+  const effectiveDensity: TimelineDensity = singleRow ? "compact" : density;
+  const height = (isMobileLayout ? MOBILE_TIMELINE_HEIGHT_PX : TIMELINE_HEIGHT_PX)[effectiveDensity];
 
   // Frames the user may actually land on. `ready_through_fh: null` means
   // nothing is ready yet — the committed selection still has to resolve
@@ -416,8 +426,8 @@ export const TimelineTrack = memo(function TimelineTrack({
       className={cn(
         "relative w-full touch-none select-none",
         docked
-          ? density === "standard" ? "h-6" : "h-[34px]"
-          : density === "standard" ? "h-6" : "h-5",
+          ? effectiveDensity === "standard" ? "h-6" : "h-[34px]"
+          : effectiveDensity === "standard" ? "h-6" : "h-5",
         disabled ? "cursor-default opacity-60" : "cursor-pointer",
       )}
       onPointerDown={handlePointerDown}
@@ -635,53 +645,93 @@ export const TimelineTrack = memo(function TimelineTrack({
     );
   }
 
+  const noteText = ghostFh !== null
+    ? `FH ${ghostFh} — not published yet`
+    : snapBackNote
+      ? "Snapped back to the last ready frame"
+      : null;
+
   return (
     <div
       data-testid="timeline-root"
-      style={{ height }}
+      data-density={effectiveDensity}
+      style={{ height: singleRow ? "100%" : height }}
       className="relative flex w-full min-w-0 items-center gap-2"
     >
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span
-            id={availabilityId}
-            data-testid="timeline-availability"
-            className="min-w-0 truncate text-[11px] font-medium leading-none text-white/60"
-          >
+        {singleRow ? (
+          <span id={availabilityId} data-testid="timeline-availability" className="sr-only">
             {availabilityOverride || model.availabilityLine}
           </span>
-          {ghostFh !== null ? (
-            <span className="shrink-0 text-[11px] font-medium leading-none text-amber-300">
-              FH {ghostFh} — not published yet
+        ) : (
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              id={availabilityId}
+              data-testid="timeline-availability"
+              className="min-w-0 truncate text-[11px] font-medium leading-none text-white/60"
+            >
+              {availabilityOverride || model.availabilityLine}
             </span>
-          ) : snapBackNote ? (
-            <span className="shrink-0 text-[11px] font-medium leading-none text-white/45">
-              Snapped back to the last ready frame
-            </span>
-          ) : null}
-        </div>
+            {noteText ? (
+              <span className={cn(
+                "shrink-0 text-[11px] font-medium leading-none",
+                ghostFh !== null ? "text-amber-300" : "text-white/45",
+              )}>
+                {noteText}
+              </span>
+            ) : null}
+          </div>
+        )}
 
         {renderTrack(false)}
 
         <div
           data-testid="timeline-tick-row"
           aria-hidden="true"
-          className={cn("relative w-full", density === "standard" ? "h-4" : "h-3")}
+          className={cn("relative w-full", effectiveDensity === "standard" ? "h-4" : "h-3")}
         >
-          {ticks.filter((tick) => tick.label).map((tick) => (
-            <span
-              key={tick.ms}
-              data-testid="timeline-tick"
-              className="absolute top-0 -translate-x-1/2 whitespace-nowrap font-sans text-[11px] font-medium leading-none tracking-[0.015em] text-white/40"
-              style={{ left: pct(fractionForMs(tick.ms)) }}
-            >
-              {tick.label}
-            </span>
-          ))}
+          {/* On the §8 one-row layout the track is ~180 px wide: at a long
+              run's cadence every tick label is the same "00Z" and they overlap
+              into mush. Marks keep the day rhythm; the actual dates come from
+              the State B day strip and the inline readout. */}
+          {singleRow
+            ? ticks.map((tick) => (
+              <span
+                key={tick.ms}
+                data-testid="timeline-tick"
+                data-major={tick.major}
+                className={cn(
+                  "absolute top-0 w-px -translate-x-1/2",
+                  tick.major ? "h-[5px] bg-white/38" : "h-[3px] bg-white/18",
+                )}
+                style={{ left: pct(fractionForMs(tick.ms)) }}
+              />
+            ))
+            : ticks.filter((tick) => tick.label).map((tick) => (
+              <span
+                key={tick.ms}
+                data-testid="timeline-tick"
+                className="absolute top-0 -translate-x-1/2 whitespace-nowrap font-sans text-[11px] font-medium leading-none tracking-[0.015em] text-white/40"
+                style={{ left: pct(fractionForMs(tick.ms)) }}
+              >
+                {tick.label}
+              </span>
+            ))}
         </div>
       </div>
 
-      {densityToggle}
+      {/* §9: nothing in the gesture path may insert a row. The snap-back note
+          is an absolute overlay on the single-row layout. */}
+      {singleRow ? (
+        noteText ? (
+          <span className={cn(
+            "pointer-events-none absolute left-0 top-0 max-w-full truncate text-[11px] font-medium leading-none",
+            ghostFh !== null ? "text-amber-300" : "text-white/45",
+          )}>
+            {noteText}
+          </span>
+        ) : null
+      ) : densityToggle}
     </div>
   );
 });
