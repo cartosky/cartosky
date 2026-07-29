@@ -7,6 +7,8 @@ export type PermalinkState = {
   product?: string;
   fh?: number;
   region?: string;
+  /** Data domain — a published build-region ID (Phase 2B); absent = canonical. */
+  domain?: string;
   lat?: number;
   lon?: number;
   z?: number;
@@ -65,6 +67,11 @@ export function readPermalink(): PermalinkState {
   const region = readStringParam(params, "reg");
   if (region) {
     state.region = region;
+  }
+
+  const domain = readStringParam(params, "domain");
+  if (domain) {
+    state.domain = domain.toLowerCase();
   }
 
   const fh = readFiniteNumberParam(params, "fh");

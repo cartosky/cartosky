@@ -416,6 +416,30 @@ Independent per-pane domains would introduce regridding, diff semantics, unequal
 
 **Stop-and-verify:** real TWF permalinks resolve to identical data and viewport; `domain=global` routes requests to the correct region-scoped paths **against synthetic fixtures** without altering camera behavior; `region=` alone still changes only the viewport; Compare enforces the shared-domain rule and degrades cleanly when one model lacks a domain; G4 green on fixed URLs.
 
+### Phase 2B completion record — 2026-07-29
+
+Implemented per `docs/PHASE_2B_FRONTEND_DOMAIN_SPLIT_PLAN_2026-07-29.md`
+(plan locked with source-verified review amendments; fresh-context agent
+review and verifier were unavailable due to persistent API outages, so the
+orchestrator ran both passes directly — checklist in the plan doc).
+
+- `domain=` permalink param (viewer + compare), URL-driven only; no UI
+  control until Phase 3 declares a real non-canonical domain.
+- `resolveDataDomain` helper; silent canonical degrade; sticky URL.
+- Control-API fetchers take `domain` (query; `/sample/batch` body field);
+  `buildContourUrl`/`buildVectorLayerUrl` emit `domains/{d}` path prefix.
+- `useModelLoader` no longer accepts the camera region — data region is
+  derived from each model's `canonical_region`; Compare applies one shared
+  domain only when BOTH panes' model/variable pairs declare it.
+- Tests: `viewer-domain.spec.ts` (10) — permalink byte-identity golden
+  strings, domain routing, unsupported-domain degrade+stickiness,
+  camera/domain independence, both compare rules — against synthetic
+  fixtures on the Phase 2A URL shapes. Full chromium e2e: 89 passed /
+  1 skipped / 0 failed; tsc + production build green.
+- G4 note: screenshot pixel-diff specs ran green in the full suite;
+  `screenshotUrlForState` inherits `domain=` from the live URL by
+  construction.
+
 ---
 
 ## Phase 3 — Global rollout at 25 km (L)

@@ -17,6 +17,7 @@ import {
   makeVariableOptions,
   mergeManifestRowsWithPrevious,
   normalizeCapabilityVarRows,
+  resolveDataDomain,
   resolveManifestFrames,
   selectableFramesForVariable,
   type VariableOption,
@@ -52,7 +53,14 @@ export interface UseModelLoaderParams {
    * (e.g. "precip_total__p50"). Defaults to `variable`.
    */
   requestVariable?: string;
-  region: string;
+  /**
+   * Shared data domain (Phase 2B); null/absent = canonical. The loader
+   * derives its data region from the model's own `canonical_region` — the
+   * camera region never keys data requests (App.tsx:746 semantics) — and
+   * applies this domain only when the pane's variable declares it in
+   * `supported_build_regions`.
+   */
+  domain?: string | null;
   ensembleView?: string;
   capabilities: CapabilitiesResponse;
   regionPresets: Record<string, RegionPreset>;
@@ -86,7 +94,7 @@ export interface UseModelLoaderResult {
  * share payloads, raster_rgb/true_color handling.
  */
 export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResult {
-  const { model, run, variable, region, ensembleView, capabilities } = params;
+  const { model, run, variable, ensembleView, capabilities } = params;
   const requestVariable = (params.requestVariable ?? "").trim() || variable;
   // Product var ids resolve directly (published runtime ids); an ensemble
   // view would be a meaningless extra hop when a product is active.
@@ -113,6 +121,21 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
   const selectedModelCapability = useMemo(
     () => (model ? capabilities.model_catalog?.[model] ?? null : null),
     [capabilities, model],
+  );
+
+  // Data region = the model's canonical build region (App.tsx:913-917
+  // semantics); the camera region never reaches a data request.
+  const dataRegion = String(
+    selectedModelCapability?.constraints?.canonical_region
+    ?? selectedModelCapability?.canonical_region
+    ?? "",
+  ).trim().toLowerCase() || null;
+  // Effective data domain: non-null only when this pane's variable declares
+  // the shared requested domain; otherwise requests degrade to canonical.
+  const dataDomain = resolveDataDomain(
+    params.domain ?? null,
+    selectedModelCapability,
+    variable ? selectedModelCapability?.variables?.[variable] : null,
   );
 
   const capabilityVars = useMemo(
@@ -202,7 +225,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
       : run === "latest"
         ? "latest"
         : resolvedRun;
-  const selectionKey = `${model}:${selectionRunKey}:${requestVariable}:${region}:${resolvedEnsembleView || "-"}`;
+  const selectionKey = `${model}:${selectionRunKey}:${requestVariable}:${dataDomain ?? dataRegion ?? "-"}:${resolvedEnsembleView || "-"}`;
 
   // ── Frame-hour projections (pure) ──────────────────────────────────────
   const frameHours = useMemo(() => {
@@ -275,7 +298,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
     }
     const controller = new AbortController();
     setRunsLoading(true);
-    fetchRuns(model, { signal: controller.signal })
+    fetchRuns(model, dataDomain, { signal: controller.signal })
       .then((raw) => {
         if (controller.signal.aborted) {
           return;
@@ -296,7 +319,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         }
       });
     return () => controller.abort();
-  }, [model]);
+  }, [model, dataDomain]);
 
   const manifestRunKey = useMemo(() => {
     if (run !== "latest") {
@@ -316,7 +339,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
     }
     const controller = new AbortController();
     setManifestLoading(true);
-    fetchManifest(model, manifestRunKey, region, resolvedEnsembleView, { signal: controller.signal })
+    fetchManifest(model, manifestRunKey, dataRegion, resolvedEnsembleView, dataDomain, { signal: controller.signal })
       .then((data) => {
         if (controller.signal.aborted) {
           return;
@@ -335,7 +358,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         }
       });
     return () => controller.abort();
-  }, [model, manifestRunKey, region, resolvedEnsembleView]);
+  }, [model, manifestRunKey, dataRegion, dataDomain, resolvedEnsembleView]);
 
   // Resolve and load the grid manifest. For a grid-only "latest" selection,
   // probe candidate runs in parallel and adopt the first that returns a valid
@@ -355,7 +378,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
       if (run === "latest") {
         const results = await Promise.allSettled(
           latestGridRunCandidates.map((candidateRun) =>
-            fetchGridManifest(model, candidateRun, requestVariable, region, resolvedEnsembleView, {
+            fetchGridManifest(model, candidateRun, requestVariable, dataRegion, resolvedEnsembleView, dataDomain, {
               signal: controller.signal,
             }).then((manifest) => ({ candidateRun, manifest })),
           ),
@@ -375,7 +398,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         return;
       }
 
-      const manifest = await fetchGridManifest(model, resolvedRun, requestVariable, region, resolvedEnsembleView, {
+      const manifest = await fetchGridManifest(model, resolvedRun, requestVariable, dataRegion, resolvedEnsembleView, dataDomain, {
         signal: controller.signal,
       });
       if (controller.signal.aborted) {
@@ -406,7 +429,8 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
     hasRenderableSelection,
     latestGridRunCandidates,
     model,
-    region,
+    dataRegion,
+    dataDomain,
     resolvedRun,
     run,
     variable,
@@ -474,7 +498,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
         if (!framesRunKey) {
           return;
         }
-        const rows = await fetchFrames(model, framesRunKey, requestVariable, region, resolvedEnsembleView, {
+        const rows = await fetchFrames(model, framesRunKey, requestVariable, dataRegion, resolvedEnsembleView, dataDomain, {
           signal: controller.signal,
         });
         if (controller.signal.aborted) {
@@ -529,7 +553,8 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
     model,
     variable,
     run,
-    region,
+    dataRegion,
+    dataDomain,
     resolvedEnsembleView,
     hasRenderableSelection,
     prefersGridSubstrate,

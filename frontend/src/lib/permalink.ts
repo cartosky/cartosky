@@ -37,6 +37,9 @@ export function buildPermalinkSearch(state: PermalinkState): string {
   if (state.region) {
     params.set("reg", state.region);
   }
+  if (state.domain) {
+    params.set("domain", state.domain);
+  }
   if (Number.isFinite(state.lat) && Number(state.lat) >= -90 && Number(state.lat) <= 90) {
     params.set("lat", fixed(Number(state.lat), 5));
   }

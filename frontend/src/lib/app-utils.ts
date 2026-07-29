@@ -937,6 +937,38 @@ export function filterRegionOptionsForVariable(
     }));
 }
 
+/**
+ * Resolve the effective data domain for a selection (Phase 2B, max-week plan).
+ *
+ * Returns the requested published build-region ID when the variable declares
+ * it in `supported_build_regions`, and `null` — meaning "canonical, send no
+ * `domain=`" — in every other case. Degrading is silent by design: an
+ * unsupported sticky `domain=` in the URL keeps issuing canonical requests
+ * rather than erroring, mirroring variable-stickiness behavior.
+ */
+export function resolveDataDomain(
+  requestedDomain: string | null | undefined,
+  modelCapability: CapabilityModel | null | undefined,
+  variableCapability: CapabilityVariable | null | undefined,
+): string | null {
+  const requested = String(requestedDomain ?? "").trim().toLowerCase();
+  if (!requested) {
+    return null;
+  }
+  const canonicalRegion = String(
+    modelCapability?.constraints?.canonical_region
+    ?? modelCapability?.canonical_region
+    ?? "",
+  ).trim().toLowerCase();
+  if (requested === canonicalRegion) {
+    return null;
+  }
+  const supported = Array.isArray(variableCapability?.supported_build_regions)
+    ? variableCapability.supported_build_regions.map((regionId) => String(regionId ?? "").trim().toLowerCase())
+    : [];
+  return supported.includes(requested) ? requested : null;
+}
+
 export function normalizeCapabilityVarRows(modelCapability: CapabilityModel | null | undefined): VariableEntry[] {
   if (!modelCapability?.variables) {
     return [];
@@ -1767,6 +1799,7 @@ export function buildVectorLayerUrl(params: {
   variable: string;
   frame: FrameRow | null | undefined;
   layerKey?: string;
+  domain?: string | null;
 }): string | null {
   const resolvedRun = String(params.run ?? "").trim();
   const layerKey = String(params.layerKey ?? "primary").trim();
@@ -1774,7 +1807,9 @@ export function buildVectorLayerUrl(params: {
   if (!resolvedRun || !Number.isFinite(fh) || !layerKey) {
     return null;
   }
-  const baseUrl = `${params.apiRoot}/api/v4/${encodeURIComponent(params.model)}/${encodeURIComponent(resolvedRun)}/${encodeURIComponent(params.variable)}/${Math.round(fh)}/vectors/${encodeURIComponent(layerKey)}`;
+  // Non-canonical domains are path-scoped (Phase 2A locked decision #5).
+  const domainPrefix = params.domain ? `domains/${encodeURIComponent(params.domain)}/` : "";
+  const baseUrl = `${params.apiRoot}/api/v4/${domainPrefix}${encodeURIComponent(params.model)}/${encodeURIComponent(resolvedRun)}/${encodeURIComponent(params.variable)}/${Math.round(fh)}/vectors/${encodeURIComponent(layerKey)}`;
   const meta = params.frame?.meta?.meta;
   const versionToken =
     typeof meta?.generated_at === "string" && meta.generated_at.trim()

@@ -48,6 +48,7 @@ import {
   nearestFrame,
   normalizeCapabilityVarRows,
   normalizeModelRows,
+  resolveDataDomain,
   readBasemapModePreference,
   readLegendVisibilityPreference,
   toAbsoluteGridFrameUrl,
@@ -709,6 +710,10 @@ export default function Compare() {
 
   // Shared region + basemap (not persisted to the URL).
   const [region] = useState("conus");
+  // Shared data domain across both panes (Phase 2B, v1 rule): URL-driven,
+  // sticky in the permalink; applied to requests only when BOTH panes'
+  // model/variable pairs declare it (no NA-vs-global pane comparisons).
+  const domain = initial.domain ?? null;
   const [basemapMode, setBasemapMode] = useState<BasemapMode>(() => readBasemapModePreference());
   const [showLegends, setShowLegends] = useState<boolean>(() => {
     const stored = readLegendVisibilityPreference();
@@ -792,12 +797,25 @@ export default function Compare() {
 
   const loaderCapabilities = capabilities ?? EMPTY_CAPABILITIES;
   const loaderRegionPresets = regionPresets ?? {};
+  // v1 shared-domain rule: the requested domain reaches the loaders only when
+  // BOTH panes' model/variable pairs resolve it; otherwise both degrade to
+  // their canonical domains together.
+  const sharedDomain = useMemo(() => {
+    if (!domain || !capabilities) {
+      return null;
+    }
+    const lModelCapability = capabilities.model_catalog?.[lModel] ?? null;
+    const rModelCapability = capabilities.model_catalog?.[rModel] ?? null;
+    const lResolved = resolveDataDomain(domain, lModelCapability, lModelCapability?.variables?.[lVariable] ?? null);
+    const rResolved = resolveDataDomain(domain, rModelCapability, rModelCapability?.variables?.[rVariable] ?? null);
+    return lResolved && rResolved ? domain : null;
+  }, [domain, capabilities, lModel, rModel, lVariable, rVariable]);
   const leftLoader = useModelLoader({
     model: capabilities ? lModel : "",
     run: lRun,
     variable: lVariable,
     requestVariable: lRequestVariable,
-    region,
+    domain: sharedDomain,
     capabilities: loaderCapabilities,
     regionPresets: loaderRegionPresets,
   });
@@ -806,7 +824,7 @@ export default function Compare() {
     run: rRun,
     variable: rVariable,
     requestVariable: rRequestVariable,
-    region,
+    domain: sharedDomain,
     capabilities: loaderCapabilities,
     regionPresets: loaderRegionPresets,
   });
@@ -1236,8 +1254,8 @@ export default function Compare() {
   // Mirror the latest selection + forecast hour into a ref so the map event
   // listeners (attached once, on map-ready) can build a fresh permalink
   // without capturing stale state in their closures.
-  const selectionStateRef = useRef({ lModel, lVariable, lProduct, lRun, rModel, rVariable, rProduct, rRun, forecastHour, mode });
-  selectionStateRef.current = { lModel, lVariable, lProduct, lRun, rModel, rVariable, rProduct, rRun, forecastHour, mode };
+  const selectionStateRef = useRef({ lModel, lVariable, lProduct, lRun, rModel, rVariable, rProduct, rRun, forecastHour, mode, domain });
+  selectionStateRef.current = { lModel, lVariable, lProduct, lRun, rModel, rVariable, rProduct, rRun, forecastHour, mode, domain };
 
   // Camera to apply to each map when it becomes ready. The compare maps
   // historically initialized at the region fit and IGNORED the permalink
@@ -1299,6 +1317,7 @@ export default function Compare() {
         lon: nextLon,
         z: nextZ,
         mode: selection.mode,
+        domain: selection.domain || undefined,
       })),
     );
   }, []);
@@ -1555,9 +1574,10 @@ export default function Compare() {
       lm: lModel, lv: lVariable, lp: lProduct || undefined, lr: lRun,
       rm: rModel, rv: rVariable, rp: rProduct || undefined, rr: rRun,
       fh: forecastHour, lat, lon, z, mode,
+      domain: domain || undefined,
     });
     return `${window.location.origin}/compare${search}`;
-  }, [lModel, lVariable, lProduct, lRun, rModel, rVariable, rProduct, rRun, forecastHour, lat, lon, z, mode]);
+  }, [lModel, lVariable, lProduct, lRun, rModel, rVariable, rProduct, rRun, forecastHour, lat, lon, z, mode, domain]);
 
   // Valid time for the displayed (nearest shared) forecast hour — same run +
   // format the scrubber shows. Used in the diff-mode share summary.
@@ -1798,11 +1818,12 @@ export default function Compare() {
         lon: camera.lon,
         z: camera.z,
         mode,
+        domain: domain || undefined,
       });
       replaceUrlQuery(withForeignSearchParams(search));
     }, URL_SYNC_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [lModel, lVariable, lProduct, lRun, rModel, rVariable, rProduct, rRun, forecastHour, mode]);
+  }, [lModel, lVariable, lProduct, lRun, rModel, rVariable, rProduct, rRun, forecastHour, mode, domain]);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 

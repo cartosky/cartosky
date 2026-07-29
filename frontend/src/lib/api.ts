@@ -678,17 +678,25 @@ export async function fetchRegions(model: string, options?: FetchOptions): Promi
   return Object.keys(regions);
 }
 
-export async function fetchRuns(model: string, options?: FetchOptions): Promise<string[]> {
+export async function fetchRuns(model: string, domain?: string | null, options?: FetchOptions): Promise<string[]> {
+  const query = new URLSearchParams();
+  if (domain) {
+    query.set("domain", domain);
+  }
   return fetchJson<string[]>(
-    `${API_V4_BASE}/${encodeURIComponent(model)}/runs`,
+    `${API_V4_BASE}/${encodeURIComponent(model)}/runs${query.toString() ? `?${query.toString()}` : ""}`,
     { ...options, productId: model }
   );
 }
 
-export async function fetchVars(model: string, run: string, options?: FetchOptions): Promise<VarRow[]> {
+export async function fetchVars(model: string, run: string, domain?: string | null, options?: FetchOptions): Promise<VarRow[]> {
   const runKey = run || "latest";
+  const query = new URLSearchParams();
+  if (domain) {
+    query.set("domain", domain);
+  }
   return fetchJson<VarRow[]>(
-    `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/vars`,
+    `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/vars${query.toString() ? `?${query.toString()}` : ""}`,
     { ...options, productId: model }
   );
 }
@@ -698,6 +706,7 @@ export async function fetchManifest(
   run: string,
   region?: string | null,
   ensembleView?: string | null,
+  domain?: string | null,
   options?: FetchOptions
 ): Promise<RunManifestResponse> {
   const runKey = run || "latest";
@@ -707,6 +716,9 @@ export async function fetchManifest(
   }
   if (ensembleView) {
     query.set("ensemble_view", ensembleView);
+  }
+  if (domain) {
+    query.set("domain", domain);
   }
   const payload = await fetchJson<unknown>(
     `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/manifest${query.toString() ? `?${query.toString()}` : ""}`,
@@ -734,6 +746,7 @@ export async function fetchFrames(
   varKey: string,
   region?: string | null,
   ensembleView?: string | null,
+  domain?: string | null,
   options?: FetchOptions
 ): Promise<FrameRow[]> {
   const runKey = run || "latest";
@@ -743,6 +756,9 @@ export async function fetchFrames(
   }
   if (ensembleView) {
     query.set("ensemble_view", ensembleView);
+  }
+  if (domain) {
+    query.set("domain", domain);
   }
   const response = await fetchJson<FrameRow[]>(
     `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/frames${query.toString() ? `?${query.toString()}` : ""}`,
@@ -792,6 +808,7 @@ export function fetchGridManifest(
   varKey: string,
   region?: string | null,
   ensembleView?: string | null,
+  domain?: string | null,
   options?: FetchOptions
 ): Promise<GridManifestResponse | null> {
   const runKey = run || "latest";
@@ -801,6 +818,9 @@ export function fetchGridManifest(
   }
   if (ensembleView) {
     query.set("ensemble_view", ensembleView);
+  }
+  if (domain) {
+    query.set("domain", domain);
   }
   const url = `${API_V4_BASE}/${encodeURIComponent(model)}/${encodeURIComponent(runKey)}/${encodeURIComponent(varKey)}/grid-manifest${query.toString() ? `?${query.toString()}` : ""}`;
 
@@ -881,6 +901,7 @@ export async function fetchSampleBatch(params: {
   run: string;
   variable: string;
   ensembleView?: string | null;
+  domain?: string | null;
   forecastHour: number;
   points: AnchorBatchPoint[];
   signal?: AbortSignal;
@@ -898,6 +919,7 @@ export async function fetchSampleBatch(params: {
       run: params.run,
       variable: params.variable,
       ensemble_view: params.ensembleView ?? null,
+      ...(params.domain ? { domain: params.domain } : {}),
       forecast_hour: params.forecastHour,
       points: params.points,
     }),
@@ -950,6 +972,7 @@ export async function fetchSample(params: {
   run: string;
   var: string;
   ensembleView?: string | null;
+  domain?: string | null;
   fh: number;
   lat: number;
   lon: number;
@@ -965,6 +988,9 @@ export async function fetchSample(params: {
   });
   if (params.ensembleView) {
     qs.set("ensemble_view", params.ensembleView);
+  }
+  if (params.domain) {
+    qs.set("domain", params.domain);
   }
   const startedAtMs = startNetworkTimer();
   const response = await productFetch(params.model, `${API_V4_BASE}/sample?${qs}`, { credentials: "omit", signal: params.signal });
@@ -1003,9 +1029,14 @@ export function buildContourUrl(params: {
   varKey: string;
   fh: number;
   key: string;
+  domain?: string | null;
 }): string {
   const enc = encodeURIComponent;
-  return `${API_V4_BASE}/${enc(params.model)}/${enc(params.run)}/${enc(params.varKey)}/${enc(params.fh)}/contours/${enc(params.key)}`;
+  // Non-canonical domains are path-scoped (Phase 2A locked decision #5):
+  // `domains/{d}` inserted immediately before the model segment. Canonical
+  // URLs stay byte-identical with no domain segment.
+  const domainPrefix = params.domain ? `domains/${enc(params.domain)}/` : "";
+  return `${API_V4_BASE}/${domainPrefix}${enc(params.model)}/${enc(params.run)}/${enc(params.varKey)}/${enc(params.fh)}/contours/${enc(params.key)}`;
 }
 
 // ── NWS Anchor City Weather ──────────────────────────────────────────

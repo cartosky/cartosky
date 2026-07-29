@@ -80,6 +80,8 @@ export type SampleContext = {
   run: string;
   varId: string;
   ensembleView?: string | null;
+  /** Data domain (Phase 2B); null/absent = canonical. */
+  domain?: string | null;
   fh: number;
 };
 
@@ -116,7 +118,7 @@ export function useSampleTooltip(ctx: SampleContext) {
   const canSample = hasValidSampleContext(ctx);
 
   // Clear cache when model/run/var change
-  const ctxFingerprint = `${ctx.model}/${ctx.run}/${ctx.varId}/${ctx.ensembleView || "-"}`;
+  const ctxFingerprint = `${ctx.model}/${ctx.run}/${ctx.varId}/${ctx.ensembleView || "-"}/${ctx.domain || "-"}`;
   useEffect(() => {
     if (ctxFingerprint !== prevCtxRef.current) {
       cacheRef.current.clear();
@@ -163,6 +165,7 @@ export function useSampleTooltip(ctx: SampleContext) {
           run: ctx.run,
           var: ctx.varId,
           ensembleView: ctx.ensembleView,
+          domain: ctx.domain,
           fh: ctx.fh,
           lat: roundedLat,
           lon: roundedLon,

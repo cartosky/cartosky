@@ -51,6 +51,7 @@ async function loadRadarPreviewPayload(signal: AbortSignal): Promise<RadarPrevie
       RADAR_PREVIEW_VARIABLE,
       RADAR_PREVIEW_REGION,
       null,
+      null,
       { signal },
     ),
     fetchFrames(
@@ -58,6 +59,7 @@ async function loadRadarPreviewPayload(signal: AbortSignal): Promise<RadarPrevie
       "latest",
       RADAR_PREVIEW_VARIABLE,
       RADAR_PREVIEW_REGION,
+      null,
       null,
       { signal },
     ),

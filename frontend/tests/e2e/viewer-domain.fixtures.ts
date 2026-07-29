@@ -1,0 +1,277 @@
+/**
+ * Synthetic region-scoped fixtures for the Phase 2B data-domain contract
+ * (docs/PHASE_2B_FRONTEND_DOMAIN_SPLIT_PLAN_2026-07-29.md, D7).
+ *
+ * No global artifacts exist yet (they arrive in Phase 3), so these fixtures
+ * fabricate a capabilities payload whose variable declares
+ * `supported_build_regions: ["conus", "global"]` and serve domain-scoped
+ * responses on the Phase 2A URL shapes. The specs assert request ROUTING —
+ * `domain=` on control APIs, `domains/{d}` on artifact URLs — not real data.
+ */
+import type { Page } from '@playwright/test';
+
+export const DOMAIN_MODEL = 'gfs';
+export const DOMAIN_SECOND_MODEL = 'nam';
+export const DOMAIN_RUN_ID = '20260729_12z';
+export const DOMAIN_VARIABLE = 'tmp2m';
+export const DOMAIN_ID = 'global';
+
+export const DOMAIN_FRAME_BINARY = new Uint16Array([1320, 1405, 65535, 877]);
+
+function modelCatalogEntry(modelId: string, options: { supportsGlobal: boolean }) {
+  return {
+    model_id: modelId,
+    name: modelId.toUpperCase(),
+    product: 'forecast',
+    canonical_region: 'conus',
+    defaults: {
+      default_var_key: DOMAIN_VARIABLE,
+      default_run: 'latest',
+      default_frame_selection: 'first',
+      default_render_substrate: 'grid',
+    },
+    constraints: {
+      canonical_region: 'conus',
+      time_axis_mode: 'forecast',
+      latest_only: false,
+      supports_sampling: true,
+    },
+    run_discovery: {},
+    variables: {
+      [DOMAIN_VARIABLE]: {
+        var_key: DOMAIN_VARIABLE,
+        display_name: 'Temperature 2m',
+        kind: 'continuous',
+        units: 'F',
+        group: 'Temperature',
+        default_fh: 0,
+        buildable: true,
+        color_map_id: 'tmp2m',
+        render_substrates: ['grid'],
+        ...(options.supportsGlobal ? { supported_build_regions: ['conus', DOMAIN_ID] } : {}),
+        constraints: {},
+        derived: false,
+        derive_strategy_id: null,
+      },
+    },
+  };
+}
+
+export function capabilityPayload() {
+  return {
+    contract_version: 'v1',
+    supported_models: [DOMAIN_MODEL, DOMAIN_SECOND_MODEL],
+    model_catalog: {
+      [DOMAIN_MODEL]: modelCatalogEntry(DOMAIN_MODEL, { supportsGlobal: true }),
+      [DOMAIN_SECOND_MODEL]: modelCatalogEntry(DOMAIN_SECOND_MODEL, { supportsGlobal: false }),
+    },
+    availability: Object.fromEntries(
+      [DOMAIN_MODEL, DOMAIN_SECOND_MODEL].map((modelId) => [
+        modelId,
+        {
+          latest_run: DOMAIN_RUN_ID,
+          published_runs: [DOMAIN_RUN_ID],
+          latest_run_ready: true,
+          latest_run_ready_vars: [DOMAIN_VARIABLE],
+          latest_run_ready_frame_count: 2,
+          latest_run_target_max_fh: 1,
+          source: 'test',
+          time_axis_mode: 'forecast',
+        },
+      ]),
+    ),
+  };
+}
+
+export function regionPayload() {
+  return {
+    regions: {
+      conus: {
+        label: 'CONUS',
+        bbox: [-125, 24, -66, 50],
+        defaultCenter: [-98.58, 39.83],
+        defaultZoom: 4,
+        minZoom: 2,
+        maxZoom: 9,
+      },
+      midwest: {
+        label: 'Midwest',
+        bbox: [-104, 36, -82, 49],
+        defaultCenter: [-93, 42.5],
+        defaultZoom: 5,
+        minZoom: 2,
+        maxZoom: 9,
+      },
+    },
+  };
+}
+
+export function manifestPayload(modelId: string) {
+  return {
+    model: modelId,
+    run: DOMAIN_RUN_ID,
+    region: 'conus',
+    variables: {
+      [DOMAIN_VARIABLE]: {
+        display_name: 'Temperature 2m',
+        kind: 'continuous',
+        units: 'F',
+        frames: [
+          { fh: 0, valid_time: '2026-07-29T12:00:00Z' },
+          { fh: 1, valid_time: '2026-07-29T13:00:00Z' },
+        ],
+      },
+    },
+  };
+}
+
+export function framesPayload() {
+  return [0, 1].map((fh) => ({
+    fh,
+    has_cog: true,
+    run: DOMAIN_RUN_ID,
+    valid_time: `2026-07-29T${String(12 + fh).padStart(2, '0')}:00:00Z`,
+    meta: {
+      meta: {
+        valid_time: `2026-07-29T${String(12 + fh).padStart(2, '0')}:00:00Z`,
+        units: 'F',
+        kind: 'continuous',
+        display_name: 'Temperature 2m',
+      },
+    },
+  }));
+}
+
+/**
+ * Grid manifest whose frame URLs mirror the backend's Phase 2A behavior:
+ * canonical requests get canonical `/api/v4/grid/{model}/...` URLs, requests
+ * carrying `domain=` get `domains/{d}`-prefixed URLs (`_grid_file_url`).
+ */
+export function gridManifestPayload(modelId: string, domain: string | null) {
+  const gridPrefix = domain ? `/api/v4/grid/domains/${domain}/` : '/api/v4/grid/';
+  return {
+    manifest_version: 1,
+    subtype: 'grid',
+    model: modelId,
+    run: DOMAIN_RUN_ID,
+    var: DOMAIN_VARIABLE,
+    projection: 'EPSG:3857',
+    bbox: [-14920000.0, 7356000.0, -14914000.0, 7362000.0],
+    grid: {
+      width: 2,
+      height: 2,
+      dtype: 'uint16',
+      endianness: 'little',
+      scale: 0.1,
+      offset: -100.0,
+      nodata: 65535,
+      units: 'F',
+    },
+    palette: {
+      color_map_id: 'tmp2m',
+      kind: 'continuous',
+      transparent_below_min: null,
+      transparent_zero: false,
+    },
+    lods: [
+      {
+        level: 0,
+        width: 2,
+        height: 2,
+        frames: [0, 1].map((fh) => ({
+          fh,
+          file: `fh${String(fh).padStart(3, '0')}.l0.u16.bin`,
+          valid_time: `2026-07-29T${String(12 + fh).padStart(2, '0')}:00:00Z`,
+          url: `${gridPrefix}${modelId}/${DOMAIN_RUN_ID}/${DOMAIN_VARIABLE}/fh${String(fh).padStart(3, '0')}.l0.u16.bin?v=${DOMAIN_RUN_ID}-${DOMAIN_VARIABLE}-${fh}`,
+        })),
+      },
+    ],
+  };
+}
+
+/**
+ * Stub every route the viewer/compare boot touches and record every
+ * `/api/v4/` request URL (pathname + search) into `recordedApiUrls`.
+ */
+export async function stubViewerDomainRoutes(page: Page, recordedApiUrls: string[]) {
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.includes('/api/v4/')) {
+      recordedApiUrls.push(`${url.pathname}${url.search}`);
+    }
+  });
+
+  await page.route('https://us.i.posthog.com/**', async (route) => {
+    await route.fulfill({ status: 204, body: '' });
+  });
+  await page.route('**/api/regions', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(regionPayload()) });
+  });
+  await page.route('**/api/v4/sample/batch', async (route) => {
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) });
+  });
+  await page.route('**/tiles/v3/boundaries/v2/tilejson.json', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        tilejson: '2.2.0',
+        name: 'Boundaries',
+        id: 'boundaries',
+        scheme: 'xyz',
+        format: 'pbf',
+        minzoom: 0,
+        maxzoom: 10,
+        bounds: [-180, -85.0511, 180, 85.0511],
+        center: [-98.58, 39.83, 4],
+        tiles: ['https://api.cartosky.com/tiles/v3/boundaries/v2/{z}/{x}/{y}.mvt'],
+      }),
+    });
+  });
+  await page.route('**/tiles/v3/boundaries/v2/**/*.mvt', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/vnd.mapbox-vector-tile', body: '' });
+  });
+  await page.route('**/api/v4/**/loop-manifest', async (route) => {
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) });
+  });
+  await page.route('**/api/v4/**/loop.webp**', async (route) => {
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) });
+  });
+  await page.route('**/tiles/v3/**/*.png**', async (route) => {
+    await route.fulfill({ status: 404, body: '' });
+  });
+
+  await page.route('**/api/v4/capabilities', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(capabilityPayload()) });
+  });
+
+  for (const modelId of [DOMAIN_MODEL, DOMAIN_SECOND_MODEL]) {
+    await page.route(`**/api/v4/${modelId}/runs**`, async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([DOMAIN_RUN_ID]) });
+    });
+    for (const runSegment of ['latest', DOMAIN_RUN_ID]) {
+      await page.route(`**/api/v4/${modelId}/${runSegment}/manifest**`, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(manifestPayload(modelId)) });
+      });
+      await page.route(`**/api/v4/${modelId}/${runSegment}/${DOMAIN_VARIABLE}/frames**`, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload()) });
+      });
+      await page.route(`**/api/v4/${modelId}/${runSegment}/${DOMAIN_VARIABLE}/grid-manifest**`, async (route) => {
+        const requestUrl = new URL(route.request().url());
+        const domain = requestUrl.searchParams.get('domain');
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(gridManifestPayload(modelId, domain)),
+        });
+      });
+    }
+    // Canonical and domain-scoped grid binaries.
+    await page.route(`**/api/v4/grid/${modelId}/${DOMAIN_RUN_ID}/${DOMAIN_VARIABLE}/*.bin**`, async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(DOMAIN_FRAME_BINARY.buffer) });
+    });
+    await page.route(`**/api/v4/grid/domains/${DOMAIN_ID}/${modelId}/${DOMAIN_RUN_ID}/${DOMAIN_VARIABLE}/*.bin**`, async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(DOMAIN_FRAME_BINARY.buffer) });
+    });
+  }
+}

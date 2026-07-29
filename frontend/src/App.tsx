@@ -149,6 +149,7 @@ import {
   defaultBasemapModeForSelection,
   emptyScrubPhase0aSnapshot,
   readAnimationDelayPreference,
+  resolveDataDomain,
   resolveScrubDisplayLagHours,
   supportsNwsWarningsOverlay,
   writeAnimationDelayPreference,
@@ -428,6 +429,12 @@ export default function App() {
 
   const [model, setModel] = useState("");
   const [region, setRegion] = useState(MAP_VIEW_DEFAULTS.region);
+  // Data domain (Phase 2B): a published build-region ID from the `domain=`
+  // permalink param; null = the model's canonical domain. URL-driven only in
+  // 2B — no UI control until a model actually declares a non-canonical
+  // domain (Phase 3). Sticky: kept in the URL even while a selection that
+  // doesn't support it degrades to canonical requests.
+  const domain = initialPermalink.domain ?? null;
   const [run, setRun] = useState("latest");
   const [newRunNotice, setNewRunNotice] = useState<NewRunNoticeState | null>(null);
   const [variable, setVariable] = useState("");
@@ -578,9 +585,9 @@ export default function App() {
       linkHref: "/account",
     },
     {
-      targetSelector: '[data-tour-target="feedback-button"]',
-      title: "More",
-      body: "Send feedback, open Compare, replay this tour, or check the keyboard shortcuts",
+      targetSelector: '[data-tour-target="compare-button"]',
+      title: "Compare",
+      body: "Open Compare directly from the top bar to inspect two runs, models, or variables side by side",
     },
     {
       targetSelector: '[data-tour-target="display-settings-button"]',
@@ -637,7 +644,7 @@ export default function App() {
     {
       targetSelector: '[data-tour-target="mobile-region-row"]',
       title: "Region",
-      body: "Search for a city, use GPS to find your location, or select from predefined regions. The magnifier in the top bar lands you here",
+      body: "Search for a city, use GPS to find your location, or select from predefined regions",
       openMobileSheet: true,
       mobileSheetSection: "view",
     },
@@ -915,6 +922,10 @@ export default function App() {
     ?? selectedModelCapability?.canonical_region
     ?? MAP_VIEW_DEFAULTS.region
   ).trim().toLowerCase() || MAP_VIEW_DEFAULTS.region;
+  // Effective data domain (Phase 2B): non-null only when the selected
+  // variable declares the requested domain in supported_build_regions;
+  // otherwise requests silently degrade to canonical (null → no `domain=`).
+  const dataDomain = resolveDataDomain(domain, selectedModelCapability, selectedVariableCapability);
   // Ensemble stats products (stats design §7, option B): declared on the
   // parent variable's capability; "mean" = today's behavior. An ACTIVE
   // product swaps the requested variable id at data-request boundaries
@@ -1178,6 +1189,7 @@ export default function App() {
         run: context.run,
         variable: context.variable,
         ensembleView: requestEnsembleView,
+        domain: dataDomain,
         forecastHour: requestedHour,
         points: context.points,
         signal: controller.signal,
@@ -1249,7 +1261,7 @@ export default function App() {
           startAnchorBatchRequest(pendingHour as number, latestContext);
         });
     },
-    [requestEnsembleView]
+    [requestEnsembleView, dataDomain]
   );
 
   const currentFrame = frameByHour.get(forecastHour) ?? frameRows[0] ?? null;
@@ -1286,6 +1298,17 @@ export default function App() {
     }
     return map;
   }, [frameRows, resolveFrameDisplayValidTime, runManifest, variable]);
+  const frameDayLabelsByHour = useMemo(() => {
+    const map: Record<number, string> = {};
+    for (const row of frameRows) {
+      const fh = Number(row?.fh);
+      const label = (extractLegendMeta(row) as { day_label?: string | null } | null)?.day_label?.trim();
+      if (Number.isFinite(fh) && label) {
+        map[fh] = label;
+      }
+    }
+    return map;
+  }, [frameRows]);
   const currentFrameValidTimeISO = useMemo(() => {
     if (prefersSpcExtendedMetaValidTime) {
       return resolveFrameDisplayValidTime(currentFrame) ?? frameValidTimesByHour[forecastHour] ?? null;
@@ -1636,7 +1659,7 @@ export default function App() {
         // order) that returns a valid manifest.
         const results = await Promise.allSettled(
           latestGridRunCandidates.map((candidateRun) =>
-            fetchGridManifest(model, candidateRun, requestVariable, dataRegion, requestEnsembleView, { signal: controller.signal })
+            fetchGridManifest(model, candidateRun, requestVariable, dataRegion, requestEnsembleView, dataDomain, { signal: controller.signal })
               .then((manifest) => ({ candidateRun, manifest })),
           ),
         );
@@ -1658,7 +1681,7 @@ export default function App() {
         return;
       }
 
-      const manifest = await fetchGridManifest(model, resolvedRunForRequests, requestVariable, dataRegion, requestEnsembleView, { signal: controller.signal });
+      const manifest = await fetchGridManifest(model, resolvedRunForRequests, requestVariable, dataRegion, requestEnsembleView, dataDomain, { signal: controller.signal });
       if (controller.signal.aborted) {
         return;
       }
@@ -1686,6 +1709,7 @@ export default function App() {
     model,
     prefersGridSubstrate,
     dataRegion,
+    dataDomain,
     resolvedRunForRequests,
     run,
     gridOnlySelection,
@@ -1913,7 +1937,7 @@ export default function App() {
     const controller = new AbortController();
     void Promise.all(
       compositeLayerSpecs.map(async (layer) => {
-        const manifest = await fetchGridManifest(model, resolvedRunForRequests, layer.var, dataRegion, ensembleView, { signal: controller.signal });
+        const manifest = await fetchGridManifest(model, resolvedRunForRequests, layer.var, dataRegion, ensembleView, dataDomain, { signal: controller.signal });
         return [layer.id, manifest] as const;
       })
     ).then((entries) => {
@@ -1930,7 +1954,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [compositeLayerSpecs, dataRegion, ensembleView, model, resolvedRunForRequests]);
+  }, [compositeLayerSpecs, dataRegion, dataDomain, ensembleView, model, resolvedRunForRequests]);
   const gridFrameByHour = useMemo(() => {
     const map = new Map<number, NonNullable<typeof selectedGridLod>["frames"][number]>();
     const frames = Array.isArray(selectedGridLod?.frames) ? selectedGridLod.frames : [];
@@ -2151,8 +2175,9 @@ export default function App() {
       varKey: displayedOverlayVariable,
       fh: Number(hour),
       key: contourKey,
+      domain: dataDomain,
     });
-  }, [displayedOverlayVariable, frameByHour, frameRows, gridManifest, model, resolvedRunForRequests]);
+  }, [displayedOverlayVariable, frameByHour, frameRows, gridManifest, model, resolvedRunForRequests, dataDomain]);
   const isGridHourReady = useCallback((hour: number | null | undefined): boolean => {
     if (!Number.isFinite(hour)) {
       return false;
@@ -3018,8 +3043,9 @@ export default function App() {
       variable,
       frame: currentFrame,
       layerKey: "primary",
+      domain: dataDomain,
     });
-  }, [apiRoot, currentFrame, model, resolvedRunForRequests, selectionSupportsVector, variable]);
+  }, [apiRoot, currentFrame, model, resolvedRunForRequests, selectionSupportsVector, variable, dataDomain]);
 
   const [nwsWarningsRefreshToken, setNwsWarningsRefreshToken] = useState(nwsWarningsVersionToken);
   const mrmsNwsWarningsEnabled = supportsNwsWarningsOverlay(model, variable) && nwsWarningsEnabled;
@@ -3092,13 +3118,14 @@ export default function App() {
         variable,
         frame: row,
         layerKey: "primary",
+        domain: dataDomain,
       });
       if (url && url !== vectorGeoJsonUrl && !urls.includes(url)) {
         urls.push(url);
       }
     }
     return urls;
-  }, [apiRoot, currentFrame, forecastHour, frameRows, model, resolvedRunForRequests, selectionSupportsVector, variable, vectorGeoJsonUrl]);
+  }, [apiRoot, currentFrame, forecastHour, frameRows, model, resolvedRunForRequests, selectionSupportsVector, variable, vectorGeoJsonUrl, dataDomain]);
 
   const rawLegend = useMemo(() => {
     const normalizedMeta = extractLegendMeta(currentFrame) ?? extractLegendMeta(frameRows[0] ?? null);
@@ -3164,6 +3191,7 @@ export default function App() {
     run: hoverSamplingEnabled ? hoverSampleRun : "",
     varId: hoverSamplingEnabled ? requestVariable : "",
     ensembleView: hoverSamplingEnabled ? requestEnsembleView : "",
+    domain: hoverSamplingEnabled ? dataDomain : null,
     fh: hoverSamplingEnabled ? hoverSampleHour : Number.NaN,
   });
   const [vectorHoverTooltip, setVectorHoverTooltip] = useState<Exclude<typeof tooltip, null> | null>(null);
@@ -3719,14 +3747,14 @@ export default function App() {
       try {
         const shouldFetchRuns = runsLoadedForModelRef.current !== model;
         const runDataPromise = shouldFetchRuns
-          ? fetchRuns(model, { signal: controller.signal })
+          ? fetchRuns(model, dataDomain, { signal: controller.signal })
           : Promise.resolve(runs);
         const manifestRunKey = run === "latest"
           ? ((gridOnlySelection && resolvedGridLatestRunId && runs.includes(resolvedGridLatestRunId)) ? resolvedGridLatestRunId : run)
           : run;
         const [runDataRaw, requestedManifest] = await Promise.all([
           runDataPromise,
-          fetchManifest(model, manifestRunKey, dataRegion, ensembleView, { signal: controller.signal }).catch(() => null),
+          fetchManifest(model, manifestRunKey, dataRegion, ensembleView, dataDomain, { signal: controller.signal }).catch(() => null),
         ]);
         if (controller.signal.aborted) {
           return;
@@ -3739,7 +3767,7 @@ export default function App() {
           ? ((gridOnlySelection && resolvedGridLatestRunId && runData.includes(resolvedGridLatestRunId)) ? resolvedGridLatestRunId : nextRun)
           : nextRun;
         if (!manifestData && nextManifestRunKey !== manifestRunKey) {
-          manifestData = await fetchManifest(model, nextManifestRunKey, dataRegion, ensembleView, { signal: controller.signal }).catch(() => null);
+          manifestData = await fetchManifest(model, nextManifestRunKey, dataRegion, ensembleView, dataDomain, { signal: controller.signal }).catch(() => null);
           if (controller.signal.aborted) {
             return;
           }
@@ -3777,7 +3805,7 @@ export default function App() {
             .filter((runId) => runId && runId !== resolvedManifestRunId)
             .slice(0, 2);
           for (const fallbackRunId of fallbackRunIds) {
-            const fallbackManifest = await fetchManifest(model, fallbackRunId, dataRegion, ensembleView, { signal: controller.signal }).catch(() => null);
+            const fallbackManifest = await fetchManifest(model, fallbackRunId, dataRegion, ensembleView, dataDomain, { signal: controller.signal }).catch(() => null);
             if (controller.signal.aborted) {
               return;
             }
@@ -3934,7 +3962,7 @@ export default function App() {
         // touching the manifest effect above, so the top progress bar must track
         // this fetch too.
         setFrameSwitchCount((count) => count + 1);
-        const rows = await fetchFrames(model, framesRunKey, requestVariable, dataRegion, requestEnsembleView, { signal: controller.signal })
+        const rows = await fetchFrames(model, framesRunKey, requestVariable, dataRegion, requestEnsembleView, dataDomain, { signal: controller.signal })
           .finally(() => setFrameSwitchCount((count) => count - 1));
         if (controller.signal.aborted || generation !== requestGenerationRef.current) return;
         setVariableSwitchState((current) => {
@@ -4029,6 +4057,7 @@ export default function App() {
     runManifest,
     commitForecastHourTransition,
     dataRegion,
+    dataDomain,
     hasRenderableSelection,
     gridOnlySelection,
     rgbManifest,
@@ -4177,7 +4206,7 @@ export default function App() {
       tickController = new AbortController();
       void (async () => {
         try {
-          const nextRuns = sortRunIdsDescending(await fetchRuns(model, { signal: tickController?.signal }));
+          const nextRuns = sortRunIdsDescending(await fetchRuns(model, dataDomain, { signal: tickController?.signal }));
           if (cancelled || tickController?.signal.aborted) {
             return;
           }
@@ -4223,9 +4252,9 @@ export default function App() {
               : resolvedRunForRequests;
             setFrameSwitchCount((count) => count + 1);
             const [manifestData, nextGridManifest] = await Promise.all([
-              fetchManifest(model, manifestRunKey, dataRegion, ensembleView, { signal: tickController.signal }),
+              fetchManifest(model, manifestRunKey, dataRegion, ensembleView, dataDomain, { signal: tickController.signal }),
               (prefersGridSubstrate && selectionSupportsGrid)
-                ? fetchGridManifest(model, gridRunKey, requestVariable, dataRegion, requestEnsembleView, { signal: tickController.signal })
+                ? fetchGridManifest(model, gridRunKey, requestVariable, dataRegion, requestEnsembleView, dataDomain, { signal: tickController.signal })
                 : Promise.resolve(null),
             ]).finally(() => setFrameSwitchCount((count) => count - 1));
             if (cancelled || tickController?.signal.aborted) {
@@ -4297,9 +4326,9 @@ export default function App() {
             ? (retainedGridLatestRunId ?? framesRunKey)
             : resolvedRunForRequests;
           const [rows, nextGridManifest] = await Promise.all([
-            fetchFrames(model, framesRunKey, requestVariable, dataRegion, requestEnsembleView, { signal: tickController.signal }),
+            fetchFrames(model, framesRunKey, requestVariable, dataRegion, requestEnsembleView, dataDomain, { signal: tickController.signal }),
             (prefersGridSubstrate && selectionSupportsGrid)
-              ? fetchGridManifest(model, framesGridRunKey, requestVariable, dataRegion, requestEnsembleView, { signal: tickController.signal })
+              ? fetchGridManifest(model, framesGridRunKey, requestVariable, dataRegion, requestEnsembleView, dataDomain, { signal: tickController.signal })
               : Promise.resolve(null),
           ]);
           if (cancelled || tickController?.signal.aborted) {
@@ -4335,7 +4364,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, variable, ensembleView, product, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId, prefersGridSubstrate, selectionSupportsGrid, dataRegion]);
+  }, [model, run, variable, ensembleView, product, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId, prefersGridSubstrate, selectionSupportsGrid, dataRegion, dataDomain]);
 
   useEffect(() => {
     if (!model || run === "latest" || !isPageVisible) {
@@ -4348,7 +4377,7 @@ export default function App() {
     const interval = window.setInterval(() => {
       tickController?.abort();
       tickController = new AbortController();
-      void fetchRuns(model, { signal: tickController.signal })
+      void fetchRuns(model, dataDomain, { signal: tickController.signal })
         .then((nextRunsRaw) => {
           if (cancelled || tickController?.signal.aborted) {
             return;
@@ -4383,7 +4412,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, isPageVisible]);
+  }, [model, run, isPageVisible, dataDomain]);
 
   useEffect(() => {
     if (!isPlaying || !isGridPlayable || gridFrameHours.length === 0) {
@@ -4939,6 +4968,7 @@ export default function App() {
       run: resolvedRunForRequests,
       variable: requestVariable,
       ensembleView: requestEnsembleView,
+      domain: dataDomain,
       forecastHour: requestFrameHour,
       points: batchPoints,
     })
@@ -4976,6 +5006,7 @@ export default function App() {
     requestVariable,
     resolvedRunForRequests,
     selectionKey,
+    dataDomain,
   ]);
   const handleGridFrameReady = useCallback((frameUrl: string) => {
     const normalized = normalizeGridFrameUrl(frameUrl);
@@ -6073,6 +6104,7 @@ export default function App() {
     product,
     resolvedForecastHourPermalink,
     region,
+    domain,
     suspended: isPlaying || isGridPreloadingForPlay,
   });
 
@@ -6354,6 +6386,7 @@ export default function App() {
           }
           showZoomControls={zoomControlsVisible}
           isDesktopLayout={isDesktopViewerLayout}
+          hasViewerRail={isRailLayout}
           legendButtonVisible={isTabletTouchLayout && legendVisible}
           legendButtonActive={isTabletTouchLayout && legendVisible && legendPopoverOpen}
           onLegendButtonClick={isTabletTouchLayout ? () => setLegendPopoverOpen(v => !v) : undefined}
@@ -6462,6 +6495,7 @@ export default function App() {
           cpcValidStart={cpcValidStart}
           cpcValidEnd={cpcValidEnd}
           frameDayLabel={frameDayLabel}
+          frameDayLabelsByHour={frameDayLabelsByHour}
           frameValidTimesByHour={frameValidTimesByHour}
           sourceStatusLabel={observedSourceStatus?.label ?? null}
           sourceStatusDescription={observedSourceStatus?.description ?? null}

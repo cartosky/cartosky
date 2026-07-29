@@ -44,6 +44,8 @@ frontend/tests/e2e/*
 !frontend/tests/e2e/viewer-legend.fixtures.ts
 !frontend/tests/e2e/viewer-legend.spec.ts
 !frontend/tests/e2e/viewer-mobile.spec.ts
+!frontend/tests/e2e/viewer-domain.fixtures.ts
+!frontend/tests/e2e/viewer-domain.spec.ts
 !frontend/playwright.config.ts
 
 # Dependencies

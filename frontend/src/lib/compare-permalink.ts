@@ -12,6 +12,8 @@ export type ComparePermalinkState = {
   lon?: number;
   z?: number;
   mode?: "split" | "diff";  // compare mode (default "split")
+  /** Shared data domain across both panes (Phase 2B); absent = canonical. */
+  domain?: string;
 };
 
 function readStringParam(params: URLSearchParams, key: string): string | undefined {
@@ -101,6 +103,11 @@ export function readComparePermalink(): ComparePermalinkState {
   const mode = readStringParam(params, "mode");
   state.mode = mode === "diff" ? "diff" : "split";
 
+  const domain = readStringParam(params, "domain");
+  if (domain) {
+    state.domain = domain.toLowerCase();
+  }
+
   return state;
 }
 
@@ -158,6 +165,9 @@ export function buildComparePermalinkSearch(state: ComparePermalinkState): strin
   if (isDiff) {
     params.set("mode", "diff");
   }
+  if (state.domain) {
+    params.set("domain", state.domain);
+  }
   const encoded = params.toString();
   return encoded ? `?${encoded}` : "";
 }
@@ -166,7 +176,7 @@ export function buildComparePermalinkSearch(state: ComparePermalinkState): strin
 const COMPARE_PERMALINK_KEYS = new Set([
   "lm", "lv",
   "lp", "lr", "rm", "rv",
-  "rp", "rr", "fh", "lat", "lon", "z", "mode",
+  "rp", "rr", "fh", "lat", "lon", "z", "mode", "domain",
 ]);
 
 /**

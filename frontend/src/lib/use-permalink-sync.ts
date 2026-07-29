@@ -19,6 +19,8 @@ export interface UsePermalinkSyncParams {
   ensembleView: string | null;
   resolvedForecastHourPermalink: number | null;
   region: string | null;
+  /** Data domain (Phase 2B); null = canonical, never serialized. */
+  domain?: string | null;
   /**
    * While true, URL write-back is paused (hydration detection still runs).
    * Used during autoplay so history.replaceState doesn't fire every UI tick;
@@ -49,6 +51,7 @@ export function usePermalinkSync({
   ensembleView,
   resolvedForecastHourPermalink,
   region,
+  domain,
   suspended = false,
 }: UsePermalinkSyncParams): void {
   const [permalinkHydrated, setPermalinkHydrated] = useState(false);
@@ -114,6 +117,7 @@ export function usePermalinkSync({
             ? Number(resolvedForecastHourPermalink)
             : undefined,
           region: region || undefined,
+          domain: domain || undefined,
           lat: mapView.lat,
           lon: mapView.lon,
           z: mapView.z,
@@ -139,6 +143,7 @@ export function usePermalinkSync({
     ensembleView, product,
     resolvedForecastHourPermalink,
     region,
+    domain,
     mapViewTick,
     suspended,
     postHydrationFlushTick,
