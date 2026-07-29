@@ -372,13 +372,15 @@ export function DisplayRow({
           data-testid="rail-toggle-switch"
           aria-hidden="true"
           className={cn(
-            "relative h-5 w-9 shrink-0 rounded-full transition-colors",
-            checked ? "bg-cyan-400/75" : "bg-white/16",
+            "relative h-5 w-9 shrink-0 rounded-full border transition-[background-color,border-color] duration-150",
+            checked
+              ? "border-cyan-200/35 bg-cyan-400/75"
+              : "border-white/28 bg-white/[0.07]",
           )}
         >
           <span
             className={cn(
-              "absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+              "absolute left-0.5 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow-sm transition-transform",
               checked && "translate-x-4",
             )}
           />

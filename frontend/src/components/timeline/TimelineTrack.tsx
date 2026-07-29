@@ -270,14 +270,14 @@ export const TimelineTrack = memo(function TimelineTrack({
 
   const daySegments = useMemo(() => {
     if (!model || trackWidth <= 0) {
-      return [] as Array<{ startMs: number; endMs: number; label: string }>;
+      return [] as Array<{ startMs: number; endMs: number; label: string; compactStart: boolean }>;
     }
     const spanMs = model.domainEndMs - model.domainStartMs;
     if (spanMs <= 0) {
       return [];
     }
     const pixelsPerDay = trackWidth / (spanMs / DAY_MS);
-    const out: Array<{ startMs: number; endMs: number; label: string }> = [];
+    const out: Array<{ startMs: number; endMs: number; label: string; compactStart: boolean }> = [];
     let cursor = model.domainStartMs;
     let index = 0;
     while (cursor < model.domainEndMs) {
@@ -289,10 +289,18 @@ export const TimelineTrack = memo(function TimelineTrack({
       );
       const endMs = Math.min(model.domainEndMs, Math.max(cursor + 1, nextMidnight));
       const segmentWidth = ((endMs - cursor) / spanMs) * trackWidth;
+      // The first GFS cell is frequently narrower than a full date label
+      // (either because the run starts mid-day or because the 384 h horizon
+      // compresses every day). A complete M/D label reads intentionally;
+      // letting the weekday form clip reads like missing content.
+      const compactStart = index === 0 && segmentWidth < 80;
       out.push({
         startMs: cursor,
         endMs,
-        label: formatDayLabel(cursor, Math.min(pixelsPerDay, segmentWidth), index),
+        label: compactStart
+          ? `${date.getUTCMonth() + 1}/${date.getUTCDate()}`
+          : formatDayLabel(cursor, Math.min(pixelsPerDay, segmentWidth), index),
+        compactStart,
       });
       cursor = endMs;
       index += 1;
@@ -576,7 +584,8 @@ export const TimelineTrack = memo(function TimelineTrack({
                   key={`${segment.startMs}-${segment.endMs}`}
                   data-testid="timeline-day-segment"
                   className={cn(
-                    "absolute inset-y-0 flex items-center overflow-hidden border-r border-white/[0.07] px-2 font-sans text-[11px] font-medium tracking-[0.01em] text-white/52",
+                    "absolute inset-y-0 flex items-center overflow-hidden border-r border-white/[0.07] font-sans text-[11px] font-medium tracking-[0.01em] text-white/52",
+                    segment.compactStart ? "px-1" : "px-2",
                     index % 2 === 1 && "bg-white/[0.025]",
                   )}
                   style={{
@@ -690,10 +699,9 @@ export const TimelineTrack = memo(function TimelineTrack({
           aria-hidden="true"
           className={cn("relative w-full", effectiveDensity === "standard" ? "h-4" : "h-3")}
         >
-          {/* On the §8 one-row layout the track is ~180 px wide: at a long
-              run's cadence every tick label is the same "00Z" and they overlap
-              into mush. Marks keep the day rhythm; the actual dates come from
-              the State B day strip and the inline readout. */}
+          {/* On the §8 one-row layout, long-run tick labels overlap into mush.
+              Marks keep the day rhythm; the active time comes from the State B
+              scrub pill. */}
           {singleRow
             ? ticks.map((tick) => (
               <span

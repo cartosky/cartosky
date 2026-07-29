@@ -405,14 +405,14 @@ test.describe('Viewer legend (Phase 7)', () => {
 
   // ── 3. Collapsed rail gains the Legend item (§6.3) ────────────────────────
 
-  test('collapsed rail shows Source / View / Legend and Legend expands to the legend mount', async ({ page }) => {
+  test('collapsed rail shows Source / Region / View / Legend and Legend expands to the legend mount', async ({ page }) => {
     await openLegendViewer(page, LEGEND_FIXTURES.continuous, COLLAPSED);
     const rail = page.getByTestId('viewer-rail');
     await expect(rail).toHaveAttribute('data-rail-state', 'collapsed');
 
     const captions = rail.getByTestId('rail-collapsed-caption');
-    await expect(captions).toHaveText(['Source', 'View', 'Legend'], { timeout: 20_000 });
-    for (const testId of ['rail-collapsed-source', 'rail-collapsed-view', 'rail-collapsed-legend']) {
+    await expect(captions).toHaveText(['Source', 'Region', 'View', 'Legend'], { timeout: 20_000 });
+    for (const testId of ['rail-collapsed-source', 'rail-collapsed-region', 'rail-collapsed-view', 'rail-collapsed-legend']) {
       const caption = page.getByTestId(testId).getByTestId('rail-collapsed-caption');
       const fontSize = await caption.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize));
       expect(fontSize, `${testId} caption font-size`).toBeGreaterThanOrEqual(11);

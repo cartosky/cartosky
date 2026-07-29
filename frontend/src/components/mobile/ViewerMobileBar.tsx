@@ -94,7 +94,7 @@ export function ViewerMobileBar() {
       style={{ height: `${MOBILE_BAR_PX}px` }}
     >
       <NavLink to="/" className="flex h-11 shrink-0 items-center font-semibold tracking-tight text-white">
-        <img src={BRAND_LOGO_SRC} alt="CartoSky" className="block h-9 w-auto max-w-none" />
+        <img src={BRAND_LOGO_SRC} alt="CartoSky" className="block h-10 w-auto max-w-none" />
       </NavLink>
 
       <div className="ml-auto flex items-center gap-1.5">

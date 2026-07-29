@@ -17,7 +17,7 @@
  *   [data-testid="rail-region-value"]             region display name as text
  *   [data-testid="rail-opacity-value"]            opacity % readout
  *   [data-legend-mount="rail"]                    Phase 7 legend mount
- *   [data-testid="rail-collapsed-source"|"rail-collapsed-view"|"rail-collapsed-legend"]
+ *   [data-testid="rail-collapsed-source"|"rail-collapsed-region"|"rail-collapsed-view"|"rail-collapsed-legend"]
  *                                                 collapsed items (§6.3 + §7.2)
  *   [data-testid="compact-legend-chip"]           §7.2 collapsed-state legend
  *   [data-testid="rail-collapse-toggle"|"rail-expand-toggle"]    width toggle
@@ -108,7 +108,7 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     await expect(brandImage).toBeVisible();
     const brandBox = await brandImage.boundingBox();
     expect(brandBox).not.toBeNull();
-    expect(brandBox!.height).toBeGreaterThanOrEqual(35);
+    expect(brandBox!.height).toBeGreaterThanOrEqual(39);
 
     // Viewer / Forecast / Climate are independent destinations, not a
     // segmented control that reads as three modes of the same product.
@@ -131,10 +131,16 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
       return {
         borderBottomWidth: style.borderBottomWidth,
         borderBottomColor: style.borderBottomColor,
+        fontFamily: style.fontFamily,
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
       };
     });
     expect(parseFloat(activeStyle.borderBottomWidth)).toBeGreaterThan(0);
     expect(activeStyle.borderBottomColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(activeStyle.fontFamily).toMatch(/Inter/i);
+    expect(activeStyle.fontSize).toBe('14px');
+    expect(Number(activeStyle.fontWeight)).toBe(500);
 
     // Compare and Share are peer actions in the bar.
     await expect(header.getByRole('link', { name: 'Compare' })).toBeVisible();
@@ -145,12 +151,15 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     await page.getByTestId('viewer-overflow-trigger').click();
     const menu = page.getByTestId('viewer-overflow-menu');
     await expect(menu).toBeVisible();
-    await expect(menu.getByRole('menuitem', { name: 'Send feedback' })).toBeVisible();
+    const menuItems = await menu.getByRole('menuitem').allInnerTexts();
+    expect(menuItems.map((text) => text.trim())).toEqual([
+      'Send feedback',
+      'Keyboard shortcuts',
+      'Attribution',
+    ]);
     await expect(menu.getByRole('menuitem', { name: 'Compare' })).toHaveCount(0);
-    await expect(menu.getByRole('menuitem', { name: 'Replay tour' })).toBeVisible();
-    await expect(menu.getByRole('menuitem', { name: 'Keyboard shortcuts' })).toBeVisible();
-    await expect(menu.getByRole('menuitem', { name: 'Attribution' })).toBeVisible();
-    await expect(menu.getByRole('menuitem', { name: /Sign in|Account/ })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Replay tour' })).toHaveCount(0);
+    await expect(menu.getByRole('menuitem', { name: /Sign in|Account/ })).toHaveCount(0);
     await page.keyboard.press('Escape');
 
     // The selectors left the bar entirely — they live in the rail now.
@@ -185,10 +194,17 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     await expect(view.getByRole('button', { name: /Dark basemap/i })).toBeVisible();
     await expect(view.getByTestId('rail-opacity-value')).toHaveText(/^\d{1,3}%$/);
 
-    // Legend mount hosts the existing MapLegend rendering.
+    // Legend is a third labeled section below View, hosting the existing
+    // normalized MapLegend rendering.
+    await expect(page.getByTestId('rail-legend-heading')).toHaveText('Legend');
     const mount = page.locator('[data-legend-mount="rail"]');
     await expect(mount).toBeVisible();
     await expect(mount.getByRole('complementary', { name: 'Map legend' })).toBeVisible();
+    const viewBox = await view.boundingBox();
+    const legendBox = await page.getByTestId('rail-legend').boundingBox();
+    expect(viewBox).not.toBeNull();
+    expect(legendBox).not.toBeNull();
+    expect(legendBox!.y).toBeGreaterThanOrEqual(viewBox!.y + viewBox!.height);
   });
 
   test('expanded rail removes decorative label icons and separates Source from View', async ({ page }) => {
@@ -308,7 +324,27 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
       });
       expect(style.borderWidth).toBe('0px');
       expect(style.backgroundColor).toBe('rgba(0, 0, 0, 0)');
+
+      const switchCenterOffset = await button.getByTestId('rail-toggle-switch').evaluate((element) => {
+        const track = element.getBoundingClientRect();
+        const thumb = element.querySelector('span')?.getBoundingClientRect();
+        if (!thumb) return Number.POSITIVE_INFINITY;
+        return Math.abs((track.y + track.height / 2) - (thumb.y + thumb.height / 2));
+      });
+      expect(switchCenterOffset).toBeLessThanOrEqual(0.5);
     }
+
+    const offSwitch = page.getByTestId('rail-toggle-dark-basemap').getByTestId('rail-toggle-switch');
+    await expect(page.getByTestId('rail-toggle-dark-basemap').getByRole('button')).toHaveAttribute('aria-pressed', 'false');
+    const offSwitchStyle = await offSwitch.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        borderWidth: computed.borderTopWidth,
+        borderColor: computed.borderTopColor,
+      };
+    });
+    expect(offSwitchStyle.borderWidth).toBe('1px');
+    expect(offSwitchStyle.borderColor).not.toBe('rgba(0, 0, 0, 0)');
 
     const opacity = page.getByTestId('rail-opacity-control');
     const opacityStyle = await opacity.evaluate((element) => {
@@ -323,7 +359,7 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
   });
 
   // ── 3. Rail collapsed ─────────────────────────────────────────────────────
-  test('collapsed rail (1200×800) shows three captioned icons, expands to a section, keeps the legend via the compact chip', async ({ page }) => {
+  test('collapsed rail (1200×800) shows four captioned destinations, expands to a section, keeps the legend via the compact chip', async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 800 });
     await openViewer(page);
 
@@ -331,17 +367,19 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     await expect(rail).toHaveAttribute('data-rail-state', 'collapsed');
     expect(await railWidth(page)).toBe(RAIL_COLLAPSED_PX);
 
-    // §6.3 + §7.2: exactly three items — Source / View / Legend.
-    await expect(rail.getByTestId('rail-collapsed-caption')).toHaveText(['Source', 'View', 'Legend']);
+    // Region gets its own direct path while still expanding to the View
+    // section that owns the selector.
+    await expect(rail.getByTestId('rail-collapsed-caption')).toHaveText(['Source', 'Region', 'View', 'Legend']);
 
     // Icon + ≥11 px caption per section (§6.3 / §2.2).
-    for (const testId of ['rail-collapsed-source', 'rail-collapsed-view', 'rail-collapsed-legend']) {
+    for (const testId of ['rail-collapsed-source', 'rail-collapsed-region', 'rail-collapsed-view', 'rail-collapsed-legend']) {
       const caption = page.getByTestId(testId).getByTestId('rail-collapsed-caption');
       await expect(caption).toBeVisible();
       const fontSize = await caption.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
       expect(fontSize, `${testId} caption font-size`).toBeGreaterThanOrEqual(11);
     }
     await expect(page.getByTestId('rail-collapsed-source').getByTestId('rail-collapsed-caption')).toHaveText('Source');
+    await expect(page.getByTestId('rail-collapsed-region').getByTestId('rail-collapsed-caption')).toHaveText('Region');
     await expect(page.getByTestId('rail-collapsed-view').getByTestId('rail-collapsed-caption')).toHaveText('View');
     await expect(page.getByTestId('rail-collapsed-legend').getByTestId('rail-collapsed-caption')).toHaveText('Legend');
 
@@ -485,7 +523,7 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
         const box = await locator.boundingBox();
         return box ? Math.min(box.width, box.height) : 0;
       };
-      for (const testId of ['rail-collapsed-source', 'rail-collapsed-view', 'rail-collapsed-legend', 'rail-expand-toggle']) {
+      for (const testId of ['rail-collapsed-source', 'rail-collapsed-region', 'rail-collapsed-view', 'rail-collapsed-legend', 'rail-expand-toggle']) {
         expect(await measure(page.getByTestId(testId)), `${testId} min side`).toBeGreaterThanOrEqual(44);
       }
       expect(

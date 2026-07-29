@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Pause, Play } from "lucide-react";
 
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
@@ -6,7 +6,6 @@ import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
 import { TimelineTrack } from "@/components/timeline/TimelineTrack";
 import { cn } from "@/lib/utils";
 import { resolveRunBuildProgress } from "@/lib/viewer-loading-status";
-import { buildTimelineViewModel } from "@/lib/timeline-availability";
 import { MOBILE_SCRUB_REVERT_MS } from "@/lib/viewer-mobile";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
 import { SpeedButton } from "@/components/SpeedButton";
@@ -339,7 +338,6 @@ export const BottomForecastControls = memo(function BottomForecastControls({
   const lastSentHourRef = useRef<number | null>(null);
   const trailingRafRef = useRef<number | null>(null);
   const pendingEmitRef = useRef<number | null>(null);
-  const showInlineSecondary = !(timeAxisMode === "valid" && (variableId === "wgust_6h_max" || variableId === "wgust_24h_max"));
 
   const validTime = useMemo(
     () => formatTimelineDisplay({
@@ -433,81 +431,6 @@ export const BottomForecastControls = memo(function BottomForecastControls({
     const timer = window.setTimeout(() => setScrubOverlayVisible(false), MOBILE_SCRUB_REVERT_MS);
     return () => window.clearTimeout(timer);
   }, [isScrubbing, scrubOverlayVisible]);
-
-  // The strip spans exactly the track's box, so its label density is decided
-  // from the measured track width — the same input TimelineTrack's own day
-  // band uses. Measured with a callback ref because the row does not exist
-  // until the run data lands.
-  const [mobileTrackWidth, setMobileTrackWidth] = useState(0);
-  const mobileTrackObserverRef = useRef<ResizeObserver | null>(null);
-  const attachMobileTrackWrapper = useCallback((element: HTMLDivElement | null) => {
-    mobileTrackObserverRef.current?.disconnect();
-    mobileTrackObserverRef.current = null;
-    if (!element || typeof ResizeObserver === "undefined") {
-      return;
-    }
-    setMobileTrackWidth(element.getBoundingClientRect().width);
-    const observer = new ResizeObserver((entries) => {
-      setMobileTrackWidth(entries[0]?.contentRect.width ?? 0);
-    });
-    observer.observe(element);
-    mobileTrackObserverRef.current = observer;
-  }, []);
-  useEffect(() => () => mobileTrackObserverRef.current?.disconnect(), []);
-
-  // Day boundaries for the strip, from the SAME view model the track builds —
-  // no second time model, no track-model change.
-  const dayStripSegments = useMemo(() => {
-    if (isDesktopLayout) {
-      return [] as Array<{ leftPct: number; widthPct: number; label: string }>;
-    }
-    const stripModel = buildTimelineViewModel({
-      mode: timeAxisMode,
-      frames: publishedFrameHours && publishedFrameHours.length > 0 ? publishedFrameHours : availableFrames,
-      validTimeByHour: frameValidTimesByHour,
-      runDateTimeISO,
-      readyThroughFh,
-      expectedMaxFh,
-      validPeriodLabel: staticSnapshotLabel,
-    });
-    if (!stripModel) {
-      return [];
-    }
-    const spanMs = stripModel.domainEndMs - stripModel.domainStartMs;
-    if (spanMs <= 0) {
-      return [];
-    }
-    const segments: Array<{ leftPct: number; widthPct: number; label: string }> = [];
-    let cursor = stripModel.domainStartMs;
-    while (cursor < stripModel.domainEndMs && segments.length < 32) {
-      const date = new Date(cursor);
-      const nextMidnight = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1);
-      const endMs = Math.min(stripModel.domainEndMs, Math.max(cursor + 1, nextMidnight));
-      const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" }).format(date);
-      segments.push({
-        leftPct: ((cursor - stripModel.domainStartMs) / spanMs) * 100,
-        widthPct: ((endMs - cursor) / spanMs) * 100,
-        label: `${weekday} ${date.getUTCMonth() + 1}/${date.getUTCDate()}`,
-      });
-      cursor = endMs;
-    }
-    // A 264 h run is 11 day cells in ~180 px. Rather than truncate every label
-    // into two illegible characters, label every Nth boundary at full width and
-    // let the cell borders carry the rhythm between them.
-    const DAY_LABEL_MIN_PX = 56;
-    const narrowestCellPx = mobileTrackWidth > 0
-      ? Math.min(...segments.map((segment) => (segment.widthPct / 100) * mobileTrackWidth))
-      : DAY_LABEL_MIN_PX;
-    const labelEvery = narrowestCellPx >= DAY_LABEL_MIN_PX
-      ? 1
-      : Math.max(1, Math.ceil(DAY_LABEL_MIN_PX / Math.max(1, narrowestCellPx)));
-    return segments.map((segment, index) => (
-      index % labelEvery === 0 ? segment : { ...segment, label: "" }
-    ));
-  }, [
-    availableFrames, expectedMaxFh, frameValidTimesByHour, isDesktopLayout, mobileTrackWidth,
-    publishedFrameHours, readyThroughFh, runDateTimeISO, staticSnapshotLabel, timeAxisMode,
-  ]);
 
   const emitForecastHour = (next: number, force: boolean) => {
     const now = Date.now();
@@ -816,9 +739,9 @@ export const BottomForecastControls = memo(function BottomForecastControls({
             style={{ willChange: "transform" }}
           />
 
-          {/* §8 State A mobile: ONE 64 px row — [▶] track  valid-time readout.
+          {/* §8 State A mobile: ONE 64 px row — [▶] full-width track.
               The speed control did not survive the 44 px audit at 390 px
-              (play 44 + track + readout leaves no room for a second target),
+              (play 44 + track leaves no room for a second target),
               so it lives in the sheet's Source section. Share, Compare,
               Feedback and the controls button moved to the 52 px bar. */}
           {!isDesktopLayout ? (
@@ -839,40 +762,9 @@ export const BottomForecastControls = memo(function BottomForecastControls({
                 {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-[1px]" />}
               </button>
 
-              <div ref={attachMobileTrackWrapper} className="relative h-full min-w-0 flex-1">
-                {/* §8 State B day strip — an absolute overlay ALIGNED TO THE
-                    TRACK, fading in on pointerdown. */}
-                {scrubOverlayVisible && dayStripSegments.length > 0 ? (
-                  <div
-                    data-testid="mobile-day-strip"
-                    aria-hidden="true"
-                    className="pointer-events-none absolute bottom-full left-0 right-0 mb-1 h-6 overflow-hidden rounded-md border border-white/[0.09] bg-[#04101e]/[0.92] backdrop-blur-md"
-                  >
-                    {dayStripSegments.map((segment) => (
-                      <span
-                        key={segment.leftPct}
-                        data-testid="mobile-day-segment"
-                        className="absolute inset-y-0 flex items-center whitespace-nowrap border-r border-white/[0.09] px-1.5 text-[11px] font-medium text-white/62"
-                        style={{ left: `${segment.leftPct}%`, width: `${segment.widthPct}%` }}
-                      >
-                        {segment.label}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
+              <div className="relative h-full min-w-0 flex-1">
                 {timeline}
               </div>
-
-              {validTime ? (
-                <div className="flex max-w-[38%] shrink-0 flex-col items-end justify-center leading-tight">
-                  <span className="truncate font-['IBM_Plex_Mono',monospace] text-[12px] font-medium tracking-[0.02em] text-white/72">
-                    {validTime.shortDate}
-                  </span>
-                  {showInlineSecondary && validTime.secondary && validTime.secondary !== validTime.shortDate ? (
-                    <span className="truncate text-[11px] font-medium text-white/45">{validTime.secondary}</span>
-                  ) : null}
-                </div>
-              ) : null}
             </div>
           ) : null}
 

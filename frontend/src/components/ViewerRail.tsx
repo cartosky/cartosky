@@ -4,6 +4,7 @@ import {
   Boxes,
   ChevronLeft,
   ChevronRight,
+  MapPin,
   Palette,
   SlidersHorizontal,
 } from "lucide-react";
@@ -22,7 +23,8 @@ import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
 
 /**
  * Phase 6 rail (§6.2 / §6.3). Fills the left edge from below the 48 px bar to
- * the viewport bottom and owns two normative sections — SOURCE and VIEW.
+ * the viewport bottom and owns three normative sections — SOURCE, VIEW and
+ * LEGEND.
  *
  * The rail is a presentational consumer: every value and setter still lives in
  * App.tsx / ViewerToolbarContext / use-display-settings. Expanded and collapsed
@@ -164,6 +166,15 @@ export function ViewerRail() {
         >
           <Boxes className="h-[18px] w-[18px]" />
           <span data-testid="rail-collapsed-caption" className="text-[11px] font-medium leading-none">Source</span>
+        </button>
+        <button
+          type="button"
+          data-testid="rail-collapsed-region"
+          onClick={() => onRailExpandTo?.("view")}
+          className={COLLAPSED_ITEM_CLASSNAME}
+        >
+          <MapPin className="h-[18px] w-[18px]" />
+          <span data-testid="rail-collapsed-caption" className="text-[11px] font-medium leading-none">Region</span>
         </button>
         <button
           type="button"
@@ -382,22 +393,31 @@ export function ViewerRail() {
           </div>
         </div>
 
-        {/* Phase 7 legend mount (§7.1): the normalized MapLegend rendering in
-            a stable bottom slot; the collapsed rail's Legend item scrolls here. */}
-        <div
-          ref={legendRef}
-          data-legend-mount="rail"
-          data-tour-target="legend-button"
-          className="mt-auto rounded-xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.72] px-1 py-1"
-        >
-          {expanded ? (
-            <MapLegend
-              legend={legend}
-              compositeLayers={compositeLegendLayers}
-              defaultExpanded={true}
-              inline={true}
-            />
-          ) : null}
+        <div aria-hidden="true" className="h-px w-full shrink-0 bg-white/10" />
+
+        {/* Phase 7 legend mount (§7.1), now presented as an explicit section
+            directly after View instead of an unlabeled bottom card. */}
+        <div ref={legendRef} data-testid="rail-legend" className="flex flex-col gap-2">
+          <span
+            data-testid="rail-legend-heading"
+            className={SECTION_LABEL_CLASSNAME}
+            data-tour-target="legend-button"
+          >
+            Legend
+          </span>
+          <div
+            data-legend-mount="rail"
+            className="rounded-xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.72] px-1 py-1"
+          >
+            {expanded ? (
+              <MapLegend
+                legend={legend}
+                compositeLayers={compositeLegendLayers}
+                defaultExpanded={true}
+                inline={true}
+              />
+            ) : null}
+          </div>
         </div>
       </div>
     </aside>

@@ -466,6 +466,20 @@ test.describe('Viewer timeline (Phase 5)', () => {
     await expect(page.getByTestId('timeline-transport')).toContainText(/FH/i);
   });
 
+  test('the first partial GFS day renders a complete compact date inside the day band', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openTimeline(page, FIXTURES.gfsLong);
+
+    const firstSegment = page.getByTestId('timeline-day-segment').first();
+    await expect(firstSegment).toBeVisible({ timeout: 20_000 });
+    await expect(firstSegment).toHaveText(/^\d{1,2}\/\d{1,2}$/);
+    const fit = await firstSegment.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(fit.scrollWidth).toBeLessThanOrEqual(fit.clientWidth);
+  });
+
   test('00Z/12Z ticks are prominent above the track and transport controls breathe', async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 768 });
     await openTimeline(page, FIXTURES.gfsLong);
@@ -562,6 +576,21 @@ test.describe('Viewer timeline (Phase 5)', () => {
     expect(transportGeometry.play!.width).toBeGreaterThanOrEqual(40);
     expect(transportGeometry.speed!.width).toBeGreaterThanOrEqual(60);
     expect(transportGeometry.playBackground).not.toBe('rgba(0, 0, 0, 0)');
+
+    await speed.click();
+    const speedMenu = page.getByTestId('timeline-speed-menu');
+    await expect(speedMenu).toBeVisible();
+    const speedOptions = speedMenu.getByRole('menuitemradio');
+    await expect(speedOptions).toHaveCount(4);
+    expect((await speedOptions.allInnerTexts()).map((text) => text.trim())).toEqual([
+      '0.5×',
+      '1×',
+      '2×',
+      '4×',
+    ]);
+    await speedMenu.getByRole('menuitemradio', { name: '2×' }).click();
+    await expect(speed).toHaveAccessibleName('Animation speed 2×');
+    await expect(speedMenu).toBeHidden();
 
     await jump.selectOption('12');
     await expect.poll(() => new URL(page.url()).searchParams.get('fh')).toBe('12');

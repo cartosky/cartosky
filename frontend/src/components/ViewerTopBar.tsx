@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { NavLink, useNavigate } from "react-router-dom";
-import { Show, UserButton, useAuth } from "@clerk/react";
+import { NavLink } from "react-router-dom";
+import { Show, UserButton } from "@clerk/react";
 import {
   GitCompareArrows,
   Info,
   Keyboard,
   MessageSquareText,
   MoreHorizontal,
-  PlayCircle,
   Share2,
   UserRound,
   X,
@@ -86,8 +85,6 @@ export function AttributionDialog({ onClose }: { onClose: () => void }) {
 
 export function ViewerTopBar() {
   const toolbar = useViewerToolbar();
-  const navigate = useNavigate();
-  const { isLoaded, isSignedIn } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [attributionOpen, setAttributionOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -132,10 +129,9 @@ export function ViewerTopBar() {
   return (
     <div className="relative z-10 flex h-12 items-center gap-2 px-4 md:gap-3 md:px-5">
       {/* min-h-11 under a coarse pointer keeps the §2.1 44 px floor without
-          growing the 48 px bar. The high-resolution lockup is rendered at
-          36 px so its wordmark stays crisp without crowding the nav. */}
+          growing the 48 px bar. */}
       <NavLink to="/" className="flex min-h-8 shrink-0 items-center font-semibold tracking-tight text-white pointer-coarse:min-h-11">
-        <img src={BRAND_LOGO_SRC} alt="CartoSky" className="block h-9 w-auto max-w-none" />
+        <img src={BRAND_LOGO_SRC} alt="CartoSky" className="block h-10 w-auto max-w-none" />
       </NavLink>
 
       <nav
@@ -148,7 +144,7 @@ export function ViewerTopBar() {
             key={link.to}
             to={link.to}
             className={({ isActive }) => cn(
-              "relative inline-flex min-h-8 items-center border-b-2 px-0.5 pt-0.5 text-[13px] font-medium transition-colors duration-100 pointer-coarse:min-h-11",
+              "relative inline-flex min-h-8 items-center border-b-2 px-0.5 pt-0.5 font-sans text-sm font-medium transition-colors duration-100 pointer-coarse:min-h-11",
               isActive
                 ? "border-cyan-300/80 text-cyan-100"
                 : "border-transparent text-white/58 hover:text-white/90",
@@ -225,10 +221,6 @@ export function ViewerTopBar() {
             <MessageSquareText className="h-4 w-4 text-white/54" />
             Send feedback
           </button>
-          <button type="button" role="menuitem" className={BAR_MENU_ITEM_CLASSNAME} onClick={runItem(() => toolbar?.onReplayTour?.())}>
-            <PlayCircle className="h-4 w-4 text-white/54" />
-            Replay tour
-          </button>
           <button type="button" role="menuitem" className={BAR_MENU_ITEM_CLASSNAME} onClick={runItem(() => toolbar?.onOpenShortcuts?.())}>
             <Keyboard className="h-4 w-4 text-white/54" />
             Keyboard shortcuts
@@ -236,16 +228,6 @@ export function ViewerTopBar() {
           <button type="button" role="menuitem" className={BAR_MENU_ITEM_CLASSNAME} onClick={runItem(() => setAttributionOpen(true))}>
             <Info className="h-4 w-4 text-white/54" />
             Attribution
-          </button>
-          <div aria-hidden="true" className="my-1 h-px bg-white/[0.08]" />
-          <button
-            type="button"
-            role="menuitem"
-            className={BAR_MENU_ITEM_CLASSNAME}
-            onClick={runItem(() => navigate(isLoaded && isSignedIn ? "/account" : "/login"))}
-          >
-            <UserRound className="h-4 w-4 text-white/54" />
-            {isLoaded && isSignedIn ? "Account" : "Sign in"}
           </button>
         </div>,
         document.body,

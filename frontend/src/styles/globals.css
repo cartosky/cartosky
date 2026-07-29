@@ -704,7 +704,7 @@
   }
 
   .viewer-chrome-fallback-logo {
-    height: 3rem;
+    height: 2.5rem;
   }
 
   .viewer-chrome-fallback-rail {
@@ -714,7 +714,7 @@
   }
 
   html[data-viewer-rail="on"] .viewer-chrome-fallback-logo {
-    height: 2rem;
+    height: 2.5rem;
   }
 
   html[data-viewer-rail="on"] .viewer-chrome-fallback-rail {

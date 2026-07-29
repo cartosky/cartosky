@@ -126,6 +126,32 @@ test.describe('§9 mobile geometry at rest', () => {
     expect(Math.abs(timeline.height - TIMELINE_PX), `timeline height ${timeline.height}`).toBeLessThanOrEqual(1);
     expect(Math.abs(sheet.height - PEEK_PX), `peek height ${sheet.height}`).toBeLessThanOrEqual(1);
 
+    const grabber = page.getByTestId('mobile-sheet-grabber');
+    await expect(grabber).toBeVisible();
+    const grabberBox = await grabber.boundingBox();
+    const grabberStyle = await grabber.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        backgroundColor: computed.backgroundColor,
+        boxShadow: computed.boxShadow,
+      };
+    });
+    expect(grabberBox).not.toBeNull();
+    expect(grabberBox!.width).toBeGreaterThanOrEqual(44);
+    expect(grabberBox!.height).toBeGreaterThanOrEqual(5);
+    expect(grabberBox!.y - sheet.y).toBeLessThanOrEqual(12);
+    expect(Math.abs(
+      (grabberBox!.x + grabberBox!.width / 2) - (sheet.x + sheet.width / 2),
+    )).toBeLessThanOrEqual(1);
+    expect(grabberStyle.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(grabberStyle.boxShadow).not.toBe('none');
+
+    // The permanent mobile timestamp is retired in favor of the scrub pill,
+    // leaving the track to consume the full row after the play button.
+    const track = await boxOf(page, 'timeline-track');
+    expect(track.width).toBeGreaterThanOrEqual(280);
+    expect(track.x + track.width).toBeGreaterThanOrEqual(VIEWPORT.width - 10);
+
     expect(map.height / VIEWPORT.height, `map fraction ${map.height / VIEWPORT.height}`)
       .toBeGreaterThanOrEqual(MAP_FLOOR_FRACTION);
     // Nothing occludes the map: it ends exactly where the timeline begins.
@@ -143,9 +169,8 @@ test.describe('§9 State B — no layout reflow during the gesture', () => {
   test('map box is identical before, during and after a scrub', async ({ page }) => {
     await openTimelineViewer(page, FIXTURES.gfsLong);
 
-    const dayStrip = page.getByTestId('mobile-day-strip');
     const readout = page.getByTestId('mobile-scrub-readout');
-    await expect(dayStrip).toBeHidden();
+    await expect(page.getByTestId('mobile-day-strip')).toHaveCount(0);
     await expect(readout).toBeHidden();
 
     const before = await boxOf(page, 'viewer-map-slot');
@@ -155,7 +180,7 @@ test.describe('§9 State B — no layout reflow during the gesture', () => {
     await page.mouse.move(track.x + track.width * 0.3, y);
     await page.mouse.down();
     const atDown = await boxOf(page, 'viewer-map-slot');
-    await expect(dayStrip).toBeVisible();
+    await expect(page.getByTestId('mobile-day-strip')).toHaveCount(0);
     await expect(readout).toBeVisible();
 
     const duringSamples: Box[] = [];
@@ -164,11 +189,12 @@ test.describe('§9 State B — no layout reflow during the gesture', () => {
       duringSamples.push(await boxOf(page, 'viewer-map-slot'));
     }
 
-    // Both overlays must be genuinely ON SCREEN, not merely laid out there.
+    // The one retained scrub pill must be genuinely ON SCREEN, not merely
+    // laid out there.
     // `getBoundingClientRect()` reports the geometric box even when an
     // ancestor's overflow clips the element away — an IntersectionObserver
     // ratio does not, so this is what catches a clipped overlay.
-    for (const testId of ['mobile-day-strip', 'mobile-scrub-readout']) {
+    for (const testId of ['mobile-scrub-readout']) {
       const ratio = await page.evaluate((id) => new Promise<number>((resolve) => {
         const element = document.querySelector(`[data-testid="${id}"]`);
         if (!element) { resolve(-1); return; }
@@ -194,7 +220,7 @@ test.describe('§9 State B — no layout reflow during the gesture', () => {
 
     await page.waitForTimeout(REVERT_MS + 250);
     const afterRevert = await boxOf(page, 'viewer-map-slot');
-    await expect(dayStrip).toBeHidden();
+    await expect(page.getByTestId('mobile-day-strip')).toHaveCount(0);
     await expect(readout).toBeHidden();
 
     for (const [label, sample] of [
@@ -357,6 +383,8 @@ test.describe('§8 State A — mobile bar', () => {
     const bar = page.getByTestId('viewer-mobile-bar');
     expect(Math.abs((await bar.boundingBox())!.height - BAR_PX)).toBeLessThanOrEqual(1);
     await expect(bar.getByRole('button', { name: 'Share' })).toBeVisible();
+    const logo = bar.getByRole('img', { name: 'CartoSky' });
+    expect((await logo.boundingBox())!.height).toBeGreaterThanOrEqual(39);
 
     await page.getByTestId('mobile-bar-overflow-trigger').click();
     const items = await page.getByTestId('mobile-bar-overflow-menu').getByRole('menuitem').allInnerTexts();

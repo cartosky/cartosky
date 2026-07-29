@@ -225,14 +225,24 @@ export function ViewerMobileSheet({ peekPx = MOBILE_PEEK_PX }: { peekPx?: number
 
   const sheetHeight = mobileSheetHeightPx(snap, viewportHeight, peekPx);
 
-  const grabBar = <span aria-hidden="true" className="block h-1 w-10 rounded-full bg-white/25" />;
+  const grabBar = (edge = false) => (
+    <span
+      data-testid="mobile-sheet-grabber"
+      aria-hidden="true"
+      className={cn(
+        "pointer-events-none block h-1.5 w-12 shrink-0 rounded-full bg-white/45 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_1px_8px_rgba(0,0,0,0.35)]",
+        edge && "absolute left-1/2 top-2 -translate-x-1/2",
+      )}
+    />
+  );
 
   const peekBody = (
     <div
       data-testid="mobile-sheet-peek"
       data-tour-target="mobile-sheet-peek"
-      className="flex h-full items-center gap-1.5 px-3"
+      className="relative flex h-full items-center gap-1.5 px-3"
     >
+      {grabBar(true)}
       <button
         type="button"
         data-testid="mobile-sheet-handle"
@@ -240,9 +250,8 @@ export function ViewerMobileSheet({ peekPx = MOBILE_PEEK_PX }: { peekPx?: number
         onTouchStart={handleDragStart}
         onTouchEnd={handleDragEnd}
         aria-label="Open controls"
-        className="flex h-full min-w-0 flex-1 touch-none select-none flex-col justify-center gap-0.5 rounded-lg px-1 text-left transition-colors active:bg-white/[0.04]"
+        className="relative flex h-full min-w-0 flex-1 touch-none select-none flex-col justify-center gap-0.5 rounded-lg px-1 pt-2 text-left transition-colors active:bg-white/[0.04]"
       >
-        <span className="mx-auto mb-1 block h-1 w-10 shrink-0 rounded-full bg-white/25" aria-hidden="true" />
         {/* Two lines, not one. Run + freshness + availability on a single row
             overflowed a 390 px peek and truncated the availability string
             mid-number ("ready through FH 3 of…"), which is the one part of the
@@ -307,7 +316,7 @@ export function ViewerMobileSheet({ peekPx = MOBILE_PEEK_PX }: { peekPx?: number
         aria-label={snap === "full" ? "Collapse controls" : "Expand controls"}
         className="flex h-11 w-full shrink-0 touch-none select-none items-center justify-center active:opacity-70"
       >
-        {grabBar}
+        {grabBar()}
       </button>
 
       {/* §8 State C: the timeline hides, so its valid time moves here. */}

@@ -196,7 +196,7 @@ const DESKTOP_SURFACES: Surface[] = [
   },
   {
     // New in Phase 6 (§6.3), extended in Phase 7: the 72 px rail — expand
-    // chevron plus icon+caption Source/View/**Legend** items.
+    // chevron plus icon+caption Source/Region/View/**Legend** items.
     name: 'rail-collapsed',
     setup: async (page) => {
       await collapseRail(page);
@@ -586,7 +586,7 @@ test.describe('Viewer design tokens (Phase 4)', () => {
 
       expect(geometry.railWidth).toBe(RAIL_COLLAPSED_PX);
       // Phase 7 (§6.3): the third rail item joined Source and View.
-      expect(geometry.captions.map((c) => c.text)).toEqual(['Source', 'View', 'Legend']);
+      expect(geometry.captions.map((c) => c.text)).toEqual(['Source', 'Region', 'View', 'Legend']);
       for (const caption of geometry.captions) {
         expect(caption.fontSize, `collapsed caption "${caption.text}" is ${caption.fontSize}px`).toBeGreaterThanOrEqual(11);
       }
