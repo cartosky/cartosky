@@ -76,6 +76,15 @@ export type GridContourLayerConfig = {
   height: number;
   interval: number;
   color?: [number, number, number, number] | null;
+  /**
+   * Projection of the contour artifact ("EPSG:3857" | "EPSG:4326"). The contour
+   * texture is sampled with the SAME quad texcoords as the data texture, so it
+   * is already assumed to be co-registered with the data artifact's extent;
+   * when omitted, the data manifest's projection and bbox are used.
+   */
+  projection?: string | null;
+  /** Contour artifact bbox, in the units implied by `projection`. */
+  bbox?: [number, number, number, number] | null;
 };
 
 export type GridWebglLayerConfig = {
@@ -118,18 +127,86 @@ function mercatorYFromMeters(y: number): number {
   return (MERCATOR_HALF_WORLD - y) / (2 * MERCATOR_HALF_WORLD);
 }
 
-function buildQuadVertices(bbox: [number, number, number, number]): Float32Array {
+/**
+ * Latitude limit of the Web Mercator world. A geographic (EPSG:4326) artifact
+ * may carry data all the way to the poles, but the quad must never extend past
+ * this — Mercator y diverges at ±90°. The poleward rows simply are not drawn.
+ * "Full pole coverage" for a global artifact is a storage/sampling property,
+ * never a display one.
+ */
+const MERCATOR_MAX_LATITUDE_DEG = 85.05112877980659;
+/** Mercator sphere radius: MERCATOR_HALF_WORLD = PI * R. */
+const MERCATOR_EARTH_RADIUS = MERCATOR_HALF_WORLD / Math.PI;
+
+/** True when a grid manifest/frame declares geographic (degree) coordinates. */
+function isGeographicProjection(projection: string | null | undefined): boolean {
+  return String(projection ?? "").trim().toUpperCase() === "EPSG:4326";
+}
+
+function mercatorXFromLonDeg(lonDeg: number): number {
+  return (lonDeg * MERCATOR_HALF_WORLD) / 180;
+}
+
+/**
+ * Inverse Gudermannian: gd^-1(phi) = R * ln(tan(PI/4 + phi/2)), i.e. the
+ * Web Mercator northing in metres for a latitude in degrees.
+ */
+function mercatorYFromLatDeg(latDeg: number): number {
+  const clamped = Math.max(-MERCATOR_MAX_LATITUDE_DEG, Math.min(MERCATOR_MAX_LATITUDE_DEG, latDeg));
+  const phi = (clamped * Math.PI) / 180;
+  return MERCATOR_EARTH_RADIUS * Math.log(Math.tan(Math.PI / 4 + phi / 2));
+}
+
+/**
+ * Quad corners in MapLibre mercator-unit space.
+ *
+ * EPSG:3857 manifests (every canonical artifact) take the original path
+ * unchanged: the bbox is already in mercator metres.
+ *
+ * EPSG:4326 manifests (the global domain, native 0.25°) carry a bbox in
+ * degrees. Longitude is linear in mercator x; latitude goes through the
+ * inverse Gudermannian and the quad's latitude extent is CLIPPED to
+ * ±MERCATOR_MAX_LATITUDE_DEG. The clip is why the fragment shader cannot use
+ * the interpolated t texcoord for a geographic texture: it must recover
+ * latitude from the fragment's mercator position and index the FULL artifact
+ * latitude extent (see u_latNorthRad/u_latSouthRad).
+ */
+function buildQuadVertices(
+  bbox: [number, number, number, number],
+  projection?: string | null,
+): Float32Array {
   const [west, south, east, north] = bbox;
-  const left = mercatorXFromMeters(west);
-  const right = mercatorXFromMeters(east);
-  const top = mercatorYFromMeters(north);
-  const bottom = mercatorYFromMeters(south);
+  const geographic = isGeographicProjection(projection);
+  const left = geographic ? mercatorXFromLonDeg(west) : west;
+  const right = geographic ? mercatorXFromLonDeg(east) : east;
+  const top = geographic ? mercatorYFromLatDeg(north) : north;
+  const bottom = geographic ? mercatorYFromLatDeg(south) : south;
   return new Float32Array([
-    left, top,
-    right, top,
-    left, bottom,
-    right, bottom,
+    mercatorXFromMeters(left), mercatorYFromMeters(top),
+    mercatorXFromMeters(right), mercatorYFromMeters(top),
+    mercatorXFromMeters(left), mercatorYFromMeters(bottom),
+    mercatorXFromMeters(right), mercatorYFromMeters(bottom),
   ]);
+}
+
+/**
+ * Per-manifest texture-projection uniforms. For EPSG:3857 the shader takes the
+ * existing path and the latitude bounds are unused. For EPSG:4326 the bounds
+ * are the artifact's TRUE latitude extent in radians (e.g. ±90°), NOT the
+ * Mercator-clipped quad extent, so v indexes the right texture rows.
+ */
+function textureProjectionUniforms(
+  projection: string | null | undefined,
+  bbox: [number, number, number, number],
+): { geographic: number; latNorthRad: number; latSouthRad: number } {
+  if (!isGeographicProjection(projection)) {
+    return { geographic: 0, latNorthRad: 0, latSouthRad: 0 };
+  }
+  return {
+    geographic: 1,
+    latNorthRad: (bbox[3] * Math.PI) / 180,
+    latSouthRad: (bbox[1] * Math.PI) / 180,
+  };
 }
 
 function buildQuadTexCoords(): Float32Array {
@@ -740,6 +817,12 @@ type ProgramBindings = {
   contourTexSizeLocation: WebGLUniformLocation | null;
   contourIntervalLocation: WebGLUniformLocation | null;
   contourColorLocation: WebGLUniformLocation | null;
+  texProjectionLocation: WebGLUniformLocation | null;
+  latNorthRadLocation: WebGLUniformLocation | null;
+  latSouthRadLocation: WebGLUniformLocation | null;
+  contourTexProjectionLocation: WebGLUniformLocation | null;
+  contourLatNorthRadLocation: WebGLUniformLocation | null;
+  contourLatSouthRadLocation: WebGLUniformLocation | null;
 };
 
 export class GridWebglLayerController {
@@ -1217,8 +1300,14 @@ export class GridWebglLayerController {
       attribute vec2 a_texCoord;
       uniform mat4 u_matrix;
       varying vec2 v_texCoord;
+      // Mercator-unit position of this vertex (a_pos verbatim). Only read when
+      // a texture is geographic; the mercator->latitude inverse needs the
+      // fragment's world position, which the interpolated texcoord cannot give
+      // once the quad is latitude-clipped.
+      varying vec2 v_mercUnit;
       void main() {
         v_texCoord = a_texCoord;
+        v_mercUnit = a_pos;
         gl_Position = u_matrix * vec4(a_pos, 0.0, 1.0);
       }
     `;
@@ -1226,6 +1315,7 @@ export class GridWebglLayerController {
     const fragmentSource = `
       precision ${fragmentPrecision} float;
       varying vec2 v_texCoord;
+      varying vec2 v_mercUnit;
       uniform sampler2D u_data;
       uniform sampler2D u_prevData;
       uniform sampler2D u_lut;
@@ -1266,6 +1356,51 @@ export class GridWebglLayerController {
       uniform vec2 u_contourTexSize;
       uniform float u_contourInterval;
       uniform vec4 u_contourColor;
+      // Texture-projection branch: 0.0 = EPSG:3857 (uv passes through
+      // untouched), 1.0 = EPSG:4326 (uv.y is recomputed per fragment).
+      // Uniform across the draw, so the branch is effectively free; deliberately
+      // NOT a compiled shader variant.
+      uniform float u_texProjection;
+      uniform float u_latNorthRad;
+      uniform float u_latSouthRad;
+      uniform float u_contourTexProjection;
+      uniform float u_contourLatNorthRad;
+      uniform float u_contourLatSouthRad;
+
+      const float CSKY_PI = 3.141592653589793;
+
+      /**
+       * Latitude (radians) of a fragment from its mercator-unit y.
+       *
+       * Mercator-unit y is 0 at +MERCATOR_HALF_WORLD and 1 at
+       * -MERCATOR_HALF_WORLD, and MERCATOR_HALF_WORLD = PI * R, so the northing
+       * in earth radii is exactly PI * (1 - 2y) — no radius constant needed.
+       * Then the inverse Gudermannian: lat = 2*atan(exp(y/R)) - PI/2.
+       */
+      float latitudeRadFromMercatorUnitY(float mercUnitY) {
+        float northingOverR = CSKY_PI * (1.0 - 2.0 * mercUnitY);
+        return 2.0 * atan(exp(northingOverR)) - CSKY_PI * 0.5;
+      }
+
+      /**
+       * uv for a texture whose projection is texProjection.
+       *
+       * EPSG:3857: returns uv bit-for-bit unchanged.
+       * EPSG:4326: uv.x is untouched (mercator x is linear in longitude, so the
+       * interpolated s texcoord is already correct); uv.y is rebuilt from the
+       * fragment's latitude against the artifact's FULL latitude extent.
+       */
+      vec2 projectedUv(vec2 uv, float texProjection, float latNorthRad, float latSouthRad) {
+        if (texProjection < 0.5) {
+          return uv;
+        }
+        float latSpan = latNorthRad - latSouthRad;
+        if (abs(latSpan) < 1e-9) {
+          return uv;
+        }
+        float lat = latitudeRadFromMercatorUnitY(v_mercUnit.y);
+        return vec2(uv.x, (latNorthRad - lat) / latSpan);
+      }
 
       // Decode a single texel from raw R/G bytes to a physical value.
       // Returns the decoded value, or -1e30 if nodata.
@@ -1629,24 +1764,35 @@ export class GridWebglLayerController {
       }
 
       void main() {
+        // Identical to v_texCoord for EPSG:3857 artifacts; latitude-remapped in
+        // v for EPSG:4326 ones. Everything downstream — the byte-wrap-safe
+        // 4-texel bilinear, the categorical/ptype dominance passes, the contour
+        // sampler — is unchanged and simply consumes this uv.
+        vec2 uv = projectedUv(v_texCoord, u_texProjection, u_latNorthRad, u_latSouthRad);
+        vec2 contourUv = projectedUv(
+          v_texCoord,
+          u_contourTexProjection,
+          u_contourLatNorthRad,
+          u_contourLatSouthRad
+        );
         vec4 current = u_radarPtypePacked > 0.5
-          ? sampleRadarPtypePacked(u_data, v_texCoord)
+          ? sampleRadarPtypePacked(u_data, uv)
           : (u_categorical > 0.5
           ? (u_categoricalNearest > 0.5
-            ? sampleCategoricalNearest(u_data, v_texCoord)
-            : sampleCategorical(u_data, v_texCoord))
-          : sampleBilinear(u_data, v_texCoord));
+            ? sampleCategoricalNearest(u_data, uv)
+            : sampleCategorical(u_data, uv))
+          : sampleBilinear(u_data, uv));
         vec4 previous = u_hasPrevious > 0.5
           ? (u_radarPtypePacked > 0.5
-            ? sampleRadarPtypePacked(u_prevData, v_texCoord)
+            ? sampleRadarPtypePacked(u_prevData, uv)
             : (u_categorical > 0.5
             ? (u_categoricalNearest > 0.5
-              ? sampleCategoricalNearest(u_prevData, v_texCoord)
-              : sampleCategorical(u_prevData, v_texCoord))
-            : sampleBilinear(u_prevData, v_texCoord)))
+              ? sampleCategoricalNearest(u_prevData, uv)
+              : sampleCategorical(u_prevData, uv))
+            : sampleBilinear(u_prevData, uv)))
           : current;
         vec4 mixed = mix(previous, current, clamp(u_mixAmount, 0.0, 1.0));
-        float contourAlpha = contourLineAlpha(v_texCoord) * u_contourColor.a * u_opacity;
+        float contourAlpha = contourLineAlpha(contourUv) * u_contourColor.a * u_opacity;
         if (mixed.a <= 0.0 && contourAlpha <= 0.0) {
           discard;
         }
@@ -1732,6 +1878,12 @@ export class GridWebglLayerController {
       contourTexSizeLocation: gl.getUniformLocation(this.program, "u_contourTexSize"),
       contourIntervalLocation: gl.getUniformLocation(this.program, "u_contourInterval"),
       contourColorLocation: gl.getUniformLocation(this.program, "u_contourColor"),
+      texProjectionLocation: gl.getUniformLocation(this.program, "u_texProjection"),
+      latNorthRadLocation: gl.getUniformLocation(this.program, "u_latNorthRad"),
+      latSouthRadLocation: gl.getUniformLocation(this.program, "u_latSouthRad"),
+      contourTexProjectionLocation: gl.getUniformLocation(this.program, "u_contourTexProjection"),
+      contourLatNorthRadLocation: gl.getUniformLocation(this.program, "u_contourLatNorthRad"),
+      contourLatSouthRadLocation: gl.getUniformLocation(this.program, "u_contourLatSouthRad"),
     };
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
@@ -1747,18 +1899,25 @@ export class GridWebglLayerController {
     return [-14922340, 2714341, -6679169, 7361866];
   }
 
+  /** Artifact projection for the displayed manifest; defaults to EPSG:3857. */
+  private resolveProjection(): string {
+    const projection = this.manifest?.projection;
+    return typeof projection === "string" && projection.trim() ? projection.trim() : "EPSG:3857";
+  }
+
   private uploadQuadVerticesIfNeeded() {
     const gl = this.gl;
     if (!gl || !this.vertexBuffer) {
       return;
     }
     const bbox = this.resolveBbox();
-    const signature = bbox.join(",");
+    const projection = this.resolveProjection();
+    const signature = `${projection}|${bbox.join(",")}`;
     if (signature === this.quadSignature) {
       return;
     }
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, buildQuadVertices(bbox), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, buildQuadVertices(bbox, projection), gl.STATIC_DRAW);
     this.quadSignature = signature;
   }
 
@@ -2450,6 +2609,25 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.contourDataEncodingLocation, resolveGridDtype(contourGrid?.dtype) === "uint16" ? 1 : 0);
     gl.uniform2f(bindings.contourTexSizeLocation, this.currentContourTextureWidth, this.currentContourTextureHeight);
     gl.uniform1f(bindings.contourIntervalLocation, Number(this.contour?.interval) || 0);
+
+    // Per-manifest texture projection. Inert (0 / 0 / 0) for every EPSG:3857
+    // artifact, which is every canonical one.
+    const dataBbox = this.resolveBbox();
+    const dataProjection = textureProjectionUniforms(this.resolveProjection(), dataBbox);
+    gl.uniform1f(bindings.texProjectionLocation, dataProjection.geographic);
+    gl.uniform1f(bindings.latNorthRadLocation, dataProjection.latNorthRad);
+    gl.uniform1f(bindings.latSouthRadLocation, dataProjection.latSouthRad);
+    // The contour overlay is a second grid frame keyed on ITS OWN manifest's
+    // projection; it falls back to the data artifact's, which it already shares
+    // a quad (and therefore texcoords) with.
+    const contourBbox = this.contour?.bbox ?? dataBbox;
+    const contourProjection = contourEnabled
+      ? textureProjectionUniforms(this.contour?.projection ?? this.resolveProjection(), contourBbox)
+      : { geographic: 0, latNorthRad: 0, latSouthRad: 0 };
+    gl.uniform1f(bindings.contourTexProjectionLocation, contourProjection.geographic);
+    gl.uniform1f(bindings.contourLatNorthRadLocation, contourProjection.latNorthRad);
+    gl.uniform1f(bindings.contourLatSouthRadLocation, contourProjection.latSouthRad);
+
     const contourColor = this.contour?.color ?? [0, 0, 0, 0.82];
     gl.uniform4f(
       bindings.contourColorLocation,

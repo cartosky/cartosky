@@ -26,6 +26,7 @@ frontend/playwright.config.ts
 frontend/tests/*
 !frontend/tests/e2e/
 frontend/tests/e2e/*
+frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/
 !frontend/tests/e2e/grid-smoke.spec.ts
 !frontend/tests/e2e/compare-map-regressions.spec.ts
 !frontend/tests/e2e/compare-alignment.spec.ts
@@ -46,6 +47,11 @@ frontend/tests/e2e/*
 !frontend/tests/e2e/viewer-mobile.spec.ts
 !frontend/tests/e2e/viewer-domain.fixtures.ts
 !frontend/tests/e2e/viewer-domain.spec.ts
+!frontend/tests/e2e/render-golden-baseline.fixtures.ts
+!frontend/tests/e2e/render-golden-baseline.spec.ts
+!frontend/tests/e2e/render-golden-baseline.timing.json
+!frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/
+!frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/**
 !frontend/playwright.config.ts
 
 # Dependencies

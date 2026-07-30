@@ -31,25 +31,30 @@ Per-model 25 km global additions and the AIFS/ECMWF canonical-grid conversion
 | Milestone | Net change | Cumulative used | vda4 |
 |---|---|---|---|
 | Today | — | 584 GiB | 31% |
-| + GFS global | 390.7 GiB | ~975 GiB | ~52% |
-| + AIGFS global | 58.8 GiB | ~1034 GiB | **~55%** |
-| + AIFS + ECMWF global, canonical grids migrated to 25 km | ~−14 GiB | ~1020 GiB | **~54%** |
-| + Tier 1 NA ensemble members (signed off) | ~98 GiB | ~1118 GiB | **~59%** |
+| + GFS global | ~~390.7 GiB~~ **≈161 GiB (Change A, 2026-07-29)** | ~745 GiB | ~40% |
+| + AIGFS global | 58.8 GiB *(pre-amendment figure — recompute under native-4326 when scheduled)* | — | — |
+| + AIFS + ECMWF global, ~~canonical grids migrated to 25 km~~ | ~−14 GiB *(derivation void — see amendment note)* | — | — |
+| + Tier 1 NA ensemble members (signed off) | ~98 GiB | — | — |
 
 > [!IMPORTANT]
 > Canonical and global artifacts remain separate extents so the canonical viewer
-> never fetches a global binary and crops it client-side. They now share a
-> uniform 25 km grid. The ~−14 GiB AIFS/ECMWF milestone is a derived net:
-> add ~132 GiB of 25 km global artifacts, replace ~169 GiB of retained 9 km
-> canonical artifacts with approximately 23 GiB at 25 km. Verify the actual
-> disk checkpoint during each model cutover.
+> never fetches a global binary and crops it client-side. ~~They now share a
+> uniform 25 km grid.~~ **Amended 2026-07-29 (Change A, see Phase 3):** the
+> global domain publishes at native 0.25° EPSG:4326; canonical stays 25 km
+> EPSG:3857. The GFS row above is remeasured under that policy
+> (2.478× cell reduction; `docs/GLOBAL_STORAGE_G1_INVESTIGATION_2026-07-29.md` §3).
+> The AIGFS/AIFS/ECMWF rows were derived from the retracted 25 km-everywhere
+> policy — in particular the ~−14 GiB net assumed the canonical 9 km → 25 km
+> migration was coupled to the global publish, a coupling Change A breaks —
+> so their net-change figures and the cumulative column beyond the GFS row
+> are **stale pending their own decisions**; do not schedule against them.
 
 **Storage capacity is green for all four models.** That is a capacity statement only; production readiness per model remains conditional on the gates below.
 
-Note the asymmetry: **GFS global alone is 390.7 GiB — roughly 90% of the
-four-model net increase after the AIFS/ECMWF canonical-grid conversion.** If
-retention or variable scope ever needs trimming, GFS global is the lever, not
-the smaller models. It is also the first model to ship, so the ~52% checkpoint
+Note the asymmetry (magnitudes updated for Change A): **GFS global at
+≈161 GiB remains the dominant single addition.** If retention or variable
+scope ever needs trimming, GFS global is the lever, not the smaller models.
+It is also the first model to ship, so its disk checkpoint (~40% projected)
 arrives early and is the most informative one.
 
 No new block storage for this rollout. The entire data root stays on vda4 so staging and publish targets remain on one filesystem (atomic rename constraint).
@@ -442,31 +447,71 @@ orchestrator ran both passes directly — checklist in the plan doc).
 
 ---
 
-## Phase 3 — Global rollout at 25 km (L)
+## Phase 3 — Global rollout (L)
 
-### Uniform deterministic-grid policy — locked 2026-07-27
+### Deterministic-grid policy — locked 2026-07-27, AMENDED 2026-07-29 (Change A)
 
-- GFS, AIGFS, AIFS, and ECMWF publish at **25 km in every supported data
-  domain**. Domain selects artifact extent and variable availability; camera
-  preset selects viewport. Neither selects resolution.
-- GFS and AIGFS canonical artifacts are already 25 km. AIFS and ECMWF
-  canonical artifacts migrate from 9 km to 25 km as part of their respective
-  global rollout, not as an unrelated early production change.
+> [!IMPORTANT]
+> **Amendment 2026-07-29 — operator-approved (Change A).** Two locked lines
+> from the 2026-07-27 policy are **retracted**, based on measured evidence
+> (`docs/GLOBAL_STORAGE_G1_INVESTIGATION_2026-07-29.md`, §3):
+>
+> - RETRACTED: *"GFS, AIGFS, AIFS, and ECMWF publish at 25 km in every
+>   supported data domain … Neither selects resolution."* The global domain
+>   does not publish on the 25 km EPSG:3857 grid.
+> - RETRACTED (from the per-model checklist): *"Canonical and global
+>   manifests report the same 25 km model grid."* They will not.
+>
+> **New policy, stated precisely:** the **global domain publishes at the
+> source's native 0.25° spacing in EPSG:4326** (1440×721 for GFS-class
+> sources, full ±90° data coverage). **Canonical domains are unchanged at
+> 25 km EPSG:3857.** The invariant the original lines existed to protect is
+> preserved and remains locked: **the CAMERA never selects resolution or
+> weather-artifact identity** — changing viewport changes nothing about
+> which artifacts are fetched. Resolution now follows the DOMAIN (a
+> deliberate data-selection act), never the viewport.
+>
+> **Measured justification** (run against the repo's own grid code at
+> `f0c92b30`): 2.478× cell-count reduction (1604² → 1440×721); GFS global
+> projection 390.7 GiB → **≈161 GiB** (157.7 pure cell scaling, refined for
+> the ~2–4% contour fraction scaling linearly); the bilinear
+> source→mercator warp is eliminated, so point samples at source gridpoints
+> are exact up to uint16 packing (±scale/2) — strictly more faithful to the
+> source than the warped path.
+>
+> **What is given up, accepted knowingly:** (1) a heterogeneous artifact
+> grid across domains for the same model — canonical 25 km/3857 vs global
+> 0.25°/4326; (2) a per-fragment reprojection branch in the renderer (a
+> uniform branch computing latitude via the inverse Gudermannian, selected
+> per frame from the sidecar/manifest `projection` field — NOT a compiled
+> shader variant). Scope note: "full pole coverage" is a **storage and
+> sampling** property only; Mercator display still ends at ±85.05° and must
+> not be described otherwise in code comments, docs, or capability text.
+
+- GFS and AIGFS canonical artifacts are already 25 km and stay exactly as
+  they are. **AIFS/ECMWF coupling broken by the amendment:** the 2026-07-27
+  policy tied their canonical 9 km → 25 km migration to their global
+  rollout as one cutover. Under native-4326 global publishing these are now
+  **two separate decisions** — the global publish no longer implies (or
+  requires) a canonical-grid migration. Do not re-plan them here; revisit
+  when their rollout turn arrives.
 - Canonical and global artifacts remain separate. This preserves existing
   canonical URLs and smaller canonical payloads; the viewer must not fetch a
   global artifact merely because its camera is over NA/CONUS.
 - NA-only anomaly variables remain canonical-only until global ERA5 baselines
-  exist, but their canonical artifacts follow the same 25 km model grid.
+  exist; their canonical artifacts follow the canonical 25 km grid.
 - The 9 km canonical grid oversamples CartoSky's 0.25° open ECMWF/AIFS source.
   Its smoother interpolation is not additional source-resolved forecast
-  detail. The cutover nevertheless requires visual, contour, sampling, and
-  playback A/B verification because presentation can change.
+  detail. Any future canonical cutover still requires visual, contour,
+  sampling, and playback A/B verification because presentation can change.
 
-Rationale for 25 km: close to the delivered resolution of the open ECMWF/AIFS
-source; removes viewport/domain-dependent model resolution; reduces the
-four-model disk projection to ~54% (~59% with ensembles); and avoids the
-multi-hour ECMWF/AIFS bursts and live-service interference observed during the
-9 km global sizing run.
+Rationale retained from 2026-07-27 where it still applies: the open
+ECMWF/AIFS source is delivered at 0.25°; avoiding the multi-hour 9 km global
+bursts and live-service interference observed during the sizing run. The
+disk rationale improves under the amendment: GFS global drops from the
+~52% vda4 checkpoint projection toward ~40% (≈161 GiB instead of
+390.7 GiB; recompute the four-model table when AIFS/ECMWF decisions are
+made).
 
 **Order: GFS → AIGFS → AIFS → ECMWF.** GFS first — cleanest global GRIB, and it surfaces the antimeridian bugs before the pattern is repeated. ECMWF last — cycle-length asymmetry and longest burst build.
 
@@ -481,8 +526,8 @@ Per model: global retention, publication, manifest, and latest-pointer behavior;
 - [ ] G4 screenshot and GIF export verified for the new domain, both capture paths
 - [ ] G5 ran within existing caps; RSS compared against Phase 0 baselines
 - [ ] G6 both cycle types tested; anomaly variables absent from global capabilities; sanity ranges global-aware
-- [ ] Canonical and global manifests report the same 25 km model grid; changing only the camera preset does not change resolution or weather-artifact identity
-- [ ] For AIFS/ECMWF, canonical 9 km → 25 km A/B verification passes for representative small/medium/large variables: source-reference sampling, contour geometry, playback, screenshots, and GIF export
+- [ ] ~~Canonical and global manifests report the same 25 km model grid~~ **RETRACTED 2026-07-29 (Change A).** Replaced by: global manifests report the native 0.25° EPSG:4326 grid and publish **two named latitude bounds** (true data extent vs Mercator-displayable extent); canonical manifests are byte-identical to today; changing only the camera preset still changes neither resolution nor weather-artifact identity
+- [ ] ~~For AIFS/ECMWF, canonical 9 km → 25 km A/B verification as part of the global rollout~~ **Coupling broken 2026-07-29 (Change A):** their global publish follows the native-4326 policy and no longer implies a canonical-grid migration; the canonical 9 km → 25 km question is a separate future decision with its own A/B gate if ever taken
 - [ ] Domain isolation holds under load: no `LATEST`/retention/pruning crossover observed
 - [ ] Disk utilization checkpoint recorded
 - [ ] Mobile: viewer usable and performant at global extent on a real device
