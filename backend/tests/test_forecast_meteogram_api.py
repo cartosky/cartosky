@@ -763,3 +763,58 @@ async def test_meteogram_members_prefers_members_ready_run(
     pinned_old_series = response.json()["series"]["gefs"]
     assert pinned_old_series["run_id"] == older
     assert pinned_old_series["latest_complete_run"] == newer
+
+
+def test_meteogram_cache_key_isolates_domain() -> None:
+    """Origin cache keys must differ by domain (Phase 2A sample caches do).
+
+    Sampling is already domain-scoped; omitting domain from the meteogram key
+    let a domain=global miss poison the canonical entry for five minutes.
+    """
+    from app.services import forecast_page as forecast_page_module
+
+    common = dict(
+        lat=TEST_LAT,
+        lon=TEST_LON,
+        models=["gfs"],
+        variables=["tmp2m"],
+        policy_type="latest_per_model",
+        include_members=False,
+        run_ids={"gfs": "20260306_00z"},
+        entitled={"gfs": True},
+    )
+    canonical = forecast_page_module._meteogram_cache_key(**common)
+    explicit_na = forecast_page_module._meteogram_cache_key(**common, domain="na")
+    global_key = forecast_page_module._meteogram_cache_key(**common, domain="global")
+    absent = forecast_page_module._meteogram_cache_key(**common, domain=None)
+
+    assert canonical == absent
+    assert canonical != global_key
+    assert explicit_na != global_key
+    assert explicit_na != canonical
+
+
+async def test_meteogram_domain_miss_does_not_poison_canonical_cache(
+    client: httpx.AsyncClient,
+) -> None:
+    """A domain= request that finds no artifacts must not cache-poison
+    the next canonical (no-domain) meteogram for the same point/models."""
+    miss_body = _body(["gfs"], ["tmp2m"])
+    miss_body["domain"] = "global"
+    miss = await client.post("/api/v4/forecast/meteogram", json=miss_body)
+    assert miss.status_code == 200
+    miss_series = miss.json()["series"]["gfs"]
+    assert miss_series["status"] in {"unavailable", "partial"}
+    assert miss_series.get("run_id") is None or not any(
+        (p or {}).get("value") is not None
+        for p in (miss_series.get("variables", {}).get("tmp2m", {}) or {}).get("points") or []
+    )
+
+    # Do NOT clear the origin cache — the regression is sharing one entry.
+    ok = await client.post("/api/v4/forecast/meteogram", json=_body(["gfs"], ["tmp2m"]))
+    assert ok.status_code == 200
+    ok_series = ok.json()["series"]["gfs"]
+    assert ok_series["status"] == "ok"
+    assert ok_series["run_id"] == "20260306_00z"
+    points = ok_series["variables"]["tmp2m"]["points"]
+    assert any(p["value"] is not None for p in points)

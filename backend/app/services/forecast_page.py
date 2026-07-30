@@ -3008,6 +3008,7 @@ def _meteogram_cache_key(
     include_members: bool,
     run_ids: dict[str, str | None],
     entitled: dict[str, bool],
+    domain: str | None = None,
 ) -> str:
     def _hash(parts: list[str]) -> str:
         return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()[:12]
@@ -3019,8 +3020,14 @@ def _meteogram_cache_key(
     # Folded in (beyond the plan's key spec) so differing entitlements never
     # share a cached payload at the origin.
     entitled_hash = _hash([f"{m}:{int(bool(entitled.get(m, True)))}" for m in sorted(models)])
+    # Absent/empty domain keeps the legacy key shape (no cold-cache blip for
+    # canonical traffic). Any explicit domain token gets its own namespace so
+    # cross-domain payloads can never share an origin cache entry — sampling
+    # already scopes by domain, and the Phase 2A sample caches do the same.
+    domain_token = str(domain or "").strip().lower()
+    domain_scope = f"{domain_token}:" if domain_token else ""
     return (
-        f"meteogram:v1:{round(lat, 3)}:{round(lon, 3)}:"
+        f"meteogram:v1:{domain_scope}{round(lat, 3)}:{round(lon, 3)}:"
         f"{models_hash}:{vars_hash}:{policy_hash}:{int(include_members)}:{run_ids_hash}:{entitled_hash}"
     )
 
@@ -3290,6 +3297,7 @@ def get_forecast_meteogram(
         include_members=include_members,
         run_ids=run_ids,
         entitled=entitled,
+        domain=domain,
     )
     now = time.monotonic()
     with _meteogram_cache_lock:
