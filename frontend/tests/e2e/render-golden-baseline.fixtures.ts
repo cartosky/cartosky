@@ -362,9 +362,166 @@ export function mrmsFrameBytes(width = GOLDEN_GRID_WIDTH, height = GOLDEN_GRID_H
   return Buffer.from(encodeUint8(values, 0.5, -10.0, 255).buffer);
 }
 
+// ── Case D: gfs global / tmp2m (native EPSG:4326, full-360 seam) ──────────
+
+/**
+ * Phase 3 antimeridian case. The grid is the real global-domain contract grid
+ * (docs/GLOBAL_DOMAIN_4326_CONTRACT.md §1): point-registered 0.25°, 1440x721,
+ * cell-edge bbox (-180.125, -90.125, 179.875, 90.125), column 0 centred on
+ * lon -180 and NO duplicate wrap column. That geometry is the whole point —
+ * the renderer has to inset the quad's texcoords by the half cell and wrap
+ * column 1439 -> 0 to draw it seamlessly.
+ */
+export const GLOBAL_SEAM_MODEL = 'gfs';
+export const GLOBAL_SEAM_VARIABLE = 'tmp2m';
+export const GLOBAL_SEAM_RUN_ID = '20260729_12z';
+export const GLOBAL_SEAM_BBOX = [-180.125, -90.125, 179.875, 90.125];
+export const GLOBAL_SEAM_GRID_WIDTH = 1440;
+export const GLOBAL_SEAM_GRID_HEIGHT = 721;
+/**
+ * Camera pinned ON the antimeridian, asking for the widest view the region
+ * allows (regionMinZoom 0). MapLibre's own constraint then settles it where the
+ * mercator world exactly fills the viewport HEIGHT — measured 700 px per world
+ * against the 928 px map pane, i.e. ~1.33 worlds across. That is what the seam
+ * case needs and it is fully deterministic, but the exact number is MapLibre's
+ * to choose, so the spec MEASURES the world period from the image rather than
+ * assuming it (probeSeam). Consequences pinned by the spec: the seam sits on
+ * the canvas's vertical centre line, and pixels beyond one world width can only
+ * be painted by a second world copy.
+ */
+export const GLOBAL_SEAM_VIEW = { lat: 0, lon: 180, zoom: 0 };
+
+/** Shortest signed longitude difference, in degrees (periodic on 360). */
+function lonDelta(lon: number, center: number): number {
+  return ((((lon - center + 180) % 360) + 360) % 360) - 180;
+}
+
+/**
+ * Value field for the seam case, in °F, as a function of TRUE lon/lat.
+ *
+ * Every term is genuinely periodic in longitude, so the physical field has no
+ * discontinuity at ±180 — any step the golden shows at the seam is the
+ * renderer's, not the fixture's. Ingredients:
+ *   - 3-cycle longitude sinusoid: smooth, periodic, and shifted by any u error.
+ *   - 4-cycle latitude sinusoid: the row-shift detector, same role the
+ *     structuredField sine plays for the 3857 cases.
+ *   - a narrow warm ridge centred exactly ON lon 180 (the straddling feature:
+ *     it lives in columns 1435..1444 mod 1440, i.e. on both sides of the seam)
+ *   - a narrow cold trough centred on lon 0, the feature that must appear
+ *     identically in two world copies.
+ */
+function globalSeamValueF(lon: number, lat: number): number {
+  const lonRad = (lon * Math.PI) / 180;
+  let t = 0.5;
+  t += 0.18 * Math.sin(3 * lonRad);
+  t += 0.16 * Math.sin((lat * Math.PI) / 22.5);
+  t += 0.26 * Math.exp(-((lonDelta(lon, 180) / 11) ** 2));
+  t -= 0.22 * Math.exp(-((lonDelta(lon, 0) / 11) ** 2));
+  return GFS_MIN_F + clamp01(t) * (GFS_MAX_F - GFS_MIN_F);
+}
+
+export function globalSeamFrameBytes(
+  width = GLOBAL_SEAM_GRID_WIDTH,
+  height = GLOBAL_SEAM_GRID_HEIGHT,
+): Buffer {
+  // Contract §1 centre formulas, derived from the grid dims so a downscaled
+  // LOD would stay on the same physical field.
+  const lonStep = 360 / width;
+  const latStep = 180 / (height - 1);
+  const values: number[] = new Array(width * height);
+  for (let row = 0; row < height; row += 1) {
+    const lat = 90 - latStep * row;
+    for (let col = 0; col < width; col += 1) {
+      values[row * width + col] = globalSeamValueF(-180 + lonStep * col, lat);
+    }
+  }
+  return Buffer.from(encodeUint16(values, 0.1, -100, 65535).buffer);
+}
+
+// ── Case E: gfs global / tmp2m ZOOMED onto the seam ───────────────────────
+
+/**
+ * The zoom-0 seam case above pins the world-copy loop, but it CANNOT pin the
+ * wrapping bilinear: at that camera one world renders into ~700 device px
+ * against 1440 texture columns (2.06 texels per pixel), so no fragment's uv.x
+ * ever leaves [0, 1], `fract` is pure identity and the 1439<->0 blend never
+ * executes. The half-cell geometry inset is likewise 0.24 px there.
+ *
+ * This case moves the camera to zoom 5, where one world is 512 * 2^5 = 16384
+ * device px — 11.38 px per 0.25 degree column. The blend band (the column pair
+ * 1439|0, i.e. lon 179.75 .. 180) is then ~11 px wide and the fragments inside
+ * it carry uv.x up to 1 + 0.5/1440, which only the wrap can resolve.
+ */
+export const GLOBAL_SEAM_ZOOM_VIEW = { lat: 0, lon: 180, zoom: 5 };
+/** Longitude degrees per grid column, and the sine period used below. */
+const SEAM_ZOOM_COLUMN_DEG = 360 / GLOBAL_SEAM_GRID_WIDTH;
+const SEAM_ZOOM_SINE_PERIOD_DEG = 4;
+
+/**
+ * Value field for the zoomed seam case, in °F.
+ *
+ * A pure longitude sine of period 4° (16 columns), phased so that lon 180 —
+ * the seam column's own centre — is a ZERO CROSSING, i.e. the point of maximum
+ * gradient. That phasing is what makes the case discriminating:
+ *
+ *   col 1439 (lon 179.75) = 0.5 - 0.38*sin(22.5°) = 0.3546
+ *   col 0    (lon 180.00) = 0.5
+ *   col 1    (lon -179.75)= 0.5 + 0.38*sin(22.5°) = 0.6454
+ *
+ * so the cross-seam column step (0.1454 normalized ≈ 13.1 °F) is the LARGEST
+ * adjacent-column step anywhere in the grid, and it is reproduced at every
+ * other zero crossing too — 2° is exactly 8 columns, so every crossing lands on
+ * a column centre. A correct wrapping bilinear therefore renders the seam with
+ * the same per-pixel gradient as the rest of the frame; a clamped one collapses
+ * the whole 11 px west band to the constant col-1439 value and dumps the entire
+ * 13 °F change into a single pixel at the seam. The spec asserts on exactly
+ * that difference.
+ *
+ * The latitude term is deliberately gentle (0.0002 normalized per pixel at this
+ * zoom) so it cannot pollute the horizontal-step measurements, while still
+ * shifting a large fraction of the frame if v is ever remapped.
+ */
+function globalSeamZoomValueF(lon: number, lat: number): number {
+  let t = 0.5;
+  t += 0.38 * Math.sin((2 * Math.PI * (lon - 180)) / SEAM_ZOOM_SINE_PERIOD_DEG);
+  t += 0.08 * Math.sin((lat * Math.PI) / 20);
+  return GFS_MIN_F + clamp01(t) * (GFS_MAX_F - GFS_MIN_F);
+}
+
+export function globalSeamZoomFrameBytes(
+  width = GLOBAL_SEAM_GRID_WIDTH,
+  height = GLOBAL_SEAM_GRID_HEIGHT,
+): Buffer {
+  const lonStep = 360 / width;
+  const latStep = 180 / (height - 1);
+  const values: number[] = new Array(width * height);
+  for (let row = 0; row < height; row += 1) {
+    const lat = 90 - latStep * row;
+    for (let col = 0; col < width; col += 1) {
+      values[row * width + col] = globalSeamZoomValueF(-180 + lonStep * col, lat);
+    }
+  }
+  return Buffer.from(encodeUint16(values, 0.1, -100, 65535).buffer);
+}
+
+/**
+ * Device pixels per grid column at GLOBAL_SEAM_ZOOM_VIEW: one world is
+ * 512 * 2^zoom px wide (MapLibre tileSize 512, dpr 1 under Playwright) shared
+ * across GLOBAL_SEAM_GRID_WIDTH columns. The spec uses this to place its probes
+ * on the column pair that straddles the seam, and asserts the measured seam
+ * position independently.
+ */
+export const GLOBAL_SEAM_ZOOM_COLUMN_PX =
+  (512 * 2 ** GLOBAL_SEAM_ZOOM_VIEW.zoom) / GLOBAL_SEAM_GRID_WIDTH;
+
 // ── Shared manifest / capability builders ─────────────────────────────────
 
-export type GoldenCaseId = 'gfs-tmp2m' | 'hrrr-radar-ptype' | 'mrms-reflectivity';
+export type GoldenCaseId =
+  | 'gfs-tmp2m'
+  | 'hrrr-radar-ptype'
+  | 'mrms-reflectivity'
+  | 'gfs-global-seam'
+  | 'gfs-global-seam-zoom';
 
 type CaseSpec = {
   id: GoldenCaseId;
@@ -397,7 +554,22 @@ type CaseSpec = {
   frameBytes: (fh: number, width: number, height: number) => Buffer;
   fileSuffix: string;
   validTime: (fh: number) => string;
+  /** Grid CRS. Absent = the legacy EPSG:3857 default (contract §4). */
+  projection?: string;
+  /** Grid extent + dims. Absent = the CONUS-sized 3857 defaults above. */
+  bbox?: number[];
+  gridWidth?: number;
+  gridHeight?: number;
+  /** Camera in the viewer URL. Absent = GOLDEN_VIEW. */
+  view?: { lat: number; lon: number; zoom: number };
+  /** Region-catalog minZoom. Absent = 2, the value the 3857 cases have always
+   *  been served; the seam case needs 0 to fit more than one world copy. */
+  regionMinZoom?: number;
 };
+
+const caseBbox = (spec: CaseSpec) => spec.bbox ?? GOLDEN_BBOX;
+const caseGridWidth = (spec: CaseSpec) => spec.gridWidth ?? GOLDEN_GRID_WIDTH;
+const caseGridHeight = (spec: CaseSpec) => spec.gridHeight ?? GOLDEN_GRID_HEIGHT;
 
 const OBSERVED_LOD_LADDER = [
   { level: 0, scaleFactor: 1, minZoom: 5.5 },
@@ -503,6 +675,71 @@ const GOLDEN_CASES: Record<GoldenCaseId, CaseSpec> = {
     fileSuffix: 'u8',
     validTime: () => '2026-07-29T12:00:00Z',
   },
+  'gfs-global-seam': {
+    id: 'gfs-global-seam',
+    model: GLOBAL_SEAM_MODEL,
+    variable: GLOBAL_SEAM_VARIABLE,
+    runId: GLOBAL_SEAM_RUN_ID,
+    frameHours: [0],
+    displayName: 'Temperature 2m',
+    units: 'F',
+    kind: 'continuous',
+    colorMapId: 'tmp2m',
+    product: 'forecast',
+    timeAxisMode: 'forecast',
+    defaultFrameSelection: 'first',
+    grid: { dtype: 'uint16', scale: 0.1, offset: -100.0, nodata: 65535 },
+    palette: {
+      color_map_id: 'tmp2m',
+      kind: 'continuous',
+      transparent_below_min: null,
+      transparent_zero: false,
+    },
+    displayPrep: null,
+    lodLadder: null,
+    legendStops: approvedLegendStops,
+    frameBytes: (_fh, width, height) => globalSeamFrameBytes(width, height),
+    fileSuffix: 'u16',
+    validTime: () => '2026-07-29T12:00:00Z',
+    projection: 'EPSG:4326',
+    bbox: GLOBAL_SEAM_BBOX,
+    gridWidth: GLOBAL_SEAM_GRID_WIDTH,
+    gridHeight: GLOBAL_SEAM_GRID_HEIGHT,
+    view: GLOBAL_SEAM_VIEW,
+    regionMinZoom: 0,
+  },
+  'gfs-global-seam-zoom': {
+    id: 'gfs-global-seam-zoom',
+    model: GLOBAL_SEAM_MODEL,
+    variable: GLOBAL_SEAM_VARIABLE,
+    runId: GLOBAL_SEAM_RUN_ID,
+    frameHours: [0],
+    displayName: 'Temperature 2m',
+    units: 'F',
+    kind: 'continuous',
+    colorMapId: 'tmp2m',
+    product: 'forecast',
+    timeAxisMode: 'forecast',
+    defaultFrameSelection: 'first',
+    grid: { dtype: 'uint16', scale: 0.1, offset: -100.0, nodata: 65535 },
+    palette: {
+      color_map_id: 'tmp2m',
+      kind: 'continuous',
+      transparent_below_min: null,
+      transparent_zero: false,
+    },
+    displayPrep: null,
+    lodLadder: null,
+    legendStops: approvedLegendStops,
+    frameBytes: (_fh, width, height) => globalSeamZoomFrameBytes(width, height),
+    fileSuffix: 'u16',
+    validTime: () => '2026-07-29T12:00:00Z',
+    projection: 'EPSG:4326',
+    bbox: GLOBAL_SEAM_BBOX,
+    gridWidth: GLOBAL_SEAM_GRID_WIDTH,
+    gridHeight: GLOBAL_SEAM_GRID_HEIGHT,
+    view: GLOBAL_SEAM_ZOOM_VIEW,
+  },
 };
 
 export function goldenCase(id: GoldenCaseId): CaseSpec {
@@ -513,21 +750,24 @@ export const GOLDEN_CASE_IDS: GoldenCaseId[] = [
   'gfs-tmp2m',
   'hrrr-radar-ptype',
   'mrms-reflectivity',
+  'gfs-global-seam',
+  'gfs-global-seam-zoom',
 ];
 
 export function viewerUrlForCase(id: GoldenCaseId): string {
   const spec = GOLDEN_CASES[id];
+  const view = spec.view ?? GOLDEN_VIEW;
   return (
     `/viewer?m=${spec.model}&r=latest&v=${spec.variable}&fh=0&reg=conus` +
-    `&lat=${GOLDEN_VIEW.lat}&lon=${GOLDEN_VIEW.lon}&z=${GOLDEN_VIEW.zoom}&screenshot=1`
+    `&lat=${view.lat}&lon=${view.lon}&z=${view.zoom}&screenshot=1`
   );
 }
 
 function lodEntriesFor(spec: CaseSpec) {
   const ladder = spec.lodLadder ?? [{ level: 0, scaleFactor: 1 }];
   return ladder.map((entry) => {
-    const width = Math.max(1, Math.round(GOLDEN_GRID_WIDTH / entry.scaleFactor));
-    const height = Math.max(1, Math.round(GOLDEN_GRID_HEIGHT / entry.scaleFactor));
+    const width = Math.max(1, Math.round(caseGridWidth(spec) / entry.scaleFactor));
+    const height = Math.max(1, Math.round(caseGridHeight(spec) / entry.scaleFactor));
     return {
       level: entry.level,
       width,
@@ -551,8 +791,8 @@ function gridDimsForLevel(spec: CaseSpec, level: number) {
   const ladder = spec.lodLadder ?? [{ level: 0, scaleFactor: 1 }];
   const entry = ladder.find((candidate) => candidate.level === level) ?? ladder[0];
   return {
-    width: Math.max(1, Math.round(GOLDEN_GRID_WIDTH / entry.scaleFactor)),
-    height: Math.max(1, Math.round(GOLDEN_GRID_HEIGHT / entry.scaleFactor)),
+    width: Math.max(1, Math.round(caseGridWidth(spec) / entry.scaleFactor)),
+    height: Math.max(1, Math.round(caseGridHeight(spec) / entry.scaleFactor)),
   };
 }
 
@@ -658,11 +898,11 @@ function gridManifestPayload(spec: CaseSpec) {
     model: spec.model,
     run: spec.runId,
     var: spec.variable,
-    projection: 'EPSG:3857',
-    bbox: GOLDEN_BBOX,
+    projection: spec.projection ?? 'EPSG:3857',
+    bbox: caseBbox(spec),
     grid: {
-      width: GOLDEN_GRID_WIDTH,
-      height: GOLDEN_GRID_HEIGHT,
+      width: caseGridWidth(spec),
+      height: caseGridHeight(spec),
       dtype: spec.grid.dtype,
       endianness: 'little',
       scale: spec.grid.scale,
@@ -684,11 +924,14 @@ function gridManifestPayload(spec: CaseSpec) {
  *
  * `binRequests` (optional) collects the served grid-binary URLs so a test can
  * pin the fetch count.
+ * `sampleRequests` (optional) collects the hover-sample URLs so a test can pin
+ * the longitude the client actually asks for.
  */
 export async function stubGoldenBaselineRoutes(
   page: Page,
   id: GoldenCaseId,
   binRequests?: string[],
+  sampleRequests?: string[],
 ) {
   const spec = GOLDEN_CASES[id];
 
@@ -706,7 +949,10 @@ export async function stubGoldenBaselineRoutes(
             bbox: [-125, 24, -66, 50],
             defaultCenter: [-98.58, 39.83],
             defaultZoom: 4,
-            minZoom: 2,
+            // Only the seam case lowers this: map-canvas applies the region's
+            // minZoom to the map, and zoom 0 is what fits more than one world
+            // copy in the frame. The camera itself always comes from the URL.
+            minZoom: spec.regionMinZoom ?? 2,
             maxZoom: 9,
           },
         },
@@ -718,6 +964,41 @@ export async function stubGoldenBaselineRoutes(
       status: 404,
       contentType: 'application/json',
       body: JSON.stringify({ error: 'not found' }),
+    });
+  });
+  // Single-point hover sampling. Registered AFTER the batch route (Playwright
+  // gives later handlers precedence) and matched on the `?` so it can never
+  // swallow /sample/batch. Mirrors the API's own contract: lon outside
+  // [-180, 180] is a 422, exactly as the backend Query bound declares it.
+  await page.route('**/api/v4/sample?*', async (route) => {
+    const url = route.request().url();
+    sampleRequests?.push(url);
+    const lon = Number(new URL(url).searchParams.get('lon'));
+    if (!Number.isFinite(lon) || lon < -180 || lon > 180) {
+      await route.fulfill({
+        status: 422,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'lon out of range' }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ value: 61.5, units: spec.units, label: spec.displayName }),
+    });
+  });
+  // Live NWS active warnings. The MRMS case turns this overlay on
+  // (supportsNwsWarningsOverlay), so leaving it unstubbed makes that golden a
+  // function of real-world weather at capture time — measured as a 79,672 px
+  // (12.3%) cross-run diff, entirely warning polygons drawn over an otherwise
+  // pixel-identical grid. Served empty, which is the state the stored goldens
+  // were captured in.
+  await page.route('**/api/v4/nws-hazards/active/warnings**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/geo+json',
+      body: JSON.stringify({ type: 'FeatureCollection', features: [] }),
     });
   });
   await page.route('**/tiles/v3/boundaries/v2/tilejson.json', async (route) => {

@@ -148,6 +148,20 @@ function mercatorXFromLonDeg(lonDeg: number): number {
 }
 
 /**
+ * True when a geographic manifest's bbox spans the whole 360° of longitude —
+ * the global-domain grid of docs/GLOBAL_DOMAIN_4326_CONTRACT.md §2, whose
+ * cell-edge bbox is (-180.125, ..., 179.875) around a seam column centred on
+ * -180. Only such a grid may abut its own world copies, so only such a grid
+ * gets the world-exact quad and the wrapping column fetch.
+ */
+function isFullWorldGeographic(
+  projection: string | null | undefined,
+  bbox: [number, number, number, number],
+): boolean {
+  return isGeographicProjection(projection) && Math.abs((bbox[2] - bbox[0]) - 360) < 1e-6;
+}
+
+/**
  * Inverse Gudermannian: gd^-1(phi) = R * ln(tan(PI/4 + phi/2)), i.e. the
  * Web Mercator northing in metres for a latitude in degrees.
  */
@@ -170,13 +184,23 @@ function mercatorYFromLatDeg(latDeg: number): number {
  * the interpolated t texcoord for a geographic texture: it must recover
  * latitude from the fragment's mercator position and index the FULL artifact
  * latitude extent (see u_latNorthRad/u_latSouthRad).
+ *
+ * A FULL-WORLD geographic bbox is additionally clipped in longitude to exactly
+ * ±180: its half-cell overhang (±0.125°) sits outside the mercator world, and
+ * once world copies are drawn (visibleWorldOffsets) the overhang would be
+ * painted twice — a darker strip along the seam under any layer opacity < 1.
+ * The quad therefore spans mercator-unit x exactly [0, 1] and the texcoords
+ * (buildQuadTexCoords) carry the half-cell offset instead.
  */
 function buildQuadVertices(
   bbox: [number, number, number, number],
   projection?: string | null,
 ): Float32Array {
-  const [west, south, east, north] = bbox;
+  const [, south, , north] = bbox;
   const geographic = isGeographicProjection(projection);
+  const fullWorld = isFullWorldGeographic(projection, bbox);
+  const west = fullWorld ? -180 : bbox[0];
+  const east = fullWorld ? 180 : bbox[2];
   const left = geographic ? mercatorXFromLonDeg(west) : west;
   const right = geographic ? mercatorXFromLonDeg(east) : east;
   const top = geographic ? mercatorYFromLatDeg(north) : north;
@@ -187,6 +211,41 @@ function buildQuadVertices(
     mercatorXFromMeters(left), mercatorYFromMeters(bottom),
     mercatorXFromMeters(right), mercatorYFromMeters(bottom),
   ]);
+}
+
+/**
+ * Largest number of world copies drawn in one frame. A copy is one extra quad;
+ * at any usable zoom the viewport spans at most two worlds and the ±1 padding
+ * makes four, so this only ever bites on a degenerate/zoomed-way-out transform.
+ */
+const MAX_WORLD_COPIES = 5;
+
+/**
+ * Absolute clamp on a derived world index before it reaches any loop. Guards
+ * against a degenerate transform (an above-horizon unproject once pitch is
+ * enabled) producing an effectively unbounded range.
+ */
+const WORLD_INDEX_LIMIT = 64;
+
+/**
+ * `matrix` with the model translated `worldOffset` whole worlds east.
+ *
+ * The quad lives in mercator-unit space where one world is exactly 1.0 in x, so
+ * translating the model by (offset, 0, 0) is M * (v + offset*e_x) — i.e. add
+ * `offset` times the matrix's first column to its translation column. Cheaper
+ * and more precise than re-deriving a matrix, and it inherits whatever
+ * projection/pitch MapLibre baked into the frame's mainMatrix.
+ */
+function translatedWorldMatrix(matrix: number[], worldOffset: number): number[] {
+  if (worldOffset === 0) {
+    return matrix;
+  }
+  const shifted = matrix.slice();
+  shifted[12] += worldOffset * matrix[0];
+  shifted[13] += worldOffset * matrix[1];
+  shifted[14] += worldOffset * matrix[2];
+  shifted[15] += worldOffset * matrix[3];
+  return shifted;
 }
 
 /**
@@ -209,12 +268,38 @@ function textureProjectionUniforms(
   };
 }
 
-function buildQuadTexCoords(): Float32Array {
+/**
+ * Quad texcoords. s is the fraction across the artifact's longitude bbox, so
+ * for every grid whose quad IS the bbox this is the plain 0..1 outer square,
+ * bit-for-bit as before.
+ *
+ * A full-world geographic quad is world-exact (buildQuadVertices) rather than
+ * bbox-exact, so its s range has to be re-expressed against the bbox:
+ *   s(lon) = (lon - west) / (east - west)
+ * With the contract's bbox (west -180.125, span 360) that is
+ *   s(-180) = 0.125/360 = 0.5/1440  -> texel index 0     (column 0 centre)
+ *   s(+180) = 360.125/360 = 1 + 0.5/1440 -> texel index 1440, i.e. column 0
+ *             again after the wrap in wrapSampleUv()
+ * — exactly a half-texel inset on each side, which is what makes lon -180 and
+ * lon +180 both land on the seam column's centre and makes fragments between
+ * columns 1439 and 0 blend across the seam.
+ */
+function buildQuadTexCoords(
+  bbox: [number, number, number, number],
+  projection?: string | null,
+): Float32Array {
+  let uLeft = 0;
+  let uRight = 1;
+  if (isFullWorldGeographic(projection, bbox)) {
+    const span = bbox[2] - bbox[0];
+    uLeft = (-180 - bbox[0]) / span;
+    uRight = (180 - bbox[0]) / span;
+  }
   return new Float32Array([
-    0, 0,
-    1, 0,
-    0, 1,
-    1, 1,
+    uLeft, 0,
+    uRight, 0,
+    uLeft, 1,
+    uRight, 1,
   ]);
 }
 
@@ -823,6 +908,8 @@ type ProgramBindings = {
   contourTexProjectionLocation: WebGLUniformLocation | null;
   contourLatNorthRadLocation: WebGLUniformLocation | null;
   contourLatSouthRadLocation: WebGLUniformLocation | null;
+  wrapSLocation: WebGLUniformLocation | null;
+  contourWrapSLocation: WebGLUniformLocation | null;
 };
 
 export class GridWebglLayerController {
@@ -1366,6 +1453,12 @@ export class GridWebglLayerController {
       uniform float u_contourTexProjection;
       uniform float u_contourLatNorthRad;
       uniform float u_contourLatSouthRad;
+      // Column-wrap branch: 0.0 = clamp at the texture edge (every canonical
+      // artifact, unchanged), 1.0 = full-360 geographic grid whose first and
+      // last columns are longitudinal neighbours. Same uniform-branch pattern
+      // as u_texProjection: constant across the draw, no shader variant.
+      uniform float u_wrapS;
+      uniform float u_contourWrapS;
 
       const float CSKY_PI = 3.141592653589793;
 
@@ -1402,6 +1495,24 @@ export class GridWebglLayerController {
         return vec2(uv.x, (latNorthRad - lat) / latSpan);
       }
 
+      /**
+       * Texel-fetch coordinate for one neighbour of a manual bilinear.
+       *
+       * wrapS = 0: returned unchanged, so CLAMP_TO_EDGE keeps handling the
+       * outer half-texel exactly as before.
+       * wrapS = 1: the COLUMN index wraps modulo the texture width. Column
+       * indices live in s as (i + 0.5) / width, so i = -1 gives s = -0.5/width
+       * and i = width gives s = 1 + 0.5/width; fract() maps both back onto the
+       * opposite edge column and is the identity for every in-range i. Rows are
+       * untouched — latitude does not wrap.
+       */
+      vec2 wrapSampleUv(vec2 uv, float wrapS) {
+        if (wrapS < 0.5) {
+          return uv;
+        }
+        return vec2(fract(uv.x), uv.y);
+      }
+
       // Decode a single texel from raw R/G bytes to a physical value.
       // Returns the decoded value, or -1e30 if nodata.
       float decodeSample(vec4 sample) {
@@ -1435,10 +1546,10 @@ export class GridWebglLayerController {
         vec2 f = fract(texel);
         vec2 base = (floor(texel) + 0.5) / u_contourTexSize;
         vec2 step = 1.0 / u_contourTexSize;
-        float v00 = decodeContourSample(texture2D(u_contourData, base));
-        float v10 = decodeContourSample(texture2D(u_contourData, base + vec2(step.x, 0.0)));
-        float v01 = decodeContourSample(texture2D(u_contourData, base + vec2(0.0, step.y)));
-        float v11 = decodeContourSample(texture2D(u_contourData, base + step));
+        float v00 = decodeContourSample(texture2D(u_contourData, wrapSampleUv(base, u_contourWrapS)));
+        float v10 = decodeContourSample(texture2D(u_contourData, wrapSampleUv(base + vec2(step.x, 0.0), u_contourWrapS)));
+        float v01 = decodeContourSample(texture2D(u_contourData, wrapSampleUv(base + vec2(0.0, step.y), u_contourWrapS)));
+        float v11 = decodeContourSample(texture2D(u_contourData, wrapSampleUv(base + step, u_contourWrapS)));
         float w00 = v00 > -1e29 ? 1.0 : 0.0;
         float w10 = v10 > -1e29 ? 1.0 : 0.0;
         float w01 = v01 > -1e29 ? 1.0 : 0.0;
@@ -1482,10 +1593,10 @@ export class GridWebglLayerController {
         vec2 f = fract(texel);
         vec2 base = (floor(texel) + 0.5) / u_texSize;
         vec2 step = 1.0 / u_texSize;
-        float v00 = decodeSample(texture2D(tex, base));
-        float v10 = decodeSample(texture2D(tex, base + vec2(step.x, 0.0)));
-        float v01 = decodeSample(texture2D(tex, base + vec2(0.0, step.y)));
-        float v11 = decodeSample(texture2D(tex, base + step));
+        float v00 = decodeSample(texture2D(tex, wrapSampleUv(base, u_wrapS)));
+        float v10 = decodeSample(texture2D(tex, wrapSampleUv(base + vec2(step.x, 0.0), u_wrapS)));
+        float v01 = decodeSample(texture2D(tex, wrapSampleUv(base + vec2(0.0, step.y), u_wrapS)));
+        float v11 = decodeSample(texture2D(tex, wrapSampleUv(base + step, u_wrapS)));
 
         // Count valid (non-nodata) neighbours.
         float w00 = v00 > -1e29 ? 1.0 : 0.0;
@@ -1598,10 +1709,10 @@ export class GridWebglLayerController {
         vec2 base = (floor(texel) + 0.5) / u_texSize;
         vec2 step = 1.0 / u_texSize;
 
-        float v00 = decodeSample(texture2D(tex, base));
-        float v10 = decodeSample(texture2D(tex, base + vec2(step.x, 0.0)));
-        float v01 = decodeSample(texture2D(tex, base + vec2(0.0, step.y)));
-        float v11 = decodeSample(texture2D(tex, base + step));
+        float v00 = decodeSample(texture2D(tex, wrapSampleUv(base, u_wrapS)));
+        float v10 = decodeSample(texture2D(tex, wrapSampleUv(base + vec2(step.x, 0.0), u_wrapS)));
+        float v01 = decodeSample(texture2D(tex, wrapSampleUv(base + vec2(0.0, step.y), u_wrapS)));
+        float v11 = decodeSample(texture2D(tex, wrapSampleUv(base + step, u_wrapS)));
 
         float bw00 = (1.0 - f.x) * (1.0 - f.y) * categoricalVisibleWeight(v00);
         float bw10 = f.x * (1.0 - f.y) * categoricalVisibleWeight(v10);
@@ -1640,7 +1751,7 @@ export class GridWebglLayerController {
       }
 
       vec4 sampleCategoricalNearest(sampler2D tex, vec2 uv) {
-        float decoded = decodeSample(texture2D(tex, uv));
+        float decoded = decodeSample(texture2D(tex, wrapSampleUv(uv, u_wrapS)));
         if (decoded <= -1e29) {
           return vec4(0.0, 0.0, 0.0, 0.0);
         }
@@ -1709,10 +1820,10 @@ export class GridWebglLayerController {
         vec2 base = (floor(texel) + 0.5) / u_texSize;
         vec2 step = 1.0 / u_texSize;
 
-        float v00 = decodeSample(texture2D(tex, base));
-        float v10 = decodeSample(texture2D(tex, base + vec2(step.x, 0.0)));
-        float v01 = decodeSample(texture2D(tex, base + vec2(0.0, step.y)));
-        float v11 = decodeSample(texture2D(tex, base + step));
+        float v00 = decodeSample(texture2D(tex, wrapSampleUv(base, u_wrapS)));
+        float v10 = decodeSample(texture2D(tex, wrapSampleUv(base + vec2(step.x, 0.0), u_wrapS)));
+        float v01 = decodeSample(texture2D(tex, wrapSampleUv(base + vec2(0.0, step.y), u_wrapS)));
+        float v11 = decodeSample(texture2D(tex, wrapSampleUv(base + step, u_wrapS)));
 
         float bw00 = (1.0 - f.x) * (1.0 - f.y);
         float bw10 = f.x * (1.0 - f.y);
@@ -1884,10 +1995,10 @@ export class GridWebglLayerController {
       contourTexProjectionLocation: gl.getUniformLocation(this.program, "u_contourTexProjection"),
       contourLatNorthRadLocation: gl.getUniformLocation(this.program, "u_contourLatNorthRad"),
       contourLatSouthRadLocation: gl.getUniformLocation(this.program, "u_contourLatSouthRad"),
+      wrapSLocation: gl.getUniformLocation(this.program, "u_wrapS"),
+      contourWrapSLocation: gl.getUniformLocation(this.program, "u_contourWrapS"),
     };
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, buildQuadTexCoords(), gl.STATIC_DRAW);
     this.uploadQuadVerticesIfNeeded();
   }
 
@@ -1907,7 +2018,7 @@ export class GridWebglLayerController {
 
   private uploadQuadVerticesIfNeeded() {
     const gl = this.gl;
-    if (!gl || !this.vertexBuffer) {
+    if (!gl || !this.vertexBuffer || !this.texCoordBuffer) {
       return;
     }
     const bbox = this.resolveBbox();
@@ -1918,6 +2029,10 @@ export class GridWebglLayerController {
     }
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, buildQuadVertices(bbox, projection), gl.STATIC_DRAW);
+    // The texcoords are no longer a constant outer square: a full-world
+    // geographic quad carries the half-cell inset, so they move with the quad.
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, buildQuadTexCoords(bbox, projection), gl.STATIC_DRAW);
     this.quadSignature = signature;
   }
 
@@ -2511,6 +2626,80 @@ export class GridWebglLayerController {
     }
   }
 
+  /**
+   * World-copy offsets (whole worlds east of the primary) to draw this frame.
+   *
+   * MapLibre repeats TILE layers across world copies but leaves custom layers to
+   * replicate themselves, so without this the data layer stops dead at the
+   * antimeridian and panning past it shows basemap with no weather. This is not
+   * global-specific: a regional EPSG:3857 quad repeats per world too, which is
+   * what makes an NA product visible when the camera has wrapped.
+   *
+   * The visible copies are the integer world indices spanned by the four canvas
+   * corners — map.unproject reports UNWRAPPED longitudes, so floor((lng+180)/360)
+   * IS the world index — padded by one so a copy entering the viewport is never
+   * a frame late. Same construction MapLibre's own
+   * transform.getVisibleUnwrappedCoordinates uses, via public API only.
+   */
+  private visibleWorldOffsets(): number[] {
+    const map = this.map;
+    if (!map) {
+      return [0];
+    }
+    if (typeof map.getRenderWorldCopies === "function" && !map.getRenderWorldCopies()) {
+      return [0];
+    }
+    const canvas = map.getCanvas();
+    const width = canvas.clientWidth || canvas.width;
+    const height = canvas.clientHeight || canvas.height;
+    if (!(width > 0) || !(height > 0)) {
+      return [0];
+    }
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    try {
+      const corners: Array<[number, number]> = [[0, 0], [width, 0], [width, height], [0, height]];
+      for (const [x, y] of corners) {
+        const index = Math.floor((map.unproject([x, y]).lng + 180) / 360);
+        if (!Number.isFinite(index)) {
+          return [0];
+        }
+        min = Math.min(min, index);
+        max = Math.max(max, index);
+      }
+    } catch {
+      // A degenerate transform (pitched past the horizon, zero-size canvas)
+      // must never take the data layer down with it.
+      return [0];
+    }
+    // Hard clamp BEFORE any loop runs. maxPitch is 0 today, which bounds the
+    // corner longitudes, but an above-horizon unproject under a future pitch
+    // returns an arbitrarily large lng — and an unbounded world index would
+    // turn both loops below into a hang. WORLD_INDEX_LIMIT is far past any
+    // number of copies that could matter.
+    min = Math.max(min - 1, -WORLD_INDEX_LIMIT);
+    max = Math.min(max + 1, WORLD_INDEX_LIMIT);
+    // The primary copy is always drawn, exactly as MapLibre's own
+    // getVisibleUnwrappedCoordinates always emits wrap 0: an off-screen quad is
+    // clipped away for free, a missing on-screen one is a hole. When it falls
+    // outside the visible range it costs one of the MAX_WORLD_COPIES slots, so
+    // the budget is reduced first and the total can never exceed the cap.
+    // Trimming only shrinks the range inward, so a 0 outside it stays outside.
+    const primaryOutsideRange = min > 0 || max < 0;
+    const budget = MAX_WORLD_COPIES - (primaryOutsideRange ? 1 : 0);
+    while (max - min + 1 > budget) {
+      max -= 1;
+      if (max - min + 1 > budget) {
+        min += 1;
+      }
+    }
+    const offsets = primaryOutsideRange ? [0] : [];
+    for (let index = min; index <= max; index += 1) {
+      offsets.push(index);
+    }
+    return offsets;
+  }
+
   private render(matrix: number[]) {
     const gl = this.gl;
     const program = this.program;
@@ -2552,7 +2741,6 @@ export class GridWebglLayerController {
     gl.enableVertexAttribArray(bindings.texCoordLocation);
     gl.vertexAttribPointer(bindings.texCoordLocation, 2, gl.FLOAT, false, 0, 0);
 
-    gl.uniformMatrix4fv(bindings.matrixLocation, false, matrix);
     gl.uniform1f(bindings.scaleLocation, Number(grid.scale) || 1);
     gl.uniform1f(bindings.offsetLocation, Number(grid.offset) || 0);
     gl.uniform1f(bindings.nodataLocation, Number(grid.nodata) || 65535);
@@ -2617,16 +2805,28 @@ export class GridWebglLayerController {
     gl.uniform1f(bindings.texProjectionLocation, dataProjection.geographic);
     gl.uniform1f(bindings.latNorthRadLocation, dataProjection.latNorthRad);
     gl.uniform1f(bindings.latSouthRadLocation, dataProjection.latSouthRad);
-    // The contour overlay is a second grid frame keyed on ITS OWN manifest's
-    // projection; it falls back to the data artifact's, which it already shares
-    // a quad (and therefore texcoords) with.
-    const contourBbox = this.contour?.bbox ?? dataBbox;
+    // The contour overlay is a second grid frame. Its bbox and its projection
+    // must come from the SAME source: a bbox read from the contour artifact
+    // paired with the data manifest's projection (or vice versa) can declare a
+    // grid that exists nowhere — e.g. degree bounds judged against EPSG:3857,
+    // or metre bounds judged full-world. Either the contour carries its own
+    // geometry or it inherits the data artifact's whole, never a mix.
+    const contourGeometry = this.contour?.bbox
+      ? { bbox: this.contour.bbox, projection: this.contour.projection ?? null }
+      : { bbox: dataBbox, projection: this.resolveProjection() };
     const contourProjection = contourEnabled
-      ? textureProjectionUniforms(this.contour?.projection ?? this.resolveProjection(), contourBbox)
+      ? textureProjectionUniforms(contourGeometry.projection, contourGeometry.bbox)
       : { geographic: 0, latNorthRad: 0, latSouthRad: 0 };
     gl.uniform1f(bindings.contourTexProjectionLocation, contourProjection.geographic);
     gl.uniform1f(bindings.contourLatNorthRadLocation, contourProjection.latNorthRad);
     gl.uniform1f(bindings.contourLatSouthRadLocation, contourProjection.latSouthRad);
+    // Column wrap: only a full-360 geographic grid has columns 0 and W-1 as
+    // longitudinal neighbours. Every other grid keeps the clamp path.
+    gl.uniform1f(bindings.wrapSLocation, isFullWorldGeographic(this.resolveProjection(), dataBbox) ? 1 : 0);
+    gl.uniform1f(
+      bindings.contourWrapSLocation,
+      contourEnabled && isFullWorldGeographic(contourGeometry.projection, contourGeometry.bbox) ? 1 : 0,
+    );
 
     const contourColor = this.contour?.color ?? [0, 0, 0, 0.82];
     gl.uniform4f(
@@ -2653,7 +2853,10 @@ export class GridWebglLayerController {
     gl.bindTexture(gl.TEXTURE_2D, contourEnabled ? this.currentContourTexture : this.currentTexture);
     gl.uniform1i(bindings.contourDataLocation, 3);
 
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    for (const offset of this.visibleWorldOffsets()) {
+      gl.uniformMatrix4fv(bindings.matrixLocation, false, translatedWorldMatrix(matrix, offset));
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
     if (this.hasPreviousTexture && mixAmount < 1) {
       this.requestRepaint();
     } else if (mixAmount >= 1) {

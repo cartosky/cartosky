@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type SampleResult, fetchSample } from "@/lib/api";
+import { normalizeLongitudeDeg } from "@/lib/lon-wrap";
 
 // ── LRU Cache ────────────────────────────────────────────────────────
 
@@ -141,7 +142,12 @@ export function useSampleTooltip(ctx: SampleContext) {
         timerRef.current = null;
         const gen = ++genRef.current;
         const roundedLat = roundCoord(lat);
-        const roundedLon = roundCoord(lon);
+        // The pointer longitude arrives unwrapped on world copies (±181 and
+        // beyond), which the sampling API rejects with a 422 — the tooltip would
+        // just vanish. Fold it back onto the canonical meridian; this is the one
+        // sampling boundary the viewer, compare-split and compare-diff hovers
+        // all funnel through.
+        const roundedLon = roundCoord(normalizeLongitudeDeg(lon));
         const key = cacheKey(ctx.model, ctx.run, ctx.varId, ctx.ensembleView, ctx.fh, roundedLat, roundedLon);
 
         // Check LRU cache

@@ -106,6 +106,7 @@ import {
   GOLDEN_CASE_IDS,
   GOLDEN_VIEWPORT,
   GFS_FRAME_HOURS,
+  GLOBAL_SEAM_ZOOM_COLUMN_PX,
   stubGoldenBaselineRoutes,
   viewerUrlForCase,
   type GoldenCaseId,
@@ -353,10 +354,184 @@ async function waitForGoldenReady(page: Page, id: GoldenCaseId) {
     .toBeLessThanOrEqual(MAX_DIFF_PIXEL_RATIO);
 }
 
-async function openCase(page: Page, id: GoldenCaseId) {
-  await stubGoldenBaselineRoutes(page, id);
+async function openCase(page: Page, id: GoldenCaseId, sampleRequests?: string[]) {
+  await stubGoldenBaselineRoutes(page, id, undefined, sampleRequests);
   await page.goto(viewerUrlForCase(id));
   await waitForGoldenReady(page, id);
+}
+
+type SeamReport = {
+  width: number;
+  height: number;
+  seamX: number;
+  /** Alpha extremes across the strip that spans the seam. */
+  minAlpha: number;
+  maxAlpha: number;
+  /** Largest adjacent-pixel luminance step in the 4 px straddling the seam. */
+  seamStepMax: number;
+  /** Largest adjacent-pixel luminance step everywhere ELSE in the strip. */
+  controlStepMax: number;
+  /** Alpha well to the west / east of the seam: data on BOTH sides. */
+  westAlpha: number;
+  eastAlpha: number;
+  /** Alpha at the extreme left / right of the canvas. */
+  leftEdgeAlpha: number;
+  rightEdgeAlpha: number;
+  /** Best horizontal repeat period found, and its mean per-channel error. */
+  copyPeriodPx: number;
+  copyPeriodError: number;
+  /** Runner-up period, so an exact match cannot be read as a flat image. */
+  nextBestPeriodError: number;
+  copyOverlapPx: number;
+};
+
+/**
+ * Pixel probe for the antimeridian case, run in-page on the app's own
+ * live-canvas PNG.
+ *
+ * Geometry (see GLOBAL_SEAM_VIEW): the camera sits exactly on lon 180, so the
+ * seam is the canvas's vertical centre line. The world width in pixels is
+ * MapLibre's to choose, so it is MEASURED here: the smallest horizontal shift
+ * (searched from 300 px up, which excludes the field's own 120°-of-longitude
+ * internal period) at which the image reproduces itself is one world copy.
+ */
+async function probeSeam(
+  page: Page,
+  source: string,
+): Promise<SeamReport> {
+  return page.evaluate(
+    async (args) => {
+      const response = await fetch(args.source);
+      const bitmap = await createImageBitmap(await response.blob());
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      const { width, height } = canvas;
+      const image = ctx.getImageData(0, 0, width, height).data;
+      const at = (x: number, y: number) => (y * width + x) * 4;
+      const luma = (x: number, y: number) => {
+        const o = at(x, y);
+        return 0.299 * image[o] + 0.587 * image[o + 1] + 0.114 * image[o + 2];
+      };
+
+      const seamX = Math.round(width / 2);
+      // Rows around the equator (mercator centre), where the seam-straddling
+      // ridge is strongest and the frame is certainly covered by data.
+      const rows: number[] = [];
+      for (let y = Math.round(height / 2) - 40; y <= Math.round(height / 2) + 40; y += 8) {
+        rows.push(y);
+      }
+      const half = 60;
+
+      let minAlpha = 255;
+      let maxAlpha = 0;
+      let seamStepMax = 0;
+      let controlStepMax = 0;
+      let westAlpha = 255;
+      let eastAlpha = 255;
+      let leftEdgeAlpha = 255;
+      let rightEdgeAlpha = 255;
+      for (const y of rows) {
+        westAlpha = Math.min(westAlpha, image[at(seamX - half, y) + 3]);
+        eastAlpha = Math.min(eastAlpha, image[at(seamX + half, y) + 3]);
+        leftEdgeAlpha = Math.min(leftEdgeAlpha, image[at(0, y) + 3]);
+        rightEdgeAlpha = Math.min(rightEdgeAlpha, image[at(width - 1, y) + 3]);
+        for (let x = seamX - half; x <= seamX + half; x += 1) {
+          const alpha = image[at(x, y) + 3];
+          minAlpha = Math.min(minAlpha, alpha);
+          maxAlpha = Math.max(maxAlpha, alpha);
+          if (x === seamX + half) {
+            continue;
+          }
+          const step = Math.abs(luma(x + 1, y) - luma(x, y));
+          // A seam artefact is 1-2 px wide and can land either side of the
+          // exact centre line, so the seam band is deliberately generous.
+          if (x >= seamX - 2 && x <= seamX + 1) {
+            seamStepMax = Math.max(seamStepMax, step);
+          } else {
+            controlStepMax = Math.max(controlStepMax, step);
+          }
+        }
+      }
+
+      // World-copy period: the shift at which the whole image reproduces
+      // itself. Only a replicated world does that; a single quad leaves
+      // transparent canvas instead.
+      const scanRows: number[] = [];
+      for (let y = Math.round(height / 2) - 150; y <= Math.round(height / 2) + 150; y += 10) {
+        scanRows.push(y);
+      }
+      let copyPeriodPx = 0;
+      let copyPeriodError = Number.POSITIVE_INFINITY;
+      let nextBestPeriodError = Number.POSITIVE_INFINITY;
+      for (let period = 300; period <= width - 150; period += 1) {
+        let total = 0;
+        let count = 0;
+        for (const y of scanRows) {
+          for (let x = 0; x + period < width; x += 3) {
+            const a = at(x, y);
+            const b = at(x + period, y);
+            total +=
+              Math.abs(image[a] - image[b])
+              + Math.abs(image[a + 1] - image[b + 1])
+              + Math.abs(image[a + 2] - image[b + 2])
+              + Math.abs(image[a + 3] - image[b + 3]);
+            count += 4;
+          }
+        }
+        const error = count === 0 ? Number.POSITIVE_INFINITY : total / count;
+        if (error < copyPeriodError) {
+          copyPeriodError = error;
+          copyPeriodPx = period;
+        }
+      }
+      // Runner-up outside a +-3 px neighbourhood of the winner, so a uniformly
+      // flat (and therefore trivially self-similar) image cannot pass.
+      for (let period = 300; period <= width - 150; period += 1) {
+        if (Math.abs(period - copyPeriodPx) <= 3) {
+          continue;
+        }
+        let total = 0;
+        let count = 0;
+        for (const y of scanRows) {
+          for (let x = 0; x + period < width; x += 3) {
+            const a = at(x, y);
+            const b = at(x + period, y);
+            total +=
+              Math.abs(image[a] - image[b])
+              + Math.abs(image[a + 1] - image[b + 1])
+              + Math.abs(image[a + 2] - image[b + 2])
+              + Math.abs(image[a + 3] - image[b + 3]);
+            count += 4;
+          }
+        }
+        const error = count === 0 ? Number.POSITIVE_INFINITY : total / count;
+        nextBestPeriodError = Math.min(nextBestPeriodError, error);
+      }
+
+      return {
+        width,
+        height,
+        seamX,
+        minAlpha,
+        maxAlpha,
+        seamStepMax,
+        controlStepMax,
+        westAlpha,
+        eastAlpha,
+        leftEdgeAlpha,
+        rightEdgeAlpha,
+        copyPeriodPx,
+        copyPeriodError,
+        nextBestPeriodError,
+        copyOverlapPx: width - copyPeriodPx,
+      };
+    },
+    { source },
+  );
 }
 
 /**
@@ -413,6 +588,135 @@ async function measureRenderTimings(page: Page, id: GoldenCaseId) {
   timingByCase[id] = entry;
   // eslint-disable-next-line no-console
   console.log(`[render-timing] ${id} median=${entry.median}ms p95=${entry.p95}ms n=${entry.samples.length}`);
+}
+
+type SeamZoomReport = {
+  width: number;
+  height: number;
+  seamX: number;
+  columnPx: number;
+  minAlpha: number;
+  maxAlpha: number;
+  /** Max adjacent-pixel step in the 6 px straddling the seam. */
+  seamStepMax: number;
+  /** Max adjacent-pixel step everywhere else within +-140 px. */
+  controlStepMax: number;
+  /**
+   * Max adjacent-pixel step inside the column EAST of the seam — the exact
+   * mirror of the wrapped column, at the same colormap position and the same
+   * fixture gradient, but needing no wrap. The like-for-like reference.
+   */
+  mirrorStepMax: number;
+  /** Luminance change across the column WEST of the seam (the wrapped pair). */
+  westBandDelta: number;
+  /** Luminance change across the column EAST of the seam (never needs wrap). */
+  eastBandDelta: number;
+};
+
+/**
+ * Zoomed seam probe. Builds a row-averaged 1-D luminance profile (rows around
+ * the equator, where the fixture's latitude term is flat) and measures the two
+ * things that separate a true cross-seam blend from a clamp smear:
+ *
+ *  - seamStepMax vs controlStepMax. The fixture puts its steepest
+ *    adjacent-column gradient exactly on the seam AND on every other zero
+ *    crossing, so a correct render has the same per-pixel step at both. A
+ *    clamped render collapses one whole column into a single pixel.
+ *  - westBandDelta vs eastBandDelta. West of the seam is the column pair
+ *    1439|0, which ONLY the wrap can interpolate; east of it is 0|1, which
+ *    needs no wrap. The fixture makes those two column steps equal in
+ *    magnitude, so a correct render gives westBandDelta ~= eastBandDelta and a
+ *    clamped one gives westBandDelta ~= 0. This is the positive assertion that
+ *    the wrapping fetch actually executed.
+ */
+async function probeSeamZoom(
+  page: Page,
+  source: string,
+  columnPx: number,
+): Promise<SeamZoomReport> {
+  return page.evaluate(
+    async (args) => {
+      const response = await fetch(args.source);
+      const bitmap = await createImageBitmap(await response.blob());
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      const { width, height } = canvas;
+      const image = ctx.getImageData(0, 0, width, height).data;
+      const at = (x: number, y: number) => (y * width + x) * 4;
+
+      const rows: number[] = [];
+      for (let y = Math.round(height / 2) - 40; y <= Math.round(height / 2) + 40; y += 4) {
+        rows.push(y);
+      }
+      // Row-averaged luminance profile: kills per-pixel dither without
+      // smoothing along x, which is the axis under test.
+      const profile = new Float64Array(width);
+      let minAlpha = 255;
+      let maxAlpha = 0;
+      for (let x = 0; x < width; x += 1) {
+        let sum = 0;
+        for (const y of rows) {
+          const o = at(x, y);
+          sum += 0.299 * image[o] + 0.587 * image[o + 1] + 0.114 * image[o + 2];
+          minAlpha = Math.min(minAlpha, image[o + 3]);
+          maxAlpha = Math.max(maxAlpha, image[o + 3]);
+        }
+        profile[x] = sum / rows.length;
+      }
+
+      const seamX = Math.round(width / 2);
+      const column = args.columnPx;
+      let seamStepMax = 0;
+      let controlStepMax = 0;
+      for (let x = seamX - 140; x <= seamX + 139; x += 1) {
+        if (x < 0 || x + 1 >= width) {
+          continue;
+        }
+        const step = Math.abs(profile[x + 1] - profile[x]);
+        // The seam band is deliberately generous: a 1-2 px artefact can land
+        // either side of the exact centre line.
+        if (x >= seamX - 3 && x <= seamX + 2) {
+          seamStepMax = Math.max(seamStepMax, step);
+        } else {
+          controlStepMax = Math.max(controlStepMax, step);
+        }
+      }
+
+      let mirrorStepMax = 0;
+      for (let x = seamX + 3; x < Math.round(seamX + column) && x + 1 < width; x += 1) {
+        mirrorStepMax = Math.max(mirrorStepMax, Math.abs(profile[x + 1] - profile[x]));
+      }
+
+      // One inset pixel at each end so the measurement never straddles the
+      // neighbouring column's own ramp.
+      const inset = 2;
+      const westBandDelta = Math.abs(
+        profile[seamX - inset] - profile[Math.round(seamX - column) + inset],
+      );
+      const eastBandDelta = Math.abs(
+        profile[Math.round(seamX + column) - inset] - profile[seamX + inset],
+      );
+
+      return {
+        width,
+        height,
+        seamX,
+        columnPx: column,
+        minAlpha,
+        maxAlpha,
+        seamStepMax,
+        controlStepMax,
+        mirrorStepMax,
+        westBandDelta,
+        eastBandDelta,
+      };
+    },
+    { source, columnPx },
+  );
 }
 
 test.describe('Render golden baseline (Step 1, pre-change)', () => {
@@ -505,6 +809,159 @@ test.describe('Render golden baseline (Step 1, pre-change)', () => {
       expect(distinctColors, `${id}: rendered canvas is not flat`).toBeGreaterThan(8);
     });
   }
+
+  // ── Antimeridian: seam continuity + world copies + hover normalization ──
+  test('gfs-global-seam: data is continuous across the antimeridian and repeats per world copy', async ({ page }) => {
+    test.setTimeout(120_000);
+    await openCase(page, 'gfs-global-seam');
+
+    const liveDataUrl = await captureLiveCanvas(page);
+    const report = await probeSeam(page, liveDataUrl);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[seam-probe] ${report.width}x${report.height} seamX=${report.seamX} ` +
+        `alpha=[${report.minAlpha},${report.maxAlpha}] west=${report.westAlpha} east=${report.eastAlpha} ` +
+        `edges=[${report.leftEdgeAlpha},${report.rightEdgeAlpha}] ` +
+        `seamStepMax=${report.seamStepMax.toFixed(2)} controlStepMax=${report.controlStepMax.toFixed(2)} ` +
+        `copyPeriod=${report.copyPeriodPx}px err=${report.copyPeriodError.toFixed(3)} ` +
+        `nextBestErr=${report.nextBestPeriodError.toFixed(3)} overlap=${report.copyOverlapPx}px`,
+    );
+
+    // 1. Data on BOTH sides of the seam. Before Phase 3 the layer stopped dead
+    //    at the world edge, so one of these was fully transparent.
+    expect(report.westAlpha, 'weather data west of the antimeridian').toBeGreaterThan(200);
+    expect(report.eastAlpha, 'weather data east of the antimeridian').toBeGreaterThan(200);
+
+    // 2. No gap and no dark strip AT the seam. A missing column reads as an
+    //    alpha dip; a double-drawn half-cell overhang reads as a luminance
+    //    step that stands out against the field's own gradient.
+    expect(report.maxAlpha, 'seam strip carries data').toBeGreaterThan(200);
+    expect(
+      report.minAlpha,
+      'no alpha dip anywhere in the 121 px strip straddling the seam',
+    ).toBeGreaterThanOrEqual(report.maxAlpha - 2);
+    expect(
+      report.seamStepMax,
+      'luminance step at the seam is not an outlier against the field gradient',
+    ).toBeLessThanOrEqual(Math.max(6, 3 * report.controlStepMax));
+
+    // 3. World-copy continuity. One world is narrower than the map pane here,
+    //    so a single-quad render (the pre-Phase-3 behaviour) leaves the outer
+    //    ~230 px of canvas transparent and has no repeat period at all.
+    expect(report.leftEdgeAlpha, 'data reaches the west canvas edge').toBeGreaterThan(200);
+    expect(report.rightEdgeAlpha, 'data reaches the east canvas edge').toBeGreaterThan(200);
+    expect(
+      report.copyPeriodError,
+      `image reproduces itself exactly at ${report.copyPeriodPx} px — one world copy`,
+    ).toBeLessThanOrEqual(1);
+    expect(
+      report.copyOverlapPx,
+      'the repeat is verified over a meaningful overlap, not a sliver',
+    ).toBeGreaterThanOrEqual(150);
+    // Not a trivially self-similar (flat) image: the winner is EXACT (measured
+    // 0.000 mean channel error) and every shift outside +-3 px of it is not
+    // (measured 4.70). A flat or low-contrast frame would make both small.
+    expect(
+      report.nextBestPeriodError,
+      'the repeat period is unique, so the match is a world copy and not flatness',
+    ).toBeGreaterThan(2);
+
+    // 4. Regression golden through the app's own capture hook, same contract as
+    //    the other cases.
+    await expectMatchesGolden(page, 'gfs-global-seam-live-canvas.png', liveDataUrl);
+  });
+
+  test('gfs-global-seam-zoom: the 1439|0 column pair is interpolated, not clamp-smeared', async ({ page }) => {
+    test.setTimeout(120_000);
+    await openCase(page, 'gfs-global-seam-zoom');
+
+    const liveDataUrl = await captureLiveCanvas(page);
+    const report = await probeSeamZoom(page, liveDataUrl, GLOBAL_SEAM_ZOOM_COLUMN_PX);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[seam-zoom-probe] ${report.width}x${report.height} seamX=${report.seamX} ` +
+        `columnPx=${report.columnPx.toFixed(2)} alpha=[${report.minAlpha},${report.maxAlpha}] ` +
+        `seamStepMax=${report.seamStepMax.toFixed(2)} mirrorStepMax=${report.mirrorStepMax.toFixed(2)} ` +
+        `controlStepMax=${report.controlStepMax.toFixed(2)} ` +
+        `westBandDelta=${report.westBandDelta.toFixed(2)} eastBandDelta=${report.eastBandDelta.toFixed(2)}`,
+    );
+
+    // Coverage first: the whole probed strip carries data at full alpha.
+    expect(report.maxAlpha, 'seam strip carries data').toBeGreaterThan(200);
+    expect(report.minAlpha, 'no alpha dip across the seam').toBeGreaterThanOrEqual(
+      report.maxAlpha - 2,
+    );
+
+    // The east column (0|1) needs no wrap, so it is the control magnitude and
+    // must be a real, large ramp — otherwise every ratio below is vacuous.
+    expect(
+      report.eastBandDelta,
+      'the fixture really does put a steep gradient beside the seam',
+    ).toBeGreaterThan(20);
+
+    // THE wrap assertion. West of the seam is the 1439|0 pair. The fixture
+    // makes that column step equal in magnitude to the 0|1 step east of it, so
+    // a correct wrapping bilinear renders both ramps alike. Clamping flattens
+    // the west band to the constant col-1439 value -> westBandDelta collapses.
+    expect(
+      report.westBandDelta,
+      'the 1439|0 column ramps like its mirror, i.e. the wrapped fetch executed',
+    ).toBeGreaterThanOrEqual(0.6 * report.eastBandDelta);
+
+    // Continuity gate, derived from the fixture rather than eyeballed, and
+    // measured against the seam's OWN MIRROR (the 0|1 column immediately east)
+    // rather than a global max — same colormap position, same fixture
+    // gradient, no wrap needed, so the two must agree up to sampling phase.
+    // A clamped render dumps a whole column (~30 luminance, see westBandDelta)
+    // into one pixel, i.e. ~7x the mirror step. Measured: 4.30 seam vs 4.30
+    // mirror; the bound below sits at 7.5.
+    expect(
+      report.mirrorStepMax,
+      'the mirror column really is a steep ramp, so the bound is not vacuous',
+    ).toBeGreaterThan(2);
+    expect(
+      report.seamStepMax,
+      'seam gradient matches its own mirror column, i.e. no clamp step',
+    ).toBeLessThanOrEqual(1.5 * report.mirrorStepMax + 1);
+
+    await expectMatchesGolden(page, 'gfs-global-seam-zoom-live-canvas.png', liveDataUrl);
+  });
+
+  test('gfs-global-seam: hovering a world copy samples a longitude inside the API bounds', async ({ page }) => {
+    test.setTimeout(120_000);
+    const sampleRequests: string[] = [];
+    await openCase(page, 'gfs-global-seam', sampleRequests);
+
+    const canvas = mapCanvas(page);
+    const box = (await canvas.boundingBox())!;
+    // Two probes: one just west of the seam (canonical longitudes), and one far
+    // east of it — past the antimeridian, where MapLibre reports an UNWRAPPED
+    // lngLat above +180 that the API rejects with a 422.
+    const points = [
+      { x: box.x + box.width / 2 - 120, y: box.y + box.height / 2 },
+      { x: box.x + box.width - 40, y: box.y + box.height / 2 },
+    ];
+    for (const point of points) {
+      await page.mouse.move(point.x, point.y);
+      await page.waitForTimeout(400);
+    }
+
+    await expect
+      .poll(() => sampleRequests.length, { timeout: 15_000, message: 'hover sample requests issued' })
+      .toBeGreaterThanOrEqual(2);
+
+    const lons = sampleRequests.map((url) => Number(new URL(url).searchParams.get('lon')));
+    // eslint-disable-next-line no-console
+    console.log(`[seam-hover] sampled lons: ${lons.join(', ')}`);
+    for (const lon of lons) {
+      expect(Number.isFinite(lon), `sample lon is numeric (${lon})`).toBe(true);
+      expect(lon, 'sample lon respects the API contract lower bound').toBeGreaterThanOrEqual(-180);
+      expect(lon, 'sample lon respects the API contract upper bound').toBeLessThanOrEqual(180);
+    }
+    // The stub itself fails closed on an out-of-range longitude (422, exactly
+    // like the real Query bound), so an unnormalized hover cannot pass here
+    // even if the assertions above were ever relaxed.
+  });
 
   // ── GIF case: the real client export over the 3 GFS fixture frames ──────
   test('gfs-tmp2m: real GIF export produces exactly 3 frames, each pinned to a golden', async ({ page }) => {
