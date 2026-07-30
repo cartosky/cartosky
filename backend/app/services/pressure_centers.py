@@ -25,14 +25,22 @@ class PressureCenterConfig:
     skip_edge_centers: bool = True
 
 
-def _pixel_size_km(transform: Any) -> tuple[float, float]:
-    pixel_width_m = abs(float(transform.a))
-    pixel_height_m = abs(float(transform.e))
-    if not np.isfinite(pixel_width_m) or pixel_width_m <= 0.0:
-        pixel_width_m = 1.0
-    if not np.isfinite(pixel_height_m) or pixel_height_m <= 0.0:
-        pixel_height_m = pixel_width_m
-    return pixel_width_m / 1000.0, pixel_height_m / 1000.0
+#: Mean km per degree of latitude on the WGS84 ellipsoid. Used to size the
+#: detector neighbourhood on geographic grids, where the transform is in
+#: degrees rather than metres.
+_KM_PER_DEGREE = 111.195
+
+
+def _pixel_size_km(transform: Any, *, geographic: bool = False) -> tuple[float, float]:
+    pixel_width = abs(float(transform.a))
+    pixel_height = abs(float(transform.e))
+    if not np.isfinite(pixel_width) or pixel_width <= 0.0:
+        pixel_width = 1.0
+    if not np.isfinite(pixel_height) or pixel_height <= 0.0:
+        pixel_height = pixel_width
+    if geographic:
+        return pixel_width * _KM_PER_DEGREE, pixel_height * _KM_PER_DEGREE
+    return pixel_width / 1000.0, pixel_height / 1000.0
 
 
 def _round_value(value: float) -> float | int:
@@ -91,7 +99,8 @@ def detect_pressure_centers(
         return []
 
     height, width = values_array.shape
-    pixel_width_km, pixel_height_km = _pixel_size_km(transform)
+    is_geographic = str(projection or "").strip().upper() == "EPSG:4326"
+    pixel_width_km, pixel_height_km = _pixel_size_km(transform, geographic=is_geographic)
     mean_pixel_km = max(0.001, (pixel_width_km + pixel_height_km) / 2.0)
     radius_px = max(1, int(round(float(config.radius_km) / mean_pixel_km)))
     min_separation_px = max(1.0, float(config.min_separation_km) / mean_pixel_km)

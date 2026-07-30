@@ -34,7 +34,14 @@ import numpy as np
 import rasterio
 
 from app.config import grid_build_enabled
-from app.services.builder.raster_grid import _gdal, compute_transform_and_shape, get_grid_params, warp_to_target_grid
+from app.services.builder.raster_grid import (
+    _gdal,
+    get_grid_crs,
+    get_grid_params,
+    get_native_grid_degrees,
+    get_target_grid,
+    warp_to_target_grid,
+)
 from app.services.builder.colorize import float_to_rgba
 from app.services.builder.derive import (
     FetchContext,
@@ -119,15 +126,15 @@ def _derived_output_matches_target_grid(
     if values.ndim != 2:
         return False
     try:
-        bbox, grid_m = get_grid_params(model, region)
-        expected_transform, expected_h, expected_w = compute_transform_and_shape(bbox, grid_m)
+        grid = get_target_grid(model, region)
+        expected_transform, expected_h, expected_w = grid.transform, grid.height, grid.width
     except Exception:
         return False
 
     if tuple(values.shape) != (expected_h, expected_w):
         return False
 
-    expected_crs = rasterio.crs.CRS.from_epsg(3857)
+    expected_crs = rasterio.crs.CRS.from_user_input(grid.crs)
     try:
         normalized_src_crs = rasterio.crs.CRS.from_user_input(src_crs)
     except Exception:
@@ -354,7 +361,7 @@ def _build_contour_metadata_for_variable(
     build_iso_contour_geojson(
         value_data=warped_component,
         value_transform=dst_transform,
-        value_crs="EPSG:3857",
+        value_crs=get_grid_crs(model, region),
         out_geojson_path=contour_path,
         levels=levels,
     )
@@ -370,7 +377,7 @@ def _build_contour_metadata_for_variable(
             levels=levels,
             label=contour_label,
             transform=dst_transform,
-            projection="EPSG:3857",
+            projection=get_grid_crs(model, region),
         )
     metadata = {
         contour_key: {
@@ -593,6 +600,7 @@ def _build_pressure_center_metadata_for_variable(
     centers = detect_pressure_centers(
         warped_component,
         transform=dst_transform,
+        projection=get_grid_crs(model, region),
         config=PressureCenterConfig(
             source=contour_key or center_component,
             units=_center_units(center_kind=center_kind, conversion=center_conversion),
@@ -1013,6 +1021,50 @@ def build_sidecar_json(
     return sidecar
 
 
+def _clamp_geojson_to_world(geojson_path: Path) -> None:
+    """Clamp contour vertices into [−180, 180] × [−90, 90].
+
+    A point-registered geographic grid's cell-edge extent overhangs the world
+    by half a cell (contract §2), and the ``-t_srs EPSG:4326`` warp is an
+    identity for such a grid, so nothing upstream clips it: gdal_contour can
+    emit vertices at e.g. −180.125. The contract requires contour coordinates
+    inside the legal range, so the overhanging sliver is clamped onto the
+    world edge. Only ever called for geographic value grids; the mercator
+    path's output is untouched.
+    """
+    try:
+        payload = json.loads(geojson_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        logger.warning("Unable to read contour GeoJSON for clamping: %s", geojson_path)
+        return
+
+    changed = False
+
+    def clamp(node: Any) -> Any:
+        nonlocal changed
+        if (
+            isinstance(node, list)
+            and len(node) >= 2
+            and all(isinstance(item, (int, float)) for item in node[:2])
+        ):
+            lon = min(180.0, max(-180.0, float(node[0])))
+            lat = min(90.0, max(-90.0, float(node[1])))
+            if lon != node[0] or lat != node[1]:
+                changed = True
+            return [lon, lat, *node[2:]]
+        if isinstance(node, list):
+            return [clamp(item) for item in node]
+        return node
+
+    for feature in payload.get("features") or []:
+        geometry = feature.get("geometry") if isinstance(feature, dict) else None
+        if isinstance(geometry, dict) and "coordinates" in geometry:
+            geometry["coordinates"] = clamp(geometry["coordinates"])
+
+    if changed:
+        geojson_path.write_text(json.dumps(payload))
+
+
 def build_iso_contour_geojson(
     *,
     value_data: np.ndarray,
@@ -1097,6 +1149,8 @@ def build_iso_contour_geojson(
             capture_output=True,
             text=True,
         )
+        if str(value_crs).strip().upper() == "EPSG:4326":
+            _clamp_geojson_to_world(out_geojson_path)
         try:
             payload = json.loads(out_geojson_path.read_text())
             features = payload.get("features") if isinstance(payload, dict) else None
@@ -1385,11 +1439,25 @@ def _resolve_derive_target_grid(
     baseline_source = normalize_baseline_source(
         str(hints.get("baseline_source") or DEFAULT_BASELINE_SOURCE).strip() or DEFAULT_BASELINE_SOURCE
     )
-    _, derive_grid_m = get_baseline_grid_params(
-        baseline_source=baseline_source,
-        region=derive_region,
-    )
-    _, output_grid_m = get_grid_params(model, output_region)
+    try:
+        _, derive_grid_m = get_baseline_grid_params(
+            baseline_source=baseline_source,
+            region=derive_region,
+        )
+        _, output_grid_m = get_grid_params(model, output_region)
+    except KeyError:
+        # Native-geographic domains (e.g. global) have no climatology baseline
+        # metre grid by construction. The component warp cache is an
+        # optimisation only, so degrade to "no shared grid" there instead of
+        # failing the frame. Every legacy metre-grid region keeps the original
+        # behaviour: a missing grid is a real misconfiguration and must raise.
+        native_geographic = (
+            get_native_grid_degrees(model, derive_region) is not None
+            or get_native_grid_degrees(model, output_region) is not None
+        )
+        if not native_geographic:
+            raise
+        return None, False
     return {
         "region": derive_region,
         "id": f"climatology:{baseline_source}:{derive_region}:{derive_grid_m:.1f}m",
@@ -1831,6 +1899,7 @@ def build_frame(
                 fh=fh,
                 values=warped_data,
                 transform=dst_transform,
+                projection=get_grid_crs(model, region),
             )
             try:
                 if not validate_grid_binary_frame(

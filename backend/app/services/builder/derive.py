@@ -28,7 +28,7 @@ import rasterio.crs
 from rasterio.enums import Resampling
 from rasterio.warp import calculate_default_transform, reproject
 
-from app.services.builder.raster_grid import compute_transform_and_shape, warp_to_target_grid
+from app.services.builder.raster_grid import compute_transform_and_shape, get_grid_crs, warp_to_target_grid
 from app.services.builder.fetch import convert_units, fetch_variable, inventory_lines_for_pattern
 from app.services.builder.fetch import HerbieTransientUnavailableError
 from app.services.climatology import (
@@ -3270,7 +3270,7 @@ def _fetch_component_warped(
     )
     resolved = (
         warped_data.astype(np.float32, copy=False),
-        rasterio.crs.CRS.from_epsg(3857),
+        _warped_component_crs(model_id, target_region, target_grid_id),
         dst_transform,
     )
     if ctx is not None:
@@ -3314,6 +3314,18 @@ def get_cached_warped_component(
         return None
     _record_warp_stat(ctx, "hits")
     return cached
+
+
+def _warped_component_crs(model_id: str, target_region: str, target_grid_id: str) -> Any:
+    """CRS of what :func:`_warp_component_to_target_grid` produced.
+
+    Climatology grid ids warp onto the baseline's EPSG:3857 grid regardless of
+    the output region (anomalies are canonical-only); everything else lands on
+    the output region's declared grid CRS.
+    """
+    if str(target_grid_id).strip().startswith("climatology:"):
+        return rasterio.crs.CRS.from_epsg(3857)
+    return rasterio.crs.CRS.from_user_input(get_grid_crs(model_id, target_region))
 
 
 def _warp_component_to_target_grid(
@@ -3717,7 +3729,7 @@ def _seed_overlap_prior_bucket_window(
             target_grid_id=target_grid_id,
             resampling=resampling,
         )
-        step_crs = rasterio.crs.CRS.from_epsg(3857)
+        step_crs = _warped_component_crs(model_id, target_region, target_grid_id)
         step_transform = warped_transform
 
     inventory_line = str((apcp_meta or {}).get("inventory_line", search_pattern[:-1])).strip()
@@ -3992,7 +4004,7 @@ def _resolve_apcp_step_data(
                         resampling=resampling,
                     )
                     selected_data = warped_data.astype(np.float32, copy=False)
-                    selected_crs = rasterio.crs.CRS.from_epsg(3857)
+                    selected_crs = _warped_component_crs(model_id, target_region, target_grid_id)
                     selected_transform = warped_transform
 
                 if _is_valid_apcp_exact_result(selected_data, selected_meta):

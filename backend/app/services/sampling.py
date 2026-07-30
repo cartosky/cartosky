@@ -160,7 +160,21 @@ def _sample_binary_frame_index(meta: dict[str, Any], *, lon: float, lat: float) 
 
     transform_values = [float(value) for value in meta["transform"]]
     col_f, row_f = ~Affine(*transform_values) * (x, y)
-    return int(np.floor(row_f)), int(np.floor(col_f))
+    row, col = int(np.floor(row_f)), int(np.floor(col_f))
+
+    if projection.upper() == "EPSG:4326":
+        # The API accepts lon ∈ [−180, +180] inclusive, but +180 is not a
+        # column centre: on a grid that spans the full 360° it is the same
+        # meridian as the western edge column. Wrap that single overshoot
+        # (contract §3). General unwrapped-longitude normalisation is not in
+        # scope here.
+        width = int(meta.get("width") or 0)
+        if width > 0 and col == width:
+            span = abs(float(transform_values[0])) * width
+            if abs(span - 360.0) <= 1.0e-6:
+                col = 0
+
+    return row, col
 
 
 def _read_binary_frame_values(frame_path: Path, meta: dict[str, Any], *, model: str, var: str) -> np.ndarray:

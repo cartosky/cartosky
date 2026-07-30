@@ -67,9 +67,10 @@ def test_gfs_buildable_var_set_and_defaults_invariants() -> None:
         "conus": 25000.0,
         "na": 25000.0,
         "pnw": 25000.0,
-        # Phase 3: the global domain shares GFS's 25 km grid.
-        "global": 25000.0,
     }
+    # The global domain is NOT a mercator metre grid: it is published on the
+    # source's native 0.25° EPSG:4326 grid.
+    assert capabilities.grid_native_degrees_by_region == {"global": 0.25}
 
     from app.services.grid import _PACKING_BY_MODEL_VAR
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import math
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -46,15 +47,9 @@ REGION_BBOX_3857: dict[str, tuple[float, float, float, float]] = {
     "conus": (-14916811.77, 2753408.11, -6679169.45, 7361866.11),
     "na": (-19814869.36, 557305.26, -2782987.27, 16967796.94),
     "pnw": (-14026255.80, 5096324.37, -12913060.93, 6378137.00),
-    # Full Web-Mercator extent. The ±85.05113° pole clip is inherent to
-    # EPSG:3857 (the projection is undefined at the poles), so the global
-    # domain is the whole valid Mercator square.
-    "global": (
-        -20037508.342789244,
-        -20037508.342789244,
-        20037508.342789244,
-        20037508.342789244,
-    ),
+    # NOTE: there is deliberately no ``global`` entry. The global domain is a
+    # native-geographic grid (see ``GLOBAL_DOMAIN_4326_CONTRACT.md``); a
+    # mercator global grid is no longer producible.
 }
 
 # WGS84 bounding boxes (for reference / coordinate transforms)
@@ -62,8 +57,31 @@ REGION_BBOX_4326: dict[str, tuple[float, float, float, float]] = {
     "conus": (-134.0, 24.0, -60.0, 55.0),
     "na": (-178.0, 5.0, -25.0, 82.0),
     "pnw": (-126.0, 41.5, -116.0, 49.5),
-    "global": (-180.0, -85.05112877980659, 180.0, 85.05112877980659),
+    # Cell-edge bbox of the native 0.25° global grid: point-registered at
+    # 0.25° multiples, so the edges overhang the ±180/±90 centres by half a
+    # cell. Data coverage is the full globe, poles included.
+    "global": (-180.125, -90.125, 179.875, 90.125),
 }
+
+# ---------------------------------------------------------------------------
+# Grid CRS
+# ---------------------------------------------------------------------------
+
+#: Legacy default: every (model, region) that does not declare a native
+#: geographic grid resolution is an EPSG:3857 metre grid.
+LEGACY_GRID_CRS = "EPSG:3857"
+
+#: Grids declared through ``ModelCapabilities.grid_native_degrees_by_region``
+#: are stored in geographic coordinates instead.
+NATIVE_GRID_CRS = "EPSG:4326"
+
+#: At or below this, a "metre" resolution is really a *degree* resolution handed
+#: to the wrong helper (native-geographic grids are 0.25°–1°).
+#: ``compute_transform_and_shape`` refuses those. The bound is deliberately
+#: tight rather than "anything under a kilometre": several tests build honest
+#: metre grids at synthetic resolutions as small as 10 m, and a real metre grid
+#: of ≤ 1 m is not producible here.
+_MIN_METRE_GRID_RESOLUTION = 1.0
 
 # ---------------------------------------------------------------------------
 # Target grid resolution (meters) per model/region
@@ -158,12 +176,24 @@ def get_grid_params(
     model: str,
     region: str,
 ) -> tuple[tuple[float, float, float, float], float]:
-    """Return (bbox_3857, grid_meters) for a model/region pair.
+    """Return (bbox, resolution) for a model/region pair.
+
+    For legacy regions that is ``(bbox_3857, grid_meters)``. For regions the
+    model declares through ``grid_native_degrees_by_region`` it is the
+    EPSG:4326 cell-edge bbox and the resolution in *degrees* — pair it with
+    :func:`get_grid_crs`, or better, call :func:`get_target_grid`, which
+    resolves CRS/transform/shape together. Do NOT feed a native-geographic
+    pair to :func:`compute_transform_and_shape`: that function implements the
+    metre-grid snap-to-multiple rule and would produce the wrong shape.
 
     Raises KeyError if the combination is not defined.
     """
     model_key = str(model).strip().lower()
     region_key = str(region).strip().lower()
+
+    native_degrees = get_native_grid_degrees(model_key, region_key)
+    if native_degrees is not None:
+        return native_geographic_bbox(native_degrees), native_degrees
 
     bbox = REGION_BBOX_3857.get(region_key)
     if bbox is None:
@@ -179,7 +209,7 @@ def get_grid_params(
     return bbox, grid_m
 
 
-def _grid_meters_from_capabilities(model: str, region: str) -> float | None:
+def _capability_grid_map(model: str, attribute: str) -> dict[str, Any] | None:
     try:
         from app.models.registry import MODEL_REGISTRY
     except Exception:
@@ -190,13 +220,111 @@ def _grid_meters_from_capabilities(model: str, region: str) -> float | None:
     capabilities = getattr(plugin, "capabilities", None)
     if capabilities is None:
         return None
-    grid_map = getattr(capabilities, "grid_meters_by_region", None)
+    grid_map = getattr(capabilities, attribute, None)
     if not isinstance(grid_map, dict):
+        return None
+    return grid_map
+
+
+def _grid_meters_from_capabilities(model: str, region: str) -> float | None:
+    grid_map = _capability_grid_map(model, "grid_meters_by_region")
+    if grid_map is None:
         return None
     value = grid_map.get(region)
     if value is None:
         return None
     return float(value)
+
+
+def get_native_grid_degrees(model: str, region: str) -> float | None:
+    """Resolution in degrees when (model, region) declares a native 4326 grid.
+
+    ``None`` means the pair uses the legacy EPSG:3857 metre grid. Presence of
+    a value is the *only* signal that a grid follows the native-geographic
+    contract (``docs/GLOBAL_DOMAIN_4326_CONTRACT.md`` §4).
+    """
+    grid_map = _capability_grid_map(str(model).strip().lower(), "grid_native_degrees_by_region")
+    if grid_map is None:
+        return None
+    value = grid_map.get(str(region).strip().lower())
+    if value is None:
+        return None
+    return float(value)
+
+
+def get_grid_crs(model: str, region: str) -> str:
+    """The CRS a model/region's artifacts are stored in."""
+    if get_native_grid_degrees(model, region) is not None:
+        return NATIVE_GRID_CRS
+    return LEGACY_GRID_CRS
+
+
+def native_geographic_bbox(degrees: float) -> tuple[float, float, float, float]:
+    """Cell-edge bbox of the point-registered global grid at ``degrees``.
+
+    Column centres run −180 … 180−d, row centres +90 … −90 (both poles are
+    literal rows), so the edges overhang by half a cell.
+    """
+    res = float(degrees)
+    half = res / 2.0
+    width = int(round(360.0 / res))
+    west = -180.0 - half
+    north = 90.0 + half
+    return (west, -90.0 - half, west + width * res, north)
+
+
+def compute_native_transform_and_shape(
+    bbox_4326: tuple[float, float, float, float],
+    grid_degrees: float,
+) -> tuple[rasterio.transform.Affine, int, int]:
+    """Affine/shape for a native-geographic grid.
+
+    Unlike :func:`compute_transform_and_shape` there is no snapping: the bbox
+    is already the exact cell-edge extent of the point-registered grid.
+    """
+    xmin, ymin, xmax, ymax = bbox_4326
+    res = float(grid_degrees)
+    width = round((xmax - xmin) / res)
+    height = round((ymax - ymin) / res)
+    return from_origin(xmin, ymax, res, res), height, width
+
+
+@dataclass(frozen=True)
+class TargetGrid:
+    """The full target-grid description for a (model, region) pair."""
+
+    crs: str
+    bbox: tuple[float, float, float, float]
+    resolution: float
+    transform: rasterio.transform.Affine
+    height: int
+    width: int
+
+    @property
+    def is_native_geographic(self) -> bool:
+        return self.crs == NATIVE_GRID_CRS
+
+
+def get_target_grid(model: str, region: str) -> TargetGrid:
+    """Resolve CRS + bbox + transform + shape for a model/region pair.
+
+    The single entry point that is correct for both legacy metre grids and
+    native-geographic grids.
+    """
+    bbox, resolution = get_grid_params(model, region)
+    crs = get_grid_crs(model, region)
+    if crs == NATIVE_GRID_CRS:
+        transform, height, width = compute_native_transform_and_shape(bbox, resolution)
+    else:
+        transform, height, width = compute_transform_and_shape(bbox, resolution)
+    return TargetGrid(
+        crs=crs,
+        bbox=bbox,
+        resolution=float(resolution),
+        transform=transform,
+        height=int(height),
+        width=int(width),
+    )
 
 
 def compute_transform_and_shape(
@@ -210,9 +338,20 @@ def compute_transform_and_shape(
     for the same model/region are pixel-aligned.
 
     Returns (transform, height, width).
+
+    Raises ValueError for a degree-scale resolution: that is a native-geographic
+    grid pair (see :func:`get_grid_params`) being fed to the metre-grid snap
+    rule, which would silently produce a wrong, half-cell-shifted grid.
     """
     xmin, ymin, xmax, ymax = bbox_3857
-    res = grid_meters
+    res = float(grid_meters)
+    if res <= _MIN_METRE_GRID_RESOLUTION:
+        raise ValueError(
+            f"compute_transform_and_shape() expects an EPSG:3857 metre resolution, "
+            f"got {res!r} — that looks like a native-geographic (degrees) grid. "
+            f"Use get_target_grid(model, region), which resolves CRS, transform "
+            f"and shape correctly for both grid families."
+        )
 
     # Snap to target-aligned pixels (equivalent to -tap)
     aligned_xmin = math.floor(xmin / res) * res
@@ -234,6 +373,101 @@ def compute_transform_and_shape(
 # ---------------------------------------------------------------------------
 
 
+def _aligned_source_indices(
+    *,
+    src_origin: float,
+    src_res: float,
+    src_count: int,
+    dst_origin: float,
+    dst_res: float,
+    dst_count: int,
+    wrap_span: float | None = None,
+) -> np.ndarray | None:
+    """Source indices for each destination index, or ``None`` if not aligned.
+
+    Both axes are described by (origin edge, signed resolution, count). The
+    destination cell centres must coincide with source cell centres to within
+    a millionth of a cell; ``wrap_span`` (e.g. 360°) allows the source to be
+    addressed cyclically, which is what turns a 0–360 longitude axis into a
+    −180…180 one by pure index arithmetic.
+    """
+    if src_count <= 0 or dst_count <= 0 or src_res == 0.0 or dst_res == 0.0:
+        return None
+    dst_centers = dst_origin + dst_res * (np.arange(dst_count, dtype=np.float64) + 0.5)
+    src_float = (dst_centers - src_origin) / src_res - 0.5
+    if wrap_span is not None:
+        cycle = abs(wrap_span / src_res)
+        if abs(cycle - src_count) > 1.0e-6:
+            return None
+        src_float = np.mod(src_float, float(src_count))
+    src_index = np.rint(src_float)
+    if not np.all(np.abs(src_float - src_index) <= 1.0e-6):
+        return None
+    src_index = src_index.astype(np.int64)
+    if wrap_span is not None:
+        src_index = np.mod(src_index, src_count)
+    if src_index.min() < 0 or src_index.max() >= src_count:
+        return None
+    return src_index
+
+
+def _index_roll_to_target_grid(
+    data: np.ndarray,
+    src_crs: Any,
+    src_transform: rasterio.transform.Affine,
+    grid: TargetGrid,
+) -> np.ndarray | None:
+    """Exact, interpolation-free resample by index arithmetic.
+
+    Applies when the source is already on the target CRS at the target
+    resolution and grid-aligned — the GFS 0.25° 0–360 → native global case,
+    where the whole "warp" is a longitude roll (contract §5). Returns ``None``
+    when the source does not align, so the caller can fall back to a real
+    reprojection.
+    """
+    if not grid.is_native_geographic:
+        return None
+    try:
+        normalized_src_crs = rasterio.crs.CRS.from_user_input(src_crs)
+    except Exception:
+        return None
+    if normalized_src_crs != rasterio.crs.CRS.from_user_input(grid.crs):
+        return None
+    if abs(float(src_transform.b)) > 1.0e-12 or abs(float(src_transform.d)) > 1.0e-12:
+        return None
+    if abs(abs(float(src_transform.a)) - grid.resolution) > 1.0e-9:
+        return None
+    if abs(abs(float(src_transform.e)) - grid.resolution) > 1.0e-9:
+        return None
+
+    src_h, src_w = data.shape[-2:]
+    rows = _aligned_source_indices(
+        src_origin=float(src_transform.f),
+        src_res=float(src_transform.e),
+        src_count=int(src_h),
+        dst_origin=float(grid.transform.f),
+        dst_res=float(grid.transform.e),
+        dst_count=grid.height,
+    )
+    if rows is None:
+        return None
+    cols = _aligned_source_indices(
+        src_origin=float(src_transform.c),
+        src_res=float(src_transform.a),
+        src_count=int(src_w),
+        dst_origin=float(grid.transform.c),
+        dst_res=float(grid.transform.a),
+        dst_count=grid.width,
+        wrap_span=360.0,
+    )
+    if cols is None:
+        return None
+
+    if data.ndim == 2:
+        return data[np.ix_(rows, cols)]
+    return data[..., rows, :][..., :, cols]
+
+
 def warp_to_target_grid(
     data: np.ndarray,
     src_crs: Any,
@@ -246,10 +480,15 @@ def warp_to_target_grid(
     dst_nodata: float = float("nan"),
     working_dtype: Any = np.float64,
 ) -> tuple[np.ndarray, rasterio.transform.Affine]:
-    """Reproject a 2-D array to the target EPSG:3857 grid for a model/region.
+    """Reproject a 2-D array to the target grid for a model/region.
 
     Equivalent to:
-        gdalwarp -t_srs EPSG:3857 -te ... -tr ... -tap -r {resampling}
+        gdalwarp -t_srs {grid CRS} -te ... -tr ... -tap -r {resampling}
+
+    The target CRS is the model/region's declared grid CRS (EPSG:3857 for
+    every legacy region; EPSG:4326 for regions with a native-geographic
+    grid). When the source already sits on an aligned native grid the warp
+    degenerates to index arithmetic and no resampling runs at all.
 
     Parameters
     ----------
@@ -274,14 +513,23 @@ def warp_to_target_grid(
     -------
     (warped_data, dst_transform) where warped_data has the target grid shape.
     """
-    bbox, grid_m = get_grid_params(model, region)
-    dst_transform, dst_h, dst_w = compute_transform_and_shape(bbox, grid_m)
-    dst_crs = rasterio.crs.CRS.from_epsg(3857)
+    grid = get_target_grid(model, region)
+    dst_transform, dst_h, dst_w = grid.transform, grid.height, grid.width
+    dst_crs = rasterio.crs.CRS.from_user_input(grid.crs)
 
     resamp = Resampling[resampling]
     resolved_dtype = np.dtype(working_dtype)
     if resolved_dtype.kind != "f":
         raise ValueError(f"working_dtype must be a floating dtype, got {resolved_dtype}")
+
+    # Native-geographic grids whose source is already aligned are a pure index
+    # roll: exact values, no interpolation (contract §5).
+    rolled = _index_roll_to_target_grid(data, src_crs, src_transform, grid)
+    if rolled is not None:
+        rolled = rolled.astype(np.float32, copy=True)
+        if src_nodata is not None:
+            rolled[rolled == np.float32(src_nodata)] = np.float32(dst_nodata)
+        return rolled, dst_transform
 
     # Expand to 3-D for reproject
     src_3d = data[np.newaxis, :, :] if data.ndim == 2 else data

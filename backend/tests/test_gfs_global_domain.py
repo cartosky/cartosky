@@ -39,7 +39,9 @@ from app.services.builder.raster_grid import (  # noqa: E402
     REGION_BBOX_3857,
     REGION_BBOX_4326,
     compute_transform_and_shape,
+    get_grid_crs,
     get_grid_params,
+    get_target_grid,
 )
 from app.services.colormaps import get_color_map_spec  # noqa: E402
 
@@ -291,32 +293,111 @@ def test_global_envelopes_only_widen_the_declared_ranges() -> None:
 # ── 6. global region geometry (plan §1) ────────────────────────────────────
 
 
-def test_global_grid_is_1604_squared_at_25km() -> None:
-    bbox, grid_meters = get_grid_params(MODEL, GLOBAL)
-    assert grid_meters == 25_000.0
-    _, height, width = compute_transform_and_shape(bbox, grid_meters)
-    assert (height, width) == (1604, 1604)
+def test_global_grid_is_native_4326_at_quarter_degree() -> None:
+    """Contract §1: 1440 × 721 EPSG:4326 at 0.25°, both poles as real rows."""
+    grid = get_target_grid(MODEL, GLOBAL)
+    assert grid.crs == "EPSG:4326"
+    assert grid.resolution == 0.25
+    assert (grid.height, grid.width) == (721, 1440)
+    assert tuple(grid.transform)[:6] == pytest.approx((0.25, 0.0, -180.125, 0.0, -0.25, 90.125))
+    assert grid.bbox == pytest.approx((-180.125, -90.125, 179.875, 90.125))
+
+    # Column/row centres, stated the way the contract states them.
+    first_lon, first_lat = grid.transform * (0.5, 0.5)
+    last_lon, last_lat = grid.transform * (grid.width - 0.5, grid.height - 0.5)
+    assert (first_lon, first_lat) == pytest.approx((-180.0, 90.0))
+    assert (last_lon, last_lat) == pytest.approx((179.75, -90.0))
 
 
-def test_global_bboxes_round_trip_between_3857_and_4326() -> None:
-    west, south, east, north = REGION_BBOX_4326[GLOBAL]
-    assert (west, east) == (-180.0, 180.0)
-    assert south == pytest.approx(-85.05112877980659)
-    assert north == pytest.approx(85.05112877980659)
+def test_mercator_global_grid_is_no_longer_producible() -> None:
+    """The retired 25 km 3857 global grid must not be reachable."""
+    assert GLOBAL not in REGION_BBOX_3857
+    assert GLOBAL not in GFS_MODEL.capabilities.grid_meters_by_region
+    assert GFS_MODEL.capabilities.grid_native_degrees_by_region == {GLOBAL: 0.25}
+    bbox, resolution = get_grid_params(MODEL, GLOBAL)
+    assert resolution == 0.25
+    assert bbox == REGION_BBOX_4326[GLOBAL]
 
-    projected = transform_bounds("EPSG:4326", "EPSG:3857", west, south, east, north)
-    for value, expected in zip(projected, REGION_BBOX_3857[GLOBAL]):
+
+def test_metre_grid_helper_rejects_a_native_geographic_pair() -> None:
+    """A degree pair fed to the metre snap rule must raise, not silently warp.
+
+    `get_grid_params(model, "global")` returns degrees now, so any legacy
+    caller that still pairs it with `compute_transform_and_shape` would get a
+    plausible-looking 722 × 1441 grid with a half-cell-shifted origin. Fail
+    loudly and name the correct entry point instead.
+    """
+    bbox, resolution = get_grid_params(MODEL, GLOBAL)
+    with pytest.raises(ValueError, match="get_target_grid"):
+        compute_transform_and_shape(bbox, resolution)
+
+    # The metre path is untouched.
+    transform, height, width = compute_transform_and_shape(REGION_BBOX_3857["conus"], 25_000.0)
+    assert (height, width) > (0, 0)
+    assert transform.a == 25_000.0
+
+
+def test_canonical_regions_keep_their_mercator_grids() -> None:
+    """The native declaration must not leak into the canonical domains."""
+    for region in ("na", "conus", "pnw"):
+        assert get_grid_crs(MODEL, region) == "EPSG:3857"
+        grid = get_target_grid(MODEL, region)
+        assert grid.resolution == 25_000.0
+        assert grid.bbox == REGION_BBOX_3857[region]
+
+    projected = transform_bounds("EPSG:4326", "EPSG:3857", *REGION_BBOX_4326["na"])
+    for value, expected in zip(projected, REGION_BBOX_3857["na"]):
         assert value == pytest.approx(expected, abs=1.0)
+
+
+def test_written_frames_and_manifest_declare_epsg_4326(tmp_path: Path) -> None:
+    """Contract §4: the projection is carried, never inferred."""
+    import json
+
+    import numpy as np
+
+    from app.services.grid import (
+        build_grid_manifests_for_run_root,
+        write_grid_frames_for_run_root,
+    )
+
+    grid = get_target_grid(MODEL, GLOBAL)
+    run_root = tmp_path / "published" / MODEL / "domains" / GLOBAL / "20260730_00z"
+    (run_root / DECLARING_VAR).mkdir(parents=True)
+    values = np.zeros((grid.height, grid.width), dtype=np.float32)
+
+    write_grid_frames_for_run_root(
+        run_root=run_root,
+        model=MODEL,
+        var=DECLARING_VAR,
+        fh=0,
+        values=values,
+        transform=grid.transform,
+        projection=get_grid_crs(MODEL, GLOBAL),
+    )
+    assert build_grid_manifests_for_run_root(
+        run_root=run_root, model=MODEL, run="20260730_00z", variables=(DECLARING_VAR,)
+    )
+
+    frame_meta = json.loads(
+        (run_root / DECLARING_VAR / "grid" / "fh000.l0.meta.json").read_text()
+    )
+    assert frame_meta["projection"] == "EPSG:4326"
+    assert (frame_meta["height"], frame_meta["width"]) == (721, 1440)
+    assert frame_meta["bbox"] == pytest.approx([-180.125, -90.125, 179.875, 90.125])
+
+    manifest = json.loads((run_root / DECLARING_VAR / "grid" / "manifest.json").read_text())
+    assert manifest["projection"] == "EPSG:4326"
+    assert (manifest["grid"]["height"], manifest["grid"]["width"]) == (721, 1440)
 
 
 def test_global_lod_chain_is_not_degenerate() -> None:
     """The global grid reuses GFS's region-independent LOD config (§1)."""
     from app.services.grid import grid_lod_specs
 
-    bbox, grid_meters = get_grid_params(MODEL, GLOBAL)
-    _, height, width = compute_transform_and_shape(bbox, grid_meters)
+    grid = get_target_grid(MODEL, GLOBAL)
     lods = grid_lod_specs(MODEL, DECLARING_VAR)
     assert lods
     for lod in lods:
         step = int(getattr(lod, "step", 1) or 1)
-        assert height // step >= 2 and width // step >= 2, lod
+        assert grid.height // step >= 2 and grid.width // step >= 2, lod

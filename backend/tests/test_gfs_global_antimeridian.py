@@ -1,19 +1,22 @@
-"""Phase 3 — G1 antimeridian gates for the GFS global domain (25 km).
+"""Phase 3 — G1 antimeridian gates for the GFS global domain (native 4326).
 
 Two synthetic oracles, both driven through the REAL production code paths
 (`warp_to_target_grid`, the grid binary writer, the `/api/v4/sample` route,
 `build_iso_contour_geojson`) rather than reimplementations:
 
 **Suite A — sampling oracle.** A smooth, single-valued analytic field on a
-GFS-style 0–360° EPSG:4326 source is warped onto the registered global 25 km
-EPSG:3857 grid, written as a real packed grid binary into a domain-scoped
-published tree, and sampled through the API at 0°, ±179°, ±179.9°, ±179.99°,
-±180° and mid-Pacific. Every sample must agree with the analytic reference
-*at that longitude* within a derived tolerance.
+GFS-style 0–360° 0.25° EPSG:4326 source is put onto the registered native
+global grid (1440 × 721 EPSG:4326 — a pure longitude roll, no resampling),
+written as a real packed grid binary into a domain-scoped published tree, and
+sampled through the API at 0°, ±179°, ±179.9°, ±179.99°, ±180° and
+mid-Pacific. Every sample must agree with the analytic reference *at that
+longitude* within a derived tolerance, and samples that land on a gridpoint
+must be exact to the packing quantum.
 
   179°E and 179°W are DISTINCT LOCATIONS. Nothing here asserts equality
   across the seam; the seam test asserts the two sides *differ* by more than
-  tolerance, which is what proves the seam has not collapsed.
+  tolerance, which is what proves the seam has not collapsed. lon = +180 is
+  the sole exception: the contract requires it to wrap onto the −180 column.
 
 **Suite B — contour seam behaviour.** A closed feature straddling lon=180
 plus a control feature far from the seam, contoured through the real GDAL CLI
@@ -58,9 +61,11 @@ os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNk
 from app import main as main_module  # noqa: E402
 from app.services import sampling as sampling_module  # noqa: E402
 from app.services.builder.pipeline import build_iso_contour_geojson  # noqa: E402
+from app.services.builder import raster_grid as raster_grid_module  # noqa: E402
 from app.services.builder.raster_grid import (  # noqa: E402
-    compute_transform_and_shape,
-    get_grid_params,
+    _index_roll_to_target_grid,
+    get_grid_crs,
+    get_target_grid,
 )
 from app.services.builder.raster_grid import warp_to_target_grid  # noqa: E402
 from app.services.grid import (  # noqa: E402
@@ -77,10 +82,10 @@ VAR = "tmp2m"
 RUN_ID = "20260729_00z"
 FLAG = "CARTOSKY_GLOBAL_DOMAIN_MODELS"
 
-#: Source grid step in degrees. GFS ships 0.25°; 0.5° keeps the fixture warp
-#: fast and is still fine enough that source-side interpolation error is
-#: negligible against the packing floor (see `_sampling_tolerance`).
-SRC_STEP_DEG = 0.5
+#: Source grid step in degrees — the real GFS 0.25°. It must equal the target
+#: grid's resolution: that is precisely what makes the build a longitude roll
+#: with no resampling, which the exactness pins below depend on.
+SRC_STEP_DEG = 0.25
 
 #: Analytic field, in the packed units of gfs/tmp2m (°F).
 #:
@@ -93,9 +98,6 @@ SRC_STEP_DEG = 0.5
 _FIELD_BASE = 60.0
 _FIELD_LON_AMPLITUDE = 50.0
 _FIELD_LAT_SLOPE = 0.5
-
-#: WGS84 semi-major axis, as EPSG:3857 uses it.
-_EARTH_RADIUS_M = 6378137.0
 
 
 def _analytic(lon: float, lat: float) -> float:
@@ -118,60 +120,64 @@ def _analytic_array(lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
 # ── tolerance ──────────────────────────────────────────────────────────────
 
 
+def _gridpoint_tolerance() -> float:
+    """Tolerance for a query that lands exactly on a gridpoint.
+
+    On the native grid there is no reprojection, so the stored value IS the
+    source value. Only two error terms survive:
+
+    1. **uint16 packing quantisation.** `_encode_values` does
+       `rint((v − offset)/scale)`, so decode error ≤ scale/2. Read from the
+       real packing config, not hardcoded.
+    2. **API response rounding.** `_sample_payload` rounds to 1 decimal ⇒
+       ≤ 0.05 °F.
+
+    No margin: this is the contract's "exact at gridpoints (±scale/2)" claim.
+    (It bounds the read path only; that the roll branch — not a fallback warp —
+    produced the frame is pinned by the two dedicated roll tests below.)
+    """
+    packing = _packing_config(MODEL, VAR)
+    assert packing is not None, f"no packing config for {MODEL}/{VAR}"
+    return float(packing["scale"]) / 2.0 + 0.05
+
+
 def _sampling_tolerance() -> float:
-    """Derive the sample-vs-analytic tolerance from first principles.
+    """Derive the sample-vs-analytic tolerance for arbitrary query points.
 
     The sampled value is the value of the grid *pixel containing* the query
-    point, decoded from a packed uint16 and rounded by the API. Four terms,
-    each bounded from the real grid/packing parameters rather than guessed:
+    point, decoded from a packed uint16 and rounded by the API. Terms:
 
     1. **Pixel-centre offset** (dominant). Sampling is NEAREST-pixel:
        `_sample_binary_frame_index` floors the inverse-affine result, so the
-       returned value describes the pixel centre, which is up to half a pixel
-       away from the query point in each axis. Half a 25 km pixel is 12 500 m
-       in EPSG:3857.
-         · longitude: dλ = 12 500 · 180/(π·R) ≈ 0.1123°, uniform in latitude.
-           |∂f/∂λ| = A·π/180·|cos λ| ≤ 0.8727 °F/deg.
-         · latitude: for Mercator dφ = dy·cos(φ)/R, so dφ ≤ 0.1123° (worst
-           case at the equator). |∂f/∂φ| = 0.5 °F/deg.
-       Second-order curvature over half a pixel is < 1e-3 °F and is absorbed
+       returned value describes the pixel centre, which is up to half a cell
+       — 0.125° on this grid, in BOTH axes and uniformly in latitude, because
+       the grid is geographic.
+         · |∂f/∂λ| = A·π/180·|cos λ| ≤ 0.8727 °F/deg.
+         · |∂f/∂φ| = 0.5 °F/deg.
+       Second-order curvature over half a cell is < 1e-3 °F and is absorbed
        by the margin below.
-    2. **Bilinear resampling slack** from the 0.5° source grid. Linear
-       interpolation error is ≤ (1/8)·max|∂²f/∂λ²|·h². f is exactly linear in
-       latitude, so that axis contributes nothing.
-    3. **uint16 packing quantisation.** `_encode_values` does
-       `rint((v − offset)/scale)`, so decode error ≤ scale/2. Read from the
-       real packing config, not hardcoded.
-    4. **API response rounding.** `_sample_payload` rounds to 1 decimal ⇒
-       ≤ 0.05 °F.
+    2. **Resampling slack: none.** The build is a longitude roll (contract
+       §5), so no interpolation term exists — the term that dominated the
+       25 km mercator version of this suite is simply gone.
+    3. + 4. The gridpoint terms above (packing + API rounding).
 
-    A 15 % margin covers float32 storage, pyproj/GDAL round-off, and the
-    ignored curvature term. The result is ~0.29 °F — narrow enough that the
-    negative controls in this module fail against a 2°-shifted reference,
-    which is what keeps it from being vacuous.
+    A 15 % margin covers float32 storage and the ignored curvature term. The
+    result is ~0.26 °F — narrow enough that the negative controls in this
+    module fail against a 2°-shifted reference, which is what keeps it from
+    being vacuous.
     """
-    _bbox, grid_m = get_grid_params(MODEL, GLOBAL)
-    half_pixel_m = float(grid_m) / 2.0
-    deg_per_meter = 180.0 / (math.pi * _EARTH_RADIUS_M)
-    half_pixel_deg = half_pixel_m * deg_per_meter
+    grid = get_target_grid(MODEL, GLOBAL)
+    half_cell_deg = grid.resolution / 2.0
 
     max_df_dlon = _FIELD_LON_AMPLITUDE * math.radians(1.0)  # |cos| ≤ 1
     max_df_dlat = _FIELD_LAT_SLOPE
-    pixel_centre_term = half_pixel_deg * (max_df_dlon + max_df_dlat)
+    pixel_centre_term = half_cell_deg * (max_df_dlon + max_df_dlat)
 
-    max_d2f_dlon2 = _FIELD_LON_AMPLITUDE * math.radians(1.0) ** 2
-    bilinear_term = 0.125 * max_d2f_dlon2 * SRC_STEP_DEG**2
-
-    packing = _packing_config(MODEL, VAR)
-    assert packing is not None, f"no packing config for {MODEL}/{VAR}"
-    packing_term = float(packing["scale"]) / 2.0
-
-    api_rounding_term = 0.05
-
-    return 1.15 * (pixel_centre_term + bilinear_term + packing_term + api_rounding_term)
+    return 1.15 * (pixel_centre_term + _gridpoint_tolerance())
 
 
 TOLERANCE_F = _sampling_tolerance()
+GRIDPOINT_TOLERANCE_F = _gridpoint_tolerance()
 
 
 # ── synthetic source + warp ────────────────────────────────────────────────
@@ -194,7 +200,7 @@ _WARP_CACHE: dict[str, tuple[np.ndarray, object]] = {}
 
 
 def _warped_global_field() -> tuple[np.ndarray, object]:
-    """The real warp onto the registered global 25 km grid (cached per run)."""
+    """The real build onto the registered native global grid (cached)."""
     if "value" not in _WARP_CACHE:
         values, src_transform = _source_raster()
         _WARP_CACHE["value"] = warp_to_target_grid(
@@ -261,6 +267,7 @@ def _publish_global_frame(data_root: Path, values: np.ndarray, transform: object
         fh=0,
         values=values,
         transform=transform,
+        projection=get_grid_crs(MODEL, GLOBAL),
     )
     (var_dir / "fh000.json").write_text(
         json.dumps({"fh": 0, "units": "F", "valid_time": "2026-07-29T00:00:00Z"})
@@ -316,13 +323,13 @@ async def _sample(client: httpx.AsyncClient, *, lon: float, lat: float) -> dict:
 # SUITE A — sampling oracle
 # ─────────────────────────────────────────────────────────────────────────────
 
-#: Latitudes exercised at every longitude. All well inside the ±85.05° Mercator
-#: pole clip so no assertion depends on the clipped rows.
+#: Latitudes exercised at every longitude. Mid-latitudes for the oracle; the
+#: poles get their own dedicated tests since only the native grid has them.
 LATITUDES = (0.0, 35.0, -35.0)
 
 #: The near-seam spread plus reference longitudes. `180.0` and `-180.0` are the
-#: two *endpoints of the same meridian* and land in opposite edge columns of
-#: the grid — they are deliberately both present and never compared.
+#: two *endpoints of the same meridian*; on the native grid +180 wraps onto the
+#: −180 column (contract §3), which its own test pins.
 SEAM_LONGITUDES = (
     0.0,
     179.0,
@@ -356,26 +363,72 @@ def test_analytic_field_fits_packing_range() -> None:
     assert field_max < representable_max, (field_max, representable_max)
 
 
-def test_global_grid_geometry_is_the_registered_25km_grid() -> None:
+def test_global_grid_geometry_is_the_registered_native_grid() -> None:
     """Pins the grid the oracle is derived against."""
-    bbox, grid_m = get_grid_params(MODEL, GLOBAL)
-    assert grid_m == 25_000.0
-    _transform, height, width = compute_transform_and_shape(bbox, grid_m)
-    assert (height, width) == (1604, 1604)
+    grid = get_target_grid(MODEL, GLOBAL)
+    assert grid.crs == "EPSG:4326"
+    assert grid.resolution == SRC_STEP_DEG
+    assert (grid.height, grid.width) == (721, 1440)
 
 
-def test_warp_leaves_no_seam_gap() -> None:
-    """The warp must not punch a nodata stripe along the antimeridian.
+def test_the_roll_path_claims_this_source() -> None:
+    """The index-roll branch must actually accept the real GFS global source.
 
-    A 0–360 source reprojected to a −180…180 destination is exactly where a
-    seam bug shows up as a column of NaN. Checked on the equatorial band,
-    which is fully covered by the source.
+    Values alone cannot prove this: on a grid-aligned source rasterio's
+    bilinear/nearest reproject is bit-exact, so a frame that matches the roll
+    is also what a *fallback warp* would produce. This pins the branch.
     """
-    warped, transform = _warped_global_field()
-    _bbox, grid_m = get_grid_params(MODEL, GLOBAL)
-    equator_row = int((transform.f - 0.0) / grid_m)
-    band = warped[equator_row - 2 : equator_row + 3, :]
-    assert np.isfinite(band).all(), "nodata found on the equatorial band after warp"
+    values, src_transform = _source_raster()
+    grid = get_target_grid(MODEL, GLOBAL)
+    rolled = _index_roll_to_target_grid(values, "EPSG:4326", src_transform, grid)
+    assert rolled is not None, "index-roll branch rejected the native GFS global source"
+    assert rolled.shape == (grid.height, grid.width)
+
+
+def test_build_is_a_pure_longitude_roll(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The exactness proof: output == source rolled by half a world.
+
+    Two independent claims, because either alone is weak:
+
+    1. **No reprojection runs.** The ``reproject`` the warp module actually
+       calls is patched to explode, so reaching the fallback warp is an
+       immediate failure. (Value comparison cannot show this — reproject is
+       bit-exact on an aligned source, so the arrays would agree either way.)
+    2. **The roll is the right one.** The output equals the source rolled by
+       half a world, with no nodata.
+    """
+    def _explode(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("rasterio.warp.reproject ran: the build is not a pure roll")
+
+    monkeypatch.setattr(raster_grid_module, "reproject", _explode)
+
+    source, src_transform = _source_raster()
+    built, transform = warp_to_target_grid(
+        source,
+        "EPSG:4326",
+        src_transform,
+        model=MODEL,
+        region=GLOBAL,
+        resampling="bilinear",
+    )
+
+    grid = get_target_grid(MODEL, GLOBAL)
+    roll = grid.width // 2  # 0…360 → −180…+179.75
+    assert np.array_equal(built, np.roll(source, roll, axis=1))
+    assert tuple(transform)[:6] == pytest.approx(tuple(grid.transform)[:6])
+    assert np.isfinite(built).all(), "nodata found after a pure index roll"
+
+
+def test_poles_are_real_rows() -> None:
+    """Contract §1: row 0 is +90 and row 720 is −90, both carrying data."""
+    built, transform = _warped_global_field()
+    assert built.shape[0] == 721
+    assert np.isfinite(built[0]).all() and np.isfinite(built[720]).all()
+
+    _lon, north = transform * (0.5, 0.5)
+    _lon, south = transform * (0.5, 720.5)
+    assert north == pytest.approx(90.0)
+    assert south == pytest.approx(-90.0)
 
 
 def test_display_prep_is_absent_so_the_sampled_grid_is_the_warped_grid() -> None:
@@ -464,34 +517,103 @@ async def test_tolerance_is_not_vacuously_wide(
         )
 
 
-def test_seam_endpoints_land_in_opposite_edge_columns(
-    published_global: Path,
-) -> None:
-    """±180 are the same meridian but opposite ends of the grid.
-
-    Asserted on the index math directly so that the "distinct locations"
-    property is pinned at the addressing level, not just the value level.
-    """
-    meta_path = (
-        published_global
-        / "published"
-        / MODEL
-        / "domains"
-        / GLOBAL
-        / RUN_ID
-        / VAR
-        / "grid"
-        / "fh000.l0.meta.json"
+def _frame_meta(published_global: Path) -> dict:
+    return json.loads(
+        (
+            published_global
+            / "published"
+            / MODEL
+            / "domains"
+            / GLOBAL
+            / RUN_ID
+            / VAR
+            / "grid"
+            / "fh000.l0.meta.json"
+        ).read_text()
     )
-    meta = json.loads(meta_path.read_text())
+
+
+def test_published_frame_declares_the_native_projection(published_global: Path) -> None:
+    meta = _frame_meta(published_global)
+    assert meta["projection"] == "EPSG:4326"
+    assert (meta["height"], meta["width"]) == (721, 1440)
+
+
+def test_seam_endpoints_address_the_same_column(published_global: Path) -> None:
+    """±180 are the same meridian, and the sampler must treat them so.
+
+    Asserted on the index math directly so that the wrap is pinned at the
+    addressing level, not just the value level: −180 is the seam column
+    (col 0) and +180, which is not a column centre, wraps onto it.
+    """
+    meta = _frame_meta(published_global)
     width = int(meta["width"])
 
     _row_e, col_east = sampling_module._sample_binary_frame_index(meta, lon=180.0, lat=0.0)
     _row_w, col_west = sampling_module._sample_binary_frame_index(meta, lon=-180.0, lat=0.0)
 
-    assert 0 <= col_west < col_east < width
     assert col_west == 0
-    assert col_east == width - 1
+    assert col_east == 0
+    # ±179.75 remain the distinct edge columns either side of the seam.
+    _row, col_last = sampling_module._sample_binary_frame_index(meta, lon=179.75, lat=0.0)
+    assert col_last == width - 1
+
+
+def test_pole_rows_are_addressable(published_global: Path) -> None:
+    meta = _frame_meta(published_global)
+    north_row, _col = sampling_module._sample_binary_frame_index(meta, lon=0.0, lat=90.0)
+    south_row, _col = sampling_module._sample_binary_frame_index(meta, lon=0.0, lat=-90.0)
+    assert north_row == 0
+    assert south_row == int(meta["height"]) - 1 == 720
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("lon", (-180.0, -150.0, 0.0, 179.75))
+@pytest.mark.parametrize("lat", (0.0, 35.25, -35.25))
+async def test_sample_at_a_gridpoint_is_exact_to_the_packing_quantum(
+    client: httpx.AsyncClient, published_global: Path, lon: float, lat: float
+) -> None:
+    """No warp error term exists on this path (contract §3).
+
+    Every (lon, lat) here is a grid *centre*, so the stored value is the
+    source value itself; the only slack allowed is ±scale/2 plus the API's
+    1-decimal rounding. This is an end-to-end tolerance gate on the read path
+    — that the *roll* branch (and not a fallback warp) produced the frame is
+    pinned separately by `test_the_roll_path_claims_this_source` and
+    `test_build_is_a_pure_longitude_roll`, since on an aligned source a warp
+    would agree here anyway.
+    """
+    payload = await _sample(client, lon=lon, lat=lat)
+    sampled = float(payload["value"])
+    delta = abs(sampled - _analytic(lon, lat))
+    assert delta <= GRIDPOINT_TOLERANCE_F, (
+        f"lon={lon} lat={lat}: sampled={sampled} expected={_analytic(lon, lat):.4f} "
+        f"delta={delta:.4f} > gridpoint tolerance={GRIDPOINT_TOLERANCE_F:.4f}"
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("lat", LATITUDES)
+async def test_plus_180_wraps_onto_the_minus_180_column(
+    client: httpx.AsyncClient, published_global: Path, lat: float
+) -> None:
+    """Contract §3: +180 is API-legal and is the same physical meridian."""
+    east = await _sample(client, lon=180.0, lat=lat)
+    west = await _sample(client, lon=-180.0, lat=lat)
+    assert east["noData"] is False and west["noData"] is False
+    assert float(east["value"]) == float(west["value"])
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("lat", (90.0, -90.0))
+async def test_sampling_at_the_poles_returns_data(
+    client: httpx.AsyncClient, published_global: Path, lat: float
+) -> None:
+    """The mercator grid could not represent these latitudes at all."""
+    payload = await _sample(client, lon=0.0, lat=lat)
+    assert payload["noData"] is False, payload
+    sampled = float(payload["value"])
+    assert abs(sampled - _analytic(0.0, lat)) <= GRIDPOINT_TOLERANCE_F, payload
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -563,6 +685,7 @@ def seam_contours(tmp_path: Path) -> dict:
     build_iso_contour_geojson(
         value_data=warped,
         value_transform=transform,
+        value_crs=get_grid_crs(MODEL, GLOBAL),
         out_geojson_path=out_path,
         levels=[_CONTOUR_LEVEL],
     )

@@ -181,12 +181,14 @@ GFS_REGIONS: dict[str, RegionSpec] = {
         bbox_wgs84=(-134.0, 24.0, -60.0, 55.0),
         clip=True,
     ),
-    # Phase 3 — the whole globe at 25 km. Latitude bounds are the EPSG:3857
-    # pole clip; no source clipping (the GFS grid already covers the domain).
+    # Phase 3 — the whole globe on the source's native 0.25° EPSG:4326 grid.
+    # Data coverage is the full globe including both poles; the mercator
+    # viewer's ±85.05° clip is a display limit, not a coverage limit. No
+    # source clipping (the GFS grid already covers the domain).
     "global": RegionSpec(
         id="global",
         name="Global",
-        bbox_wgs84=(-180.0, -85.05112877980659, 180.0, 85.05112877980659),
+        bbox_wgs84=(-180.0, -90.0, 180.0, 90.0),
         clip=False,
     ),
 }
@@ -1276,7 +1278,12 @@ GFS_CAPABILITIES = ModelCapabilities(
         "conus": 25_000.0,
         "na": 25_000.0,
         "pnw": 25_000.0,
-        "global": 25_000.0,
+    },
+    # The global domain is published on the source's own 0.25° EPSG:4326 grid
+    # (1440 × 721, both poles included) rather than a mercator warp — see
+    # docs/GLOBAL_DOMAIN_4326_CONTRACT.md.
+    grid_native_degrees_by_region={
+        "global": 0.25,
     },
     run_discovery={
         "probe_var_key": "tmp2m",

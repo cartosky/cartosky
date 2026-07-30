@@ -117,6 +117,12 @@ class ModelCapabilities:
     product: str = "sfc"
     canonical_region: str = "conus"
     grid_meters_by_region: dict[str, float] = field(default_factory=dict)
+    # Regions stored on a native EPSG:4326 grid instead of an EPSG:3857 metre
+    # grid, mapped to their resolution in degrees. Presence here is the sole
+    # declaration that a region follows the native-geographic artifact
+    # contract (docs/GLOBAL_DOMAIN_4326_CONTRACT.md); such regions must NOT
+    # also appear in ``grid_meters_by_region``.
+    grid_native_degrees_by_region: dict[str, float] = field(default_factory=dict)
     run_discovery: dict[str, Any] = field(default_factory=dict)
     ui_defaults: dict[str, Any] = field(default_factory=dict)
     ui_constraints: dict[str, Any] = field(default_factory=dict)
