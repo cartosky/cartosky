@@ -210,8 +210,13 @@ def get_grid_params(
 
 
 def _capability_grid_map(model: str, attribute: str) -> dict[str, Any] | None:
+    # Relative import: the deployed API imports this package as
+    # ``backend.app`` (uvicorn backend.app.main:app), where a
+    # ``from app.models...`` absolute import fails and the except below
+    # silently disabled every capability grid map. The legacy metre path had
+    # static fallbacks that masked this; the native-geographic map does not.
     try:
-        from app.models.registry import MODEL_REGISTRY
+        from ...models.registry import MODEL_REGISTRY
     except Exception:
         return None
     plugin = MODEL_REGISTRY.get(model)

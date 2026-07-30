@@ -162,7 +162,7 @@ time; per-fh requests would waterfall):
 | **1 — Pipeline** | Fetch ship-set + surface block, stack writer + sidecar, scheduler wiring behind `CARTOSKY_SOUNDING_MODELS` (empty default, HRRR when on), retention hookup | Stacks publishing on prod for full runs; spot-check vs direct GRIB decode |
 | **2 — Endpoint** | `/forecast/sounding`, seek sampler for stacks, tests in the Layer-1/2 style | Served profile byte-identical to decoded stack; OKC parity vs spike profile |
 | **3 — Viewer panel (v1 ship)** | Map-click entry, panel, SVG plot, scrubber, URL sync, dark styling | Prod gate: real-phone + desktop review vs TT reference |
-| **4 — Parcel & indices** | MetPy server-side: SB/ML parcel path, CAPE/CIN, LCL/LFC/EL markers, readout panel | Values match TT/SHARPpy same-data within tolerance (document chosen tolerance) |
+| **4 — Parcel & indices** | MetPy server-side: SB/ML parcel path, CAPE/CIN, LCL/LFC/EL markers, readout panel | Values match TT/SHARPpy same-data within tolerance (document chosen tolerance) — **requires decision #5 first**; see v2 prototype finding below |
 | **5 — Overlays** | Wet-bulb, hodograph (U/V already in stack), omega strip (VVEL already in stack per decision 2026-07-30), DGZ, θe inset | Per-overlay visual gates |
 
 Phases 1–2 are backend-only and shippable dark; Phase 3 is the first user-visible ship.
@@ -177,6 +177,18 @@ Phases 1–2 are backend-only and shippable dark; Phase 3 is the first user-visi
    decidable at Phase 3 review.
 4. **Nearest-gridpoint vs interpolation** at pick time. v1: nearest (12 km cell, honest
    and cheap; the response reports the snap distance). Open; revisit only if users notice.
+5. **SB parcel origin definition (Phase 4 blocker), found by the v2 prototype
+   (2026-07-30).** With real anchoring, ML flavors and PWAT match Tropical Tidbits within
+   a few percent (MLCAPE 83 vs 93, MLCIN −101 vs −106, PWAT 44.0 vs 43.4 mm) — but SBCAPE
+   is 367 vs TT's 966 on identical data. Diagnosed as *surface-parcel definition
+   sensitivity*, not a column error: this hot/dry column (LCL 721 hPa) gives SBCAPE
+   367→758→1276 for 2m Td of 17→18→19 °C, and TT's displayed 65 °F surface Td reproduces
+   ~926. We use HRRR's native `DPT:2m` grid value; TT evidently uses something else
+   (interpolation, lowest-model-level parcel, or the model's own SBCAPE field).
+   Virtual-temperature correction adds ~120 J/kg more. Before Phase 4: pick our parcel
+   definition (options: raw 2m fields as-is; Tv-corrected; lowest-model-level; or also
+   publish HRRR's native CAPE fields for comparison) and set the parity tolerance
+   accordingly. Sensitivity table recorded in the spike's `indices_v2.json` diagnostics.
 
 ## 9. Spike verification record (2026-07-30)
 
