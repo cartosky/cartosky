@@ -82,7 +82,7 @@ import {
   parseRunId,
   runIdToIso,
 } from "@/lib/time-axis";
-import { buildPermalinkSearch } from "@/lib/permalink";
+import { buildPermalinkSearch, viewerPermalinkStateFromSelection } from "@/lib/permalink";
 import { buildComparePermalinkSearch } from "@/lib/compare-permalink";
 import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
@@ -1589,20 +1589,19 @@ export default function App() {
     const feedbackPermalinkForecastHour = Number.isFinite(forecastHour)
       ? forecastHour
       : pendingInitialForecastHourRef.current;
-    const permalinkSearch = buildPermalinkSearch({
-      model: model || undefined,
-      run: run || undefined,
-      var: variable || undefined,
-      ensembleView: ensembleView || undefined,
-      product: product || undefined,
-      fh: Number.isFinite(feedbackPermalinkForecastHour)
-        ? Number(feedbackPermalinkForecastHour)
-        : undefined,
-      region: region || undefined,
+    const permalinkSearch = buildPermalinkSearch(viewerPermalinkStateFromSelection({
+      model,
+      run,
+      variable,
+      ensembleView,
+      product,
+      fh: feedbackPermalinkForecastHour,
+      region,
+      dataDomain,
       lat: mapView.lat,
       lon: mapView.lon,
       z: mapView.z,
-    });
+    }));
     const pathname = typeof window !== "undefined" ? window.location.pathname : "/viewer";
     const hash = typeof window !== "undefined" ? window.location.hash : "";
     setViewerContext({
@@ -1614,6 +1613,7 @@ export default function App() {
       animationStateContext: isPlaying ? "playing" : (isGridPreloadingForPlay ? "buffering" : "paused"),
     });
   }, [
+    dataDomain,
     ensembleView,
     product,
     forecastHour,
@@ -5990,20 +5990,22 @@ export default function App() {
       ? resolvedRunForRequests
       : (run === "latest" ? (latestRunId ?? "latest") : run);
     const mapView = mapViewRef.current;
-    const permalinkSearch = buildPermalinkSearch({
-      model: model || undefined,
-      run: run || undefined,
-      var: variable || undefined,
-      ensembleView: ensembleView || undefined,
-      product: product || undefined,
-      fh: Number.isFinite(resolvedForecastHourPermalink)
-        ? Number(resolvedForecastHourPermalink)
-        : undefined,
-      region: region || undefined,
+    const permalinkSearch = buildPermalinkSearch(viewerPermalinkStateFromSelection({
+      model,
+      run,
+      variable,
+      ensembleView,
+      product,
+      fh: resolvedForecastHourPermalink,
+      region,
+      // Phase 2B: only the EFFECTIVE domain travels. Canonical resolves to
+      // null, so the share link and the server-side screenshot render URL stay
+      // byte-identical to today for every existing user.
+      dataDomain,
       lat: mapView.lat,
       lon: mapView.lon,
       z: mapView.z,
-    });
+    }));
     const permalink = typeof window !== "undefined"
       ? `${window.location.origin}${window.location.pathname}${permalinkSearch}${window.location.hash}`
       : permalinkSearch;
@@ -6060,6 +6062,7 @@ export default function App() {
         // Leave the fallback payload in place on import/build errors.
       });
   }, [
+    dataDomain,
     displayedForecastHour,
     gridOnlySelection,
     latestRunId,
@@ -6117,20 +6120,33 @@ export default function App() {
     const isLeftLatest = run === "latest" || run === publishedRuns[0];
     const rightRun = !isLeftLatest ? "latest" : (publishedRuns[1] ?? "latest");
     const mapView = mapViewRef.current;
-    const search = buildComparePermalinkSearch({
-      lm: model || undefined,
-      lv: variable || undefined,
-      lr: run || undefined,
-      rm: model || undefined,
-      rv: variable || undefined,
-      rr: rightRun,
-      fh: Number.isFinite(forecastHour) ? Number(forecastHour) : undefined,
+    const core = viewerPermalinkStateFromSelection({
+      model,
+      variable,
+      run,
+      fh: forecastHour,
+      dataDomain,
       lat: mapView.lat,
       lon: mapView.lon,
       z: mapView.z,
     });
+    const search = buildComparePermalinkSearch({
+      lm: core.model,
+      lv: core.var,
+      lr: core.run,
+      rm: core.model,
+      rv: core.var,
+      rr: rightRun,
+      fh: core.fh,
+      // Phase 2B: carry only a resolved (non-null) data domain into compare,
+      // which reads `domain` as a single global param for both sides.
+      domain: core.domain,
+      lat: core.lat,
+      lon: core.lon,
+      z: core.z,
+    });
     return `/compare${search}`;
-  }, [capabilities, forecastHour, mapViewTick, model, run, variable]);
+  }, [capabilities, dataDomain, forecastHour, mapViewTick, model, run, variable]);
 
   const productAvailability = useMemo(() => {
     const map: Record<string, boolean> = {};

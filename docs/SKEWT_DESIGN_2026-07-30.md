@@ -126,6 +126,11 @@ New endpoint, meteogram-shaped: **`POST /api/v4/forecast/sounding`** with
 time; per-fh requests would waterfall):
 
 - Resolve run via existing manifest/run-resolution logic (same stale-run fallback rules).
+- **Row-convention warning (bit us at the Phase 1 prod gate):** the stack affine is
+  north-up (row 0 = north), while xarray/cfgrib GRIB decodes index south-up. The spike's
+  OKC point "row 417, col 899" (south-up, full grid) is stack row 160, col 225 (north-up,
+  decimated). Always derive (row, col) from the sidecar affine — never reuse
+  xarray-derived indices.
 - lat/lon → (row, col) once via the decimated affine; one 306 B seek-read per fh.
 - Response per fh: `{fh, valid_time, surface: {...}, levels: [...], t: [...], td: [...],
   u: [...], v: [...], w: [...]}` in physical units (server decodes scale/offset) +
@@ -162,12 +167,17 @@ time; per-fh requests would waterfall):
 | **1 — Pipeline** | Fetch ship-set + surface block, stack writer + sidecar, scheduler wiring behind `CARTOSKY_SOUNDING_MODELS` (empty default, HRRR when on), retention hookup | Stacks publishing on prod for full runs; spot-check vs direct GRIB decode |
 | **2 — Endpoint** | `/forecast/sounding`, seek sampler for stacks, tests in the Layer-1/2 style | Served profile byte-identical to decoded stack; OKC parity vs spike profile |
 | **3 — Viewer panel (v1 ship)** | Map-click entry, panel, SVG plot, scrubber, URL sync, dark styling | Prod gate: real-phone + desktop review vs TT reference |
-| **4 — Parcel & indices** | MetPy server-side: SB/ML parcel path, CAPE/CIN, LCL/LFC/EL markers, readout panel | Values match TT/SHARPpy same-data within tolerance (document chosen tolerance) — **requires decision #5 first**; see v2 prototype finding below |
+| **4 — Parcel & indices** | MetPy server-side: SB/ML parcel path, CAPE/CIN, LCL/LFC/EL markers, readout panel. **First prod MetPy dependency** — this phase adds `metpy` to backend/requirements.txt + installs into the prod API venv (Phases 1–3 never run MetPy on prod; Phase 3 background lines are generated offline and checked in) | Values match TT/SHARPpy same-data within tolerance (document chosen tolerance) — **requires decision #5 first**; see v2 prototype finding below |
 | **5 — Overlays** | Wet-bulb, hodograph (U/V already in stack), omega strip (VVEL already in stack per decision 2026-07-30), DGZ, θe inset | Per-overlay visual gates |
 
 Phases 1–2 are backend-only and shippable dark; Phase 3 is the first user-visible ship.
 
-**Phase 1 status: implemented + independently verified 2026-07-30** (uncommitted).
+**Phase 1 status: COMPLETE — prod gate closed 2026-07-30.** Deployed with
+`CARTOSKY_SOUNDING_MODELS=hrrr` on csky-hrrr-scheduler; live backfill verified (fetch
+109 MB prs + 8.5 MB sfc from AWS, stacks exactly 450×265×380 B, published-promotion and
+manifest sweep working); CLI spot-check at OKC (stack row 160/col 225) matched the spike
+reference — surface pressure 969.2 vs 968.5 hPa, column agreement within diurnal
+evolution. Band-tag→plane mapping validated against real GRIB.
 `backend/app/services/sounding.py` (new), `sounding_models()` in config, scheduler hook +
 top-level `sounding` manifest section, 67 new tests. Verifier hand-decoded a planted
 pixel's 380-byte block with independent offset arithmetic (exact match), confirmed

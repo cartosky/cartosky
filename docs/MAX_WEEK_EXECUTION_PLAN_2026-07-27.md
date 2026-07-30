@@ -536,6 +536,15 @@ Per model: global retention, publication, manifest, and latest-pointer behavior;
 - [ ] Disk utilization checkpoint recorded
 - [ ] Mobile: viewer usable and performant at global extent on a real device
 
+**Global city-anchor coverage (noted 2026-07-30, non-blocking):** the city
+label anchor dataset is NA-scoped, so the global domain shows city values
+only over CONUS/Canada. The projection-aware sampling path (Phase 2, CPU
+paths) is verified and world-ready; this is a *data* gap, not a code gap.
+Extending the anchor GeoJSON to world cities is go-live polish — schedule
+alongside the go-live UI work, not as a rollout blocker. Zoom-density
+curation for a global extent is the design question to answer when picked
+up.
+
 **Realistic expectation: GFS ships this week; AIGFS is the stretch.** If AIFS/ECMWF cannot clear gates, leave them wired behind rollout controls and dark. Two solid global models beat four shaky ones going into October.
 
 ---
