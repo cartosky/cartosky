@@ -499,7 +499,11 @@ orchestrator ran both passes directly — checklist in the plan doc).
   canonical URLs and smaller canonical payloads; the viewer must not fetch a
   global artifact merely because its camera is over NA/CONUS.
 - NA-only anomaly variables remain canonical-only until global ERA5 baselines
-  exist; their canonical artifacts follow the canonical 25 km grid.
+  exist; their canonical artifacts follow the canonical 25 km grid. **This is
+  a scheduled gap, not a permanent one — see "Phase 3A — Global anomaly
+  variables" below. Global anomalies are REQUIRED before user-visible
+  go-live** (hgt500 anomalies are among the most-cited TWF variables); they
+  are NOT required for the dark-flag phases.
 - The 9 km canonical grid oversamples CartoSky's 0.25° open ECMWF/AIFS source.
   Its smoother interpolation is not additional source-resolved forecast
   detail. Any future canonical cutover still requires visual, contour,
@@ -533,6 +537,55 @@ Per model: global retention, publication, manifest, and latest-pointer behavior;
 - [ ] Mobile: viewer usable and performant at global extent on a real device
 
 **Realistic expectation: GFS ships this week; AIGFS is the stretch.** If AIFS/ECMWF cannot clear gates, leave them wired behind rollout controls and dark. Two solid global models beat four shaky ones going into October.
+
+---
+
+## Phase 3A — Global anomaly variables (ERA5 global baselines) (M/L)
+
+**Status: committed requirement, deliberately later phase — added 2026-07-30.**
+Driver: hgt500 anomalies are among the most-cited variables in the TWF user
+base; **global go-live (user-visible) must include anomaly support.** The
+dark-flag phases (native-4326 publish, CPU sampling paths, seam work) do NOT
+depend on this and must not wait for it.
+
+**Sequencing:** after the CPU-projection-path phase; independent of the seam
+work; before the frontend go-live change that exposes the domain UI. Until
+this phase ships, the G6 checklist line "anomaly variables absent from
+global capabilities" remains the correct assertion; this phase inverts it.
+
+**Operational model (operator-set):** ERA5 baseline generation runs on a
+**separate VM**, never on prod — Brian spins it up, builds the assets, and
+moves the finished baselines into the climatology folder on prod. Agents
+write and commit the generation/verification scripts; Brian executes them.
+
+Scope, in order:
+
+1. **Sizing estimate first, before any ERA5 download.** The ≈161 GiB global
+   projection excludes anomaly artifacts AND baseline assets. Global 4326
+   baselines (1440×721 per baseline day/var) plus per-run anomaly artifacts
+   are new disk; produce the number before committing.
+2. **Global ERA5 baseline generation** for the anomaly variable set
+   (hgt500_anom first-class; tmp2m/tmp850/precip anomalies per current NA
+   catalog), on the native 0.25° EPSG:4326 grid per
+   `docs/GLOBAL_DOMAIN_4326_CONTRACT.md`. Existing NA baselines and their
+   °F conventions are untouched (tmp850_anom °C ladder decision carries
+   over as-is).
+3. **Climatology validation goes projection-aware.** `climatology.py`
+   currently enforces EPSG:3857 baseline assets (left untouched by Phase 1
+   by design); it must accept 4326 baselines for native-geographic regions
+   without loosening the 3857 checks for canonical.
+4. **Anomaly derive path on the 4326 grid** — including the
+   `_resolve_derive_target_grid` degrade added in Phase 1 (native-geographic
+   regions currently return "no shared warp cache"; with real global
+   baselines this becomes a real shared-grid resolution again).
+5. **Capabilities + tests:** anomaly vars declare global;
+   `test_gfs_global_domain.py` anomaly-exclusion pins invert; parity spot
+   check of global anomaly values against canonical NA where they overlap;
+   per-model stop-and-verify gates (G1–G6) re-run for the anomaly set.
+
+**Not in scope:** any change to canonical NA anomaly behavior or ERA5
+baseline °F storage conventions; AIFS/ECMWF anomaly decisions (follow their
+model rollout turns).
 
 ---
 

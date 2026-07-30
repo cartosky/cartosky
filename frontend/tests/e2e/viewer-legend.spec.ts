@@ -61,6 +61,13 @@ async function expandRail(page: Page) {
   await expect(page.getByTestId('viewer-rail')).toHaveAttribute('data-rail-state', 'expanded');
 }
 
+async function collapseRail(page: Page) {
+  if ((await page.getByTestId('viewer-rail').getAttribute('data-rail-state')) === 'expanded') {
+    await page.getByTestId('rail-collapse-toggle').click();
+  }
+  await expect(page.getByTestId('viewer-rail')).toHaveAttribute('data-rail-state', 'collapsed');
+}
+
 /**
  * The full (rail-mounted) legend rendering for the current fixture. Composite
  * groups nest a presentation per component, so this is the outermost one.
@@ -401,6 +408,18 @@ test.describe('Viewer legend (Phase 7)', () => {
     await expect(page.getByTestId('viewer-suspense-skeleton')).toBeHidden({ timeout: 30_000 });
     await expect(page.getByTestId('viewer-rail')).toBeVisible({ timeout: 20_000 });
     await expect(chip(page)).toHaveCount(0);
+
+    // The desktop rail's VIEW section owns the same preference — a pref
+    // persisted false must be recoverable from desktop, not only from the
+    // mobile sheet (the pre-toggle dead-end).
+    await expandRail(page);
+    const legendChipRow = page.getByTestId('rail-toggle-legend-chip').getByRole('button');
+    await expect(legendChipRow).toHaveAttribute('aria-pressed', 'false');
+    await legendChipRow.click();
+    await expect(legendChipRow).toHaveAttribute('aria-pressed', 'true');
+    expect(await page.evaluate(() => localStorage.getItem('twf.map.legend_visible'))).toBe('true');
+    await collapseRail(page);
+    await expect(chip(page)).toBeVisible();
   });
 
   // ── 3. Collapsed rail gains the Legend item (§6.3) ────────────────────────

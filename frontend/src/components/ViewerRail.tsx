@@ -93,7 +93,7 @@ export function ViewerRail() {
     run, onRunChange, runs, runDisplayLabel, runSelectionLocked,
     hasNewerRunAvailable, latestAvailableRunLabel, onViewLatestRun,
     region, onRegionChange, onLocationJump, regions,
-    disabled, legend, legendVisible, compositeLegendLayers,
+    disabled, legend, legendVisible, onLegendVisibleChange, compositeLegendLayers,
     pointLabelsEnabled, onPointLabelsEnabledChange,
     nwsWarningsEnabled, onNwsWarningsEnabledChange,
     zoomControlsVisible, onZoomControlsVisibleChange,
@@ -370,6 +370,17 @@ export function ViewerRail() {
               label="Zoom controls"
               checked={zoomControlsVisible}
               onToggle={() => onZoomControlsVisibleChange(!zoomControlsVisible)}
+              variant="flat"
+            />
+          </div>
+          {/* Same shared twf.map.legend_visible pref as the mobile sheet row —
+              without this, a pref persisted false left desktop with no way to
+              bring the collapsed-state chip back. */}
+          <div data-testid="rail-toggle-legend-chip">
+            <DisplayRow
+              label="Legend chip"
+              checked={legendVisible}
+              onToggle={() => onLegendVisibleChange(!legendVisible)}
               variant="flat"
             />
           </div>

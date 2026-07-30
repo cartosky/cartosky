@@ -400,6 +400,7 @@ export function ModelPicker({
                     favorited ? "text-amber-300 opacity-100" : "text-white/34 opacity-50 hover:text-white/55"
                   )}
                   aria-label={favorited ? `Remove ${option.label} from favorites` : `Favorite ${option.label}`}
+                  title={favorited ? "Remove from favorites" : "Add to favorites"}
                 >
                   <Star className={cn("h-3.5 w-3.5", favorited ? "fill-current" : "")} />
                 </button>
