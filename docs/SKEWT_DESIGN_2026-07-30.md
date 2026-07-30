@@ -173,8 +173,10 @@ Phases 1–2 are backend-only and shippable dark; Phase 3 is the first user-visi
    a later format bump and unbackfillable runs. Reflected in §1/§3/§4/§5.
 2. **Retention — RESOLVED (Brian, 2026-07-30): match HRRR raster retention.** Stacks age
    out with the runs they belong to.
-3. **Td clip threshold** (T < −40 °C fade vs hard clip vs draw-it-all). Cosmetic, open,
-   decidable at Phase 3 review.
+3. **Td upper-level policy — RESOLVED (Brian, 2026-07-30, v3 prototype review): draw
+   full**, no fade/clip. Also from that review, color semantics: green is reserved for
+   the dewpoint trace — moist adiabats render steel-blue (TT pseudoadiabat convention),
+   mixing-ratio lines faint dotted teal, dry adiabats warm tan.
 4. **Nearest-gridpoint vs interpolation** at pick time. v1: nearest (12 km cell, honest
    and cheap; the response reports the snap distance). Open; revisit only if users notice.
 5. **SB parcel origin definition (Phase 4 blocker), found by the v2 prototype

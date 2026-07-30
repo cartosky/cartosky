@@ -1024,11 +1024,15 @@ export default function App() {
     if (run !== "latest" && runManifest.run !== run) {
       return null;
     }
-    if (runManifest.region && dataRegion && runManifest.region !== dataRegion) {
+    // The manifest is fetched for the EFFECTIVE artifact domain (Phase 2B):
+    // a non-canonical dataDomain manifest reports region="global" etc., and
+    // must not be discarded against the canonical dataRegion.
+    const boundaryRegion = dataDomain ?? dataRegion;
+    if (runManifest.region && boundaryRegion && runManifest.region !== boundaryRegion) {
       return null;
     }
     return runManifest.variables?.[requestVariable] ?? null;
-  }, [dataRegion, model, requestVariable, run, runManifest, selectedTimeAxisMode]);
+  }, [dataDomain, dataRegion, model, requestVariable, run, runManifest, selectedTimeAxisMode]);
 
   const manifestReadyThroughFh = useMemo<number | null | undefined>(() => {
     const entry = manifestVariableForBoundary;
