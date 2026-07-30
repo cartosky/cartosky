@@ -131,14 +131,16 @@ export function CompactLegendChip({ legend, compositeLayers = null, position = "
       className={cn(
         "fixed right-4 z-[55] flex flex-col overflow-hidden rounded-xl",
         "border border-[#1a3a5c]/60 bg-[#04101e]/[0.82] shadow-[0_8px_32px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md",
-        position === "mobile" ? "right-3" : "top-[7.75rem]",
+        position === "mobile" && "right-3",
       )}
       style={{
         width: expanded ? `${EXPANDED_WIDTH_PX}px` : chipWidthCss,
-        // §8 State A: top-right of the MAP, mirroring the desktop corner.
         ...(position === "mobile"
-          ? { top: "calc(var(--viewer-map-top-inset, 0px) + 0.75rem)", maxHeight: "calc(100vh - var(--viewer-map-top-inset, 0px) - var(--viewer-map-bottom-inset, 0px) - 1.5rem)" }
-          : null),
+          ? // §8 State A: top-right of the MAP, mirroring the desktop corner.
+            { top: "calc(var(--viewer-map-top-inset, 0px) + 0.75rem)", maxHeight: "calc(100vh - var(--viewer-map-top-inset, 0px) - var(--viewer-map-bottom-inset, 0px) - 1.5rem)" }
+          : // Tucked under the top bar, same seam offset as the rail edge
+            // toggle — never a hardcoded height from a previous chrome.
+            { top: "calc(var(--viewer-topbar-height, 3rem) + var(--viewer-header-extra, 0px) + 0.75rem)" }),
       }}
     >
       <button
