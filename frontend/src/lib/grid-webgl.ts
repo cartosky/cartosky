@@ -2741,6 +2741,7 @@ export class GridWebglLayerController {
         units: grid.units,
       },
       bbox: this.resolveBbox(),
+      projection: this.resolveProjection(),
       points,
     });
 

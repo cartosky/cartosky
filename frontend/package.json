@@ -8,6 +8,7 @@
     "build": "export VITE_RELEASE_SHA=${VITE_RELEASE_SHA:-$(git rev-parse --short HEAD)} && tsc --noEmit -p tsconfig.json && vite build --base /",
     "preview": "vite preview",
     "test": "playwright test",
+    "test:unit": "vitest run",
     "test:ui": "playwright test --ui",
     "test:debug": "playwright test --debug",
     "test:headed": "playwright test --headed",
@@ -48,7 +49,8 @@
     "tailwindcss": "3.4.17",
     "tailwindcss-animate": "1.0.7",
     "typescript": "5.9.2",
-    "vite": "^8.1.0"
+    "vite": "^8.1.0",
+    "vitest": "^4.1.10"
   },
   "overrides": {
     "@clerk/shared": "4.15.0"

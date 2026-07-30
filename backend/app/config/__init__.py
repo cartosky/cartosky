@@ -119,6 +119,23 @@ def global_domain_models() -> frozenset[str]:
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
+def sounding_models() -> frozenset[str]:
+    """Models whose scheduler builds per-forecast-hour sounding stacks.
+
+    Comma-separated model allowlist (``CARTOSKY_SOUNDING_MODELS=hrrr``); empty
+    (the default) means the sounding pass is off everywhere, so a deploy with
+    the flag unset is behaviourally identical to pre-Phase-1 (Skew-T design
+    §7 Phase 1). Removing a model is the kill switch: already-published stacks
+    live inside the run directory and age out with run retention.
+    Deliberately not lru_cached so tests can flip it without cache
+    invalidation; the read is trivially cheap per call.
+    """
+    raw = _env_value("CARTOSKY_SOUNDING_MODELS").strip().lower()
+    if not raw:
+        return frozenset()
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
 def stats_publish_models() -> frozenset[str]:
     """Models whose scheduler runs the ensemble STATS publish pass (member
     pipeline Phase 6 / Tier 2 — percentile + probability map products).

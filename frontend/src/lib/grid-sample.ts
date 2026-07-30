@@ -19,17 +19,35 @@ function mercatorYFromMeters(y: number): number {
 }
 
 /**
+ * True when a grid declares geographic (degree) coordinates. Matches
+ * case/whitespace-insensitively (identical to grid-webgl.ts) so the CPU and
+ * shader branches can never disagree; any non-match — including an absent
+ * field — means the legacy EPSG:3857 default (global domain contract §4).
+ */
+function isGeographicProjection(projection: string | null | undefined): boolean {
+  return String(projection ?? "").trim().toUpperCase() === "EPSG:4326";
+}
+
+/**
  * Inverse of {@link lonLatToGridUv}: map a normalized grid coordinate (u, v) in
- * [0, 1] back to lon/lat. `bbox` is in Web-Mercator meters (EPSG:3857), the same
- * convention `lonLatToGridUv` expects. The mercator-normalization affine cancels
- * out, so the meters span maps linearly; only the Y→lat step is non-linear.
+ * [0, 1] back to lon/lat. `bbox` is in Web-Mercator meters (EPSG:3857) by
+ * default, the same convention `lonLatToGridUv` expects. The
+ * mercator-normalization affine cancels out, so the meters span maps linearly;
+ * only the Y→lat step is non-linear.
+ *
+ * For an `EPSG:4326` grid the bbox is in degrees and both axes are linear —
+ * no Gudermannian.
  */
 export function gridUvToLonLat(
   u: number,
   v: number,
   bbox: [number, number, number, number],
+  projection?: string | null,
 ): [number, number] {
   const [west, south, east, north] = bbox;
+  if (isGeographicProjection(projection)) {
+    return [west + u * (east - west), north + v * (south - north)];
+  }
   const meterX = west + u * (east - west);
   const meterY = north + v * (south - north);
   const lon = (meterX * 180) / MERCATOR_HALF_WORLD;
@@ -39,13 +57,48 @@ export function gridUvToLonLat(
 }
 
 /**
- * Horizontal component of {@link lonLatToGridUv}: lon → u within the bbox, or
- * null when outside/degenerate. In Web Mercator, u depends only on lon (and v
- * only on lat), so callers that map a whole grid can precompute one u per
- * column and one v per row instead of projecting every pixel.
+ * Longitude wrapped into an `EPSG:4326` bbox's [west, east] span by at most one
+ * ±360° turn, or null when it stays outside. Contract §3: on the global grid
+ * the east edge stops short of +180, so lon = +180 must resolve to the −180
+ * seam column. General unwrapped-longitude (world-copy) normalization is not
+ * this function's job.
  */
-export function lonToGridU(lon: number, bbox: [number, number, number, number]): number | null {
+function wrapLonIntoSpan(lon: number, west: number, east: number): number | null {
+  if (lon >= west && lon <= east) {
+    return lon;
+  }
+  const shifted = lon > east ? lon - 360 : lon + 360;
+  return shifted >= west && shifted <= east ? shifted : null;
+}
+
+/**
+ * Horizontal component of {@link lonLatToGridUv}: lon → u within the bbox, or
+ * null when outside/degenerate. In both Web Mercator and EPSG:4326, u depends
+ * only on lon (and v only on lat), so callers that map a whole grid can
+ * precompute one u per column and one v per row instead of projecting every
+ * pixel.
+ */
+export function lonToGridU(
+  lon: number,
+  bbox: [number, number, number, number],
+  projection?: string | null,
+): number | null {
   const [west, , east] = bbox;
+  if (isGeographicProjection(projection)) {
+    const span = east - west;
+    if (!Number.isFinite(span) || span === 0) {
+      return null;
+    }
+    const wrapped = wrapLonIntoSpan(lon, west, east);
+    if (wrapped === null) {
+      return null;
+    }
+    const u = (wrapped - west) / span;
+    if (!Number.isFinite(u) || u < 0 || u > 1) {
+      return null;
+    }
+    return u;
+  }
   const mx = (lon * MERCATOR_HALF_WORLD) / 180;
   const left = mercatorXFromMeters(west);
   const right = mercatorXFromMeters(east);
@@ -61,9 +114,29 @@ export function lonToGridU(lon: number, bbox: [number, number, number, number]):
   return u;
 }
 
-/** Vertical component of {@link lonLatToGridUv}: lat → v within the bbox, or null. */
-export function latToGridV(lat: number, bbox: [number, number, number, number]): number | null {
+/**
+ * Vertical component of {@link lonLatToGridUv}: lat → v within the bbox, or
+ * null. The mercator branch clamps to the Web-Mercator latitude limit; the
+ * geographic branch does not — a 4326 artifact carries (and can be sampled at)
+ * the pole rows themselves, contract §3.
+ */
+export function latToGridV(
+  lat: number,
+  bbox: [number, number, number, number],
+  projection?: string | null,
+): number | null {
   const [, south, , north] = bbox;
+  if (isGeographicProjection(projection)) {
+    const span = north - south;
+    if (!Number.isFinite(span) || span === 0) {
+      return null;
+    }
+    const v = (north - lat) / span;
+    if (!Number.isFinite(v) || v < 0 || v > 1) {
+      return null;
+    }
+    return v;
+  }
   const clampedLat = Math.max(-85.05112878, Math.min(85.05112878, lat));
   const yRadians = (clampedLat * Math.PI) / 180;
   const my = Math.log(Math.tan(Math.PI / 4 + yRadians / 2)) * (MERCATOR_HALF_WORLD / Math.PI);
@@ -85,9 +158,10 @@ export function lonLatToGridUv(
   lon: number,
   lat: number,
   bbox: [number, number, number, number],
+  projection?: string | null,
 ): [number, number] | null {
-  const u = lonToGridU(lon, bbox);
-  const v = latToGridV(lat, bbox);
+  const u = lonToGridU(lon, bbox, projection);
+  const v = latToGridV(lat, bbox, projection);
   if (u === null || v === null) {
     return null;
   }
@@ -184,6 +258,8 @@ export function sampleGridPoints(params: {
   bytes: Uint8Array<ArrayBufferLike>;
   grid: GridSampleGrid;
   bbox: [number, number, number, number];
+  /** Grid CRS from the manifest. Absent = EPSG:3857 (contract §4). */
+  projection?: string | null;
   points: AnchorBatchPoint[];
 }): Record<string, number | null> {
   const dtype = String(params.grid.dtype ?? "").trim().toLowerCase() === "uint8" ? "uint8" : "uint16";
@@ -195,7 +271,7 @@ export function sampleGridPoints(params: {
   const values: Record<string, number | null> = {};
 
   for (const point of params.points) {
-    const uv = lonLatToGridUv(point.lon, point.lat, params.bbox);
+    const uv = lonLatToGridUv(point.lon, point.lat, params.bbox, params.projection);
     if (!uv) {
       values[point.id] = null;
       continue;

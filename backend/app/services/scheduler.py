@@ -23,6 +23,7 @@ from app.models.registry import MODEL_REGISTRY
 from app.config import (
     grid_build_enabled,
     member_publish_models,
+    sounding_models,
     stats_publish_models,
 )
 from app.services import climatology
@@ -38,6 +39,7 @@ from app.services.builder.fetch import HerbieTransientUnavailableError, fetch_va
 from app.services.builder.derive import FetchContext, destroy_fetch_context
 from app.services.builder.pipeline import build_frame, build_frame_bundle
 from app.services.grid import build_grid_manifests_for_run_root, grid_frame_meta_path_for_run_root
+from app.services import sounding as sounding_service
 from app.services.process_memory import current_rss_bytes, peak_rss_bytes
 from app.services.publish_utils import enforce_herbie_cache_retention
 from app.services.run_ids import format_run_id, parse_run_id_datetime
@@ -1439,6 +1441,134 @@ def _target_domains(targets: list[BuildTarget], canonical: str) -> list[str]:
     return domains
 
 
+# ---------------------------------------------------------------------------
+# Sounding stacks (Skew-T design §7 Phase 1) — dark behind
+# CARTOSKY_SOUNDING_MODELS, canonical domain only, never gates raster work.
+# ---------------------------------------------------------------------------
+
+
+def _sounding_enabled(model: str) -> bool:
+    model_norm = str(model).strip().lower()
+    if model_norm not in sounding_models():
+        return False
+    if model_norm not in sounding_service.SUPPORTED_MODELS:
+        logger.info(
+            "Sounding flag lists model=%s but only %s are supported in Phase 1; skipping",
+            model_norm,
+            sorted(sounding_service.SUPPORTED_MODELS),
+        )
+        return False
+    return True
+
+
+def _sounding_manifest_section(
+    *,
+    data_root: Path,
+    model: str,
+    run_id: str,
+    region: str,
+    expected_by_var: dict[str, list[int]],
+) -> dict[str, Any] | None:
+    if not _sounding_enabled(model):
+        return None
+    if normalize_domain(model, region) != canonical_domain(model):
+        return None
+    expected_fhs = sorted({int(fh) for fhs in expected_by_var.values() for fh in fhs})
+    try:
+        return sounding_service.manifest_section(
+            run_root=_staging_run_root(data_root, model, run_id, region),
+            expected_fhs=expected_fhs,
+        )
+    except Exception:
+        logger.exception("Sounding manifest section failed: model=%s run=%s", model, run_id)
+        return None
+
+
+def _sounding_complete_fhs(
+    *,
+    data_root: Path,
+    model_id: str,
+    run_id: str,
+    region: str,
+    primary_vars: list[str],
+    candidate_fhs: Iterable[int],
+) -> list[int]:
+    """Forecast hours whose canonical primary frames are all already on disk.
+
+    This is purely an ordering device: the stack shares no data with the raster
+    frames, so gating on *primary* vars (rather than every target) tracks the
+    build frontier without letting one permanently blocked variable starve the
+    sounding pass forever.
+    """
+    ready: list[int] = []
+    for fh in sorted({int(value) for value in candidate_fhs}):
+        if all(
+            _frame_artifacts_exist(data_root, model_id, run_id, var_id, fh, region=region)
+            for var_id in primary_vars
+        ):
+            ready.append(fh)
+    return ready
+
+
+def _run_sounding_pass(
+    *,
+    data_root: Path,
+    model_id: str,
+    run_id: str,
+    run_dt: datetime,
+    region: str,
+    primary_vars: list[str],
+    candidate_fhs: Iterable[int],
+    reason: str,
+) -> tuple[int, int]:
+    """Build any missing stacks for already-complete fhs. Never raises.
+
+    Returns ``(built, failed)``.
+    """
+    if not _sounding_enabled(model_id):
+        return 0, 0
+    try:
+        run_root = _staging_run_root(data_root, model_id, run_id, region)
+        fhs = _sounding_complete_fhs(
+            data_root=data_root,
+            model_id=model_id,
+            run_id=run_id,
+            region=region,
+            primary_vars=primary_vars,
+            candidate_fhs=candidate_fhs,
+        )
+        pending = [fh for fh in fhs if not sounding_service.stack_exists(run_root, fh)]
+        if not pending:
+            return 0, 0
+        logger.info(
+            "Sounding pass: run=%s model=%s reason=%s pending_fhs=%s",
+            run_id,
+            model_id,
+            reason,
+            pending,
+        )
+        built, failed = sounding_service.build_stacks_for_run(
+            model_id=model_id,
+            run_id=run_id,
+            run_date=run_dt,
+            run_root=run_root,
+            fhs=pending,
+        )
+        logger.info(
+            "Sounding pass done: run=%s model=%s reason=%s built=%d failed=%d",
+            run_id,
+            model_id,
+            reason,
+            built,
+            failed,
+        )
+        return built, failed
+    except Exception:
+        # A sounding failure must never fail the run publish.
+        logger.exception("Sounding pass failed: run=%s model=%s reason=%s", run_id, model_id, reason)
+        return 0, 0
+
+
 def _write_run_manifest(
     *,
     data_root: Path,
@@ -1567,6 +1697,20 @@ def _write_run_manifest(
         "variables": variables,
         "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+
+    # Sounding stacks are an independent artifact type, not a raster variable:
+    # they get their own TOP-LEVEL section so nothing that iterates `variables`
+    # (capabilities, viewer catalogs, canaries) can ever see them. Purely
+    # additive — every existing key keeps its shape (Skew-T design §7 Phase 1).
+    sounding_section = _sounding_manifest_section(
+        data_root=data_root,
+        model=model,
+        run_id=run_id,
+        region=manifest_region,
+        expected_by_var=expected_by_var,
+    )
+    if sounding_section is not None:
+        payload["sounding"] = sounding_section
 
     _write_json_atomic(manifest_path, payload)
 
@@ -1890,6 +2034,7 @@ def _process_run(
 
     total = len(targets)
     built_ok = 0
+    sounding_built_total = 0
     blocked_targets: set[tuple[str, str]] = set()
     derive_bundle_enabled = _bool_from_env(ENV_DERIVE_BUNDLE, DEFAULT_DERIVE_BUNDLE)
     progress_publish_min_new_frames = _int_from_env(
@@ -2657,6 +2802,23 @@ def _process_run(
             _publish_run_snapshot(reason=f"catchup_progress_{rounds}", pregenerate_loops=False)
             built_ok_at_last_publish = built_ok
 
+        # Sounding stacks come AFTER the publish decision on purpose: they are
+        # an independent artifact and must never sit in front of raster
+        # readiness. Only fhs whose frames are already complete are eligible,
+        # so this trails the build frontier instead of racing it, and
+        # skip-if-exists keeps it idempotent across rounds and restarts.
+        round_stacks, _round_stack_failures = _run_sounding_pass(
+            data_root=data_root,
+            model_id=model_id,
+            run_id=run_id,
+            run_dt=run_dt,
+            region=_default_build_region(plugin),
+            primary_vars=primary_vars,
+            candidate_fhs=[fh for fhs in fhs_by_target.values() for fh in fhs],
+            reason=f"catchup_round_{rounds}",
+        )
+        sounding_built_total += round_stacks
+
     available = _available_target_count(data_root, model_id, run_id, targets)
     if _should_promote(data_root, model_id, run_id, primary_vars, promotion_fhs):
         if (not published_once) or (available > built_ok_at_last_publish):
@@ -2666,6 +2828,39 @@ def _process_run(
             )
             published_once = True
             built_ok_at_last_publish = available
+
+    # Run-end sweep: the resume path (every frame already on disk, so the
+    # catch-up loop does no rounds) would otherwise never build a stack. It
+    # runs strictly after the final publish; if it produced anything, the
+    # canonical domain is republished so the stacks land in published/ and the
+    # manifest's `sounding.available_fhs` is accurate.
+    final_stacks, _final_stack_failures = _run_sounding_pass(
+        data_root=data_root,
+        model_id=model_id,
+        run_id=run_id,
+        run_dt=run_dt,
+        region=_default_build_region(plugin),
+        primary_vars=primary_vars,
+        candidate_fhs=[fh for fhs in fhs_by_target.values() for fh in fhs],
+        reason="run_complete",
+    )
+    sounding_built_total += final_stacks
+    # Republish once if ANY stack was built this run: mid-run stacks land in
+    # staging, and without this they would sit unpromoted whenever no further
+    # progress publish happened after them.
+    if sounding_built_total and published_once:
+        try:
+            _publish_one_domain(
+                domain=_default_build_region(plugin),
+                reason="sounding_complete",
+                ready_regions=_promotion_ready_regions(
+                    data_root, model_id, run_id, primary_vars, promotion_fhs
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "Sounding republish failed: run=%s model=%s", run_id, model_id,
+            )
 
     effective_keep_runs = _resolved_keep_runs_for_scheduler_plugin(plugin, keep_runs)
     staging_model_root = data_root / "staging" / model_id

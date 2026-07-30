@@ -21,11 +21,16 @@ export {
  * Decisions #1). It never reads from or writes to the WebGL controller.
  */
 
-/** Geometry + packing metadata for one grid frame. `bbox` is EPSG:3857 meters. */
+/**
+ * Geometry + packing metadata for one grid frame. `bbox` is EPSG:3857 meters
+ * unless `projection` says otherwise — for `"EPSG:4326"` grids (the global
+ * domain) it is degrees. An absent `projection` means EPSG:3857 (contract §4).
+ */
 export type GridMeta = {
   width: number;
   height: number;
   bbox: [number, number, number, number];
+  projection?: string;
   dtype: "uint8" | "uint16";
   scale: number;
   offset: number;
@@ -178,6 +183,7 @@ function metaMatches(a: GridMeta, b: GridMeta): boolean {
     && a.bbox[1] === b.bbox[1]
     && a.bbox[2] === b.bbox[2]
     && a.bbox[3] === b.bbox[3]
+    && (a.projection ?? "") === (b.projection ?? "")
   );
 }
 
@@ -186,10 +192,15 @@ function metaMatches(a: GridMeta, b: GridMeta): boolean {
  * interpolation. Pixels outside the source bbox become `NaN`. Identical
  * dimensions + bbox short-circuit to the source unchanged.
  *
- * The Web-Mercator mapping is separable — lon depends only on `u` and lat only
- * on `v` — so the per-pixel projection collapses to one lookup table per axis
- * (W+H projections instead of W×H). {@link lonToGridU}/{@link latToGridV} are
- * the axis components of `lonLatToGridUv`, so the result is identical to the
+ * Each grid is converted through its OWN declared projection — source uv →
+ * lon/lat with the source's, lon/lat → reference uv with the reference's — so
+ * lon/lat is the common frame and a mixed pair (4326 global vs 3857 canonical)
+ * needs no special case.
+ *
+ * Both mappings are separable — lon depends only on `u` and lat only on `v` —
+ * so the per-pixel projection collapses to one lookup table per axis (W+H
+ * projections instead of W×H). {@link lonToGridU}/{@link latToGridV} are the
+ * axis components of `lonLatToGridUv`, so the result is identical to the
  * per-pixel formulation.
  */
 export function resampleGridToReference(
@@ -209,16 +220,16 @@ export function resampleGridToReference(
   const sourceUForCol = new Float64Array(refWidth);
   for (let col = 0; col < refWidth; col += 1) {
     const u = (col + 0.5) / refWidth;
-    const [lon] = gridUvToLonLat(u, 0.5, refMeta.bbox);
-    const sourceU = lonToGridU(lon, sourceMeta.bbox);
+    const [lon] = gridUvToLonLat(u, 0.5, refMeta.bbox, refMeta.projection);
+    const sourceU = lonToGridU(lon, sourceMeta.bbox, sourceMeta.projection);
     sourceUForCol[col] = sourceU === null ? NaN : sourceU;
   }
   // Per-row source v (NaN = outside the source bbox vertically).
   const sourceVForRow = new Float64Array(refHeight);
   for (let row = 0; row < refHeight; row += 1) {
     const v = (row + 0.5) / refHeight;
-    const [, lat] = gridUvToLonLat(0.5, v, refMeta.bbox);
-    const sourceV = latToGridV(lat, sourceMeta.bbox);
+    const [, lat] = gridUvToLonLat(0.5, v, refMeta.bbox, refMeta.projection);
+    const sourceV = latToGridV(lat, sourceMeta.bbox, sourceMeta.projection);
     sourceVForRow[row] = sourceV === null ? NaN : sourceV;
   }
 
@@ -348,6 +359,9 @@ export function buildDiffManifest(
     model: "compare-diff",
     run: "diff",
     var: "diff",
+    // The diff grid IS the reference grid, so it inherits its CRS — omitted for
+    // EPSG:3857 so the manifest stays byte-identical to the pre-4326 shape.
+    ...(refMeta.projection ? { projection: refMeta.projection } : {}),
     bbox: refMeta.bbox,
     grid: {
       width,

@@ -155,7 +155,11 @@ function resolveAdjacentGridFrameUrls(loader: UseModelLoaderResult, forecastHour
   return urls;
 }
 
-/** Build the diff GridMeta from a loader's grid manifest (level-zero LOD). bbox is EPSG:3857 meters. */
+/**
+ * Build the diff GridMeta from a loader's grid manifest (level-zero LOD). bbox
+ * units follow the manifest's declared projection — EPSG:3857 meters unless it
+ * says EPSG:4326, in which case degrees.
+ */
 function resolveGridMeta(manifest: GridManifestResponse | null): GridMeta | null {
   if (!manifest || !Array.isArray(manifest.bbox) || manifest.bbox.length !== 4) {
     return null;
@@ -169,6 +173,9 @@ function resolveGridMeta(manifest: GridManifestResponse | null): GridMeta | null
     width: Math.max(1, Math.floor(Number(lod.width) || 1)),
     height: Math.max(1, Math.floor(Number(lod.height) || 1)),
     bbox: manifest.bbox as [number, number, number, number],
+    projection: typeof manifest.projection === "string" && manifest.projection.trim()
+      ? manifest.projection.trim()
+      : undefined,
     dtype: String(grid?.dtype ?? "").trim().toLowerCase() === "uint8" ? "uint8" : "uint16",
     scale: Number(grid?.scale) || 1,
     offset: Number(grid?.offset) || 0,

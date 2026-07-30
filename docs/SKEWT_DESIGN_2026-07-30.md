@@ -167,6 +167,20 @@ time; per-fh requests would waterfall):
 
 Phases 1–2 are backend-only and shippable dark; Phase 3 is the first user-visible ship.
 
+**Phase 1 status: implemented + independently verified 2026-07-30** (uncommitted).
+`backend/app/services/sounding.py` (new), `sounding_models()` in config, scheduler hook +
+top-level `sounding` manifest section, 67 new tests. Verifier hand-decoded a planted
+pixel's 380-byte block with independent offset arithmetic (exact match), confirmed
+exception containment, frontier gating, dark-by-default, and zero catalog contamination.
+Prod-gate watch items: (a) the sounding pass is synchronous inside the catch-up loop —
+each newly eligible fh adds one ~15 s GRIB fetch per round when the flag is on (publish
+is unaffected; later-fh build wall clock grows) — move to a thread if it matters;
+(b) encode clips silently in the gap between the physical-validity floor and the
+representable floor (e.g. −130 °C → −120), all physically unreachable for HRRR;
+(c) band-tag→plane mapping and range windows were not exercised against real GRIB —
+first prod spot-check should run `python -m app.services.sounding --run <run> --fh 6`
+and compare a profile against direct GRIB decode.
+
 ## 8. Decisions
 
 1. **VVEL from day one — RESOLVED yes (Brian, 2026-07-30).** +~25% storage/fetch; avoids
@@ -176,7 +190,10 @@ Phases 1–2 are backend-only and shippable dark; Phase 3 is the first user-visi
 3. **Td upper-level policy — RESOLVED (Brian, 2026-07-30, v3 prototype review): draw
    full**, no fade/clip. Also from that review, color semantics: green is reserved for
    the dewpoint trace — moist adiabats render steel-blue (TT pseudoadiabat convention),
-   mixing-ratio lines faint dotted teal, dry adiabats warm tan.
+   mixing-ratio lines faint dotted teal, dry adiabats warm tan. Density (v4 review):
+   mixing-ratio lines draw only below 440 hPa (TT convention), and dark-theme background
+   opacity sits a step lower than a light theme would use (dry .5 / moist .55 / mixr .7)
+   so the same line count doesn't glow — reference values live in the prototype template.
 4. **Nearest-gridpoint vs interpolation** at pick time. v1: nearest (12 km cell, honest
    and cheap; the response reports the snap distance). Open; revisit only if users notice.
 5. **SB parcel origin definition (Phase 4 blocker), found by the v2 prototype

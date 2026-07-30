@@ -24,6 +24,9 @@ frontend/playwright/.cache/
 frontend/playwright.config.ts
 !frontend/tests/
 frontend/tests/*
+# Vitest unit tests (pure logic, no artifacts) — tracked wholesale.
+!frontend/tests/unit/
+!frontend/tests/unit/**
 !frontend/tests/e2e/
 frontend/tests/e2e/*
 frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/
