@@ -215,9 +215,12 @@ elevation-correct ~835 hPa anchoring, mobile sheet). Accepted quirks: rate limit
 on client.host without XFF (matches meteogram precedent — revisit both together);
 viewer→panel fh follow verified by inspection, not e2e.
 
-**Phase 4 status: implemented + verified 2026-07-31** (uncommitted; prod gate = deploy,
-`pip install metpy` into the API venv + restart csky-api, restart csky-hrrr-scheduler
-for v2 stacks). `sounding_indices.py` (new): per-frame SB parcel per decision #5
+**Phase 4 status: COMPLETE — prod gate closed 2026-07-31.** (Deploy hiccup worth
+remembering: the first restart round ran against a prod checkout one commit behind —
+symptom was a Phase 3-shaped response with no `indices` key; fix was just the pull.)
+Live verification: OKC afternoon SBCAPE 1557–2120 J/kg decaying to 491 by evening,
+parcel path every frame, definition caption served; stable evening profiles correctly
+show 0/no-markers. Native-SBCAPE row appears from the first post-restart (v2) run. `sounding_indices.py` (new): per-frame SB parcel per decision #5
 (2 m T/Td, Tv-corrected — identity gap +122 J/kg over plain SB, pinned by test), ML
 CAPE/CIN, LCL/LFC/EL (from the drawn parcel curve so markers sit on the visible
 intersection), PWAT, 37-level parcel path; reproduces the spike reference to the digit

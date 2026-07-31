@@ -359,15 +359,22 @@ test.describe('Coverage control', () => {
    * AFTER the switch, because the pre-switch state legitimately owns requests
    * in the other domain.
    */
-  async function switchVariableTo(page: import('@playwright/test').Page, fromLabel: string, toLabel: string) {
+  async function switchVariableTo(
+    page: import('@playwright/test').Page,
+    fromLabel: string,
+    toLabel: string,
+    toVarId: string,
+  ) {
     await page.getByTestId('rail-source-fields-card').getByRole('button', { name: fromLabel }).click();
     await expect(page.getByRole('dialog', { name: 'Variable picker' })).toBeVisible();
     await page.getByPlaceholder('Search variables…').fill(toLabel);
-    // Not `exact`: the row button also contains the coverage chip / search
-    // highlight, so its accessible name is a superset of the label.
+    // Target the row button by `title`, not by accessible name: the row's
+    // name is a superset of the label (chips, search highlight) and its
+    // sibling favorite star's aria-label CONTAINS the label.
     await page.getByRole('dialog', { name: 'Variable picker' })
-      .getByRole('button', { name: toLabel }).first().click();
-    await expect(page.getByRole('dialog', { name: 'Variable picker' })).toBeHidden();
+      .locator(`button[title="${toLabel}"]`).first().click();
+    // The permalink is the commit signal for the new selection.
+    await expect.poll(() => new URL(page.url()).searchParams.get('v')).toBe(toVarId);
   }
 
   test('R1 forward: run-degraded → global-present issues NO canonical request for the new variable', async ({ page }) => {
@@ -384,12 +391,16 @@ test.describe('Coverage control', () => {
 
     // Everything from here is attributable to the switch alone.
     const before = recorded.length;
-    await switchVariableTo(page, '5-day Precip Anomaly', 'Surface Temp');
+    await switchVariableTo(page, '5-day Precip Anomaly', 'Surface Temp', DOMAIN_VARIABLE);
 
     // tmp2m IS built globally, so it must never be requested canonically —
     // not even for the single commit the stale verdict used to open.
-    await page.waitForRequest((request) =>
-      request.url().includes(`/api/v4/grid/domains/${DOMAIN_ID}/${DOMAIN_MODEL}/${DOMAIN_RUN_ID}/${DOMAIN_VARIABLE}/`));
+    // Poll `recorded` rather than waitForRequest: the request may already have
+    // fired by the time the switch is observable in the URL.
+    await expect
+      .poll(() => recorded.some((url) =>
+        url.startsWith(`/api/v4/grid/domains/${DOMAIN_ID}/${DOMAIN_MODEL}/${DOMAIN_RUN_ID}/${DOMAIN_VARIABLE}/`)))
+      .toBe(true);
     await expect(page.getByTestId('coverage-degraded-note')).toHaveCount(0);
 
     const afterSwitch = recorded.slice(before).filter((url) => url.includes(DOMAIN_VARIABLE));
@@ -412,7 +423,7 @@ test.describe('Coverage control', () => {
       request.url().includes(`/api/v4/grid/domains/${DOMAIN_ID}/${DOMAIN_MODEL}/`));
 
     const before = recorded.length;
-    await switchVariableTo(page, 'Surface Temp', '5-day Precip Anomaly');
+    await switchVariableTo(page, 'Surface Temp', '5-day Precip Anomaly', DOMAIN_UNBUILT_GLOBAL_VARIABLE);
 
     await expect(page.getByTestId('coverage-degraded-note'))
       .toHaveText('Not available for this run — showing CONUS');
