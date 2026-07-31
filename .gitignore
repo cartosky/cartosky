@@ -50,6 +50,7 @@ frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/
 !frontend/tests/e2e/viewer-mobile.spec.ts
 !frontend/tests/e2e/viewer-domain.fixtures.ts
 !frontend/tests/e2e/viewer-domain.spec.ts
+!frontend/tests/e2e/viewer-domain-coherence.spec.ts
 !frontend/tests/e2e/render-golden-baseline.fixtures.ts
 !frontend/tests/e2e/render-golden-baseline.spec.ts
 !frontend/tests/e2e/render-golden-baseline.timing.json

@@ -1,27 +1,11 @@
-"""Phase C gate-agreement test: pre-encode sanity gate vs COG sanity gate.
+"""Boundary regression tests for the pre-encode value-sanity gate.
 
 Naturally-occurring bad frames are too rare to observe passively (zero
-rejections from either gate across the full multi-day GFS canary window), so
-this test feeds both gates deliberately bad synthetic arrays and requires
-their accept/reject decisions to agree exactly.
+rejections across the original multi-day GFS canary window), so these tests
+feed the live gate deliberately bad synthetic arrays and pin its decisions.
 
-Both production gates delegate to the shared ``_check_value_array_sanity()``
-helper in ``builder/pipeline.py`` — confirmed by reading both wrappers:
-
-- ``check_pre_encode_value_sanity(values, ...)`` (the new Phase C gate) is a
-  pure passthrough that only sets ``gate_name="Pre-encode value sanity"``.
-- ``check_value_sanity(val_path, ...)`` (the existing COG gate) adds exactly
-  one behavior beyond the passthrough: ``rasterio.open(val_path).read(1)``.
-  Its other differences (``gate_name="Value COG"``, ``pass_name``) feed log
-  strings only — nothing in the pass/fail logic reads them.
-
-So the old gate's decision logic is exercised here by calling
-``_check_value_array_sanity()`` directly with the exact arguments
-``check_value_sanity()`` passes after its file read, and the new gate through
-its real public function — identical arrays, no file I/O. The COG-specific
-*structural* layer (``validate_cog()``: CRS/tiling/overviews/dtype) is a
-separate Gate 1 and intentionally out of scope: it checks file structure, not
-values, and has its own binary-side counterpart (``validate_grid_binary_frame``).
+Structural validation of the encoded frame is covered separately by
+``validate_grid_binary_frame`` tests; this module covers value semantics only.
 
 Case thresholds below are derived from the real logic in
 ``_check_value_array_sanity()``, not guessed:
@@ -62,7 +46,6 @@ os.environ.setdefault("TOKEN_DB_PATH", "/tmp/twf_gate_agreement_tokens.sqlite3")
 os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 
 from app.services.builder.pipeline import (
-    _check_value_array_sanity,
     _resolve_model_var_capability,
     _resolve_model_var_spec,
     check_pre_encode_value_sanity,
@@ -77,7 +60,7 @@ TOTAL = SHAPE[0] * SHAPE[1]
 
 def _gfs_spec_triple(var: str) -> tuple[dict[str, Any], Any, Any]:
     """The exact (var_spec, var_spec_model, var_capability) triple the
-    pipeline passes to both gates for a real GFS variable."""
+    pipeline passes to the gate for a real GFS variable."""
     var_spec_model = _resolve_model_var_spec("gfs", var)
     var_capability = _resolve_model_var_capability("gfs", var)
     var_spec = get_color_map_spec(var_capability.color_map_id)
@@ -97,11 +80,10 @@ def _with_leading_nans(values: np.ndarray, nan_count: int) -> np.ndarray:
 # (case_name, gfs_var, array_builder, expected_pass)
 #
 # expected_pass pins the current behavior of the shared logic so the
-# agreement assertion cannot be trivially satisfied by both gates degrading
-# into always-True (or always-False) together.
+# assertion catches the gate degrading into always-True or always-False.
 CASES: list[tuple[str, str, Any, bool]] = [
     # Control: realistic winter/spring 2m temperatures with a plausible
-    # ocean-mask worth of nodata. Both gates must agree on ACCEPT.
+    # ocean-mask worth of nodata. The gate must accept it.
     ("control_valid_tmp2m", "tmp2m", lambda: _with_leading_nans(_gradient(20.0, 80.0), TOTAL // 10), True),
     # Entirely NaN -> nodata ratio 1.0 > 0.95 -> reject.
     ("all_nan_tmp2m", "tmp2m", lambda: np.full(SHAPE, np.nan, dtype=np.float32), False),
@@ -113,9 +95,8 @@ CASES: list[tuple[str, str, Any, bool]] = [
     # Degenerate all-identical field; tmp2m has no allow_dry_frame -> reject.
     ("flat_constant_tmp2m", "tmp2m", lambda: np.full(SHAPE, 55.0, dtype=np.float32), False),
     # Wildly outside tmp2m's spec range (-60..120 F +/- 20%). The real logic
-    # treats spec-range violations as a WARNING, not a rejection, so both
-    # gates must agree on ACCEPT here — this case exists to catch either gate
-    # becoming stricter than the other on range.
+    # treats spec-range violations as a WARNING, not a rejection, so the gate
+    # must accept it.
     ("far_out_of_range_tmp2m", "tmp2m", lambda: _gradient(5000.0, 6000.0), True),
     # Zero pixels -> hard reject.
     ("empty_array_tmp2m", "tmp2m", lambda: np.zeros((0, 0), dtype=np.float32), False),
@@ -145,39 +126,26 @@ CASES: list[tuple[str, str, Any, bool]] = [
 
 
 @pytest.mark.parametrize(("case_name", "var", "build", "expected_pass"), CASES, ids=[c[0] for c in CASES])
-def test_gate_agreement(case_name: str, var: str, build: Any, expected_pass: bool) -> None:
+def test_pre_encode_value_sanity_decision(
+    case_name: str,
+    var: str,
+    build: Any,
+    expected_pass: bool,
+) -> None:
     var_spec, var_spec_model, var_capability = _gfs_spec_triple(var)
     values = build()
 
-    new_gate = check_pre_encode_value_sanity(
+    decision = check_pre_encode_value_sanity(
         values,
         var_spec,
         var_spec_model=var_spec_model,
         var_capability=var_capability,
-        label=f"gate-agreement:{case_name}",
-    )
-    # The COG gate's decision logic, minus only the rasterio file read (see
-    # module docstring): identical arguments to check_value_sanity()'s
-    # delegation.
-    old_gate = _check_value_array_sanity(
-        values,
-        var_spec,
-        var_spec_model=var_spec_model,
-        var_capability=var_capability,
-        label=f"gate-agreement:{case_name}",
-        gate_name="Value COG",
-        pass_name="Value sanity",
+        label=f"pre-encode-sanity:{case_name}",
     )
 
-    assert new_gate == old_gate, (
-        f"GATE DISAGREEMENT on {case_name} (gfs/{var}): "
-        f"pre-encode gate={'PASS' if new_gate else 'REJECT'} vs "
-        f"COG gate={'PASS' if old_gate else 'REJECT'} — Phase C parallel-gate "
-        f"evidence is NOT satisfied for this failure class."
-    )
-    assert new_gate == expected_pass, (
-        f"Both gates agree on {case_name} (gfs/{var}) but decided "
-        f"{'PASS' if new_gate else 'REJECT'}, expected "
+    assert decision == expected_pass, (
+        f"Gate decided {'PASS' if decision else 'REJECT'} for "
+        f"{case_name} (gfs/{var}), expected "
         f"{'PASS' if expected_pass else 'REJECT'} — the shared sanity logic "
         f"changed behavior for this failure class."
     )

@@ -114,7 +114,7 @@ const DEFAULT_PHASES: RoadmapPhase[] = [
       { id: "p5-6", labels: ["enhancement"], title: "Pressure center H/L labels", status: "todo", priority: "low", effort: "S", notes: "" },
       { id: "p5-7", labels: ["ux"], title: "Location favorites on forecast page", status: "todo", priority: "low", effort: "S", notes: "" },
       { id: "p5-8", labels: ["ux"], title: "Client-side screenshot revisit", status: "todo", priority: "low", effort: "M", notes: "Originally client-side but viewport consistency caused screenshot to differ from displayed view — trust issue. Revisit if viewport normalization can be solved without mismatching output." },
-      { id: "p5-9", labels: ["infrastructure","performance"], title: "Remove val.cog and sample off grid binaries", status: "todo", priority: "low", effort: "L", notes: "Possibly replace val.cog with point sampling directly off grid binaries." },
+      { id: "p5-9", labels: ["infrastructure","performance"], title: "Remove val.cog and sample off grid binaries", status: "done", priority: "low", effort: "L", notes: "Completed in July 2026: production sampling and publishers use grid binaries; only the compatibility field and pinned legacy 404 text remain." },
       { id: "p5-10", labels: ["infrastructure"], title: "Server upgrade evaluation", status: "todo", priority: "low", effort: "S", notes: "Netcup RS 8000 G12 at 82€/mo vs Hetzner AX42 at ~49€/mo. Pending ECMWF memory investigation outcome." },
     ],
   },

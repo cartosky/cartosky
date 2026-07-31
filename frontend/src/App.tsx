@@ -1481,7 +1481,7 @@ export default function App() {
     : run === "latest"
       ? "latest"
       : resolvedRunForRequests;
-  const selectionKey = `${model}:${selectionRunKey}:${variable}:${dataRegion}:${ensembleView || "-"}:${product || "-"}`;
+  const selectionKey = `${model}:${selectionRunKey}:${variable}:${dataRegion}:${ensembleView || "-"}:${product || "-"}:${dataDomain || "-"}`;
   useEffect(() => {
     selectionKeyRef.current = selectionKey;
   }, [selectionKey]);
@@ -3329,7 +3329,7 @@ export default function App() {
     if (
       !pendingVarSwitch
       || pendingVarSwitch.toVariableId !== variable
-      || pendingVarSwitch.expectedSelectionKey !== loadedFramesKey
+      || loadedFramesKey !== selectionKey
       || !activeGridFrameUrl
     ) {
       return;
@@ -3343,7 +3343,7 @@ export default function App() {
         visualState: "warming_new",
       };
     });
-  }, [activeGridFrameUrl, loadedFramesKey, variable]);
+  }, [activeGridFrameUrl, loadedFramesKey, selectionKey, variable]);
 
   const cancelPendingVariableSwitch = useCallback((
     reason: "selection-mismatch" | "timeout",
@@ -3370,7 +3370,7 @@ export default function App() {
     if (
       !pendingVarSwitch
       || pendingVarSwitch.toVariableId !== variable
-      || pendingVarSwitch.expectedSelectionKey !== loadedFramesKey
+      || loadedFramesKey !== selectionKey
     ) {
       return false;
     }
@@ -3389,7 +3389,7 @@ export default function App() {
 
     setVariableSwitchState(null);
     return true;
-  }, [loadedFramesKey, variable]);
+  }, [loadedFramesKey, selectionKey, variable]);
 
   useEffect(() => {
     if (!variableSwitchState) {
@@ -4101,7 +4101,7 @@ export default function App() {
         // Merge with existing frame rows rather than hard-replacing.  The
         // manifest hydration path may have already populated a full set of
         // expected forecast hours, while fetchFrames only returns hours that
-        // have COGs ready.  A hard replace would contract the slider, causing
+        // have frame artifacts ready. A hard replace would contract the slider, causing
         // it to snap to a high hour on still-populating runs.
         //
         // We use a functional updater so we can access the previous rows AND
@@ -4141,7 +4141,7 @@ export default function App() {
         });
         setLoadedFramesKey(selectionKey);
         // Use the merged frame set so resolveForecastHour sees ALL expected
-        // hours (including manifest-only rows), not just COG-ready ones.
+        // hours (including manifest-only rows), not just artifact-ready ones.
         // Note: React processes functional updaters synchronously within the
         // same synchronous block, so `mergedRows` is populated by this point.
         const awaitingManifestForProductSwitch =
@@ -5300,9 +5300,12 @@ export default function App() {
       return;
     }
     const fromVariable = visualVariable || variable;
+    // Frame arrival for the new variable is detected by comparing
+    // loadedFramesKey against the live selectionKey at check time — a
+    // snapshotted key here would go stale whenever selectionKey gains a
+    // segment or the run/product shifts mid-switch.
     pendingVariableSwitchRef.current = {
       toVariableId: nextVariable,
-      expectedSelectionKey: `${model}:${selectionRunKey}:${nextVariable}:${region}:${ensembleView || "-"}`,
     };
     setVariableSwitchState({
       fromVariable,
@@ -5322,7 +5325,7 @@ export default function App() {
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
     });
-  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour, selectionRunKey, ensembleView]);
+  }, [model, variable, visualVariable, telemetryRunId, region, forecastHour]);
 
   useEffect(() => {
     if (
@@ -5917,6 +5920,7 @@ export default function App() {
     gridReadyHourSet,
     presentedGridDisplayHour,
     displayedValidTimeISO,
+    frameValidTimesByHour,
     gridActive: isGridLowMidActive,
     targetForecastHour,
     forecastHour,
@@ -5933,6 +5937,7 @@ export default function App() {
     gridReadyHourSet,
     presentedGridDisplayHour,
     displayedValidTimeISO,
+    frameValidTimesByHour,
     gridActive: isGridLowMidActive,
     targetForecastHour,
     forecastHour,
@@ -6007,6 +6012,8 @@ export default function App() {
       captureFrame: (maxWidth?: number, expectGridHour?: number | null) =>
         captureCanvasRef.current?.(maxWidth, expectGridHour) ?? Promise.resolve(null),
       getDisplayedValidTimeISO: () => gifDriverSnapshotRef.current.displayedValidTimeISO ?? null,
+      validTimeForFrameHour: (hour: number) =>
+        gifDriverSnapshotRef.current.frameValidTimesByHour[hour] ?? null,
       getRestoreTarget: () => ({
         run: gifDriverSnapshotRef.current.run,
         forecastHour: gifDriverSnapshotRef.current.forecastHour,

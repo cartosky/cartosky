@@ -23,6 +23,8 @@ export const DOMAIN_CANONICAL_ONLY_VARIABLE = 'precip_7d_anom';
 export const DOMAIN_ID = 'global';
 
 export const DOMAIN_FRAME_BINARY = new Uint16Array([1320, 1405, 65535, 877]);
+/** Global-domain frames are 4x2 (see `gridManifestPayload`), so 8 samples. */
+export const DOMAIN_GLOBAL_FRAME_BINARY = new Uint16Array([1320, 1405, 65535, 877, 1500, 1610, 1720, 1830]);
 
 function modelCatalogEntry(modelId: string, options: { supportsGlobal: boolean }) {
   return {
@@ -188,19 +190,28 @@ export function framesPayload() {
  * Grid manifest whose frame URLs mirror the backend's Phase 2A behavior:
  * canonical requests get canonical `/api/v4/grid/{model}/...` URLs, requests
  * carrying `domain=` get `domains/{d}`-prefixed URLs (`_grid_file_url`).
+ *
+ * Geometry differs by domain exactly as the real artifacts do: the canonical
+ * (NA) domain is EPSG:3857 with a metre bbox, the global domain is EPSG:4326
+ * with a degree bbox and a different grid shape. That difference is what makes
+ * a domain toggle a manifest-identity change, so the coherence guard in
+ * grid-webgl has something real to catch.
  */
 export function gridManifestPayload(modelId: string, domain: string | null, varId: string = DOMAIN_VARIABLE) {
   const gridPrefix = domain ? `/api/v4/grid/domains/${domain}/` : '/api/v4/grid/';
+  const isGlobal = domain === DOMAIN_ID;
   return {
     manifest_version: 1,
     subtype: 'grid',
     model: modelId,
     run: DOMAIN_RUN_ID,
     var: varId,
-    projection: 'EPSG:3857',
-    bbox: [-14920000.0, 7356000.0, -14914000.0, 7362000.0],
+    projection: isGlobal ? 'EPSG:4326' : 'EPSG:3857',
+    bbox: isGlobal
+      ? [-180.0, -90.0, 180.0, 90.0]
+      : [-14920000.0, 7356000.0, -14914000.0, 7362000.0],
     grid: {
-      width: 2,
+      width: isGlobal ? 4 : 2,
       height: 2,
       dtype: 'uint16',
       endianness: 'little',
@@ -218,7 +229,7 @@ export function gridManifestPayload(modelId: string, domain: string | null, varI
     lods: [
       {
         level: 0,
-        width: 2,
+        width: isGlobal ? 4 : 2,
         height: 2,
         frames: [0, 1].map((fh) => ({
           fh,
@@ -316,7 +327,7 @@ export async function stubViewerDomainRoutes(page: Page, recordedApiUrls: string
         await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(DOMAIN_FRAME_BINARY.buffer) });
       });
       await page.route(`**/api/v4/grid/domains/${DOMAIN_ID}/${modelId}/${DOMAIN_RUN_ID}/${varId}/*.bin**`, async (route) => {
-        await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(DOMAIN_FRAME_BINARY.buffer) });
+        await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(DOMAIN_GLOBAL_FRAME_BINARY.buffer) });
       });
     }
   }

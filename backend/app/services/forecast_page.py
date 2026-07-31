@@ -3186,7 +3186,7 @@ def get_forecast_meteogram(
     """Fan out point samples across models/variables and return one payload.
 
     Reads only already-published artifacts via :mod:`app.services.sampling`
-    (same COG read path as ``/api/v4/sample``). Never raises for missing data:
+    (the same grid-binary path as ``/api/v4/sample``). Never raises for missing data:
     per-model and per-variable status fields carry the outcome. Raises
     :class:`MeteogramRequestError` only for refused requests (HTTP 400).
     """
@@ -3301,8 +3301,8 @@ def get_forecast_meteogram(
             _meteogram_cache.pop(cache_key, None)
 
     # Build the per-(model, variable) plan from manifests (one cached read each):
-    # forecast hours + their valid_times + units. Sampling then reads only the COG
-    # value per frame — valid_time/units come from the manifest, not a per-frame
+    # forecast hours + their valid_times + units. Sampling then reads only the
+    # packed value per frame — valid_time/units come from the manifest, not a per-frame
     # sidecar — and every frame across all models/variables is sampled in one pass.
     series: dict[str, Any] = {}
     var_results_by_model: dict[str, dict[str, Any]] = {}

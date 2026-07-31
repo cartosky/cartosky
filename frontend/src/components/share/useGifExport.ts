@@ -28,6 +28,11 @@ export type GifFrameDriver = {
   captureFrame: (maxWidth?: number, expectGridHour?: number | null) => Promise<HTMLCanvasElement | null>;
   /** Valid time of the currently displayed frame (after showFrame resolves). */
   getDisplayedValidTimeISO: () => string | null;
+  /** Frame-metadata valid time for `hour`, independent of what the display
+   * pipeline has caught up to. The displayed value lags the readiness gate by
+   * an overlay paint, so hour-frame chrome must use this hour-keyed read or
+   * the burned-in valid time races render scheduling. */
+  validTimeForFrameHour: (hour: number) => string | null;
   /** Opaque timeline snapshot taken before stepping; handed back to restore(). */
   getRestoreTarget: () => unknown;
   restore: (token: unknown) => void;
@@ -378,7 +383,9 @@ export function useGifExport({
             frameState = {
               ...baseState,
               fh: plannedFrame.hour,
-              validTimeISO: frameDriver.getDisplayedValidTimeISO() ?? baseState.validTimeISO,
+              validTimeISO: frameDriver.validTimeForFrameHour(plannedFrame.hour)
+                ?? frameDriver.getDisplayedValidTimeISO()
+                ?? baseState.validTimeISO,
             };
           }
         } else {

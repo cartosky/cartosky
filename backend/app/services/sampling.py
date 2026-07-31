@@ -1,4 +1,4 @@
-"""COG point-sampling helpers.
+"""Published grid-binary point-sampling helpers.
 
 Extracted from ``app.main`` (Phase 1A of the Model Guidance plan) so that the
 meteogram service (``app.services.forecast_page.get_forecast_meteogram``) can
@@ -6,12 +6,11 @@ sample published artifacts directly, without HTTP round-trips and without
 importing ``app.main`` at module load time (which would be circular, since
 ``app.main`` imports ``forecast_page``).
 
-The genuinely self-contained COG readers live here in full. Run / manifest /
-runtime-var resolution remains the responsibility of ``app.main`` (it is tied
-to the capabilities + run-discovery machinery); the two ``_resolve_*`` helpers
-reach back into ``app.main`` via a lazy import at call time. ``app.main``
-re-imports the names defined here so existing call sites and tests are
-unchanged.
+The binary readers live here in full. Run, manifest, and runtime-variable
+resolution remains the responsibility of ``app.main`` (it is tied to the
+capabilities and run-discovery machinery); the ``_resolve_*`` helpers reach
+back into ``app.main`` via a lazy import at call time. ``app.main`` re-imports
+the names defined here so existing call sites and tests are unchanged.
 """
 
 from __future__ import annotations
@@ -235,7 +234,7 @@ def sample_binary_point_value(
     lat: float,
     lon: float,
 ) -> float | None:
-    """Sample a point from a grid binary frame, rounded like the COG helpers.
+    """Sample and round a point from a grid binary frame.
 
     ``var`` must be the runtime variable id the frame was packed under, as with
     :func:`read_binary_sample_value`.
@@ -510,9 +509,9 @@ def sample_binary_batch_values(
 
 # ── Artifact resolution ───────────────────────────────────────────────────
 # These delegate run / runtime-var / path resolution to ``app.main`` (lazy
-# import to avoid a load-time cycle). The published value COG already stores
-# display units (conversion happens at build time), so callers get the same
-# values served by ``/api/v4/sample``.
+# import to avoid a load-time cycle). Grid binaries store display-ready values
+# (conversion happens at build time), so callers get the same values served by
+# ``/api/v4/sample``.
 
 def _resolve_sidecar(
     model: str,

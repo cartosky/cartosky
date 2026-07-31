@@ -235,20 +235,16 @@ def grid_display_prep_config(model: str, var: str) -> GridDisplayPrepConfig | No
     return _GRID_DISPLAY_PREP_BY_MODEL_VAR.get((str(model).strip().lower(), str(var).strip().lower()))
 
 
-def sampling_tolerance_group(config: GridDisplayPrepConfig | None) -> int:
-    """Tolerance group for COG-vs-binary sampling comparisons (migration plan
-    Section 3 Layer 2 / Phase G), derived from the display-prep config rather
-    than per-model variable lists:
+def display_prep_shape_group(config: GridDisplayPrepConfig | None) -> int:
+    """Classify display preparation by grid-shape and categorical behavior.
 
-      Group 1 — no display prep (or no upscale, non-categorical): the COG and
-                binary describe the same pixel grid; agreement within scale/2.
+      Group 1 — no display prep, or no upscale and non-categorical.
       Group 2 — continuous upscale (``upscale_factor > 1``): the binary is a
-                finer grid; bounded numeric tolerance.
+                finer grid.
       Group 3 — categorical upscale (``categorical_nearest`` with upscale):
-                integer-category comparison, boundary divergence tolerated.
+                nearest-neighbor categories on a finer grid.
       Group 4 — categorical without upscale (``categorical_nearest`` at
-                ``upscale_factor == 1``): same resolution on both sides, so
-                strict integer-category equality with zero tolerance.
+                ``upscale_factor == 1``).
     """
     if config is None:
         return 1

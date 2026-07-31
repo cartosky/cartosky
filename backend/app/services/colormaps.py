@@ -1,8 +1,7 @@
-"""V2 palette constants for COG-encoded tiles.
+"""Shared palette constants and lookup-table builders.
 
-Band 1 in each COG stores a byte: a palette index for discrete fields, or a fixed-range
-byte (0–255) for continuous fields. Band 2 stores alpha as a byte. Runtime tiles are
-rendered by mapping LUT[band1] and applying band2 as the output alpha.
+These definitions drive build-time color metadata and client-side rendering
+for continuous, discrete, and indexed weather fields.
 """
 
 from __future__ import annotations

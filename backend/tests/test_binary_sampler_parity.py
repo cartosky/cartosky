@@ -1,4 +1,4 @@
-"""Layer 2 binary-sampler tests for the value COG -> grid binary migration."""
+"""Grid-binary sampling, packing, and display-preparation regression tests."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ from app.services.grid import (
 from app.services.grid_display_prep import (
     grid_display_prep_config,
     prepare_grid_display_values,
-    sampling_tolerance_group,
+    display_prep_shape_group,
 )
 from app.services.sampling import (
     read_binary_sample_value,
@@ -243,15 +243,15 @@ PHASE_G_PUBLISHER_MODELS = ("ndfd", "wpc")
 PHASE_G_OBSERVED_MODELS = ("current_analysis", "mrms", "goes-east")
 
 # Observed variables whose grid binary stores a TRANSFORMED field, so the
-# generic Group 1 binary==COG assertion does not apply even though
-# sampling_tolerance_group classifies them Group 1:
+# generic Group 1 source-to-binary assertion does not apply even though
+# display_prep_shape_group classifies them Group 1:
 # - goes-east ir13/wv9/wv8: a hardcoded K->C special case at the top of
 #   prepare_grid_display_values (values - 273.15, not a display-prep config
-#   entry) means the binary is Celsius while the COG is Kelvin — a clean
+#   entry) means the binary is Celsius while the source field is Kelvin — a clean
 #   constant delta at every pixel, invisible to the classifier; the canary
 #   WILL flag it (~273.15 divergence) and that is handled at canary time.
 # - mrms reflectivity: display-prep smooth_sigma=0.45 at upscale 1 means the
-#   binary is a masked-gaussian-smoothed field vs the raw COG — a known
+#   binary is a masked-gaussian-smoothed field vs the raw source field — a known
 #   Group-1-classifier blind spot (same category as ECMWF's floor; operator
 #   decision not to patch the classifier).
 # Each gets a dedicated parity test below instead of the generic one.
@@ -276,7 +276,7 @@ def _canary_scope(model: str) -> list[str]:
 
 
 def _tolerance_group(model: str, var: str) -> int:
-    return sampling_tolerance_group(grid_display_prep_config(model, var))
+    return display_prep_shape_group(grid_display_prep_config(model, var))
 
 
 _PHASE_G_SCOPE_BY_MODEL: dict[str, list[str]] = {
@@ -513,8 +513,8 @@ def _lonlat_at(
 def _lattice_values(model: str, var: str, shape: tuple[int, int]) -> np.ndarray:
     """In-band fixture values on the packing lattice (offset + k*scale),
     stepped so every value has at most one decimal digit. Lattice values
-    quantize losslessly, and one-decimal values round stably, so the COG path
-    (raw float32) and the binary path (packed uint) agree exactly after the
+    quantize losslessly, and one-decimal values round stably, so the source
+    float32 and packed binary agree exactly after the
     samplers' shared round-to-1-decimal — letting Group 1 assert strict
     equality instead of a tolerance. Negative-offset packings (e.g. vorticity
     and temperature anomalies) naturally produce negative values here.
@@ -533,7 +533,7 @@ def _lattice_values(model: str, var: str, shape: tuple[int, int]) -> np.ndarray:
     return (offset + codes * step).reshape(shape).astype(np.float32)
 
 
-# Expected classifier groups per the live sampling_tolerance_group() config:
+# Expected classifier groups per the live display_prep_shape_group() config:
 # ALL Group 1 across all three models — including mrms_radar_ptype (it has NO
 # categorical display-prep entry, unlike hrrr's radar_ptype which an entry
 # makes Group 4; its scale=1.0 lossless packing makes strict integer equality

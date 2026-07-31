@@ -1,8 +1,7 @@
 """Build-time colorization: float32 data → 4-band RGBA uint8 array.
 
-This replaces the V2 two-step process:
-  1. encode_to_byte_and_alpha() → 2-band COG (byte index + alpha)
-  2. get_lut() at serve time → maps byte index to RGBA
+This replaces the old two-step indexed-raster process, where palette bytes
+were stored first and expanded through a lookup table at serve time.
 
 V3 merges both into a single build-time function: float_to_rgba().
 The tile server never touches colormaps — it reads RGBA and returns PNG.
@@ -81,7 +80,7 @@ def colorize_metadata(
     MRMS CONUS target grids are roughly 4609 x 8238. A full RGBA result for one
     frame is about 145 MiB, and the colorization path also creates transient
     masks/index arrays. MRMS publish only needs the metadata because it writes
-    value COG/grid artifacts, so this path keeps sidecar metadata identical
+    grid artifacts, so this path keeps sidecar metadata identical
     while avoiding the unused RGBA allocation.
     """
     var_key, spec, _kind = _resolve_colorize_context(

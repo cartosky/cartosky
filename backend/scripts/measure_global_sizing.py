@@ -330,7 +330,7 @@ def inject_global_region(plugin: Any, model: str) -> float:
          ``resolved_plugin.get_region(region)`` (pipeline.py:1572), which reads
          this mapping. Frozen dataclass, but the mapping object is mutable.
       2. ``raster_grid.REGION_BBOX_3857["global"]`` — ``get_grid_params`` (used
-         by ``warp_to_target_grid`` and the COG/validate paths) looks the bbox
+         by ``warp_to_target_grid`` and the validation paths) looks the bbox
          up here.
       3. ``plugin.capabilities.grid_meters_by_region["global"]`` — the
          authoritative grid-resolution source consulted by

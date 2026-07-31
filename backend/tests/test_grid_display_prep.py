@@ -12,7 +12,7 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services.grid_display_prep import (
     GridDisplayPrepConfig,
     prepare_grid_display_values,
-    sampling_tolerance_group,
+    display_prep_shape_group,
 )
 
 
@@ -232,22 +232,22 @@ def test_gfs_ptype_intensity_display_prep_upscales_categorically() -> None:
     np.testing.assert_array_equal(prepared[3:, 3:], np.full((3, 3), 42.0, dtype=np.float32))
 
 
-def test_sampling_tolerance_group_covers_all_four_config_shapes() -> None:
+def test_display_prep_shape_group_covers_all_four_config_shapes() -> None:
     """The shared classifier must derive the group purely from the config shape
     (upscale_factor x categorical_nearest), never from model/variable names.
     Synthetic configs cover all four shapes plus the config-absent case."""
     # No display-prep config at all -> Group 1.
-    assert sampling_tolerance_group(None) == 1
+    assert display_prep_shape_group(None) == 1
     # Config present but no upscale and not categorical -> still Group 1.
-    assert sampling_tolerance_group(
+    assert display_prep_shape_group(
         GridDisplayPrepConfig(id="synthetic_identity_v1", upscale_factor=1)
     ) == 1
     # Continuous upscale -> Group 2.
-    assert sampling_tolerance_group(
+    assert display_prep_shape_group(
         GridDisplayPrepConfig(id="synthetic_continuous_v1", upscale_factor=3)
     ) == 2
     # Categorical upscale -> Group 3.
-    assert sampling_tolerance_group(
+    assert display_prep_shape_group(
         GridDisplayPrepConfig(
             id="synthetic_categorical_upscale_v1",
             upscale_factor=3,
@@ -255,7 +255,7 @@ def test_sampling_tolerance_group_covers_all_four_config_shapes() -> None:
         )
     ) == 3
     # Categorical without upscale -> Group 4 (strict equality group).
-    assert sampling_tolerance_group(
+    assert display_prep_shape_group(
         GridDisplayPrepConfig(
             id="synthetic_categorical_v1",
             upscale_factor=1,
@@ -265,7 +265,7 @@ def test_sampling_tolerance_group_covers_all_four_config_shapes() -> None:
     # render_categorical_nearest is a rendering hint only; it must not affect
     # the sampling group (hrrr/nam radar_ptype set it False while remaining
     # categorical for sampling purposes).
-    assert sampling_tolerance_group(
+    assert display_prep_shape_group(
         GridDisplayPrepConfig(
             id="synthetic_categorical_render_off_v1",
             upscale_factor=1,

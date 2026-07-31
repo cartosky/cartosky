@@ -623,6 +623,119 @@ function isObservedGridManifest(manifest: GridManifestResponse | null): boolean 
   return String(manifest?.model ?? "").trim().toLowerCase() === "mrms";
 }
 
+/**
+ * Identity of everything in a manifest that the draw call bakes into geometry
+ * or into the interpretation of the frame texture's raw bytes: the quad
+ * (projection + bbox) and the grid decode (dimensions + dtype + scale/offset/
+ * nodata), plus the selection triple so an identity-general mismatch — model,
+ * variable, run, OR data domain — is caught by the same key.
+ *
+ * A frame texture is only drawable against the manifest whose key matches the
+ * one in force when the texture was installed. The NA (EPSG:3857, metre bbox)
+ * and global (EPSG:4326, degree bbox) domains differ in projection, bbox and
+ * grid dimensions, so a domain toggle always changes this key.
+ */
+function manifestIdentityKey(manifest: GridManifestResponse | null): string {
+  if (!manifest) {
+    return "";
+  }
+  const bbox = Array.isArray(manifest.bbox) ? manifest.bbox.join(",") : "";
+  const grid = manifest.grid;
+  return [
+    manifest.model ?? "",
+    manifest.var ?? "",
+    manifest.run ?? "",
+    manifest.projection ?? "",
+    bbox,
+    grid?.width ?? "",
+    grid?.height ?? "",
+    grid?.dtype ?? "",
+    grid?.scale ?? "",
+    grid?.offset ?? "",
+    grid?.nodata ?? "",
+  ].join("|");
+}
+
+/**
+ * Structural identity of the frame TEXTURE itself — the only manifest fields
+ * baked into the uploaded GPU object. Everything else a manifest carries
+ * (bbox, projection, scale/offset/nodata, palette) is applied per-draw from
+ * `this.manifest`, so a manifest change that leaves this key intact can be
+ * reconciled by simply restamping the existing texture; a change to this key
+ * needs a real re-upload.
+ */
+function textureCompatKey(manifest: GridManifestResponse | null): string {
+  const grid = manifest?.grid;
+  const width = Math.max(1, Math.floor(Number(grid?.width) || 1));
+  const height = Math.max(1, Math.floor(Number(grid?.height) || 1));
+  return `${width}x${height}:${resolveGridDtype(grid?.dtype)}`;
+}
+
+/**
+ * In-render coherence telemetry.
+ *
+ * - `held` — draws suppressed because the loaded frame texture belonged to a
+ *   different manifest than the one now configured.
+ * - `drewMismatched` — draws ISSUED against a mismatched pair. Must always
+ *   be 0; this is the tripwire.
+ * - `coherentDraws` — draws that passed the tripwire. A build that holds
+ *   forever is just as broken as one that draws garbage, so tests assert this
+ *   keeps increasing.
+ * - `reconciled` — holds resolved by restamping the existing texture under a
+ *   new manifest identity (see `reconcileManifestIdentity`).
+ * - `resetForReupload` — holds resolved by dropping the texture so the normal
+ *   fetch/upload path re-runs.
+ *
+ * Only an in-render check is race-free (React effects observe state after the
+ * offending frame has already been painted), so the assertion surface lives
+ * here rather than in App state.
+ */
+export interface GridCoherenceStats {
+  held: number;
+  drewMismatched: number;
+  coherentDraws: number;
+  reconciled: number;
+  resetForReupload: number;
+}
+
+const gridCoherenceStats: GridCoherenceStats = {
+  held: 0,
+  drewMismatched: 0,
+  coherentDraws: 0,
+  reconciled: 0,
+  resetForReupload: 0,
+};
+
+export function readGridCoherenceStats(): GridCoherenceStats {
+  return { ...gridCoherenceStats };
+}
+
+export function resetGridCoherenceStats() {
+  gridCoherenceStats.held = 0;
+  gridCoherenceStats.drewMismatched = 0;
+  gridCoherenceStats.coherentDraws = 0;
+  gridCoherenceStats.reconciled = 0;
+  gridCoherenceStats.resetForReupload = 0;
+}
+
+/**
+ * Live controllers by layer id, so tests can interrogate the real instance's
+ * `visibleFrameHour()` (the capture gate) rather than infer it. Entries are
+ * removed on detach; the key space is the fixed set of layer ids, so this
+ * cannot grow unbounded.
+ */
+const gridControllerRegistry = new Map<string, GridWebglLayerController>();
+
+if (typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).__cartoskyGridCoherence = {
+    read: readGridCoherenceStats,
+    reset: resetGridCoherenceStats,
+    /** Capture gate as the exporter sees it. null while a hold is in effect. */
+    visibleFrameHour: (layerId?: string) =>
+      gridControllerRegistry.get(layerId ?? GRID_WEBGL_LAYER_ID)?.visibleFrameHour() ?? null,
+  };
+}
+
 function transparentZeroForManifest(manifest: GridManifestResponse | null): boolean {
   return Boolean(manifest?.palette?.transparent_zero);
 }
@@ -958,6 +1071,10 @@ export class GridWebglLayerController {
   private currentTextureFrameHour: number | null = null;
   private currentTextureSelectionEpoch = 0;
   private currentTextureSelectionKey = "";
+  /** Manifest identity in force when `currentTexture` was installed. */
+  private currentTextureManifestKey = "";
+  /** Structural shape of `currentTexture` (dims + dtype) as uploaded. */
+  private currentTextureCompatKey = "";
   private currentTextureUrl: string | null = null;
   private previousTextureUrl: string | null = null;
   private visibleNotifiedSignature: string | null = null;
@@ -1215,6 +1332,8 @@ export class GridWebglLayerController {
       this.currentTextureFrameHour = null;
       this.currentTextureSelectionEpoch = config.selectionEpoch;
       this.currentTextureSelectionKey = config.selectionKey;
+      this.currentTextureManifestKey = "";
+      this.currentTextureCompatKey = "";
       this.hasPreviousTexture = false;
       this.previousTexture = null;
     }
@@ -1246,6 +1365,7 @@ export class GridWebglLayerController {
     }
 
     const nextSignature = this.buildFrameSignature(this.frameUrl);
+    this.reconcileManifestIdentity(nextSignature);
     if (!this.active || !this.frameUrl || !this.manifest) {
       this.currentFrameSignature = nextSignature;
       this.requestRepaint();
@@ -1295,6 +1415,72 @@ export class GridWebglLayerController {
       target.removeLayer(this.layerId);
     }
     this.disposeGlResources();
+    if (gridControllerRegistry.get(this.layerId) === this) {
+      gridControllerRegistry.delete(this.layerId);
+    }
+  }
+
+  /**
+   * Make every hold converge.
+   *
+   * The render guard is a safety net, not a state machine: it refuses to draw
+   * an incoherent (manifest, texture) pair but cannot by itself produce a
+   * coherent one. The texture stamp is only written in `activateFrameTexture`,
+   * which runs on frame-SIGNATURE change — and the signature carries no
+   * manifest identity. So a manifest whose identity fields move while the
+   * frame URLs stay put (App background-polls the same run's grid manifest
+   * every 30s and applies any JSON-different response) would leave the stamp
+   * permanently stale: the guard holds forever, nothing draws, and no loader
+   * is showing because from React's point of view everything is loaded.
+   *
+   * Convergence rule, given the frame itself did not change:
+   *  - The GPU texture only bakes in dims + dtype. Every other manifest field
+   *    (bbox, projection, scale/offset/nodata, palette) is read from
+   *    `this.manifest` at draw time. So if the compat key still matches, the
+   *    existing texture IS valid under the new manifest — restamp it and the
+   *    next draw uses the NEW decode params.
+   *  - If dims/dtype moved, the upload is genuinely stale: drop it and let the
+   *    normal fetch/upload path re-run. (In practice a base-LOD flip changes
+   *    the frame filename too, so the signature branch below already covers
+   *    it; this is the belt-and-braces arm.)
+   *
+   * Either way the hold is bounded. This runs in `update()` — the only place
+   * `this.manifest` is ever assigned — so no manifest change can slip past it.
+   * It is a liveness mechanism, not a safety one: the in-render guard remains
+   * the race-free authority on what may actually be drawn.
+   */
+  private reconcileManifestIdentity(nextSignature: string | null) {
+    if (!this.currentTexture || !this.manifest) {
+      return;
+    }
+    const manifestKey = manifestIdentityKey(this.manifest);
+    if (manifestKey === this.currentTextureManifestKey) {
+      return;
+    }
+    // A changed frame signature means the normal load path is already fetching
+    // the correct frame for this manifest — holding until it lands is exactly
+    // the intended behavior (this is the domain-toggle case).
+    if (nextSignature !== this.currentTextureSignature) {
+      return;
+    }
+    if (textureCompatKey(this.manifest) === this.currentTextureCompatKey) {
+      this.currentTextureManifestKey = manifestKey;
+      gridCoherenceStats.reconciled += 1;
+      this.requestRepaint();
+      return;
+    }
+    this.currentTexture = null;
+    this.currentContourTexture = null;
+    this.currentContourTextureUrl = null;
+    this.currentTextureSignature = null;
+    this.currentTextureFrameHour = null;
+    this.currentTextureManifestKey = "";
+    this.currentTextureCompatKey = "";
+    this.currentFrameSignature = null;
+    this.hasPreviousTexture = false;
+    this.previousTexture = null;
+    gridCoherenceStats.resetForReupload += 1;
+    this.requestRepaint();
   }
 
   private buildFrameSignature(frameUrl: string | null): string | null {
@@ -2260,6 +2446,8 @@ export class GridWebglLayerController {
     this.currentTextureFrameHour = Number.isFinite(this.frameHour) ? Number(this.frameHour) : null;
     this.currentTextureSelectionEpoch = this.selectionEpoch;
     this.currentTextureSelectionKey = this.selectionKey;
+    this.currentTextureManifestKey = manifestIdentityKey(this.manifest);
+    this.currentTextureCompatKey = textureCompatKey(this.manifest);
     this.transitionStartedAt = performance.now();
     this.markFrameRetained(frameUrl);
     this.requestRepaint();
@@ -2701,6 +2889,13 @@ export class GridWebglLayerController {
   }
 
   private render(matrix: number[]) {
+    // The controller MapLibre is driving is the live one — App may construct
+    // several (StrictMode remount, composite/sampler layers) that share a
+    // layer id, and only this one is on screen. Registering here rather than
+    // in the constructor keeps the test seam pointed at the real instance.
+    if (gridControllerRegistry.get(this.layerId) !== this) {
+      gridControllerRegistry.set(this.layerId, this);
+    }
     const gl = this.gl;
     const program = this.program;
     const bindings = this.bindings;
@@ -2717,6 +2912,21 @@ export class GridWebglLayerController {
       || !this.texCoordBuffer
       || !this.currentTextureSignature
     ) {
+      return;
+    }
+
+    // Coherence guard. The quad geometry and every decode uniform below come
+    // from `this.manifest`, while the sampled bytes come from `currentTexture`.
+    // `update()` installs a new manifest the moment React hands one over, but
+    // the matching frame texture only lands after its fetch resolves — so
+    // without this check the intervening draws pair new geometry with the
+    // previous manifest's data. A domain toggle makes that mismatch total
+    // (EPSG:3857 metre bbox vs EPSG:4326 degree bbox), which is the "completely
+    // off" flash. Hold the draw until the pair is coherent; this is the same
+    // thing a model switch already does by nulling the texture outright, so it
+    // reuses the existing loading state rather than inventing a new one.
+    if (manifestIdentityKey(this.manifest) !== this.currentTextureManifestKey) {
+      gridCoherenceStats.held += 1;
       return;
     }
 
@@ -2853,6 +3063,17 @@ export class GridWebglLayerController {
     gl.bindTexture(gl.TEXTURE_2D, contourEnabled ? this.currentContourTexture : this.currentTexture);
     gl.uniform1i(bindings.contourDataLocation, 3);
 
+    // Tripwire at the point of no return: re-read the pair immediately before
+    // issuing geometry, so any future draw path that bypasses the guard above
+    // is still caught. This must never fire.
+    const drawIsCoherent = manifestIdentityKey(this.manifest) === this.currentTextureManifestKey;
+    if (drawIsCoherent) {
+      // Liveness signal: a build that holds forever is as broken as one that
+      // draws garbage, so tests assert this keeps climbing after a switch.
+      gridCoherenceStats.coherentDraws += 1;
+    } else {
+      gridCoherenceStats.drewMismatched += 1;
+    }
     for (const offset of this.visibleWorldOffsets()) {
       gl.uniformMatrix4fv(bindings.matrixLocation, false, translatedWorldMatrix(matrix, offset));
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -2881,14 +3102,26 @@ export class GridWebglLayerController {
   /** Hour of the frame this layer draws right now (null = no texture, e.g.
    * mid selection swap). Checked synchronously inside capture render
    * callbacks so GIF frames can't be read while the grid is transiently
-   * cleared (share overhaul Phase 4). */
+   * cleared (share overhaul Phase 4).
+   *
+   * A coherence hold is the same situation as "no texture" from the caller's
+   * point of view — the layer is holding a texture it refuses to draw, so the
+   * grid is not on screen. Reporting the stale texture's hour here would let
+   * the atomic capture gate pass while the layer draws nothing, producing
+   * gridless exports; the docstring promise above has to stay literally true. */
   visibleFrameHour(): number | null {
-    return this.active
-      && this.currentTexture
-      && this.currentTextureSignature
-      && Number.isFinite(this.currentTextureFrameHour)
-      ? Number(this.currentTextureFrameHour)
-      : null;
+    if (
+      !this.active
+      || !this.currentTexture
+      || !this.currentTextureSignature
+      || !Number.isFinite(this.currentTextureFrameHour)
+    ) {
+      return null;
+    }
+    if (manifestIdentityKey(this.manifest) !== this.currentTextureManifestKey) {
+      return null;
+    }
+    return Number(this.currentTextureFrameHour);
   }
 
   /** True when `value` renders fully transparent under the current manifest's

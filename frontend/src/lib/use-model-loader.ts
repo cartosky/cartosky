@@ -445,7 +445,7 @@ export function useModelLoader(params: UseModelLoaderParams): UseModelLoaderResu
   }, [selectionKey]);
 
   // Load frame rows. Hydrate the slider from the manifest's expected hours
-  // first (for continuity), then merge the COG-ready hours from fetchFrames.
+  // first (for continuity), then merge the artifact-ready hours from fetchFrames.
   useEffect(() => {
     if (!model || !variable || !hasRenderableSelection) {
       setFramesLoading(false);

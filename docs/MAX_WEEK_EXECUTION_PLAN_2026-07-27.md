@@ -319,6 +319,46 @@ history; the canary's audited scope classifier lives on in
 - `_resolve_val_cog` is gone, so the discarded-`region` surface Phase 2A must
   plumb is smaller, as intended.
 
+### Phase 1 closeout refresh — 2026-07-31
+
+The implementation and production-observation portions of Phase 1 are closed.
+Current-code terminology and the duplicate admin-roadmap item were reconciled;
+the remaining value-COG strings are deliberate compatibility or historical
+records: the `has_cog` wire field, the pinned `val.cog.tif not found` 404 body,
+and cleanup of interrupted pre-cutover staging files.
+
+- **Backend suite:** 2118 passed, 1 skipped, 0 failed. The ECMWF EPS
+  model-mapping test now seeds the real readiness-cache key, so it tests the
+  mapping contract without making a DNS-dependent upstream readiness probe.
+- **Focused backend coverage:** 142 passed across builder quality gates,
+  binary sampling/display preparation, MRMS/current-analysis publishing,
+  sample and meteogram APIs, and ECMWF EPS fetching.
+- **ruff policy:** retain the Phase 1 no-new-errors gate. The full
+  `backend/app backend/tests backend/scripts` count is 337 before and after
+  this closeout; reducing that existing baseline to zero remains a separate
+  repository cleanup.
+- **Frontend:** TypeScript plus the production Vite build pass. The three
+  COG-removal browser contracts pass in Chromium: the grid-default viewer
+  makes no retired legacy requests, city labels use direct grid samples when
+  available, and city labels request the batch fallback when direct sampling
+  is unavailable.
+- **Broader Playwright status:** collection now succeeds, but the configured
+  all-project run is not globally green. It was stopped after 47 passes,
+  10 failures, 3 interrupted tests, and 1 skip; failures were in broader
+  API/beta-checklist/region/share/forecast UI contracts rather than the Phase
+  1 COG-removal paths. This is recorded as independent frontend-suite debt,
+  not as evidence that the COG runtime remains.
+- **Operator evidence (user-reported, not independently replayed here):**
+  production has run COG-free for an extended period with no apparent issues
+  on the operator-verification surfaces. This closes the deploy/manual portion
+  of Phase 1. Deterministic G4 pixel-diff coverage remains part of the broader
+  Playwright-suite exception above.
+
+**Closeout decision:** no further value-COG implementation work is required.
+The production contract and scoped regression gates are binary-only. The only
+remaining plan exception is repository-wide Playwright health, which should be
+tracked and repaired separately rather than reopening Phase 1.
+
 ---
 
 ## Phase 2A — Backend artifact-domain contract — **the new blocker phase** (L)

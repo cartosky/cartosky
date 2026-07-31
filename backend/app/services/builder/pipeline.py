@@ -118,8 +118,8 @@ def _log_frame_memory_checkpoint(stage: str, **details: Any) -> None:
         float(peak_rss_bytes()) / (1024.0 * 1024.0),
         suffix,
     )
-# Value COG base grid must match RGBA COG grid for render-time parity.
-VALUE_HOVER_DOWNSAMPLE_FACTOR = 1
+# Hover values use the same grid geometry as the rendered grid artifacts.
+HOVER_VALUE_DOWNSAMPLE_FACTOR = 1
 CANONICAL_COVERAGE = "conus"
 
 
@@ -937,7 +937,7 @@ def build_sidecar_json(
 ) -> dict[str, Any]:
     """Build the sidecar metadata dict per the artifact contract.
 
-    The sidecar JSON is written alongside each frame's COGs and provides
+    The sidecar JSON is written alongside each frame's grid artifacts and provides
     the frontend with all information needed to render legends and tooltips.
     """
     valid_time = valid_time_override or (run_date + timedelta(hours=fh))
@@ -1086,9 +1086,9 @@ def build_iso_contour_geojson(
     """Generate iso-contour GeoJSON from a full-resolution value grid.
 
     Writes temporary GTiffs under the output directory from the provided
-    array/transform, then warps/contours via GDAL CLI. This avoids depending
-    on the on-disk hover value COG resolution and keeps contour scratch work
-    on the same filesystem as the staged artifacts.
+    array/transform, then warps/contours via GDAL CLI. This keeps contour
+    generation independent of the packed hover grid and keeps scratch work on
+    the same filesystem as the staged artifacts.
     """
     out_geojson_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1611,10 +1611,10 @@ def build_frame(
     derive_component_warp_cache: bool = False,
     return_status: bool = False,
 ) -> Path | None | tuple[Path | None, str]:
-    """Build one frame's artifacts: RGBA COG + value COG + sidecar JSON.
+    """Build one frame's grid binary, metadata, and optional contours.
 
     This is the core orchestration function implementing the pipeline:
-        fetch → unit convert → warp → colorize → write COGs → validate → sidecar
+        fetch → unit convert → warp → sanity check → metadata → grid binary
 
     Parameters
     ----------
@@ -1964,8 +1964,6 @@ def build_frame(
             dtype=str(getattr(warped_data, "dtype", "")),
         )
         # The pre-encode sanity gate is ENFORCED: a failure rejects the frame.
-        # (This was the binary-only branch of the Phase F cutover; the value
-        # COG write and its post-write gates are retired.)
         # No try/except: an unexpected gate error propagates to the outer
         # handler (cleanup + "failed").
         if not check_pre_encode_value_sanity(
@@ -2034,7 +2032,7 @@ def build_frame(
             var_spec=var_spec_colormap,
             var_spec_model=var_spec_model,
             contours=contours_meta,
-            value_downsample_factor=VALUE_HOVER_DOWNSAMPLE_FACTOR,
+            value_downsample_factor=HOVER_VALUE_DOWNSAMPLE_FACTOR,
             quality=frame_quality,
             quality_flags=frame_quality_flags,
             ensemble_view=ensemble_view,
@@ -2063,16 +2061,16 @@ def build_frame(
                     fh=fh,
                 ):
                     logger.warning(
-                        "Phase C shadow gate failed: grid binary validation "
-                        "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                        "Post-write grid diagnostic failed: grid binary validation "
+                        "model=%s var=%s fh%03d; the pre-encode sanity gate remains authoritative",
                         model,
                         var_key,
                         int(fh),
                     )
             except Exception:
                 logger.exception(
-                    "Phase C shadow gate errored: grid binary validation "
-                    "model=%s var=%s fh%03d; frame remains governed by existing COG gates",
+                    "Post-write grid diagnostic errored: grid binary validation "
+                    "model=%s var=%s fh%03d; the pre-encode sanity gate remains authoritative",
                     model,
                     var_key,
                     int(fh),

@@ -677,8 +677,8 @@ def write_mrms_frame(
         time.monotonic() - phase_started_at,
     )
 
-    # Gate the warped array — the one both the COG and grid writes receive —
-    # not the colorize-only smoothed display copy computed below.
+    # Gate the warped source array, not the colorize-only smoothed display copy
+    # computed below.
     if not _pre_encode_gate_allows(
         values,
         var_id=MRMS_VARIABLE_ID,
@@ -1448,10 +1448,8 @@ def finalize_mrms_published_run(
         )
         written_items: list[tuple[int, MRMSSupplementalFrame]] = []
         for fh, supplemental_frame in enumerate(ordered_frames):
-            # Grid artifacts are written inline. The old flow deferred them to
-            # _build_published_run_grid_artifacts, which re-encodes from the
-            # value COG — a COG that no longer exists once the model is
-            # binary-only, which published sidecar-only (unsampleable) frames.
+            # Grid artifacts are written inline. Deferring them produced
+            # sidecar-only, unsampleable frames after the binary cutover.
             if _write_mrms_supplemental_frame_to_run_root(
                 run_root=published_run_root,
                 run_id=run_id,
@@ -1498,7 +1496,7 @@ def finalize_mrms_published_run(
                 for var_id in MRMS_RECENT_PRECIP_VARIABLE_IDS
                 if (published_run_root / var_id).is_dir()
             )
-            _build_published_run_grid_artifacts(
+            _refresh_published_run_grid_manifests(
                 data_root=data_root,
                 run_id=run_id,
                 variables=tuple(dict.fromkeys(grid_variables)),
@@ -1660,7 +1658,7 @@ def _copy_published_variable_artifacts(
     )
 
 
-def _build_published_run_grid_artifacts(
+def _refresh_published_run_grid_manifests(
     *,
     data_root: Path,
     run_id: str,
@@ -1674,10 +1672,9 @@ def _build_published_run_grid_artifacts(
         if not var_dir.is_dir():
             continue
 
-        # Non-destructive backfill: never delete existing grid artifacts (they
-        # may be the frame's ONLY substrate post value-COG cutover, with no
-        # COG left to rebuild them from). Only fill in frames that are missing
-        # grid artifacts AND still have a COG to re-encode.
+        # Non-destructive manifest refresh: preserve existing grid artifacts.
+        # Frames missing grid metadata cannot be reconstructed from sidecars,
+        # so report them and exclude them from the refreshed manifest.
         wrote_any = False
         for sidecar_path in sorted(var_dir.glob("fh*.json")):
             fh = _forecast_hour_from_artifact_name(sidecar_path)

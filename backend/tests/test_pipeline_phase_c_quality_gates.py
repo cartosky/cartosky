@@ -124,12 +124,10 @@ def test_validate_grid_binary_frame_accepts_written_frame_and_rejects_size_misma
     )
 
 
-def test_build_frame_runs_phase_c_gates_as_parallel_non_authoritative_checks(
+def test_build_frame_runs_pre_encode_gate_and_post_write_grid_diagnostic(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    # Exercises build_frame's retained COG path: opt the model out of the
-    # (now default) binary-only substrate.
     plugin = _Plugin()
     var_spec_model = SimpleNamespace(
         id="tmp2m",
@@ -194,10 +192,9 @@ def test_build_frame_runs_phase_c_gates_as_parallel_non_authoritative_checks(
         phase_c_calls.append("binary")
         return False
 
-    # The pre-encode gate is AUTHORITATIVE (a False rejects the frame — pinned
-    # by test_binary_only_frame_builds.py); the grid-binary structural
-    # validation remains a non-authoritative shadow check: a False logs but
-    # the frame still publishes.
+    # The pre-encode gate is authoritative (a False rejects the frame); the
+    # post-write structural validation remains diagnostic, so a False logs but
+    # does not replace the pre-encode decision.
     monkeypatch.setattr(pipeline_module, "check_pre_encode_value_sanity", _passing_pre_encode_gate)
     monkeypatch.setattr(pipeline_module, "validate_grid_binary_frame", _failing_binary_gate)
 

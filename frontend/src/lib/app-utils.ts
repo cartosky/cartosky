@@ -223,7 +223,6 @@ export type PendingLoopStartMetric = {
 
 export type PendingVariableSwitchMetric = {
   toVariableId: string;
-  expectedSelectionKey: string;
 };
 
 export type VariableSwitchState = {

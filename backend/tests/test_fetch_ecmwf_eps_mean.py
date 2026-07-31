@@ -911,6 +911,7 @@ def test_build_frame_uses_underlying_herbie_model_for_eps(monkeypatch, tmp_path:
         model_plugin=EPS_MODEL,
         ensemble_view="mean",
         fetch_ctx=FetchContext(coverage="conus"),
+        readiness_cache={"ifs|enfo|fh000": True},
         log_fetch_cache_stats=False,
     )
 

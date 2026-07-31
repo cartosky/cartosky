@@ -70,9 +70,7 @@ class CurrentAnalysisBundleFrame:
 @dataclass(frozen=True)
 class CurrentAnalysisPublishedFrame:
     valid_time: datetime
-    # Value COG paths for the variables that HAVE one. Post-cutover
-    # (binary-only) frames have no COG: they appear in sidecar_paths/sidecars
-    # only, and reuse links their grid artifacts instead.
+    # Published frame metadata. Reuse links the corresponding grid artifacts.
     sidecars: dict[str, dict[str, Any]]
     sidecar_paths: dict[str, Path] = field(default_factory=dict)
 
