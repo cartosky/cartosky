@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RotateCw, X } from "lucide-react";
 
+import { Hodograph } from "@/components/sounding/Hodograph";
 import { SkewTChart } from "@/components/sounding/SkewTChart";
+import { ThetaEInset } from "@/components/sounding/ThetaEInset";
 import { useSounding } from "@/hooks/useSounding";
 import { cn } from "@/lib/utils";
 import type { SoundingFrame, SoundingGridPoint } from "@/lib/sounding-types";
@@ -330,6 +332,34 @@ export function SoundingPanel({
               frame={frame}
               title={`${modelLabel} sounding, ${formatCoordinate(data.grid_point.lat, data.grid_point.lon)}`}
             />
+            {/* Stacked sections, never floating insets on the chart (Brian,
+                Phase 5): chart → [hodograph | θe] → indices. The row collapses
+                to one column below a 384px VIEWPORT (a proxy for content width
+                that is exact today: mobile content is viewport−24px and the
+                desktop panel is fixed 440px — revisit if the panel ever
+                becomes resizable). */}
+            {frame.profiles ? (
+              <div
+                data-testid="sounding-insets"
+                className="mt-3 flex flex-col gap-3 min-[384px]:flex-row min-[384px]:gap-2.5"
+              >
+                <Hodograph
+                  className="min-w-0 flex-1"
+                  u={frame.u}
+                  v={frame.v}
+                  heightM={frame.profiles.height_m_agl}
+                  surfaceU={frame.surface?.u10m}
+                  surfaceV={frame.surface?.v10m}
+                />
+                <ThetaEInset
+                  className="min-w-0 flex-1"
+                  levelsHPa={data.levels_hPa}
+                  thetaE={frame.profiles.theta_e}
+                  surfaceP={frame.surface?.pres_sfc}
+                  surfaceValue={frame.profiles.surface_theta_e}
+                />
+              </div>
+            ) : null}
             <IndicesReadout frame={frame} parcelDefinition={data.parcel_definition} />
           </>
         ) : null}

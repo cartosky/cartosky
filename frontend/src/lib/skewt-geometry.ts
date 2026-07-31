@@ -28,7 +28,23 @@ export const SKEWT_SKEW = 1.0;
 const REFERENCE_PLOT_W = 620;
 const REFERENCE_PLOT_H = 640;
 
-export const SKEWT_MARGIN = { top: 26, right: 12, bottom: 46, left: 46 } as const;
+/**
+ * Left-hand omega strip (Phase 5, TT layout): a fixed-width gutter between the
+ * pressure labels and the plot edge. The width is reserved unconditionally so
+ * the plot rectangle — and therefore the adiabat shapes — does not move
+ * between a frame that has VVEL and one that does not.
+ */
+export const SKEWT_OMEGA_W = 22;
+const OMEGA_GAP = 5;
+/** Pressure labels sit to the LEFT of the omega strip. */
+const PRESSURE_LABEL_W = 46;
+
+export const SKEWT_MARGIN = {
+  top: 26,
+  right: 12,
+  bottom: 46,
+  left: PRESSURE_LABEL_W + SKEWT_OMEGA_W + OMEGA_GAP,
+} as const;
 /** Right-hand wind strip. Fixed size: barb glyphs never scale. */
 export const SKEWT_BARB_W = 64;
 const BARB_GAP = 8;
@@ -53,6 +69,10 @@ export type SkewTGeometry = {
   barbCx: number;
   barbX0: number;
   barbX1: number;
+  /** Omega strip: left edge, right edge, and the zero baseline between them. */
+  omegaX0: number;
+  omegaX1: number;
+  omegaCx: number;
   yOf: (p: number) => number;
   xOf: (t: number, p: number) => number;
 };
@@ -70,6 +90,8 @@ export function createSkewTGeometry(plotWidth: number = SKEWT_DEFAULT_PLOT_W): S
   const y1 = y0 + plotH;
   const barbX0 = x1 + BARB_GAP;
   const barbX1 = barbX0 + SKEWT_BARB_W;
+  const omegaX1 = x0 - OMEGA_GAP;
+  const omegaX0 = omegaX1 - SKEWT_OMEGA_W;
 
   const yOf = (p: number) => y1 - ((LOG_BOT - Math.log(p)) / (LOG_BOT - LOG_TOP)) * plotH;
   const xOf = (t: number, p: number) =>
@@ -87,6 +109,9 @@ export function createSkewTGeometry(plotWidth: number = SKEWT_DEFAULT_PLOT_W): S
     barbCx: (barbX0 + barbX1) / 2,
     barbX0,
     barbX1,
+    omegaX0,
+    omegaX1,
+    omegaCx: (omegaX0 + omegaX1) / 2,
     yOf,
     xOf,
   };
@@ -135,6 +160,11 @@ const MS_TO_KT = 1.9438445;
 
 export function windSpeedKt(u: number, v: number): number {
   return Math.hypot(u, v) * MS_TO_KT;
+}
+
+/** One wind COMPONENT, m/s -> kt (the hodograph plots components, not speed). */
+export function msToKt(value: number): number {
+  return value * MS_TO_KT;
 }
 
 export type BarbDecomposition = { pennants: number; fulls: number; halves: number };
@@ -234,6 +264,162 @@ export function anchorProfile(
   };
 }
 
+// ----------------------------------------------- dendritic growth zone (§7 P5)
+
+/** Warm and cold edges of the DGZ, °C. */
+export const DGZ_T_WARM = -12;
+export const DGZ_T_COLD = -18;
+
+export type PressureBand = {
+  /** Higher pressure — the bottom of the band on screen. */
+  pBottom: number;
+  /** Lower pressure — the top. */
+  pTop: number;
+};
+
+/** Pressure at fraction `s` along a layer, interpolating in log-p. */
+function interpolatePressure(pA: number, pB: number, s: number): number {
+  return Math.exp(Math.log(pA) + s * (Math.log(pB) - Math.log(pA)));
+}
+
+/**
+ * Pressure interval(s) where the ENVIRONMENT temperature lies in
+ * [−18, −12] °C — the dendritic growth zone.
+ *
+ * The crossing pressures are interpolated *inside* each layer rather than
+ * snapped to the level ladder: at 25 hPa spacing a snapped band is up to a
+ * whole level too tall, which on a 640 px plot is visibly wrong.
+ *
+ * Returns an ARRAY because the zone is not always one contiguous slab: an
+ * elevated inversion can re-enter it. A warm column simply returns `[]` and the
+ * caller draws nothing — the DGZ is legitimately absent, not empty-at-zero.
+ */
+export function dgzBands(
+  pressures: ReadonlyArray<number | null | undefined>,
+  temperatures: ReadonlyArray<number | null | undefined>,
+): PressureBand[] {
+  const raw: Array<[number, number]> = [];
+
+  const usable = (index: number) => {
+    const p = pressures[index];
+    const t = temperatures[index];
+    return p != null && t != null && Number.isFinite(p) && Number.isFinite(t) && p > 0;
+  };
+
+  for (let i = 0; i + 1 < pressures.length; i += 1) {
+    if (!usable(i) || !usable(i + 1)) continue;
+    const p0 = Number(pressures[i]);
+    const p1 = Number(pressures[i + 1]);
+    const t0 = Number(temperatures[i]);
+    const t1 = Number(temperatures[i + 1]);
+
+    let sLo: number;
+    let sHi: number;
+    if (t0 === t1) {
+      // An isothermal layer is either entirely inside the zone or entirely out.
+      if (t0 > DGZ_T_WARM || t0 < DGZ_T_COLD) continue;
+      sLo = 0;
+      sHi = 1;
+    } else {
+      const sWarm = (DGZ_T_WARM - t0) / (t1 - t0);
+      const sCold = (DGZ_T_COLD - t0) / (t1 - t0);
+      sLo = Math.max(0, Math.min(sWarm, sCold));
+      sHi = Math.min(1, Math.max(sWarm, sCold));
+      if (!(sHi > sLo)) continue;
+    }
+
+    const pA = interpolatePressure(p0, p1, sLo);
+    const pB = interpolatePressure(p0, p1, sHi);
+    raw.push([Math.max(pA, pB), Math.min(pA, pB)]);
+  }
+
+  if (raw.length === 0) return [];
+
+  // Merge layers that meet at a shared level into one band.
+  raw.sort((a, b) => b[0] - a[0]);
+  const merged: PressureBand[] = [];
+  for (const [bottom, top] of raw) {
+    const last = merged[merged.length - 1];
+    if (last && bottom >= last.pTop - 1e-6) {
+      last.pTop = Math.min(last.pTop, top);
+    } else {
+      merged.push({ pBottom: bottom, pTop: top });
+    }
+  }
+  return merged;
+}
+
+// ------------------------------------------------------ omega strip (§7 P5)
+
+/** Bar length saturates here, Pa/s. Beyond it the tone still reads. */
+export const OMEGA_CLAMP_PA_S = 2.0;
+/** Below this the level is left blank rather than drawn as a hairline. */
+export const OMEGA_MIN_PA_S = 0.05;
+
+export type OmegaBar = {
+  p: number;
+  w: number;
+  /** Meteorological ascent is NEGATIVE omega. */
+  ascent: boolean;
+  /** |w| / clamp, in [0, 1] — the bar's share of the half-strip. */
+  fraction: number;
+};
+
+/**
+ * Per-level omega bars, dropping levels too weak to be worth a mark.
+ *
+ * Sign convention is the one thing that matters here: `w < 0` is upward motion,
+ * so ascent is what gets the warm tone and points at the plot.
+ */
+export function omegaBars(
+  pressures: ReadonlyArray<number | null | undefined>,
+  omega: ReadonlyArray<number | null | undefined>,
+): OmegaBar[] {
+  const out: OmegaBar[] = [];
+  for (let i = 0; i < pressures.length; i += 1) {
+    const p = pressures[i];
+    const w = omega[i];
+    if (p == null || w == null || !Number.isFinite(p) || !Number.isFinite(w)) continue;
+    if (Math.abs(w) < OMEGA_MIN_PA_S) continue;
+    out.push({
+      p,
+      w,
+      ascent: w < 0,
+      fraction: Math.min(1, Math.abs(w) / OMEGA_CLAMP_PA_S),
+    });
+  }
+  return out;
+}
+
+/**
+ * Anchors ONE extra level-aligned series onto the pressure ladder that
+ * :func:`anchorProfile` produced, applying the identical below-ground mask.
+ *
+ * The Phase 5 overlays (wet-bulb, omega) are level-aligned arrays that arrive
+ * outside the `SoundingFrameLike` shape, and duplicating the masking rule in
+ * each of them is exactly how the two would drift apart.
+ *
+ * `surfaceValue` is optional: omega has no surface counterpart, so its anchored
+ * array simply starts with a null and the bar for that row is skipped.
+ */
+export function anchorSeries(
+  levelsHPa: ReadonlyArray<number>,
+  values: ReadonlyArray<number | null | undefined>,
+  options: { surfacePressure: number | null; surfaceValue?: number | null },
+): (number | null)[] {
+  const { surfacePressure, surfaceValue } = options;
+  const out: (number | null)[] = [];
+  if (surfacePressure != null) {
+    out.push(typeof surfaceValue === "number" && Number.isFinite(surfaceValue) ? surfaceValue : null);
+  }
+  for (let i = 0; i < levelsHPa.length; i += 1) {
+    if (surfacePressure != null && levelsHPa[i] >= surfacePressure) continue;
+    const value = values[i];
+    out.push(typeof value === "number" && Number.isFinite(value) ? value : null);
+  }
+  return out;
+}
+
 /**
  * Pressure ticks and the labelled subset — the Tropical Tidbits ladder the
  * prototype adopted.
@@ -274,4 +460,28 @@ export const SKEWT_COLORS = {
   parcel: "hsl(280 68% 72%)",
   /** LCL / LFC / EL ticks + labels — quiet annotations, not a fourth trace. */
   levelMarker: "hsl(280 30% 62%)",
+  /** Wet-bulb trace (Phase 5). A saturated blue per TT convention — well clear
+   *  of the dark, desaturated steel-blue the moist adiabats use. */
+  wetbulb: "hsl(200 92% 60%)",
+  /** Omega strip: ascent warm/gold, descent neutral grey. */
+  omegaAscent: "hsl(38 92% 58%)",
+  omegaDescent: "hsl(210 10% 55%)",
+  /** Dendritic growth zone: a tint, not a highlight. */
+  dgzFill: "hsl(0 72% 58%)",
+  dgzEdge: "hsl(0 62% 62%)",
+  /** Theta-e inset. */
+  thetaE: "hsl(174 62% 52%)",
 } as const;
+
+/**
+ * Hodograph height bands, ascending (Phase 5). TT's red → green → blue →
+ * purple ordering; the >9 km tail is neutral so it never competes with the
+ * storm-relevant lower layers.
+ */
+export const HODOGRAPH_HEIGHT_BANDS = [
+  { maxKm: 1, label: "0-1 km", color: "hsl(4 84% 62%)" },
+  { maxKm: 3, label: "1-3 km", color: "hsl(140 62% 50%)" },
+  { maxKm: 6, label: "3-6 km", color: "hsl(210 85% 62%)" },
+  { maxKm: 9, label: "6-9 km", color: "hsl(280 68% 70%)" },
+  { maxKm: Number.POSITIVE_INFINITY, label: ">9 km", color: "hsl(210 12% 62%)" },
+] as const;

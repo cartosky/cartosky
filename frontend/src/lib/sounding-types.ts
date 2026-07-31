@@ -47,6 +47,29 @@ export type SoundingIndices = {
   model_sbcape: number | null;
 };
 
+/**
+ * Server-computed per-level overlay inputs (Phase 5).
+ *
+ * The three arrays are index-aligned with `levels_hPa` — including `null` at
+ * every below-ground level — even though the server computes them on the
+ * surface-anchored column. That keeps the client's existing parallel-array
+ * indexing (`anchorProfile`) working unchanged.
+ *
+ * Absent on responses served before Phase 5: every overlay that reads this must
+ * render nothing rather than assume the block exists.
+ */
+export type SoundingProfiles = {
+  /** Wet-bulb temperature, °C. */
+  tw: (number | null)[];
+  /** Equivalent potential temperature, K. */
+  theta_e: (number | null)[];
+  /** Height above ground, m — hypsometrically reconstructed, surface = 0. */
+  height_m_agl: (number | null)[];
+  /** Surface-block values; the surface has no slot on the isobaric ladder. */
+  surface_tw?: number | null;
+  surface_theta_e?: number | null;
+};
+
 /** SB parcel ascent polyline, index-aligned (hPa / °C). */
 export type SoundingParcel = {
   p: number[];
@@ -66,6 +89,8 @@ export type SoundingFrame = {
   /** Phase 4; absent on responses served before it shipped. */
   indices?: SoundingIndices | null;
   parcel?: SoundingParcel | null;
+  /** Phase 5; absent on responses served before it shipped. */
+  profiles?: SoundingProfiles | null;
 };
 
 export type SoundingGridPoint = {

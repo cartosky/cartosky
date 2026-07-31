@@ -10,10 +10,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   anchorProfile,
+  anchorSeries,
   celsiusToFahrenheit,
   createSkewTGeometry,
   dataPath,
   decomposeBarb,
+  dgzBands,
+  omegaBars,
   SKEWT_P_BOTTOM,
   SKEWT_P_TOP,
   windSpeedKt,
@@ -169,5 +172,121 @@ describe("celsiusToFahrenheit", () => {
   it("matches the trace-bottom label conversion", () => {
     expect(celsiusToFahrenheit(0)).toBe(32);
     expect(Math.round(celsiusToFahrenheit(37.2))).toBe(99);
+  });
+});
+
+// ---------------------------------------------------------------- Phase 5
+
+describe("dendritic growth zone", () => {
+  /** Linear-in-log-p column crossing −12 and −18 between known levels. */
+  const pressures = [900, 800, 700, 600, 500, 400, 300];
+  const temps = [10, 2, -6, -14, -24, -36, -48];
+
+  it("interpolates the crossing pressures instead of snapping to levels", () => {
+    const bands = dgzBands(pressures, temps);
+    expect(bands).toHaveLength(1);
+    const [band] = bands;
+    // −12 °C sits between 700 (−6) and 600 (−14); −18 between 600 and 500.
+    expect(band.pBottom).toBeGreaterThan(600);
+    expect(band.pBottom).toBeLessThan(700);
+    expect(band.pTop).toBeGreaterThan(500);
+    expect(band.pTop).toBeLessThan(600);
+    // Not a level value: a snapped implementation would return 700/500.
+    expect(pressures).not.toContain(band.pBottom);
+    expect(pressures).not.toContain(band.pTop);
+  });
+
+  it("is empty for a warm column", () => {
+    expect(dgzBands(pressures, temps.map((t) => t + 40))).toEqual([]);
+  });
+
+  it("is empty for a column that is already colder than the zone", () => {
+    expect(dgzBands(pressures, temps.map((t) => t - 40))).toEqual([]);
+  });
+
+  it("reports every slab when the column crosses the zone repeatedly", () => {
+    // Cools through the zone, warms back out, then cools through it again:
+    // three separate passes, and a single-band implementation would smear them
+    // into one slab spanning the warm nose in between.
+    const p = [700, 650, 600, 550, 500, 450];
+    const t = [-10, -16, -20, -16, -10, -20];
+    const bands = dgzBands(p, t);
+    expect(bands).toHaveLength(3);
+    for (let i = 0; i < bands.length; i += 1) {
+      expect(bands[i].pBottom).toBeGreaterThan(bands[i].pTop);
+      // Sorted downward and disjoint.
+      if (i > 0) expect(bands[i].pBottom).toBeLessThan(bands[i - 1].pTop);
+    }
+  });
+
+  it("merges layers that meet at a shared level into one band", () => {
+    // Whole 700-500 span sits inside the zone.
+    const bands = dgzBands([700, 600, 500], [-13, -15, -17]);
+    expect(bands).toHaveLength(1);
+    expect(bands[0].pBottom).toBeCloseTo(700, 6);
+    expect(bands[0].pTop).toBeCloseTo(500, 6);
+  });
+
+  it("breaks at nulls instead of bridging them", () => {
+    const bands = dgzBands([700, 600, 500], [-13, null, -17]);
+    expect(bands).toEqual([]);
+  });
+});
+
+describe("omega bars", () => {
+  it("marks negative omega as ascent and scales against the clamp", () => {
+    const bars = omegaBars([900, 800, 700], [-1.0, 0.5, -4.0]);
+    expect(bars.map((bar) => bar.ascent)).toEqual([true, false, true]);
+    expect(bars[0].fraction).toBeCloseTo(0.5, 9);
+    expect(bars[1].fraction).toBeCloseTo(0.25, 9);
+    // Clamped, not extrapolated off the end of the strip.
+    expect(bars[2].fraction).toBe(1);
+  });
+
+  it("drops levels below the noise floor and nulls entirely", () => {
+    const bars = omegaBars([900, 800, 700, 600], [0.01, null, -0.04, -0.6]);
+    expect(bars.map((bar) => bar.p)).toEqual([600]);
+  });
+
+  it("returns nothing when the frame carries no omega", () => {
+    expect(omegaBars([900, 800], [null, null])).toEqual([]);
+    expect(omegaBars([900, 800], [])).toEqual([]);
+  });
+});
+
+describe("anchorSeries", () => {
+  const levels = [1000, 975, 950, 925];
+
+  it("applies the same below-ground mask as anchorProfile", () => {
+    const profile = anchorProfile(levels, {
+      surface: { pres_sfc: 968.5, t2m: 30, td2m: 20, u10m: 1, v10m: 2 },
+      t: [1, 2, 3, 4],
+      td: [0, 1, 2, 3],
+      u: [1, 1, 1, 1],
+      v: [1, 1, 1, 1],
+    });
+    const series = anchorSeries(levels, [10, 20, 30, 40], {
+      surfacePressure: profile.surfacePressure,
+      surfaceValue: 5,
+    });
+    expect(series).toHaveLength(profile.pressures.length);
+    expect(series).toEqual([5, 30, 40]);
+  });
+
+  it("starts with a null when the series has no surface counterpart", () => {
+    const series = anchorSeries(levels, [10, 20, 30, 40], { surfacePressure: 968.5 });
+    expect(series[0]).toBeNull();
+  });
+
+  it("keeps every level when there is no surface pressure to mask against", () => {
+    expect(anchorSeries(levels, [10, 20, 30, 40], { surfacePressure: null })).toEqual([
+      10, 20, 30, 40,
+    ]);
+  });
+
+  it("normalises missing and non-finite samples to null", () => {
+    expect(
+      anchorSeries(levels, [10, undefined, Number.NaN, null], { surfacePressure: null }),
+    ).toEqual([10, null, null, null]);
   });
 });

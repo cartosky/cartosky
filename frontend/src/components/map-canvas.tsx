@@ -34,6 +34,8 @@ import {
   SCRUB_LONG_TIMELINE_FRAMES_MOBILE,
 } from "@/lib/app-utils";
 import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridContourLayerConfig, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
+// [GLOBE SPIKE] dev-only, inert unless the page was loaded with ?globe=1.
+import { GLOBE_SPIKE_ENABLED } from "@/lib/globe-spike";
 import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 import type { SampleTooltipState } from "@/lib/use-sample-tooltip";
 import { cn } from "@/lib/utils";
@@ -2673,6 +2675,13 @@ export function MapCanvas({
 
     map.touchZoomRotate.disableRotation();
 
+    // [GLOBE SPIKE] dev-only (?globe=1). See docs/GLOBE_SPIKE_2026-08-01.md.
+    // setProjection() throws "Style is not done loading" before the style
+    // settles, so it has to wait for `load` — see the on("load") handler below.
+    if (GLOBE_SPIKE_ENABLED) {
+      (window as unknown as Record<string, unknown>).__cartoskyGlobeSpikeMap = map;
+    }
+
     const handleMapError = (event: { error?: unknown }) => {
       const err = event?.error;
       const errName =
@@ -2693,6 +2702,10 @@ export function MapCanvas({
 
     map.on("error", handleMapError as any);
     map.on("load", () => {
+      // [GLOBE SPIKE]
+      if (GLOBE_SPIKE_ENABLED) {
+        map.setProjection({ type: "globe" });
+      }
       setIsLoaded(true);
       lastAppliedBasemapModeRef.current = basemapMode;
       applyRoadLayerStyle(map, variable, opacity, basemapMode);

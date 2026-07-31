@@ -57,6 +57,7 @@ frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/
 !frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/
 !frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/**
 !frontend/playwright.config.ts
+frontend/globe-spike-artifacts
 
 # Dependencies
 node_modules/
@@ -117,3 +118,8 @@ frontend/vite.config.d.ts
 # with a negated allowlist — without these two lines the spec is invisible).
 !frontend/tests/e2e/sounding-panel.spec.ts
 !frontend/tests/e2e/sounding-panel.fixtures.ts
+
+# Tests
+backend/tests/data
+frontend/tests/unit
+frontend/tests/e2e

@@ -236,6 +236,99 @@ test.describe('Sounding panel', () => {
     await expect(page.locator('[data-testid="skewt-parcel-path"]')).toHaveCount(1);
   });
 
+  test('the Phase 5 overlays render: wet-bulb, omega, DGZ, hodograph and theta-e', async ({ page }) => {
+    const requests: SoundingRequestLog = [];
+    const mapSlot = await bootViewer(page, requests);
+    await page.locator('[data-testid="sounding-toggle"]').click();
+    await mapSlot.click({ position: { x: 320, y: 220 } });
+    await expect(page.locator('[data-testid="skewt-chart"]')).toBeVisible();
+
+    // --- wet-bulb: a real trace, and SHORTER than T because the server sends
+    // nulls at the below-ground levels T is anchored through.
+    const wetbulb = page.locator('[data-testid="skewt-trace-tw"]');
+    await expect(wetbulb).toHaveCount(1);
+    const twPath = (await wetbulb.getAttribute('d')) ?? '';
+    const tPath = (await page.locator('[data-testid="skewt-trace-t"]').getAttribute('d')) ?? '';
+    expect(twPath.length).toBeGreaterThan(0);
+    expect(twPath).not.toContain('NaN');
+    expect(pathYs(twPath).length).toBeLessThanOrEqual(pathYs(tPath).length);
+    // Tw lies between Td and T, so its path is neither of them.
+    expect(twPath).not.toBe(tPath);
+    await expect(page.locator('[data-testid="skewt-legend"]')).toContainText('Wetbulb');
+
+    // --- omega strip: bars in the left gutter, ascent tagged.
+    const omega = page.locator('[data-testid="skewt-omega"]');
+    await expect(omega).toHaveCount(1);
+    expect(Number(await omega.getAttribute('data-bars'))).toBeGreaterThan(3);
+    expect(await page.locator('[data-testid="skewt-omega-bar"][data-ascent="1"]').count())
+      .toBeGreaterThan(0);
+
+    // --- DGZ: this column crosses −18…−12, so exactly one band is shaded.
+    const dgz = page.locator('[data-testid="skewt-dgz"]');
+    expect(Number(await dgz.getAttribute('data-bands'))).toBe(1);
+    await expect(dgz).toContainText('DGZ');
+
+    // --- hodograph: height-coloured, and the 12 km deep fixture reaches every
+    // band, so all five colours are drawn with distinct strokes.
+    const hodograph = page.locator('[data-testid="sounding-hodograph"]');
+    await expect(hodograph).toBeVisible();
+    const segments = page.locator('[data-testid="hodograph-segment"]');
+    expect(await segments.count()).toBeGreaterThanOrEqual(4);
+    const strokes = await segments.evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute('stroke')),
+    );
+    expect(new Set(strokes).size).toBe(strokes.length);
+    await expect(page.locator('[data-testid="hodograph-surface"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="hodograph-tick-1"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="hodograph-tick-9"]')).toHaveCount(1);
+
+    // --- theta-e inset.
+    await expect(page.locator('[data-testid="sounding-thetae"]')).toBeVisible();
+    const thetaePath = (await page.locator('[data-testid="thetae-trace"]').getAttribute('d')) ?? '';
+    expect(thetaePath.length).toBeGreaterThan(0);
+    expect(thetaePath).not.toContain('NaN');
+
+    // Stacked sections, in order: chart, then the inset row, then the indices.
+    const order = await page.evaluate(() => {
+      const ids = ['skewt-chart', 'sounding-insets', 'sounding-indices'];
+      return ids.map((id) => {
+        const node = document.querySelector(`[data-testid="${id}"]`);
+        return node ? node.getBoundingClientRect().top : Number.NaN;
+      });
+    });
+    expect(order[0]).toBeLessThan(order[1]);
+    expect(order[1]).toBeLessThan(order[2]);
+  });
+
+  test('the DGZ is absent in a warm frame and the inset row is absent without profiles', async ({ page }) => {
+    const requests: SoundingRequestLog = [];
+    const mapSlot = await bootViewer(page, requests);
+    await page.locator('[data-testid="sounding-toggle"]').click();
+    await mapSlot.click({ position: { x: 320, y: 220 } });
+    await expect(page.locator('[data-testid="skewt-chart"]')).toBeVisible();
+
+    // fh 1: no `profiles` at all (pre-Phase-5 cached response, or a frame whose
+    // overlay computation failed). The chart still draws; the row is gone.
+    await page.locator('[data-testid="sounding-scrubber"]').fill('1');
+    await expect(page.locator('[data-testid="sounding-scrubber"]')).toHaveValue('1');
+    await expect(page.locator('[data-testid="skewt-trace-t"]')).toBeVisible();
+    await expect(page.locator('[data-testid="sounding-insets"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="skewt-trace-tw"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="sounding-hodograph"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="sounding-thetae"]')).toHaveCount(0);
+    // The omega strip is fed by `w`, not by `profiles`: it survives.
+    expect(Number(await page.locator('[data-testid="skewt-omega"]').getAttribute('data-bars')))
+      .toBeGreaterThan(3);
+
+    // fh 2: a column that never reaches −12 °C has no DGZ — nothing is drawn
+    // rather than a zero-height band or a fabricated default.
+    await page.locator('[data-testid="sounding-scrubber"]').fill('2');
+    await expect(page.locator('[data-testid="sounding-scrubber"]')).toHaveValue('2');
+    await expect(page.locator('[data-testid="sounding-insets"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="skewt-dgz"]')).toHaveAttribute('data-bands', '0');
+    await expect(page.locator('[data-testid="skewt-dgz"]')).not.toContainText('DGZ');
+  });
+
   test('the picked point round-trips through `sounding=` and closing clears it', async ({ page }) => {
     const requests: SoundingRequestLog = [];
     const mapSlot = await bootViewer(page, requests);

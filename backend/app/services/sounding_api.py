@@ -22,9 +22,12 @@ from __future__ import annotations
 
 import logging
 import math
+import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from pyproj import Transformer
@@ -33,6 +36,7 @@ from rasterio.transform import Affine
 from ..config import sounding_models
 from . import sounding as sounding_service
 from . import sounding_indices
+from . import sounding_thermo
 from .run_ids import RUN_ID_RE
 
 logger = logging.getLogger(__name__)
@@ -266,6 +270,117 @@ def _shape_fingerprint(sidecar: dict[str, Any]) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# Response cache (Phase 5 — the lever Phase 4 pre-staged)
+# ---------------------------------------------------------------------------
+#
+# Phase 4 measured ~1.2-1.4 s of MetPy per 49-frame request and deliberately
+# shipped no cache. Phase 5 adds three more per-level MetPy passes (wet-bulb is
+# the expensive one — an LCL plus a moist-lapse integration per level), which
+# roughly doubles that. A sounding panel is also *re-requested* far more than a
+# meteogram: every map re-pick near the same grid cell, every share-link open,
+# every reload of the same permalink.
+#
+# So: an in-process TTL cache of the fully-assembled payload, checked after the
+# cheap work (run resolution + one sidecar read + the grid-point mapping) and
+# before the ~49 stack reads and the MetPy pass.
+
+#: Short enough that a newly published fh shows up quickly on the next request.
+SOUNDING_CACHE_TTL_S = 300.0
+#: ~128 × a 49-frame payload; bounded because this is process memory.
+SOUNDING_CACHE_MAX_ENTRIES = 128
+
+_cache_lock = Lock()
+#: key -> (expires_at, payload). Insertion-ordered so the oldest evicts first.
+_response_cache: "OrderedDict[tuple, tuple[float, dict[str, Any]]]" = OrderedDict()
+
+
+def _now() -> float:
+    """Monotonic clock, indirected so tests can move time without sleeping."""
+    return time.monotonic()
+
+
+def _cache_key(
+    model: str, run_id: str, *, row: int, col: int, fhs: list[int]
+) -> tuple:
+    """Cache identity for one served payload.
+
+    The forecast-hour set is part of the key on purpose. A run is built
+    incrementally: a request that lands while only fh 0-5 exist would otherwise
+    keep serving that short list for the whole TTL, even as fh 6+ publish. Both
+    the count and the newest fh are included so growth at either end is a miss.
+    """
+    return (model, run_id, int(row), int(col), len(fhs), int(fhs[-1]) if fhs else -1)
+
+
+def _cache_get(key: tuple) -> dict[str, Any] | None:
+    now = _now()
+    with _cache_lock:
+        entry = _response_cache.get(key)
+        if entry is None:
+            return None
+        expires_at, payload = entry
+        if expires_at <= now:
+            _response_cache.pop(key, None)
+            return None
+        return payload
+
+
+def _cache_put(key: tuple, payload: dict[str, Any]) -> None:
+    now = _now()
+    with _cache_lock:
+        _response_cache.pop(key, None)
+        _response_cache[key] = (now + SOUNDING_CACHE_TTL_S, payload)
+        # Drop anything already expired before evicting live entries, so a burst
+        # of stale keys cannot push out a fresh one.
+        for stale_key in [k for k, (exp, _) in _response_cache.items() if exp <= now]:
+            _response_cache.pop(stale_key, None)
+        while len(_response_cache) > SOUNDING_CACHE_MAX_ENTRIES:
+            _response_cache.popitem(last=False)
+
+
+def clear_response_cache() -> None:
+    """Drop every cached payload (tests; also a hook for a future admin path)."""
+    with _cache_lock:
+        _response_cache.clear()
+
+
+def _with_request_fields(
+    payload: dict[str, Any],
+    *,
+    run: str | None,
+    lat: float,
+    lon: float,
+    grid_point: dict[str, Any],
+) -> dict[str, Any]:
+    """Shallow copy carrying every REQUEST-scoped field.
+
+    The cache key is the grid cell, but three things belong to the caller, not
+    the cell, and must never be served from cache (verification 2026-07-31
+    caught ``location``/``distance_km`` leaking one caller's click to another):
+
+    - ``requested_run`` — two callers can pin differently (``latest`` vs an
+      aged-out id) and still resolve to the same run.
+    - ``location`` — the caller's own lat/lon, echoed back.
+    - ``grid_point`` — row/col/grid lat-lon are cell attributes, but
+      ``distance_km`` is the haversine from THIS caller's click; the whole
+      object is recomputed per request anyway (it is how the key is derived).
+
+    The copy is shallow: nothing downstream mutates the payload, and
+    deep-copying a 49-frame response on every hit would give back the time the
+    cache saved.
+    """
+    result = dict(payload)
+    result["location"] = {"lat": float(lat), "lon": float(lon)}
+    result["grid_point"] = grid_point
+    pinned = str(run or "").strip()
+    if pinned and pinned.lower() != "latest":
+        result["requested_run"] = pinned
+    else:
+        result.pop("requested_run", None)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Response assembly
 # ---------------------------------------------------------------------------
 
@@ -313,7 +428,7 @@ def _frame_for_fh(
 
 
 def _attach_indices(frames: list[dict[str, Any]], levels_hpa: list[int]) -> None:
-    """Add ``indices`` / ``parcel`` to every frame, in place (Phase 4).
+    """Add ``indices`` / ``parcel`` / ``profiles`` to every frame, in place.
 
     Deliberately the LAST step: the stack reads above are a few hundred bytes
     each, while this is the only expensive part of the request (MetPy parcel
@@ -322,22 +437,28 @@ def _attach_indices(frames: list[dict[str, Any]], levels_hpa: list[int]) -> None
 
     A failure here is never allowed to cost the profile that the panel can
     already draw: one bad frame gets ``indices: null`` and the rest are served.
+
+    Frames are independent, so the work is fanned out across a process pool
+    (:mod:`app.services.sounding_thermo`), which degrades to this same serial
+    loop wherever subprocesses are unavailable.
     """
-    for frame in frames:
-        try:
-            computed = sounding_indices.compute_frame_indices(
-                levels_hpa=levels_hpa,
-                t=frame.get("t") or [],
-                td=frame.get("td") or [],
-                u=frame.get("u"),
-                v=frame.get("v"),
-                surface=frame.get("surface") or {},
-            )
-        except Exception:  # noqa: BLE001 - belt and braces; the module also guards
-            logger.exception("Sounding indices failed for fh%03d", int(frame.get("fh", -1)))
-            computed = {"indices": None, "parcel": None}
-        frame["indices"] = computed.get("indices")
-        frame["parcel"] = computed.get("parcel")
+    computed = sounding_thermo.compute_frames(
+        [
+            {
+                "levels_hpa": levels_hpa,
+                "t": frame.get("t") or [],
+                "td": frame.get("td") or [],
+                "u": frame.get("u"),
+                "v": frame.get("v"),
+                "surface": frame.get("surface") or {},
+            }
+            for frame in frames
+        ]
+    )
+    for frame, result in zip(frames, computed):
+        frame["indices"] = result.get("indices")
+        frame["parcel"] = result.get("parcel")
+        frame["profiles"] = result.get("profiles")
 
 
 def get_sounding(*, model: str, lat: float, lon: float, run: str | None = None) -> dict[str, Any]:
@@ -346,11 +467,10 @@ def get_sounding(*, model: str, lat: float, lon: float, run: str | None = None) 
     Raises :class:`SoundingUnavailableError` (404), :class:`SoundingRequestError`
     (400) or :class:`SoundingDataError` (500); the route maps them.
 
-    No in-process response cache: each fh is a single ~380 B seek-read, so a
-    48-fh response is ~18 KB of I/O, and the Phase 4 MetPy pass measures under
-    the 1.5 s budget for a full 49-frame run. A cache keyed on
-    (model, run, row, col) is the obvious lever if that ever changes — see
-    :func:`_attach_indices` for why the expensive work is ordered last.
+    Cached in-process on (model, run, row, col, fh-set) for
+    :data:`SOUNDING_CACHE_TTL_S`. The cheap identifying work — run resolution,
+    one sidecar read, the lat/lon → (row, col) mapping — runs on every request
+    because it *is* the key; everything expensive sits behind the lookup.
     """
     model_norm = str(model or "").strip().lower()
     if not sounding_enabled(model_norm):
@@ -376,6 +496,18 @@ def get_sounding(*, model: str, lat: float, lon: float, run: str | None = None) 
         )
 
     grid_point = locate_grid_point(reference_sidecar, lat=lat, lon=lon)
+
+    cache_key = _cache_key(
+        model_norm,
+        run_id,
+        row=int(grid_point["row"]),
+        col=int(grid_point["col"]),
+        fhs=usable_fhs,
+    )
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return _with_request_fields(cached, run=run, lat=lat, lon=lon, grid_point=grid_point)
+
     reference = {
         "fingerprint": _shape_fingerprint(reference_sidecar),
         "variable_ids": [str(entry["id"]) for entry in reference_sidecar["variables"]],
@@ -401,11 +533,11 @@ def get_sounding(*, model: str, lat: float, lon: float, run: str | None = None) 
     levels_hpa = [int(level) for level in reference_sidecar["levels_hPa"]]
     _attach_indices(frames, levels_hpa)
 
+    # Request-scoped fields (location, grid_point, requested_run) are attached
+    # by _with_request_fields AFTER caching — the cached body is cell-scoped only.
     payload: dict[str, Any] = {
         "model": model_norm,
         "run": run_id,
-        "location": {"lat": float(lat), "lon": float(lon)},
-        "grid_point": grid_point,
         "levels_hPa": levels_hpa,
         # Server-owned, displayed verbatim: the client never restates what the
         # parcel is (design decision #5).
@@ -414,7 +546,5 @@ def get_sounding(*, model: str, lat: float, lon: float, run: str | None = None) 
         "frames": frames,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    pinned = str(run or "").strip()
-    if pinned and pinned.lower() != "latest":
-        payload["requested_run"] = pinned
-    return payload
+    _cache_put(cache_key, payload)
+    return _with_request_fields(payload, run=run, lat=lat, lon=lon, grid_point=grid_point)

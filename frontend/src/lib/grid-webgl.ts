@@ -6,6 +6,16 @@ import { productFetch, type GridManifestResponse } from "@/lib/api";
 import type { AnchorBatchPoint } from "@/lib/anchor-labels";
 import { SCRUB_LAG_BURST_WARM_LIMIT, SCRUB_LAG_BURST_WARM_LIMIT_MOBILE } from "@/lib/app-utils";
 import { sampleGridPoints } from "@/lib/grid-sample";
+// [GLOBE SPIKE] dev-only, inert unless the page was loaded with ?globe=1.
+import {
+  GLOBE_SPIKE_ENABLED,
+  GLOBE_SPIKE_MESH_COLS,
+  GLOBE_SPIKE_MESH_ROWS,
+  GLOBE_SPIKE_VERTEX_SOURCE,
+  buildGlobeMesh,
+  readGlobeFrameProjection,
+  type GlobeFrameProjection,
+} from "@/lib/globe-spike";
 import { startNetworkTimer, trackClientProcessingDuration, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 
 export const GRID_WEBGL_LAYER_ID = "twf-grid-webgl";
@@ -710,6 +720,22 @@ export function readGridCoherenceStats(): GridCoherenceStats {
   return { ...gridCoherenceStats };
 }
 
+/**
+ * [GLOBE SPIKE] Draw-call counters, read from Playwright to prove the
+ * world-copy loop really is bypassed on the globe (draws == 1 per frame,
+ * mercatorQuadDraws frozen) and to sample the live transition value.
+ */
+export const globeSpikeStats = {
+  draws: 0,
+  mercatorQuadDraws: 0,
+  lastTransition: 0,
+  lastIndexCount: 0,
+  /** Last projection data handed to the layer, for the transition probe. */
+  lastMainMatrix: null as number[] | null,
+  lastFallbackMatrix: null as number[] | null,
+  lastClippingPlane: null as number[] | null,
+};
+
 export function resetGridCoherenceStats() {
   gridCoherenceStats.held = 0;
   gridCoherenceStats.drewMismatched = 0;
@@ -733,6 +759,20 @@ if (typeof window !== "undefined") {
     /** Capture gate as the exporter sees it. null while a hold is in effect. */
     visibleFrameHour: (layerId?: string) =>
       gridControllerRegistry.get(layerId ?? GRID_WEBGL_LAYER_ID)?.visibleFrameHour() ?? null,
+  };
+  // [GLOBE SPIKE] test seam, registered unconditionally so a spec can assert
+  // draws === 0 with the flag off.
+  (window as unknown as Record<string, unknown>).__cartoskyGlobeSpike = {
+    enabled: GLOBE_SPIKE_ENABLED,
+    meshCols: GLOBE_SPIKE_MESH_COLS,
+    meshRows: GLOBE_SPIKE_MESH_ROWS,
+    read: () => ({ ...globeSpikeStats }),
+    reset: () => {
+      globeSpikeStats.draws = 0;
+      globeSpikeStats.mercatorQuadDraws = 0;
+      globeSpikeStats.lastTransition = 0;
+      globeSpikeStats.lastIndexCount = 0;
+    },
   };
 }
 
@@ -1103,6 +1143,21 @@ export class GridWebglLayerController {
   private transitionStartedAt = 0;
   private transitionDurationMs = 0;
   private quadSignature: string | null = null;
+  // [GLOBE SPIKE] second program + mesh buffers, created only under ?globe=1.
+  private globeProgram: WebGLProgram | null = null;
+  private globeBindings: ProgramBindings | null = null;
+  private globeUniforms: {
+    fallbackMatrixLocation: WebGLUniformLocation | null;
+    clippingPlaneLocation: WebGLUniformLocation | null;
+    transitionLocation: WebGLUniformLocation | null;
+    lonLatLocation: number;
+  } | null = null;
+  private globeLonLatBuffer: WebGLBuffer | null = null;
+  private globeIndexBuffer: WebGLBuffer | null = null;
+  private globeVertexBuffer: WebGLBuffer | null = null;
+  private globeTexCoordBuffer: WebGLBuffer | null = null;
+  private globeMeshSignature: string | null = null;
+  private globeMeshIndexCount = 0;
 
   constructor(layerId = GRID_WEBGL_LAYER_ID) {
     this.layerId = layerId;
@@ -1274,7 +1329,9 @@ export class GridWebglLayerController {
             ? args
             : Array.from(args.defaultProjectionData.mainMatrix);
 
-        this.render(matrix);
+        // [GLOBE SPIKE] null on every mercator frame and whenever the flag is
+        // off, so the call below is the pre-spike call.
+        this.render(matrix, readGlobeFrameProjection(args));
       },
       onRemove: () => {
         this.disposeGlResources();
@@ -1585,10 +1642,15 @@ export class GridWebglLayerController {
       }
     `;
     const fragmentPrecision = fragmentFloatPrecisionQualifier(gl);
-    const fragmentSource = `
+    // [GLOBE SPIKE] The fragment source became a function of one boolean so the
+    // globe program can share it. `buildFragmentSource(false)` is byte-identical
+    // to the previous literal — every spike interpolation collapses to "" or to
+    // the exact previous text — so the mercator program compiles the same
+    // source it always did.
+    const buildFragmentSource = (globeVariant: boolean) => `
       precision ${fragmentPrecision} float;
       varying vec2 v_texCoord;
-      varying vec2 v_mercUnit;
+      varying vec2 v_mercUnit;${globeVariant ? "\n      varying float v_latRad;" : ""}
       uniform sampler2D u_data;
       uniform sampler2D u_prevData;
       uniform sampler2D u_lut;
@@ -1677,7 +1739,7 @@ export class GridWebglLayerController {
         if (abs(latSpan) < 1e-9) {
           return uv;
         }
-        float lat = latitudeRadFromMercatorUnitY(v_mercUnit.y);
+        float lat = ${globeVariant ? "v_latRad" : "latitudeRadFromMercatorUnitY(v_mercUnit.y)"};
         return vec2(uv.x, (latNorthRad - lat) / latSpan);
       }
 
@@ -2112,6 +2174,8 @@ export class GridWebglLayerController {
       }
     `;
 
+    const fragmentSource = buildFragmentSource(false);
+
     this.program = createProgram(gl, vertexSource, fragmentSource);
     this.vertexBuffer = gl.createBuffer();
     this.texCoordBuffer = gl.createBuffer();
@@ -2128,64 +2192,131 @@ export class GridWebglLayerController {
       throw new Error("Failed to initialize grid WebGL resources");
     }
 
-    this.bindings = {
-      positionLocation: gl.getAttribLocation(this.program, "a_pos"),
-      texCoordLocation: gl.getAttribLocation(this.program, "a_texCoord"),
-      matrixLocation: gl.getUniformLocation(this.program, "u_matrix"),
-      scaleLocation: gl.getUniformLocation(this.program, "u_scale"),
-      offsetLocation: gl.getUniformLocation(this.program, "u_offset"),
-      nodataLocation: gl.getUniformLocation(this.program, "u_nodata"),
-      valueMinLocation: gl.getUniformLocation(this.program, "u_valueMin"),
-      valueMaxLocation: gl.getUniformLocation(this.program, "u_valueMax"),
-      opacityLocation: gl.getUniformLocation(this.program, "u_opacity"),
-      transparentBelowMinLocation: gl.getUniformLocation(this.program, "u_transparentBelowMin"),
-      dataLocation: gl.getUniformLocation(this.program, "u_data"),
-      prevDataLocation: gl.getUniformLocation(this.program, "u_prevData"),
-      lutLocation: gl.getUniformLocation(this.program, "u_lut"),
-      mixLocation: gl.getUniformLocation(this.program, "u_mixAmount"),
-      hasPrevLocation: gl.getUniformLocation(this.program, "u_hasPrevious"),
-      powerNormGammaLocation: gl.getUniformLocation(this.program, "u_powerNormGamma"),
-      dataEncodingLocation: gl.getUniformLocation(this.program, "u_dataEncoding"),
-      texSizeLocation: gl.getUniformLocation(this.program, "u_texSize"),
-      categoricalLocation: gl.getUniformLocation(this.program, "u_categorical"),
-      categoricalNearestLocation: gl.getUniformLocation(this.program, "u_categoricalNearest"),
-      edgeFadeLocation: gl.getUniformLocation(this.program, "u_edgeFade"),
-      edgeFillValueLocation: gl.getUniformLocation(this.program, "u_edgeFillValue"),
-      radarPtypePackedLocation: gl.getUniformLocation(this.program, "u_radarPtypePacked"),
-      radarPtypeOffsetsLocation: gl.getUniformLocation(this.program, "u_radarPtypeOffsets"),
-      radarPtypeCountsLocation: gl.getUniformLocation(this.program, "u_radarPtypeCounts"),
-      radarPtypeTotalBinsLocation: gl.getUniformLocation(this.program, "u_radarPtypeTotalBins"),
-      supportCoverageThresholdLocation: gl.getUniformLocation(this.program, "u_supportCoverageThreshold"),
-      lowEndEdgeMaxLocation: gl.getUniformLocation(this.program, "u_lowEndEdgeMax"),
+    // [GLOBE SPIKE] Extracted verbatim into a builder so the globe program can
+    // reuse it; every `this.program` below became the `program` parameter.
+    const buildBindings = (program: WebGLProgram): ProgramBindings => ({
+      positionLocation: gl.getAttribLocation(program, "a_pos"),
+      texCoordLocation: gl.getAttribLocation(program, "a_texCoord"),
+      matrixLocation: gl.getUniformLocation(program, "u_matrix"),
+      scaleLocation: gl.getUniformLocation(program, "u_scale"),
+      offsetLocation: gl.getUniformLocation(program, "u_offset"),
+      nodataLocation: gl.getUniformLocation(program, "u_nodata"),
+      valueMinLocation: gl.getUniformLocation(program, "u_valueMin"),
+      valueMaxLocation: gl.getUniformLocation(program, "u_valueMax"),
+      opacityLocation: gl.getUniformLocation(program, "u_opacity"),
+      transparentBelowMinLocation: gl.getUniformLocation(program, "u_transparentBelowMin"),
+      dataLocation: gl.getUniformLocation(program, "u_data"),
+      prevDataLocation: gl.getUniformLocation(program, "u_prevData"),
+      lutLocation: gl.getUniformLocation(program, "u_lut"),
+      mixLocation: gl.getUniformLocation(program, "u_mixAmount"),
+      hasPrevLocation: gl.getUniformLocation(program, "u_hasPrevious"),
+      powerNormGammaLocation: gl.getUniformLocation(program, "u_powerNormGamma"),
+      dataEncodingLocation: gl.getUniformLocation(program, "u_dataEncoding"),
+      texSizeLocation: gl.getUniformLocation(program, "u_texSize"),
+      categoricalLocation: gl.getUniformLocation(program, "u_categorical"),
+      categoricalNearestLocation: gl.getUniformLocation(program, "u_categoricalNearest"),
+      edgeFadeLocation: gl.getUniformLocation(program, "u_edgeFade"),
+      edgeFillValueLocation: gl.getUniformLocation(program, "u_edgeFillValue"),
+      radarPtypePackedLocation: gl.getUniformLocation(program, "u_radarPtypePacked"),
+      radarPtypeOffsetsLocation: gl.getUniformLocation(program, "u_radarPtypeOffsets"),
+      radarPtypeCountsLocation: gl.getUniformLocation(program, "u_radarPtypeCounts"),
+      radarPtypeTotalBinsLocation: gl.getUniformLocation(program, "u_radarPtypeTotalBins"),
+      supportCoverageThresholdLocation: gl.getUniformLocation(program, "u_supportCoverageThreshold"),
+      lowEndEdgeMaxLocation: gl.getUniformLocation(program, "u_lowEndEdgeMax"),
       lowEndEdgeSupportCoverageThresholdLocation: gl.getUniformLocation(
-        this.program,
+        program,
         "u_lowEndEdgeSupportCoverageThreshold",
       ),
-      transparentZeroLocation: gl.getUniformLocation(this.program, "u_transparentZero"),
-      contrastFactorLocation: gl.getUniformLocation(this.program, "u_contrastFactor"),
-      saturationFactorLocation: gl.getUniformLocation(this.program, "u_saturationFactor"),
-      brightnessLowLocation: gl.getUniformLocation(this.program, "u_brightnessLow"),
-      brightnessHighLocation: gl.getUniformLocation(this.program, "u_brightnessHigh"),
-      contourDataLocation: gl.getUniformLocation(this.program, "u_contourData"),
-      contourEnabledLocation: gl.getUniformLocation(this.program, "u_contourEnabled"),
-      contourScaleLocation: gl.getUniformLocation(this.program, "u_contourScale"),
-      contourOffsetLocation: gl.getUniformLocation(this.program, "u_contourOffset"),
-      contourNodataLocation: gl.getUniformLocation(this.program, "u_contourNodata"),
-      contourDataEncodingLocation: gl.getUniformLocation(this.program, "u_contourDataEncoding"),
-      contourTexSizeLocation: gl.getUniformLocation(this.program, "u_contourTexSize"),
-      contourIntervalLocation: gl.getUniformLocation(this.program, "u_contourInterval"),
-      contourColorLocation: gl.getUniformLocation(this.program, "u_contourColor"),
-      texProjectionLocation: gl.getUniformLocation(this.program, "u_texProjection"),
-      latNorthRadLocation: gl.getUniformLocation(this.program, "u_latNorthRad"),
-      latSouthRadLocation: gl.getUniformLocation(this.program, "u_latSouthRad"),
-      contourTexProjectionLocation: gl.getUniformLocation(this.program, "u_contourTexProjection"),
-      contourLatNorthRadLocation: gl.getUniformLocation(this.program, "u_contourLatNorthRad"),
-      contourLatSouthRadLocation: gl.getUniformLocation(this.program, "u_contourLatSouthRad"),
-      wrapSLocation: gl.getUniformLocation(this.program, "u_wrapS"),
-      contourWrapSLocation: gl.getUniformLocation(this.program, "u_contourWrapS"),
-    };
+      transparentZeroLocation: gl.getUniformLocation(program, "u_transparentZero"),
+      contrastFactorLocation: gl.getUniformLocation(program, "u_contrastFactor"),
+      saturationFactorLocation: gl.getUniformLocation(program, "u_saturationFactor"),
+      brightnessLowLocation: gl.getUniformLocation(program, "u_brightnessLow"),
+      brightnessHighLocation: gl.getUniformLocation(program, "u_brightnessHigh"),
+      contourDataLocation: gl.getUniformLocation(program, "u_contourData"),
+      contourEnabledLocation: gl.getUniformLocation(program, "u_contourEnabled"),
+      contourScaleLocation: gl.getUniformLocation(program, "u_contourScale"),
+      contourOffsetLocation: gl.getUniformLocation(program, "u_contourOffset"),
+      contourNodataLocation: gl.getUniformLocation(program, "u_contourNodata"),
+      contourDataEncodingLocation: gl.getUniformLocation(program, "u_contourDataEncoding"),
+      contourTexSizeLocation: gl.getUniformLocation(program, "u_contourTexSize"),
+      contourIntervalLocation: gl.getUniformLocation(program, "u_contourInterval"),
+      contourColorLocation: gl.getUniformLocation(program, "u_contourColor"),
+      texProjectionLocation: gl.getUniformLocation(program, "u_texProjection"),
+      latNorthRadLocation: gl.getUniformLocation(program, "u_latNorthRad"),
+      latSouthRadLocation: gl.getUniformLocation(program, "u_latSouthRad"),
+      contourTexProjectionLocation: gl.getUniformLocation(program, "u_contourTexProjection"),
+      contourLatNorthRadLocation: gl.getUniformLocation(program, "u_contourLatNorthRad"),
+      contourLatSouthRadLocation: gl.getUniformLocation(program, "u_contourLatSouthRad"),
+      wrapSLocation: gl.getUniformLocation(program, "u_wrapS"),
+      contourWrapSLocation: gl.getUniformLocation(program, "u_contourWrapS"),
+    });
+
+    this.bindings = buildBindings(this.program);
+
+    // [GLOBE SPIKE] Second program, only under ?globe=1. Same fragment shader
+    // modulo the latitude source; different vertex shader (sphere + transition
+    // blend). Building it lazily here keeps the mercator program's compile
+    // inputs untouched when the flag is off.
+    if (GLOBE_SPIKE_ENABLED) {
+      this.globeProgram = createProgram(gl, GLOBE_SPIKE_VERTEX_SOURCE, buildFragmentSource(true));
+      this.globeBindings = buildBindings(this.globeProgram);
+      this.globeUniforms = {
+        fallbackMatrixLocation: gl.getUniformLocation(this.globeProgram, "u_globeFallbackMatrix"),
+        clippingPlaneLocation: gl.getUniformLocation(this.globeProgram, "u_globeClippingPlane"),
+        transitionLocation: gl.getUniformLocation(this.globeProgram, "u_globeTransition"),
+        lonLatLocation: gl.getAttribLocation(this.globeProgram, "a_lonLat"),
+      };
+      this.globeVertexBuffer = gl.createBuffer();
+      this.globeTexCoordBuffer = gl.createBuffer();
+      this.globeLonLatBuffer = gl.createBuffer();
+      this.globeIndexBuffer = gl.createBuffer();
+    }
 
     this.uploadQuadVerticesIfNeeded();
+  }
+
+  /**
+   * [GLOBE SPIKE] Rebuild + upload the subdivided mesh when the artifact
+   * footprint or the mesh density changes. Same cache-by-signature shape as
+   * uploadQuadVerticesIfNeeded().
+   */
+  private uploadGlobeMeshIfNeeded() {
+    const gl = this.gl;
+    if (
+      !GLOBE_SPIKE_ENABLED
+      || !gl
+      || !this.globeVertexBuffer
+      || !this.globeTexCoordBuffer
+      || !this.globeLonLatBuffer
+      || !this.globeIndexBuffer
+    ) {
+      return;
+    }
+    const bbox = this.resolveBbox();
+    const projection = this.resolveProjection();
+    const geographic = isGeographicProjection(projection);
+    const fullWorld = isFullWorldGeographic(projection, bbox);
+    const mesh = buildGlobeMesh(
+      bbox,
+      projection,
+      geographic,
+      fullWorld,
+      GLOBE_SPIKE_MESH_COLS,
+      GLOBE_SPIKE_MESH_ROWS,
+    );
+    if (mesh.signature === this.globeMeshSignature) {
+      return;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.globeVertexBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.globeTexCoordBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, mesh.texCoords, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.globeLonLatBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, mesh.lonLat, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.globeIndexBuffer);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
+    this.globeMeshIndexCount = mesh.indexCount;
+    this.globeMeshSignature = mesh.signature;
   }
 
   private resolveBbox(): [number, number, number, number] {
@@ -2888,7 +3019,7 @@ export class GridWebglLayerController {
     return offsets;
   }
 
-  private render(matrix: number[]) {
+  private render(matrix: number[], globe: GlobeFrameProjection | null = null) {
     // The controller MapLibre is driving is the live one — App may construct
     // several (StrictMode remount, composite/sampler layers) that share a
     // layer id, and only this one is on screen. Registering here rather than
@@ -2897,8 +3028,14 @@ export class GridWebglLayerController {
       gridControllerRegistry.set(this.layerId, this);
     }
     const gl = this.gl;
-    const program = this.program;
-    const bindings = this.bindings;
+    // [GLOBE SPIKE] `globe` is non-null only on globe-projection frames under
+    // ?globe=1; otherwise these are the pre-spike `this.program`/`this.bindings`.
+    const globeActive = Boolean(globe)
+      && this.globeProgram !== null
+      && this.globeBindings !== null
+      && this.globeUniforms !== null;
+    const program = globeActive ? this.globeProgram : this.program;
+    const bindings = globeActive ? this.globeBindings : this.bindings;
     const grid = this.manifest?.grid;
     if (
       !gl
@@ -2931,6 +3068,8 @@ export class GridWebglLayerController {
     }
 
     this.uploadQuadVerticesIfNeeded();
+    // [GLOBE SPIKE] no-op unless ?globe=1.
+    this.uploadGlobeMeshIfNeeded();
     this.uploadLutTexture();
 
     const zoom = this.map?.getZoom() ?? 0;
@@ -2943,13 +3082,24 @@ export class GridWebglLayerController {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+    gl.bindBuffer(gl.ARRAY_BUFFER, globeActive ? this.globeVertexBuffer : this.vertexBuffer);
     gl.enableVertexAttribArray(bindings.positionLocation);
     gl.vertexAttribPointer(bindings.positionLocation, 2, gl.FLOAT, false, 0, 0);
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.texCoordBuffer);
+    gl.bindBuffer(gl.ARRAY_BUFFER, globeActive ? this.globeTexCoordBuffer : this.texCoordBuffer);
     gl.enableVertexAttribArray(bindings.texCoordLocation);
     gl.vertexAttribPointer(bindings.texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+    // [GLOBE SPIKE] true lon/lat attribute + the three projection uniforms
+    // MapLibre hands custom layers in defaultProjectionData.
+    if (globeActive && globe && this.globeUniforms) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.globeLonLatBuffer);
+      gl.enableVertexAttribArray(this.globeUniforms.lonLatLocation);
+      gl.vertexAttribPointer(this.globeUniforms.lonLatLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.uniformMatrix4fv(this.globeUniforms.fallbackMatrixLocation, false, globe.fallbackMatrix);
+      gl.uniform4f(this.globeUniforms.clippingPlaneLocation, ...globe.clippingPlane);
+      gl.uniform1f(this.globeUniforms.transitionLocation, globe.transition);
+    }
 
     gl.uniform1f(bindings.scaleLocation, Number(grid.scale) || 1);
     gl.uniform1f(bindings.offsetLocation, Number(grid.offset) || 0);
@@ -3074,9 +3224,26 @@ export class GridWebglLayerController {
     } else {
       gridCoherenceStats.drewMismatched += 1;
     }
+    if (globeActive) {
+      // [GLOBE SPIKE] Exactly ONE draw. The world-copy loop is a mercator-only
+      // device: translatedWorldMatrix() adds whole mercator worlds to the model
+      // translation, which is meaningless against a unit-sphere matrix, and the
+      // sphere already closes on itself so there is nothing to replicate.
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.globeIndexBuffer);
+      gl.uniformMatrix4fv(bindings.matrixLocation, false, matrix);
+      gl.drawElements(gl.TRIANGLES, this.globeMeshIndexCount, gl.UNSIGNED_SHORT, 0);
+      globeSpikeStats.draws += 1;
+      globeSpikeStats.lastTransition = globe?.transition ?? 0;
+      globeSpikeStats.lastIndexCount = this.globeMeshIndexCount;
+      globeSpikeStats.lastMainMatrix = matrix;
+      globeSpikeStats.lastFallbackMatrix = globe?.fallbackMatrix ?? null;
+      globeSpikeStats.lastClippingPlane = globe?.clippingPlane ?? null;
+    } else {
     for (const offset of this.visibleWorldOffsets()) {
       gl.uniformMatrix4fv(bindings.matrixLocation, false, translatedWorldMatrix(matrix, offset));
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      globeSpikeStats.mercatorQuadDraws += 1;
+    }
     }
     if (this.hasPreviousTexture && mixAmount < 1) {
       this.requestRepaint();
@@ -3199,6 +3366,22 @@ export class GridWebglLayerController {
       if (this.texCoordBuffer) {
         gl.deleteBuffer(this.texCoordBuffer);
       }
+      // [GLOBE SPIKE] all null unless ?globe=1.
+      if (this.globeProgram) {
+        gl.deleteProgram(this.globeProgram);
+      }
+      for (
+        const buffer of [
+          this.globeVertexBuffer,
+          this.globeTexCoordBuffer,
+          this.globeLonLatBuffer,
+          this.globeIndexBuffer,
+        ]
+      ) {
+        if (buffer) {
+          gl.deleteBuffer(buffer);
+        }
+      }
       for (const entry of this.textureCache.values()) {
         gl.deleteTexture(entry.texture);
       }
@@ -3214,6 +3397,16 @@ export class GridWebglLayerController {
       controller.abort();
     }
     this.frameFetchAbortControllers.clear();
+    // [GLOBE SPIKE]
+    this.globeProgram = null;
+    this.globeBindings = null;
+    this.globeUniforms = null;
+    this.globeVertexBuffer = null;
+    this.globeTexCoordBuffer = null;
+    this.globeLonLatBuffer = null;
+    this.globeIndexBuffer = null;
+    this.globeMeshSignature = null;
+    this.globeMeshIndexCount = 0;
     this.program = null;
     this.bindings = null;
     this.vertexBuffer = null;

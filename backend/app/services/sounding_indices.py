@@ -7,8 +7,10 @@ thermodynamics (design bullet "Thermo policy"). One call takes a single decoded
 frame (the 37-level ladder plus the surface block that
 :func:`app.services.sounding.read_profile` returns) and gives back:
 
-* ``indices`` — SBCAPE/SBCIN, MLCAPE/MLCIN, LCL, LFC, EL, PWAT
-* ``parcel``  — the (p, T) polyline the Skew-T draws for the SB parcel
+* ``indices``  — SBCAPE/SBCIN, MLCAPE/MLCIN, LCL, LFC, EL, PWAT
+* ``parcel``   — the (p, T) polyline the Skew-T draws for the SB parcel
+* ``profiles`` — per-level wet-bulb, θe and height AGL for the Phase 5
+  overlays (wet-bulb trace, θe inset, height-coloured hodograph)
 
 ## The column (design §2)
 
@@ -42,9 +44,9 @@ would be a lie. They are legitimately undefined for a capped sounding and are
 ## Robustness contract
 
 No input can make this module raise: a frame whose surface block is nodata, or
-whose column collapses to nothing, yields ``{"indices": None, "parcel": None}``.
-Individual metrics degrade to ``None`` on their own without taking the rest of
-the frame down.
+whose column collapses to nothing, yields every key ``None``. Individual
+metrics degrade to ``None`` on their own without taking the rest of the frame
+down.
 """
 
 from __future__ import annotations
@@ -104,14 +106,21 @@ def _round_or_none(value: float | None, digits: int | None) -> float | int | Non
 
 
 class _Column:
-    """The anchored column, in plain floats (units are attached at use time)."""
+    """The anchored column, in plain floats (units are attached at use time).
 
-    __slots__ = ("p", "t", "td")
+    ``idx`` maps each column entry back to its index in the caller's isobaric
+    level ladder, with ``-1`` for the surface entry. Phase 5's per-level
+    profiles are computed on this column but shipped **level-aligned**, so the
+    client's existing index-parallel arrays keep working.
+    """
 
-    def __init__(self, p: np.ndarray, t: np.ndarray, td: np.ndarray) -> None:
+    __slots__ = ("p", "t", "td", "idx")
+
+    def __init__(self, p: np.ndarray, t: np.ndarray, td: np.ndarray, idx: np.ndarray) -> None:
         self.p = p
         self.t = t
         self.td = td
+        self.idx = idx
 
 
 def build_column(
@@ -138,6 +147,7 @@ def build_column(
     pressures: list[float] = [psfc]
     temps: list[float] = [t2m]
     dewpoints: list[float] = [td2m]
+    source: list[int] = [-1]
 
     kept = 0
     last_p = psfc
@@ -152,6 +162,7 @@ def build_column(
         pressures.append(level_p)
         temps.append(level_t)
         dewpoints.append(level_td)
+        source.append(index)
         last_p = level_p
         kept += 1
 
@@ -163,7 +174,7 @@ def build_column(
     # Quantization can push a saturated level's Td a hundredth of a degree above
     # T; MetPy treats supersaturation as an error, so clamp it away.
     td_array = np.minimum(np.asarray(dewpoints, dtype=float), t_array)
-    return _Column(p_array, t_array, td_array)
+    return _Column(p_array, t_array, td_array, np.asarray(source, dtype=int))
 
 
 def _parcel_path(mpcalc: Any, units: Any, column: _Column) -> dict[str, list[float]] | None:
@@ -228,6 +239,106 @@ def _virtual_temperature_cape_cin(
     return _scalar(cape), _scalar(cin)
 
 
+# ---------------------------------------------------------------------------
+# Phase 5 — per-level overlay profiles
+# ---------------------------------------------------------------------------
+
+
+def _hypsometric_heights_m(mpcalc: Any, units: Any, column: _Column) -> np.ndarray:
+    """Height AGL (m) at every column level, surface = 0.
+
+    The stack deliberately omits HGT (design §1: "+25% cost for an axis we can
+    reconstruct hypsometrically"), so the hodograph's height colouring comes
+    from integrating layer thicknesses upward from the surface:
+
+        Δz = (Rd / g) · Tv̄ · ln(p_below / p_above)
+
+    with ``Tv̄`` the layer-mean virtual temperature. That is exactly MetPy's
+    ``thickness_hydrostatic`` applied to each two-point layer (trapezoidal
+    integration of ``Rd·Tv d(ln p)/g``), and a test pins it against MetPy
+    layer-by-layer — but done here as one vectorised pass instead of 36 MetPy
+    calls per frame, because this runs 49 times per request.
+
+    ``pressure_to_height_std`` would be wrong: it is the standard atmosphere,
+    not this column.
+    """
+    import metpy.constants as mpconsts
+
+    p = column.p * units.hPa
+    t = column.t * units.degC
+    mixing_ratio = mpcalc.mixing_ratio_from_relative_humidity(
+        p, t, mpcalc.relative_humidity_from_dewpoint(t, column.td * units.degC)
+    )
+    tv = np.asarray(mpcalc.virtual_temperature(t, mixing_ratio).to(units.kelvin).m, dtype=float)
+
+    rd_over_g = float(mpconsts.Rd.m_as("J / (kg kelvin)")) / float(mpconsts.g.m_as("m / s**2"))
+    layer_mean_tv = 0.5 * (tv[:-1] + tv[1:])
+    thickness = rd_over_g * layer_mean_tv * np.log(column.p[:-1] / column.p[1:])
+    heights = np.empty_like(column.p)
+    heights[0] = 0.0
+    heights[1:] = np.cumsum(thickness)
+    return heights
+
+
+def _level_aligned(
+    values: np.ndarray, source_index: np.ndarray, level_count: int, digits: int
+) -> list[float | None]:
+    """Scatter column values back onto the isobaric ladder, ``None`` elsewhere.
+
+    Levels below ground (masked out of the column) and levels whose T/Td were
+    nodata (dropped) both stay ``None``, so the client can keep indexing these
+    arrays in parallel with ``levels_hPa``.
+    """
+    out: list[float | None] = [None] * level_count
+    for position, level_index in enumerate(source_index):
+        if level_index < 0 or level_index >= level_count:
+            continue
+        value = _finite(values[position])
+        out[int(level_index)] = None if value is None else round(value, digits)
+    return out
+
+
+def _compute_profiles(
+    mpcalc: Any, units: Any, column: _Column, level_count: int
+) -> dict[str, Any] | None:
+    """``{"tw", "theta_e", "height_m_agl", "surface_*"}`` for one frame.
+
+    All three are computed on the SAME anchored column the indices use, then
+    mapped back to the level ladder. A failure nulls the whole object rather
+    than shipping a half-populated one — the overlays are all-or-nothing per
+    frame and a partial set would be harder to reason about than none.
+    """
+    try:
+        p = column.p * units.hPa
+        t = column.t * units.degC
+        td = column.td * units.degC
+        tw = np.asarray(
+            mpcalc.wet_bulb_temperature(p, t, td).to(units.degC).m, dtype=float
+        ).reshape(-1)
+        theta_e = np.asarray(
+            mpcalc.equivalent_potential_temperature(p, t, td).to(units.kelvin).m, dtype=float
+        ).reshape(-1)
+        heights = _hypsometric_heights_m(mpcalc, units, column)
+    except Exception:  # noqa: BLE001 - never raise out of this module
+        logger.debug("Sounding overlay profiles failed", exc_info=True)
+        return None
+
+    if tw.shape != column.p.shape or theta_e.shape != column.p.shape:
+        logger.debug("Sounding overlay profiles returned an unexpected shape")
+        return None
+
+    return {
+        "tw": _level_aligned(tw, column.idx, level_count, 2),
+        "theta_e": _level_aligned(theta_e, column.idx, level_count, 2),
+        "height_m_agl": _level_aligned(heights, column.idx, level_count, 1),
+        # The surface entry has no slot on the isobaric ladder, and the client
+        # anchors its traces there: ship it explicitly rather than making the
+        # client fabricate one. Surface height is 0 m AGL by definition.
+        "surface_tw": _round_or_none(_finite(tw[0]), 2),
+        "surface_theta_e": _round_or_none(_finite(theta_e[0]), 2),
+    }
+
+
 def compute_frame_indices(
     *,
     levels_hpa: Sequence[Any],
@@ -237,14 +348,16 @@ def compute_frame_indices(
     v: Sequence[Any] | None = None,
     surface: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """``{"indices": {...} | None, "parcel": {...} | None}`` for one frame.
+    """``{"indices", "parcel", "profiles"}`` for one frame, each independently
+    nullable.
 
-    ``u``/``v`` are accepted (the caller already has them and Phase 5's
-    hodograph/shear indices will need them) but nothing in Phase 4 reads them.
+    ``u``/``v`` are accepted (the caller already has them) but nothing reads
+    them: the Phase 5 hodograph consumes the raw components client-side and
+    only needs ``profiles["height_m_agl"]`` from here.
 
     Never raises.
     """
-    empty: dict[str, Any] = {"indices": None, "parcel": None}
+    empty: dict[str, Any] = {"indices": None, "parcel": None, "profiles": None}
     surface = surface or {}
 
     try:
@@ -335,4 +448,5 @@ def compute_frame_indices(
         "model_sbcape": _round_or_none(_finite(surface.get("cape_sfc")), None),
     }
     parcel = _parcel_path(mpcalc, units, column) if parcel_q is not None else None
-    return {"indices": indices, "parcel": parcel}
+    profiles = _compute_profiles(mpcalc, units, column, len(levels_hpa))
+    return {"indices": indices, "parcel": parcel, "profiles": profiles}

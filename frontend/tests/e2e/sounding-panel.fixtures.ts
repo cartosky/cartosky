@@ -25,6 +25,8 @@ for (let p = 1000; p >= 100; p -= 25) SOUNDING_LEVELS.push(p);
 /** Below 968.5 hPa there is ground: the 1000 and 975 levels must be masked. */
 export const SOUNDING_SURFACE_PRESSURE = 968.5;
 export const SOUNDING_EXPECTED_MASKED_LEVELS = 2;
+/** Standard-atmosphere height of that surface pressure — the AGL datum. */
+const SOUNDING_SURFACE_HEIGHT_KM = 44.3 * (1 - Math.pow(SOUNDING_SURFACE_PRESSURE / 1013.25, 0.19));
 /** Index (into SOUNDING_LEVELS) whose temperature is nodata in every frame. */
 const NULL_LEVEL_INDEX = 12;
 
@@ -50,18 +52,34 @@ function frameFor(fh: number) {
   const u: (number | null)[] = [];
   const v: (number | null)[] = [];
   const w: (number | null)[] = [];
+  const tw: (number | null)[] = [];
+  const thetaE: (number | null)[] = [];
+  const heightM: (number | null)[] = [];
+
+  const warmColumn = fh === SOUNDING_WARM_FH;
 
   SOUNDING_LEVELS.forEach((p, index) => {
+    const belowGround = p >= SOUNDING_SURFACE_PRESSURE;
     if (index === NULL_LEVEL_INDEX) {
       t.push(null);
       td.push(null);
       u.push(null);
       v.push(null);
       w.push(null);
+      tw.push(null);
+      thetaE.push(null);
+      heightM.push(null);
       return;
     }
     const heightKm = 44.3 * (1 - Math.pow(p / 1013.25, 0.19));
-    const temperature = p >= 200 ? 28 + warmth - 6.5 * heightKm : -56 + (200 - p) * 0.05;
+    // The warm frame never reaches −12 °C, so it has NO dendritic growth
+    // zone — the only way to exercise the absent case, since a real
+    // full-depth column always passes through the −18…−12 slab somewhere.
+    const temperature = warmColumn
+      ? 28 + warmth - 1.0 * heightKm
+      : p >= 200
+        ? 28 + warmth - 6.5 * heightKm
+        : -56 + (200 - p) * 0.05;
     const depression = 3 + heightKm * 2.2;
     t.push(Number(temperature.toFixed(2)));
     td.push(Number((temperature - depression).toFixed(2)));
@@ -71,6 +89,20 @@ function frameFor(fh: number) {
     u.push(Number((speed * Math.cos(angle)).toFixed(2)));
     v.push(Number((speed * Math.sin(angle)).toFixed(2)));
     w.push(Number((-0.05 * heightKm).toFixed(3)));
+
+    // Phase 5 per-level overlay inputs. Server-shaped: computed on the
+    // anchored column and shipped level-aligned, so below-ground levels carry
+    // nulls exactly like the isobaric arrays do NOT (they carry real values) —
+    // this is the difference the client has to respect.
+    if (belowGround) {
+      tw.push(null);
+      thetaE.push(null);
+      heightM.push(null);
+      return;
+    }
+    tw.push(Number((temperature - depression * 0.35).toFixed(2)));
+    thetaE.push(Number((338 + heightKm * 3.1 + warmth).toFixed(2)));
+    heightM.push(Number(((heightKm - SOUNDING_SURFACE_HEIGHT_KM) * 1000).toFixed(1)));
   });
 
   return {
@@ -94,14 +126,34 @@ function frameFor(fh: number) {
     // the profile still draws, every readout row falls back to an em dash.
     indices: fh === SOUNDING_NULL_INDICES_FH ? null : indicesFor(fh),
     parcel: fh === SOUNDING_NULL_INDICES_FH ? null : parcelFor(fh),
+    // Same frame stands in for a pre-Phase-5 / failed overlay block: the inset
+    // row must simply not render.
+    profiles:
+      fh === SOUNDING_NULL_INDICES_FH
+        ? null
+        : {
+            tw,
+            theta_e: thetaE,
+            height_m_agl: heightM,
+            surface_tw: Number((31.5 + warmth - 4.4).toFixed(2)),
+            surface_theta_e: Number((338 + warmth).toFixed(2)),
+          },
   };
 }
 
 /** The last frame stands in for a v1 stack: no model SBCAPE, no LFC/EL. */
 export const SOUNDING_LAST_FH = SOUNDING_FRAME_HOURS[SOUNDING_FRAME_HOURS.length - 1];
 
-/** This frame carries `indices: null` / `parcel: null` (per-frame degradation). */
+/** This frame carries `indices` / `parcel` / `profiles` all null. */
 export const SOUNDING_NULL_INDICES_FH = SOUNDING_FRAME_HOURS[1];
+
+/**
+ * The DGZ-free frame. Its column is deliberately unphysical (a ~1 K/km lapse
+ * all the way to 100 hPa) because a realistic full-depth sounding ALWAYS
+ * crosses −18…−12 °C somewhere, and the "renders nothing" branch still has to
+ * be proven.
+ */
+export const SOUNDING_WARM_FH = SOUNDING_FRAME_HOURS[2];
 
 /**
  * Server-shaped Phase 4 block. Values are per-fh so the scrubber assertions can

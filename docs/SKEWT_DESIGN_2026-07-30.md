@@ -238,6 +238,81 @@ steepening the fixture lapse to ~8 K/km. `CAPE:surface` confirmed present in rea
 sfc files at f00 (anl) and f06. Backend sounding modules 115 green; e2e 12; build/tsc
 clean.
 
+**Phase 5 status: implemented + verified 2026-07-31** (uncommitted; prod gate =
+per-overlay visual review). All four overlays plus the response cache.
+Layout is Brian's locked decision: **stacked sections** in the panel — Skew-T
+chart → side-by-side `[hodograph | θe]` row → indices box, same order in the
+mobile sheet, collapsing to one column under 384 px. No floating insets, no
+tabs. Backend: `sounding_indices` gained a per-frame `profiles` block
+(`tw`, `theta_e`, `height_m_agl` + the two surface anchors) computed on the same
+anchored column as the indices and shipped **level-aligned with nulls below
+ground**, so the client's parallel-array indexing is unchanged. Heights are
+integrated hypsometrically per §1 (layer-mean virtual temperature, vectorised;
+pinned against MetPy's `thickness_hydrostatic` layer by layer to 0.5 m —
+`pressure_to_height_std` would answer the standard atmosphere, not this column).
+Frontend: wet-bulb trace, left-gutter omega strip (ascent = gold toward the
+plot, ±2 Pa/s clamp, |w| ≥ 0.05), DGZ band with **interpolated** crossing
+pressures (multi-slab capable), and the two new inset components; all the math
+lives in `lib/skewt-geometry.ts` + the new `lib/sounding-insets.ts`.
+Cost and the two levers, measured on dev hardware for a 49-frame request.
+Serial, the profiles cost 0.93 s → **2.16 s**: MetPy's `wet_bulb_temperature`
+is ~1.3 s of that and dominates the phase. Two things were measured before
+being built, and the results are worth keeping:
+
+- **Batching the MetPy calls does NOT work.** `wet_bulb_temperature` runs one
+  SciPy `solve_ivp` moist-lapse integration **per element** — ~660 µs/element
+  at n=36 degrading to ~1060 µs/element at n=1764 — so concatenating all 49
+  frames into one call was *slower* than 49 sequential calls (best case 0.92×,
+  bit-identical results). It does not vectorise. `equivalent_potential_temperature`
+  genuinely does (1.97 ms for 1764 points) and is not a contributor.
+- **Frames are independent and the work is GIL-bound, so a process pool is the
+  lever.** `sounding_thermo.py` (new) fans the whole per-frame thermo pass —
+  Phase 4 indices/parcel *and* Phase 5 profiles — across a lazily created,
+  process-lifetime `ProcessPoolExecutor` using the **spawn** context (never
+  fork: the API is an async server with helper threads). Workers import only
+  `sounding_indices` + numpy, with MetPy lazy inside it. Anything that can go
+  wrong — pool won't start, submit fails, executor breaks mid-request —
+  degrades transparently to the serial loop and latches off, logged once.
+  `CARTOSKY_SOUNDING_THERMO_WORKERS=0` forces serial as an ops escape hatch.
+
+| 49-frame request | |
+|---|---|
+| serial, Phase 4 shape (no profiles) | 929 ms |
+| serial, Phase 5 | 2163 ms |
+| **pooled (4 workers), warm** | **622 ms** |
+| pooled, first request (spawn + MetPy import per worker) | 3478 ms |
+| cache hit | 0.2 ms |
+
+Pooled output is byte-identical to serial across all 49 frames. The warm
+pooled request is now cheaper than Phase 4's serial baseline was; the one-off
+~3.5 s first request per process is the accepted cost of spawn. The Phase 4
+pre-staged cache is also in: 300 s / 128-entry in-process TTL in `sounding_api`
+keyed `(model, run, row, col, fh-count, newest fh)` — the fh set is in the key
+so a partially built run cannot serve a stale short list.
+Rejected and recorded: precomputing wet-bulb into the stack at build time is
+infeasible without abandoning MetPy (4.4 M per-element ODE solves per fh);
+revisit only alongside a closed-form (Stull/Davies-Jones) decision at some
+future `format_version` bump. Tests: 142 backend (was 115), 128 frontend unit
+(hodograph band splitting, ring auto-scale, θe domain, DGZ interpolation,
+omega sign/clamp, `anchorSeries`), 14 sounding e2e (was 12) including a
+fixture frame engineered with no DGZ and one with no `profiles` at all.
+
+**Verification round (2026-07-31, fresh-context):** initially REFUTED on one
+real bug — the response cache served **request-scoped fields** (`location`,
+`grid_point.distance_km`) from one caller to another in the same 12 km cell
+("~0.0 km from click" for a pick 2.2 km away). Fixed: `_with_request_fields`
+attaches location/grid_point/requested_run AFTER cache retrieval; the cached
+body is cell-scoped only; regression test covers the two-callers-one-cell case
+and re-verification proved B gets its own echo on a genuine cache hit. The
+pool-parity test now runs from a checked-in fixture
+(`backend/tests/data/sounding_profile_okc_v2.json`) instead of skipping outside
+this session. Everything else confirmed independently: physics to ≤0.005 °C/K
+and ≤0.05 m of the verifier's own MetPy/hypsometric computations, spawn-context
+isolation (worker sys.modules carries no FastAPI/app.main), all degradation
+paths, geometry invariants after the margin change, cache eviction at the cap.
+Known pre-existing issue tracked separately: flaky map-click request-log e2e
+tests (nondeterministic missed clicks; not introduced by this work).
+
 ## 8. Decisions
 
 1. **VVEL from day one — RESOLVED yes (Brian, 2026-07-30).** +~25% storage/fetch; avoids

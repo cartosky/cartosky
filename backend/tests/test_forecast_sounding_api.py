@@ -40,6 +40,7 @@ from app import main as main_module  # noqa: E402
 from app.services import sounding as sounding_service  # noqa: E402
 from app.services import sounding_api as sounding_api_service  # noqa: E402
 from app.services import sounding_indices  # noqa: E402
+from app.services import sounding_thermo  # noqa: E402
 
 pytestmark = pytest.mark.anyio
 
@@ -154,6 +155,10 @@ def _reset_caches() -> None:
     main_module._manifest_cache.clear()
     main_module._sidecar_cache.clear()
     sounding_api_service._sounding_transformer.cache_clear()
+    # The Phase 5 response cache keys on (model, run, row, col, fh-set) — which
+    # is unique per *process* in production, but not across tests, where every
+    # case rebuilds a different tmp_path tree under the same model/run ids.
+    sounding_api_service.clear_response_cache()
 
 
 @pytest.fixture
@@ -171,6 +176,18 @@ def roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     _reset_caches()
     yield published_root, manifests_root
     _reset_caches()
+
+
+@pytest.fixture(autouse=True)
+def _serial_thermo(monkeypatch: pytest.MonkeyPatch):
+    """Pin the endpoint's thermo pass to the in-process path.
+
+    Several cases here monkeypatch ``sounding_indices.compute_frame_indices``
+    to count calls or to inject a failure, and a patch applied in the parent
+    process is invisible to spawned workers. The pool itself is covered
+    directly in ``test_sounding_thermo.py``.
+    """
+    monkeypatch.setenv(sounding_thermo.WORKERS_ENV_VAR, "0")
 
 
 @pytest.fixture(autouse=True)
@@ -895,3 +912,224 @@ async def test_nodata_pixel_yields_null_indices_not_an_error(
     for frame in response.json()["frames"]:
         assert frame["indices"] is None
         assert frame["parcel"] is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — overlay profiles + response cache
+# ---------------------------------------------------------------------------
+
+
+async def test_every_frame_carries_overlay_profiles(
+    client: httpx.AsyncClient, roots
+) -> None:
+    """The four Phase 5 overlays are fed by one per-frame ``profiles`` block."""
+    published_root, manifests_root = roots
+    _write_physical_run(published_root, manifests_root)
+    lon, lat = _cell_center_lonlat(6, 9)
+
+    response = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    assert response.status_code == 200
+    payload = response.json()
+    levels = payload["levels_hPa"]
+
+    for frame in payload["frames"]:
+        profiles = frame["profiles"]
+        assert profiles is not None
+        assert set(profiles) == {
+            "tw",
+            "theta_e",
+            "height_m_agl",
+            "surface_tw",
+            "surface_theta_e",
+        }
+        for key in ("tw", "theta_e", "height_m_agl"):
+            assert len(profiles[key]) == len(levels), key
+
+        # The 968.5 hPa ground masks 1000 and 975; everything above is real.
+        assert profiles["tw"][0] is None
+        assert profiles["tw"][1] is None
+
+        heights = [value for value in profiles["height_m_agl"] if value is not None]
+        assert heights and all(heights[i] < heights[i + 1] for i in range(len(heights) - 1))
+
+        for index, level in enumerate(levels):
+            tw = profiles["tw"][index]
+            if tw is None:
+                continue
+            # Tw sits between Td and T; a swapped array would break this.
+            assert frame["td"][index] - 0.05 <= tw <= frame["t"][index] + 0.05, level
+            # Kelvin, not Celsius. The upper bound is loose because the
+            # fixture column is deliberately extreme aloft.
+            assert 250.0 < profiles["theta_e"][index] < 450.0, level
+
+
+async def test_nodata_pixel_yields_null_profiles_not_an_error(
+    client: httpx.AsyncClient, roots
+) -> None:
+    published_root, manifests_root = roots
+    _write_run(published_root, manifests_root, RUN_ID)
+    lon, lat = _cell_center_lonlat(NODATA_ROW, NODATA_COL)
+
+    response = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    assert response.status_code == 200
+    for frame in response.json()["frames"]:
+        assert frame["profiles"] is None
+
+
+async def test_repeat_request_for_the_same_point_is_served_from_cache(
+    client: httpx.AsyncClient, roots, monkeypatch
+) -> None:
+    """The cache must sit in front of the stack reads AND the MetPy pass."""
+    published_root, manifests_root = roots
+    _write_physical_run(published_root, manifests_root)
+    lon, lat = _cell_center_lonlat(6, 9)
+
+    first = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    assert first.status_code == 200
+
+    calls: list[int] = []
+    real = sounding_indices.compute_frame_indices
+
+    def _counting(**kwargs):
+        calls.append(1)
+        return real(**kwargs)
+
+    monkeypatch.setattr(sounding_indices, "compute_frame_indices", _counting)
+
+    second = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    assert second.status_code == 200
+    assert second.json()["frames"] == first.json()["frames"]
+    assert calls == []
+
+
+async def test_a_different_grid_cell_is_a_cache_miss(
+    client: httpx.AsyncClient, roots
+) -> None:
+    published_root, manifests_root = roots
+    _write_physical_run(published_root, manifests_root)
+
+    first = await client.post(
+        "/api/v4/forecast/sounding", json=_body(*reversed(_cell_center_lonlat(6, 9)))
+    )
+    second = await client.post(
+        "/api/v4/forecast/sounding", json=_body(*reversed(_cell_center_lonlat(2, 3)))
+    )
+    assert first.status_code == second.status_code == 200
+    assert first.json()["grid_point"] != second.json()["grid_point"]
+
+
+async def test_cache_entry_expires_after_the_ttl(
+    client: httpx.AsyncClient, roots, monkeypatch
+) -> None:
+    published_root, manifests_root = roots
+    _write_physical_run(published_root, manifests_root)
+    lon, lat = _cell_center_lonlat(6, 9)
+
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr(sounding_api_service, "_now", lambda: clock["now"])
+
+    first = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    assert first.status_code == 200
+
+    calls: list[int] = []
+    real = sounding_indices.compute_frame_indices
+    monkeypatch.setattr(
+        sounding_indices,
+        "compute_frame_indices",
+        lambda **kwargs: (calls.append(1), real(**kwargs))[1],
+    )
+
+    clock["now"] += sounding_api_service.SOUNDING_CACHE_TTL_S - 1.0
+    assert (await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))).status_code == 200
+    assert calls == []
+
+    clock["now"] += 2.0
+    assert (await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))).status_code == 200
+    assert len(calls) == len(FHS)
+
+
+async def test_a_growing_run_is_not_served_from_a_stale_short_list(
+    client: httpx.AsyncClient, roots
+) -> None:
+    """A partially built run must not pin its short fh list for the whole TTL."""
+    published_root, manifests_root = roots
+    _write_physical_run(published_root, manifests_root, fhs=[0, 1])
+    lon, lat = _cell_center_lonlat(6, 9)
+
+    first = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    assert [frame["fh"] for frame in first.json()["frames"]] == [0, 1]
+
+    # The scheduler publishes another hour inside the TTL window.
+    _write_physical_run(published_root, manifests_root, fhs=[0, 1, 2])
+    main_module._manifest_cache.clear()
+
+    second = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    assert [frame["fh"] for frame in second.json()["frames"]] == [0, 1, 2]
+
+
+def test_cache_evicts_the_oldest_entry_past_the_size_cap(monkeypatch) -> None:
+    sounding_api_service.clear_response_cache()
+    monkeypatch.setattr(sounding_api_service, "SOUNDING_CACHE_MAX_ENTRIES", 3)
+
+    keys = [
+        sounding_api_service._cache_key(MODEL, RUN_ID, row=index, col=0, fhs=FHS)
+        for index in range(4)
+    ]
+    for index, key in enumerate(keys):
+        sounding_api_service._cache_put(key, {"n": index})
+
+    assert sounding_api_service._cache_get(keys[0]) is None
+    for index in (1, 2, 3):
+        assert sounding_api_service._cache_get(keys[index]) == {"n": index}
+    sounding_api_service.clear_response_cache()
+
+
+def test_cache_hit_still_echoes_this_requests_run_pin(monkeypatch) -> None:
+    """Two callers can pin differently and resolve to the same run."""
+    sounding_api_service.clear_response_cache()
+    payload = {"model": MODEL, "run": RUN_ID, "frames": []}
+    grid_point = {"lat": 38.66, "lon": -97.57, "row": 6, "col": 9, "distance_km": 0.0}
+
+    def with_fields(run):
+        return sounding_api_service._with_request_fields(
+            payload, run=run, lat=38.66, lon=-97.57, grid_point=grid_point
+        )
+
+    unpinned = with_fields(None)
+    pinned = with_fields(OLDER_RUN_ID)
+    latest = with_fields("latest")
+
+    assert "requested_run" not in unpinned
+    assert "requested_run" not in latest
+    assert pinned["requested_run"] == OLDER_RUN_ID
+    # The cached body itself is never contaminated by a caller's pin.
+    assert "requested_run" not in payload
+
+
+async def test_cache_hit_carries_this_requests_location_and_distance(
+    client: httpx.AsyncClient, roots
+) -> None:
+    """Two clicks in the SAME 12 km cell must each get their own echo.
+
+    Regression for the 2026-07-31 verification counterexample: the cache served
+    caller A's ``location`` and ``distance_km`` to caller B for the TTL.
+    """
+    published_root, manifests_root = roots
+    _write_run(published_root, manifests_root, RUN_ID)
+    lon_a, lat_a = _cell_center_lonlat(6, 9)
+
+    first = await client.post("/api/v4/forecast/sounding", json=_body(lat_a, lon_a))
+    # ~2 km north, same cell (cells are 12 km).
+    second = await client.post(
+        "/api/v4/forecast/sounding", json=_body(lat_a + 0.02, lon_a)
+    )
+
+    a, b = first.json(), second.json()
+    assert a["grid_point"]["row"] == b["grid_point"]["row"]
+    assert a["grid_point"]["col"] == b["grid_point"]["col"]
+    assert a["location"]["lat"] == pytest.approx(lat_a)
+    assert b["location"]["lat"] == pytest.approx(lat_a + 0.02)
+    assert a["grid_point"]["distance_km"] == pytest.approx(0.0, abs=0.05)
+    assert b["grid_point"]["distance_km"] == pytest.approx(2.2, abs=0.3)
+    # And it genuinely was a cache hit, not a rebuild:
+    assert a["generated_at"] == b["generated_at"]

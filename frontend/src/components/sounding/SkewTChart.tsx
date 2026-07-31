@@ -3,11 +3,14 @@ import { Fragment, useMemo } from "react";
 import backgroundLines from "@/assets/skewt-background.json";
 import {
   anchorProfile,
+  anchorSeries,
   BARB_CALM_KT,
   celsiusToFahrenheit,
   createSkewTGeometry,
   dataPath,
   decomposeBarb,
+  dgzBands,
+  omegaBars,
   SKEWT_COLORS,
   SKEWT_DEFAULT_PLOT_W,
   SKEWT_ISOTHERM_MIN,
@@ -15,6 +18,7 @@ import {
   SKEWT_MAJOR_PRESSURES,
   SKEWT_MIXR_LABEL_P,
   SKEWT_MIXR_TOP_P,
+  SKEWT_OMEGA_W,
   SKEWT_P_BOTTOM,
   SKEWT_P_TOP,
   SKEWT_T_MAX,
@@ -52,6 +56,7 @@ const BARB_STEP = 4.5;
 const LEGEND_ROWS: Array<[string, string, number, string | undefined]> = [
   [SKEWT_COLORS.temperature, "Temperature", 2.1, undefined],
   [SKEWT_COLORS.dewpoint, "Dewpoint", 2.1, undefined],
+  [SKEWT_COLORS.wetbulb, "Wetbulb", 1.2, undefined],
   [SKEWT_COLORS.parcel, "Parcel path", 1.6, "4 3"],
   [SKEWT_COLORS.dryAdiabat, "Dry adiabats", 1, undefined],
   [SKEWT_COLORS.moistAdiabat, "Moist adiabats", 1, undefined],
@@ -271,6 +276,63 @@ export function SkewTChart({
     [geo, profile],
   );
 
+  /**
+   * Wet-bulb trace (Phase 5). Server-computed, so a response without
+   * `profiles` simply produces an empty path and nothing is drawn — the client
+   * must never fall back to deriving Tw itself.
+   */
+  const wetbulbPath = useMemo(() => {
+    const tw = frame.profiles?.tw;
+    if (!Array.isArray(tw) || tw.length === 0) return null;
+    const anchored = anchorSeries(levelsHPa, tw, {
+      surfacePressure: profile.surfacePressure,
+      surfaceValue: frame.profiles?.surface_tw,
+    });
+    const d = dataPath(geo, profile.pressures, anchored);
+    return d.length > 0 ? d : null;
+  }, [geo, levelsHPa, profile, frame.profiles]);
+
+  /**
+   * Dendritic growth zone: the pressure slab where the ENVIRONMENT sits
+   * between −18 and −12 °C. Warm columns have none and draw nothing.
+   */
+  const dgz = useMemo(
+    () =>
+      dgzBands(profile.pressures, profile.t)
+        .map((band) => ({
+          ...band,
+          yTop: geo.yOf(band.pTop),
+          yBottom: geo.yOf(band.pBottom),
+        }))
+        .filter((band) => Number.isFinite(band.yTop) && Number.isFinite(band.yBottom))
+        .map((band) => ({
+          ...band,
+          // Clip to the plot rather than dropping a band that runs off the top.
+          yTop: Math.max(band.yTop, geo.y0),
+          yBottom: Math.min(band.yBottom, geo.y1),
+        }))
+        .filter((band) => band.yBottom - band.yTop > 0.5),
+    [geo, profile],
+  );
+
+  /**
+   * Omega bars in the left gutter. Ascent (w < 0) reaches toward the plot in
+   * gold, descent away from it in grey.
+   */
+  const omega = useMemo(() => {
+    const anchored = anchorSeries(levelsHPa, frame.w ?? [], {
+      surfacePressure: profile.surfacePressure,
+    });
+    const halfWidth = SKEWT_OMEGA_W / 2 - 1;
+    return omegaBars(profile.pressures, anchored)
+      .map((bar) => ({
+        ...bar,
+        y: geo.yOf(bar.p),
+        length: Math.max(1, bar.fraction * halfWidth),
+      }))
+      .filter((bar) => Number.isFinite(bar.y) && bar.y >= geo.y0 && bar.y <= geo.y1);
+  }, [geo, levelsHPa, profile, frame.w]);
+
   const barbs = useMemo(() => {
     const out: Array<{ key: string; y: number; u: number; v: number }> = [];
     let lastY = Number.POSITIVE_INFINITY;
@@ -360,6 +422,47 @@ export function SkewTChart({
 
       <SkewTBackground geo={geo} />
 
+      {/* --- dendritic growth zone (−18 to −12 °C), TT-style --- */}
+      <g data-testid="skewt-dgz" data-bands={dgz.length} clipPath="url(#skewt-plotclip)">
+        {dgz.map((band) => (
+          <Fragment key={`dgz-${band.pBottom.toFixed(1)}`}>
+            <rect
+              x={geo.x0}
+              y={band.yTop}
+              width={geo.plotW}
+              height={band.yBottom - band.yTop}
+              fill={SKEWT_COLORS.dgzFill}
+              opacity={0.08}
+            />
+            {[band.yTop, band.yBottom].map((y, index) => (
+              <line
+                key={`dgz-edge-${index}`}
+                x1={geo.x0}
+                y1={y}
+                x2={geo.x1}
+                y2={y}
+                stroke={SKEWT_COLORS.dgzEdge}
+                strokeWidth={0.8}
+                strokeDasharray="3 3"
+                opacity={0.55}
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+            <text
+              x={geo.x1 - 4}
+              y={(band.yTop + band.yBottom) / 2 + 3}
+              fontSize={8}
+              fontWeight={600}
+              textAnchor="end"
+              fill={SKEWT_COLORS.dgzEdge}
+              opacity={0.85}
+            >
+              DGZ
+            </text>
+          </Fragment>
+        ))}
+      </g>
+
       {/* --- isobars + pressure labels (TT ladder) --- */}
       {SKEWT_TICK_PRESSURES.map((p) => {
         const y = geo.yOf(p);
@@ -386,7 +489,7 @@ export function SkewTChart({
             />
             {major ? (
               <text
-                x={geo.x0 - 8}
+                x={geo.omegaX0 - 5}
                 y={y + 3.5}
                 fontSize={10}
                 textAnchor="end"
@@ -408,6 +511,43 @@ export function SkewTChart({
       >
         pressure (hPa)
       </text>
+
+      {/* --- omega strip: ascent toward the plot in gold, descent in grey --- */}
+      <g data-testid="skewt-omega" data-bars={omega.length}>
+        <line
+          x1={geo.omegaCx}
+          y1={geo.y0}
+          x2={geo.omegaCx}
+          y2={geo.y1}
+          stroke={SKEWT_COLORS.gridMinor}
+          strokeWidth={0.5}
+          vectorEffect="non-scaling-stroke"
+        />
+        {omega.map((bar) => (
+          <line
+            key={`omega-${bar.p}`}
+            data-testid="skewt-omega-bar"
+            data-ascent={bar.ascent ? "1" : "0"}
+            x1={geo.omegaCx}
+            y1={bar.y}
+            x2={geo.omegaCx + (bar.ascent ? bar.length : -bar.length)}
+            y2={bar.y}
+            stroke={bar.ascent ? SKEWT_COLORS.omegaAscent : SKEWT_COLORS.omegaDescent}
+            strokeWidth={1.6}
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+        <text
+          x={geo.omegaCx}
+          y={geo.y1 + 15}
+          fontSize={9}
+          textAnchor="middle"
+          fill={SKEWT_COLORS.axisLabel}
+        >
+          ω
+        </text>
+      </g>
 
       {/* --- isotherm labels along the bottom axis --- */}
       {(() => {
@@ -488,6 +628,20 @@ export function SkewTChart({
           strokeLinecap="round"
           vectorEffect="non-scaling-stroke"
         />
+        {/* Thin, between the two loud traces: Tw always lies between Td and T,
+            and drawing it heavier would read as a third primary profile. */}
+        {wetbulbPath ? (
+          <path
+            data-testid="skewt-trace-tw"
+            d={wetbulbPath}
+            fill="none"
+            stroke={SKEWT_COLORS.wetbulb}
+            strokeWidth={1.2}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        ) : null}
         <path
           data-testid="skewt-trace-t"
           d={tracePaths.t}
