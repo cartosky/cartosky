@@ -12,7 +12,11 @@ import {
 const POSTHOG_EVENT_BUDGET_KEY = "cartosky.posthog.event_count";
 const POSTHOG_EVENT_BUDGET = 75;
 
-const ALLOWED_EVENT_NAMES = new Set([
+/**
+ * Capture allowlist. Exported so the unit suite can pin it against
+ * `ANALYTICS_EVENT_NAMES` — an event missing here is dropped silently.
+ */
+export const ALLOWED_EVENT_NAMES = new Set<string>([
   "$pageview",
   "$exception",
   "viewer_opened",
@@ -27,6 +31,7 @@ const ALLOWED_EVENT_NAMES = new Set([
   "model_selected",
   "variable_selected",
   "region_selected",
+  "coverage_selected",
   "animation_started",
   "legend_opened",
   "share_clicked",

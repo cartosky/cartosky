@@ -536,6 +536,16 @@ Per model: global retention, publication, manifest, and latest-pointer behavior;
 - [ ] Disk utilization checkpoint recorded
 - [ ] Mobile: viewer usable and performant at global extent on a real device
 
+**Global LOD chain → default-to-global (operator-committed end state,
+2026-07-31):** the go-live UI ships an opt-in Coverage toggle, but the
+intended end state is global-by-default for global-capable models
+(docs/GLOBAL_GOLIVE_UI_DESIGN_2026-07-31.md §7). Prerequisite: a global
+LOD chain (~+33% disk on the global tree) so default-global does not
+multiply the majority-NA audience's frame payload ~10×. Sequence: toggle +
+instrumentation → LOD phase → data-informed default flip. The launch
+implementation is REQUIRED to keep the default in one resolution function
+so the flip is a one-line change.
+
 **Global city-anchor coverage (noted 2026-07-30, non-blocking):** the city
 label anchor dataset is NA-scoped, so the global domain shows city values
 only over CONUS/Canada. The projection-aware sampling path (Phase 2, CPU

@@ -12,6 +12,7 @@ import { test, expect } from '@playwright/test';
 import { buildPermalinkSearch } from '../../src/lib/permalink';
 import { buildComparePermalinkSearch } from '../../src/lib/compare-permalink';
 import {
+  DOMAIN_CANONICAL_ONLY_VARIABLE,
   DOMAIN_ID,
   DOMAIN_MODEL,
   DOMAIN_RUN_ID,
@@ -153,6 +154,156 @@ test.describe('Viewer data-domain routing', () => {
       expect(url).toContain(`domain=${DOMAIN_ID}`);
       expect(url).not.toContain('midwest');
     }
+  });
+});
+
+/**
+ * Coverage control — global go-live design §1/§2 (decisions U1/U2).
+ *
+ * The control is capabilities-driven: the fixture's `gfs` declares
+ * `supported_build_regions: ['conus', 'global']`, `nam` declares none.
+ */
+test.describe('Coverage control', () => {
+  test.skip(({ browserName }) => browserName !== 'chromium', 'Chromium-only contract suite.');
+
+  test.beforeEach(async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop rail contract.');
+    // Wide enough for the rail to boot expanded (same size the Phase 6 rail
+    // chrome suite uses).
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
+  });
+
+  test('flipping to Global adds domain=, flipping back drops the param entirely', async ({ page }) => {
+    const recorded: string[] = [];
+    await stubViewerDomainRoutes(page, recorded);
+
+    await page.goto(`/viewer?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_VARIABLE}&fh=0&reg=conus`);
+    await page.waitForRequest((request) => request.url().includes('/grid-manifest'));
+
+    const coverage = page.getByTestId('coverage-control');
+    await expect(coverage).toBeVisible();
+    // §1: canonical segment label derived from the model's canonical region.
+    await expect(coverage.getByRole('radio', { name: 'CONUS' })).toHaveAttribute('aria-checked', 'true');
+    // Absence of `domain=` is the canonical default (§7 flip point returns null).
+    expect(new URL(page.url()).searchParams.get('domain')).toBeNull();
+
+    await coverage.getByRole('radio', { name: 'Global' }).click();
+    await expect.poll(() => new URL(page.url()).searchParams.get('domain')).toBe(DOMAIN_ID);
+    await expect(coverage.getByRole('radio', { name: 'Global' })).toHaveAttribute('aria-checked', 'true');
+    // The flip must actually re-key the data requests.
+    await expect
+      .poll(() => recorded.some((url) => url.includes(`/api/v4/grid/domains/${DOMAIN_ID}/${DOMAIN_MODEL}/`)))
+      .toBe(true);
+
+    await coverage.getByRole('radio', { name: 'CONUS' }).click();
+    await expect.poll(() => new URL(page.url()).searchParams.get('domain')).toBeNull();
+    await expect.poll(() => page.evaluate(() => window.location.search)).not.toContain('domain');
+  });
+
+  test('a variable without the requested domain keeps the segment and shows the degraded note', async ({ page }) => {
+    const recorded: string[] = [];
+    await stubViewerDomainRoutes(page, recorded);
+
+    await page.goto(
+      `/viewer?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_CANONICAL_ONLY_VARIABLE}&fh=0&reg=conus&domain=${DOMAIN_ID}`,
+    );
+    await page.waitForRequest((request) => request.url().includes('/grid-manifest'));
+
+    const coverage = page.getByTestId('coverage-control');
+    // U2: sticky — the toggle stays on the REQUESTED segment...
+    await expect(coverage.getByRole('radio', { name: 'Global' })).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(() => new URL(page.url()).searchParams.get('domain')).toBe(DOMAIN_ID);
+    // ...with an inline note naming the canonical coverage actually shown.
+    await expect(page.getByTestId('coverage-degraded-note'))
+      .toHaveText('Not available for this variable — showing CONUS');
+    // ...while requests silently degrade to canonical (Phase 2B, unchanged).
+    for (const url of controlApiUrls(recorded)) {
+      expect(url, `degraded selection must not carry domain=: ${url}`).not.toContain('domain=');
+    }
+  });
+
+  test('a canonical-only model renders no Coverage control, note or badges — even with a sticky domain=', async ({ page }) => {
+    const recorded: string[] = [];
+    await stubViewerDomainRoutes(page, recorded);
+
+    // WITH the param: this is reachable through pure UI (GFS → Global → switch
+    // to NAM), and it is the case that leaked NA badges onto a model with no
+    // control to explain them.
+    await page.goto(`/viewer?m=${DOMAIN_SECOND_MODEL}&r=latest&v=${DOMAIN_VARIABLE}&fh=0&reg=conus&domain=${DOMAIN_ID}`);
+    await page.waitForRequest((request) => request.url().includes('/grid-manifest'));
+    await expect(page.getByTestId('rail-source')).toBeVisible();
+    await expect(page.getByTestId('coverage-control')).toHaveCount(0);
+    await expect(page.getByTestId('coverage-degraded-note')).toHaveCount(0);
+
+    // Open the variable picker: not one row may carry a coverage chip.
+    await page.getByTestId('rail-source-fields-card').getByRole('button', { name: 'Surface Temp' }).click();
+    await expect(page.getByRole('dialog', { name: 'Variable picker' })).toBeVisible();
+    await expect(page.getByTestId('variable-coverage-badge')).toHaveCount(0);
+  });
+
+  test('variable rows lacking the requested domain carry the canonical chip', async ({ page }) => {
+    const recorded: string[] = [];
+    await stubViewerDomainRoutes(page, recorded);
+
+    await page.goto(`/viewer?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_VARIABLE}&fh=0&reg=conus&domain=${DOMAIN_ID}`);
+    await page.waitForRequest((request) => request.url().includes('/grid-manifest'));
+
+    await page.getByTestId('rail-source-fields-card').getByRole('button', { name: 'Surface Temp' }).click();
+    await expect(page.getByRole('dialog', { name: 'Variable picker' })).toBeVisible();
+    // Search brings both variables into one list regardless of category.
+    await page.getByPlaceholder('Search variables…').fill('e');
+    const badges = page.getByTestId('variable-coverage-badge');
+    await expect(badges).toHaveCount(1);
+    await expect(badges.first()).toHaveText('CONUS');
+  });
+});
+
+/**
+ * World camera preset — design §4 / decision U3. No new filter logic exists:
+ * `filterRegionOptionsForDataDomain` drops every preset not contained by the
+ * canonical region unless a non-canonical domain is ACTIVE.
+ */
+test.describe('World camera preset gating', () => {
+  test.skip(({ browserName }) => browserName !== 'chromium', 'Chromium-only contract suite.');
+
+  test.beforeEach(async ({ page }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop rail contract.');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
+  });
+
+  async function openRegionOptions(page: import('@playwright/test').Page) {
+    await page.getByTestId('rail-region-row').getByRole('button').first().click();
+    await expect(page.getByTestId('region-picker-panel')).toBeVisible();
+    return page.getByTestId('region-picker-panel');
+  }
+
+  test('World appears only while a non-canonical domain is active', async ({ page }) => {
+    const recorded: string[] = [];
+    await stubViewerDomainRoutes(page, recorded);
+
+    await page.goto(`/viewer?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_VARIABLE}&fh=0&reg=conus&domain=${DOMAIN_ID}`);
+    await page.waitForRequest((request) => request.url().includes('/grid-manifest'));
+    await expect((await openRegionOptions(page)).getByRole('button', { name: 'World' })).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    // Canonical load: same fixture presets, World filtered out.
+    await page.goto(`/viewer?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_VARIABLE}&fh=0&reg=conus`);
+    await page.waitForRequest((request) => request.url().includes('/grid-manifest'));
+    await expect((await openRegionOptions(page)).getByRole('button', { name: 'World' })).toHaveCount(0);
+  });
+
+  test('World disappears again when a degraded variable drops the effective domain', async ({ page }) => {
+    const recorded: string[] = [];
+    await stubViewerDomainRoutes(page, recorded);
+
+    await page.goto(
+      `/viewer?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_CANONICAL_ONLY_VARIABLE}&fh=0&reg=conus&domain=${DOMAIN_ID}`,
+    );
+    await page.waitForRequest((request) => request.url().includes('/grid-manifest'));
+    // Requested global, resolved canonical → the camera list stays canonical.
+    await expect((await openRegionOptions(page)).getByRole('button', { name: 'World' })).toHaveCount(0);
   });
 });
 

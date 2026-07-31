@@ -29,6 +29,14 @@ type VariablePickerProps = {
   inlinePanel?: boolean;
   inlinePanelClassName?: string;
   panelOffset?: number;
+  /**
+   * Coverage badges (global go-live design §3): ids listed here do not declare
+   * the requested non-canonical data domain, so their rows carry a muted chip
+   * naming the canonical coverage they fall back to. Selection stays enabled —
+   * choosing one degrades per §2, it is never hidden or disabled.
+   */
+  coverageBadgeVariableIds?: string[];
+  coverageBadgeLabel?: string | null;
 };
 
 type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "SEVERE" | "UPPER AIR" | "OUTLOOKS" | "FORECASTS" | "ENSEMBLE" | "RADAR" | "SATELLITE";
@@ -144,6 +152,8 @@ export function VariablePicker({
   inlinePanel = false,
   inlinePanelClassName,
   panelOffset = 6,
+  coverageBadgeVariableIds,
+  coverageBadgeLabel,
 }: VariablePickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -159,6 +169,10 @@ export function VariablePicker({
   const { favorites, favoriteSet, toggleFavorite } = useVariableFavorites(modelId);
 
   const supportedSet = useMemo(() => new Set(supportedVariableIds), [supportedVariableIds]);
+  const coverageBadgeSet = useMemo(
+    () => new Set(coverageBadgeLabel ? (coverageBadgeVariableIds ?? []) : []),
+    [coverageBadgeLabel, coverageBadgeVariableIds],
+  );
   const options = useMemo(() => {
     const seen = new Set<string>();
     return variableCatalog.filter((option) => {
@@ -622,6 +636,15 @@ export function VariablePicker({
                           {option.hasStats ? (
                             <span className="shrink-0 rounded-md border border-cyan-300/25 bg-cyan-300/[0.10] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cyan-200/80">
                               stats
+                            </span>
+                          ) : null}
+                          {coverageBadgeSet.has(option.value) ? (
+                            <span
+                              data-testid="variable-coverage-badge"
+                              title={`Not available for the selected coverage — shows ${coverageBadgeLabel}`}
+                              className="shrink-0 rounded-md border border-white/8 bg-white/[0.05] px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-white/38"
+                            >
+                              {coverageBadgeLabel}
                             </span>
                           ) : null}
                           {hasSearch ? (

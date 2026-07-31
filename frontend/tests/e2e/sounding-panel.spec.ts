@@ -250,7 +250,7 @@ test.describe('Sounding panel (mobile)', () => {
 test.describe('Sounding availability', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'Chromium-only contract suite.');
 
-  test('the toggle is disabled with an HRRR-only tooltip on other models', async ({ page }) => {
+  test('the toggle is hidden entirely on models without soundings', async ({ page }) => {
     test.skip(/Mobile/.test(test.info().project.name), 'Desktop docked-panel contract.');
     await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
     const requests: SoundingRequestLog = [];
@@ -259,9 +259,10 @@ test.describe('Sounding availability', () => {
       `/viewer?m=${NO_SOUNDING_MODEL}&r=latest&v=${SOUNDING_VARIABLE}&fh=0&reg=conus`,
     );
 
+    // Hidden, not disabled (Brian, Phase 3 prod review). Wait for the viewer to
+    // finish booting so absence is meaningful, then assert the toggle never rendered.
+    await expect(page.locator('.maplibregl-canvas')).toBeVisible({ timeout: 30_000 });
     const toggle = page.locator('[data-testid="sounding-toggle"]');
-    await expect(toggle).toBeVisible();
-    await expect(toggle).toBeDisabled();
-    await expect(toggle).toHaveAttribute('title', 'Soundings available on HRRR');
+    await expect(toggle).toHaveCount(0);
   });
 });

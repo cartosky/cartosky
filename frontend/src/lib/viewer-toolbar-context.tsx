@@ -4,7 +4,7 @@ import type { ObservedSourceStatusTone, TimeAxisMode } from "@/lib/time-axis";
 import type { RailBreakpointClass, RailSection, RailState } from "@/lib/viewer-rail";
 import type { MobileSheetRequest, MobileSheetSection, MobileSheetSnap } from "@/lib/viewer-mobile";
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
-import type { GroupedOption } from "@/lib/app-utils";
+import type { CoverageSegment, GroupedOption } from "@/lib/app-utils";
 import type { CompositeLegendLayer, LegendPayload } from "@/components/map-legend";
 import type { EnsembleProductOption } from "@/lib/api";
 
@@ -28,6 +28,18 @@ export type ViewerToolbarProps = {
   variables: VariableOption[];
   variableCatalog: VariableOption[];
   supportedVariableIds: string[];
+  // Coverage / data domain (global go-live design §1-§3). `coverageOptions` is
+  // empty for canonical-only models, which is what hides the control;
+  // `coverageValue` is the effective segment value — the canonical segment
+  // carries the canonical region id (never ""), because URL absence means
+  // "the model's default", not "canonical" (§7).
+  coverageOptions?: CoverageSegment[];
+  coverageValue?: string;
+  onCoverageChange?: (value: string) => void;
+  coverageDegradedNote?: string | null;
+  /** Variable ids lacking the requested domain — badged, never hidden (§3). */
+  coverageBadgeVariableIds?: string[];
+  coverageBadgeLabel?: string | null;
   // Ensemble stats product selector (stats design §7 / D-D): present only
   // when the selected variable declares products; option availability is
   // resolved against the current run's manifest.

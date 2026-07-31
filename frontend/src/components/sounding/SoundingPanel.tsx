@@ -148,6 +148,10 @@ export function SoundingPanel({
         top: "calc(var(--viewer-topbar-height, 3.5rem) + var(--viewer-header-extra, 0px) + 0.75rem)",
         width: `${PANEL_WIDTH_PX}px`,
         maxHeight: `calc(100vh - var(--viewer-topbar-height, 3.5rem) - var(--viewer-header-extra, 0px) - ${DESKTOP_BOTTOM_GUTTER_PX}px)`,
+        // Denser than .glass-navy's 0.74 alpha: map data bleeding through makes
+        // the traces hard to read (Brian, Phase 3 prod review). Panel-local so
+        // other glass-navy surfaces keep their look.
+        backgroundColor: "rgba(4, 16, 30, 0.93)",
       };
 
   return (

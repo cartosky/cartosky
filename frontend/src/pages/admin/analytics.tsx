@@ -151,6 +151,7 @@ export default function AdminAnalyticsPage() {
             "model_selected",
             "variable_selected",
             "region_selected",
+            "coverage_selected",
             "animation_started",
             "legend_opened",
             "share_clicked",

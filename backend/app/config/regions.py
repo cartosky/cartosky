@@ -14,7 +14,9 @@ REGION_PRESETS: dict[str, dict] = {
         "bbox": [-178.0, 5.0, -25.0, 82.0],
         "defaultCenter": [-101.5, 45.0],
         "defaultZoom": 0.5,
-        "minZoom": -1,
+        # 0, not -1: the permalink serializers drop z < 0, silently losing the
+        # camera from shared links (same rule as the world preset).
+        "minZoom": 0,
         "maxZoom": 14,
     },
     "pnw": {
@@ -71,6 +73,23 @@ REGION_PRESETS: dict[str, dict] = {
         "defaultCenter": [-113.5, 36.5],
         "defaultZoom": 5,
         "minZoom": 3,
+        "maxZoom": 14,
+    },
+    # Full-extent camera for global data domains (global go-live design §4).
+    # It is a CAMERA preset like every other entry here — never a data domain.
+    # Its bbox is deliberately the whole mercator-displayable world, which is
+    # what keeps it out of the canonical (conus/na) coverage-filtered lists and
+    # makes it appear exactly when a non-canonical domain is active.
+    "world": {
+        "label": "World",
+        "bbox": [-180.0, -85.0, 180.0, 85.0],
+        "defaultCenter": [-30.0, 25.0],
+        "defaultZoom": 1.3,
+        # minZoom is 0, not -1: the permalink serializers drop `z` below 0
+        # (frontend permalink.ts / permalink-read.ts gate on z >= 0), so a
+        # negative-zoom World camera would silently lose z from every shared
+        # link. The full extent already fits at z=0.
+        "minZoom": 0,
         "maxZoom": 14,
     },
 }

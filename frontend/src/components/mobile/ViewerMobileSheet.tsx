@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { MapLegend } from "@/components/map-legend";
 import { ModelPicker } from "@/components/ModelPicker";
 import { SpeedButton } from "@/components/SpeedButton";
+import { CoverageControl } from "@/components/CoverageControl";
 import { StatisticPicker } from "@/components/StatisticPicker";
 import { VariablePicker } from "@/components/VariablePicker";
 import { DisplayRow, NavbarSelect, RegionUtilitySelect } from "@/components/ViewerSiteHeader";
@@ -172,6 +173,7 @@ export function ViewerMobileSheet({ peekPx = MOBILE_PEEK_PX }: { peekPx?: number
   const {
     model, onModelChange, models,
     variable, onVariableChange, variables, supportedVariableIds,
+    coverageBadgeVariableIds, coverageBadgeLabel,
     ensembleProducts, product, onProductChange, productAvailability,
     run, onRunChange, runs, runDisplayLabel, runSelectionLocked,
     hasNewerRunAvailable, latestAvailableRunLabel, onViewLatestRun,
@@ -379,6 +381,10 @@ export function ViewerMobileSheet({ peekPx = MOBILE_PEEK_PX }: { peekPx?: number
             />
           </div>
 
+          {/* Global go-live §5: same Coverage control as the desktop rail,
+              directly under Model; hidden while a picker owns the sheet. */}
+          <CoverageControl labelClassName={FIELD_LABEL_CLASSNAME} className={cn(pickerOpen && "hidden")} />
+
           <div className={cn("flex flex-col gap-1", variablePickerOpen && "min-h-0 flex-1", modelPickerOpen && "hidden")}>
             <span className={cn(FIELD_LABEL_CLASSNAME, pickerOpen && "hidden")}>Variable</span>
             <VariablePicker
@@ -387,6 +393,8 @@ export function ViewerMobileSheet({ peekPx = MOBILE_PEEK_PX }: { peekPx?: number
               onChange={onVariableChange}
               variableCatalog={displayVariableCatalog}
               supportedVariableIds={supportedVariableIds}
+              coverageBadgeVariableIds={coverageBadgeVariableIds}
+              coverageBadgeLabel={coverageBadgeLabel}
               disabled={disabled}
               placeholder="Variable"
               legend={legend}

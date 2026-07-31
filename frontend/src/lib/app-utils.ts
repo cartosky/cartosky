@@ -966,6 +966,267 @@ export function resolveDataDomain(
   return supported.includes(requested) ? requested : null;
 }
 
+/**
+ * THE single flip point for global-by-default (global go-live design §7).
+ *
+ * Returns the data domain a selection uses when the URL carries no `domain=`
+ * param — i.e. what ABSENCE means. It returns `null` (canonical) today;
+ * flipping global-by-default is changing THIS function and nothing else. No
+ * other call site may hardcode the "absent param → canonical" assumption for
+ * DEFAULTING purposes — they must route through here so the flip stays a
+ * one-line change.
+ *
+ * Because absence means "the default", an explicit selection that differs from
+ * the default has to be spelled out in the URL — including a canonical one
+ * (`domain=na`). `normalizeRequestedDomain` below owns that collapse rule, and
+ * is the only other function that has to be correct for the flip to be safe.
+ *
+ * (`resolveDataDomain` is the separate, unrelated question of whether an
+ * already-chosen domain is *supported* by a selection.)
+ */
+export function defaultDataDomainForSelection(
+  modelCapability: CapabilityModel | null | undefined,
+  variableCapability: CapabilityVariable | null | undefined,
+): string | null {
+  void modelCapability;
+  void variableCapability;
+  return null;
+}
+
+/**
+ * Canonical form of a requested domain: `null` means "the model's canonical
+ * domain". A canonical region id and `null` are the same request.
+ */
+function canonicalizeRequestedDomain(
+  requestedDomain: string | null | undefined,
+  canonicalRegionId: string,
+): string | null {
+  const requested = String(requestedDomain ?? "").trim().toLowerCase();
+  if (!requested || requested === canonicalRegionId) {
+    return null;
+  }
+  return requested;
+}
+
+/**
+ * Collapse an EXPLICIT coverage selection to the domain state that should be
+ * stored (and therefore serialized into `domain=`) — design §7.
+ *
+ * `null` state means "unset, use the default", so a selection is storable as
+ * `null` only when it *is* the default. A selection that differs must be kept
+ * verbatim, and a canonical selection that differs from a non-canonical
+ * default must be spelled out as the canonical region id — otherwise absence
+ * would re-resolve to the default and silently revert the user's choice on
+ * every reload or shared link.
+ *
+ * Today (default `null`): canonical selections collapse to `null`, so the URL
+ * is byte-identical to the pre-control behavior. After the flip (default
+ * `"global"`): a canonical selection serializes as `domain=na` and survives a
+ * reload; an explicit global selection collapses to no param.
+ *
+ * `domain=na` is safe on the wire — the backend's `normalize_domain` treats a
+ * canonical id as no domain, and `resolveDataDomain` returns `null` for it, so
+ * requests stay byte-identical canonical ones.
+ */
+export function normalizeRequestedDomain(
+  requestedDomain: string | null | undefined,
+  modelCapability: CapabilityModel | null | undefined,
+  variableCapability: CapabilityVariable | null | undefined,
+): string | null {
+  return normalizeRequestedDomainAgainstDefault(
+    requestedDomain,
+    canonicalRegionIdForModel(modelCapability),
+    defaultDataDomainForSelection(modelCapability, variableCapability),
+  );
+}
+
+/**
+ * The collapse rule itself, with the default injected. Exported so the flip
+ * can be PROVEN safe: the unit suite runs the full serialization matrix in
+ * both the `null` (today) and `"global"` (post-flip) worlds without having to
+ * mutate the flip point.
+ */
+export function normalizeRequestedDomainAgainstDefault(
+  requestedDomain: string | null | undefined,
+  canonicalRegionId: string,
+  defaultDomain: string | null | undefined,
+): string | null {
+  const canonical = String(canonicalRegionId ?? "").trim().toLowerCase();
+  const selection = canonicalizeRequestedDomain(requestedDomain, canonical);
+  const fallback = canonicalizeRequestedDomain(defaultDomain, canonical);
+  if (selection === fallback) {
+    // Representable by absence.
+    return null;
+  }
+  // Differs from the default, so it has to be explicit. A canonical selection
+  // is spelled out with the canonical region id.
+  return selection ?? (canonical || null);
+}
+
+/**
+ * The coverage segment a given domain state should show as selected — design
+ * §1/§7. `null` state resolves through the default, so the toggle reflects
+ * what the user is actually getting, both before and after the flip.
+ *
+ * Returns a concrete region id (never ""), so a sticky-but-unknown domain
+ * (`?domain=mars`) matches NO segment and leaves the toggle unchecked while
+ * the degraded note explains it.
+ */
+export function coverageSelectionValue(
+  requestedDomain: string | null | undefined,
+  modelCapability: CapabilityModel | null | undefined,
+  variableCapability: CapabilityVariable | null | undefined,
+): string {
+  return coverageSelectionValueAgainstDefault(
+    requestedDomain,
+    canonicalRegionIdForModel(modelCapability),
+    defaultDataDomainForSelection(modelCapability, variableCapability),
+  );
+}
+
+/** `coverageSelectionValue` with the default injected — see the sibling above. */
+export function coverageSelectionValueAgainstDefault(
+  requestedDomain: string | null | undefined,
+  canonicalRegionId: string,
+  defaultDomain: string | null | undefined,
+): string {
+  const requested = String(requestedDomain ?? "").trim().toLowerCase();
+  if (requested) {
+    return requested;
+  }
+  return String(defaultDomain ?? "").trim().toLowerCase()
+    || String(canonicalRegionId ?? "").trim().toLowerCase();
+}
+
+export function canonicalRegionIdForModel(modelCapability: CapabilityModel | null | undefined): string {
+  return String(
+    modelCapability?.constraints?.canonical_region
+    ?? modelCapability?.canonical_region
+    ?? "",
+  ).trim().toLowerCase();
+}
+
+/**
+ * Human label for a data-domain segment. Camera presets carry labels
+ * (`na` → "North America"); build regions without a preset (`global`) fall
+ * back to a title-cased id, so a future domain needs no UI change.
+ */
+export function coverageSegmentLabel(
+  regionId: string,
+  regionPresets?: Record<string, RegionPreset> | null,
+): string {
+  const id = String(regionId ?? "").trim().toLowerCase();
+  if (!id) {
+    return "";
+  }
+  const presetLabel = regionPresets?.[id]?.label;
+  if (presetLabel) {
+    return presetLabel;
+  }
+  return id.charAt(0).toUpperCase() + id.slice(1);
+}
+
+export type CoverageSegment = {
+  /**
+   * A concrete build-region id — the canonical segment carries the canonical
+   * region id (`na`), NOT "". Absence of `domain=` means "the default", which
+   * is not necessarily canonical after the §7 flip, so the segment set cannot
+   * use "" to stand for canonical.
+   */
+  value: string;
+  label: string;
+};
+
+/**
+ * Coverage (data-domain) segments for a model — global go-live design §1.
+ *
+ * The non-canonical segment set is the UNION of every buildable variable's
+ * `supported_build_regions`, minus the canonical region, so a model that gains
+ * a new domain needs no UI change. Returns `[]` when the model declares no
+ * non-canonical build region at all: canonical-only models render no control.
+ */
+export function coverageSegmentsForModel(
+  modelCapability: CapabilityModel | null | undefined,
+  regionPresets?: Record<string, RegionPreset> | null,
+): CoverageSegment[] {
+  const canonical = canonicalRegionIdForModel(modelCapability);
+  const extras: string[] = [];
+  for (const entry of normalizeCapabilityVarRows(modelCapability)) {
+    for (const regionId of entry.supportedBuildRegions ?? []) {
+      if (regionId && regionId !== canonical && !extras.includes(regionId)) {
+        extras.push(regionId);
+      }
+    }
+  }
+  if (extras.length === 0) {
+    return [];
+  }
+  extras.sort();
+  return [
+    { value: canonical, label: coverageSegmentLabel(canonical, regionPresets) || "Canonical" },
+    ...extras.map((regionId) => ({ value: regionId, label: coverageSegmentLabel(regionId, regionPresets) })),
+  ];
+}
+
+/**
+ * Degraded-coverage note (design §2 / decision U2). The toggle stays on the
+ * requested segment (mirroring URL stickiness) and this note states what is
+ * actually being shown — exactly when a domain was requested but
+ * `resolveDataDomain` degraded it to canonical.
+ *
+ * Two causes, two sentences: the MODEL may not offer the requested coverage at
+ * all (a sticky `?domain=mars`, or a domain carried across a model switch), or
+ * the model offers it and the selected VARIABLE does not. Attributing the
+ * former to the variable would be a lie.
+ */
+export function coverageDegradedNote(
+  requestedDomain: string | null | undefined,
+  modelCapability: CapabilityModel | null | undefined,
+  variableCapability: CapabilityVariable | null | undefined,
+  regionPresets?: Record<string, RegionPreset> | null,
+): string | null {
+  const requested = String(requestedDomain ?? "").trim().toLowerCase();
+  if (!requested) {
+    return null;
+  }
+  if (resolveDataDomain(requested, modelCapability, variableCapability) !== null) {
+    return null;
+  }
+  const canonical = canonicalRegionIdForModel(modelCapability);
+  if (requested === canonical) {
+    return null;
+  }
+  const canonicalLabel = coverageSegmentLabel(canonical, regionPresets) || "the canonical coverage";
+  const modelOffersRequested = coverageSegmentsForModel(modelCapability, regionPresets)
+    .some((segment) => segment.value === requested);
+  const subject = modelOffersRequested ? "this variable" : "this model";
+  return `Not available for ${subject} — showing ${canonicalLabel}`;
+}
+
+/** Short chip label for the canonical domain, used on variable rows (§3). */
+export function coverageBadgeLabel(modelCapability: CapabilityModel | null | undefined): string {
+  return canonicalRegionIdForModel(modelCapability).toUpperCase();
+}
+
+/**
+ * Variable ids that do NOT declare the requested (non-canonical) domain —
+ * design §3. Empty whenever coverage is canonical: no badges exist then.
+ * Rows are badged, never hidden or disabled; selecting one degrades per §2.
+ */
+export function variableIdsMissingDomain(
+  entries: readonly VariableEntry[],
+  requestedDomain: string | null | undefined,
+  modelCapability: CapabilityModel | null | undefined,
+): string[] {
+  const requested = String(requestedDomain ?? "").trim().toLowerCase();
+  if (!requested || requested === canonicalRegionIdForModel(modelCapability)) {
+    return [];
+  }
+  return entries
+    .filter((entry) => !(entry.supportedBuildRegions ?? []).includes(requested))
+    .map((entry) => entry.id);
+}
+
 export function normalizeCapabilityVarRows(modelCapability: CapabilityModel | null | undefined): VariableEntry[] {
   if (!modelCapability?.variables) {
     return [];

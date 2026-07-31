@@ -14,6 +14,12 @@ export const DOMAIN_MODEL = 'gfs';
 export const DOMAIN_SECOND_MODEL = 'nam';
 export const DOMAIN_RUN_ID = '20260729_12z';
 export const DOMAIN_VARIABLE = 'tmp2m';
+/**
+ * Canonical-only companion variable (global go-live design §2/§3): declares
+ * only the canonical build region, so requesting `domain=global` on it must
+ * degrade to canonical AND surface the inline note / row badge.
+ */
+export const DOMAIN_CANONICAL_ONLY_VARIABLE = 'precip_7d_anom';
 export const DOMAIN_ID = 'global';
 
 export const DOMAIN_FRAME_BINARY = new Uint16Array([1320, 1405, 65535, 877]);
@@ -49,6 +55,21 @@ function modelCatalogEntry(modelId: string, options: { supportsGlobal: boolean }
         color_map_id: 'tmp2m',
         render_substrates: ['grid'],
         ...(options.supportsGlobal ? { supported_build_regions: ['conus', DOMAIN_ID] } : {}),
+        constraints: {},
+        derived: false,
+        derive_strategy_id: null,
+      },
+      [DOMAIN_CANONICAL_ONLY_VARIABLE]: {
+        var_key: DOMAIN_CANONICAL_ONLY_VARIABLE,
+        display_name: '7-Day Precip Anomaly',
+        kind: 'continuous',
+        units: 'in',
+        group: 'Precipitation',
+        default_fh: 0,
+        buildable: true,
+        color_map_id: 'precip_anom',
+        render_substrates: ['grid'],
+        supported_build_regions: ['conus'],
         constraints: {},
         derived: false,
         derive_strategy_id: null,
@@ -102,6 +123,18 @@ export function regionPayload() {
         minZoom: 2,
         maxZoom: 9,
       },
+      // Global go-live §4 / U3: the full-extent camera. Its bbox is not
+      // contained by the canonical (conus) preset, which is what makes the
+      // existing coverage filter hide it unless a non-canonical domain is
+      // active — no new filter logic exists to test.
+      world: {
+        label: 'World',
+        bbox: [-180, -85, 180, 85],
+        defaultCenter: [-30, 25],
+        defaultZoom: 1.3,
+        minZoom: 0,
+        maxZoom: 9,
+      },
     },
   };
 }
@@ -116,6 +149,15 @@ export function manifestPayload(modelId: string) {
         display_name: 'Temperature 2m',
         kind: 'continuous',
         units: 'F',
+        frames: [
+          { fh: 0, valid_time: '2026-07-29T12:00:00Z' },
+          { fh: 1, valid_time: '2026-07-29T13:00:00Z' },
+        ],
+      },
+      [DOMAIN_CANONICAL_ONLY_VARIABLE]: {
+        display_name: '7-Day Precip Anomaly',
+        kind: 'continuous',
+        units: 'in',
         frames: [
           { fh: 0, valid_time: '2026-07-29T12:00:00Z' },
           { fh: 1, valid_time: '2026-07-29T13:00:00Z' },
@@ -147,14 +189,14 @@ export function framesPayload() {
  * canonical requests get canonical `/api/v4/grid/{model}/...` URLs, requests
  * carrying `domain=` get `domains/{d}`-prefixed URLs (`_grid_file_url`).
  */
-export function gridManifestPayload(modelId: string, domain: string | null) {
+export function gridManifestPayload(modelId: string, domain: string | null, varId: string = DOMAIN_VARIABLE) {
   const gridPrefix = domain ? `/api/v4/grid/domains/${domain}/` : '/api/v4/grid/';
   return {
     manifest_version: 1,
     subtype: 'grid',
     model: modelId,
     run: DOMAIN_RUN_ID,
-    var: DOMAIN_VARIABLE,
+    var: varId,
     projection: 'EPSG:3857',
     bbox: [-14920000.0, 7356000.0, -14914000.0, 7362000.0],
     grid: {
@@ -182,7 +224,7 @@ export function gridManifestPayload(modelId: string, domain: string | null) {
           fh,
           file: `fh${String(fh).padStart(3, '0')}.l0.u16.bin`,
           valid_time: `2026-07-29T${String(12 + fh).padStart(2, '0')}:00:00Z`,
-          url: `${gridPrefix}${modelId}/${DOMAIN_RUN_ID}/${DOMAIN_VARIABLE}/fh${String(fh).padStart(3, '0')}.l0.u16.bin?v=${DOMAIN_RUN_ID}-${DOMAIN_VARIABLE}-${fh}`,
+          url: `${gridPrefix}${modelId}/${DOMAIN_RUN_ID}/${varId}/fh${String(fh).padStart(3, '0')}.l0.u16.bin?v=${DOMAIN_RUN_ID}-${varId}-${fh}`,
         })),
       },
     ],
@@ -253,25 +295,29 @@ export async function stubViewerDomainRoutes(page: Page, recordedApiUrls: string
       await page.route(`**/api/v4/${modelId}/${runSegment}/manifest**`, async (route) => {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(manifestPayload(modelId)) });
       });
-      await page.route(`**/api/v4/${modelId}/${runSegment}/${DOMAIN_VARIABLE}/frames**`, async (route) => {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload()) });
-      });
-      await page.route(`**/api/v4/${modelId}/${runSegment}/${DOMAIN_VARIABLE}/grid-manifest**`, async (route) => {
-        const requestUrl = new URL(route.request().url());
-        const domain = requestUrl.searchParams.get('domain');
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(gridManifestPayload(modelId, domain)),
+      for (const varId of [DOMAIN_VARIABLE, DOMAIN_CANONICAL_ONLY_VARIABLE]) {
+        await page.route(`**/api/v4/${modelId}/${runSegment}/${varId}/frames**`, async (route) => {
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload()) });
         });
-      });
+        await page.route(`**/api/v4/${modelId}/${runSegment}/${varId}/grid-manifest**`, async (route) => {
+          const requestUrl = new URL(route.request().url());
+          const domain = requestUrl.searchParams.get('domain');
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(gridManifestPayload(modelId, domain, varId)),
+          });
+        });
+      }
     }
     // Canonical and domain-scoped grid binaries.
-    await page.route(`**/api/v4/grid/${modelId}/${DOMAIN_RUN_ID}/${DOMAIN_VARIABLE}/*.bin**`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(DOMAIN_FRAME_BINARY.buffer) });
-    });
-    await page.route(`**/api/v4/grid/domains/${DOMAIN_ID}/${modelId}/${DOMAIN_RUN_ID}/${DOMAIN_VARIABLE}/*.bin**`, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(DOMAIN_FRAME_BINARY.buffer) });
-    });
+    for (const varId of [DOMAIN_VARIABLE, DOMAIN_CANONICAL_ONLY_VARIABLE]) {
+      await page.route(`**/api/v4/grid/${modelId}/${DOMAIN_RUN_ID}/${varId}/*.bin**`, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(DOMAIN_FRAME_BINARY.buffer) });
+      });
+      await page.route(`**/api/v4/grid/domains/${DOMAIN_ID}/${modelId}/${DOMAIN_RUN_ID}/${varId}/*.bin**`, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(DOMAIN_FRAME_BINARY.buffer) });
+      });
+    }
   }
 }

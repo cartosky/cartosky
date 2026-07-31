@@ -150,6 +150,13 @@ import {
   emptyScrubPhase0aSnapshot,
   readAnimationDelayPreference,
   resolveDataDomain,
+  defaultDataDomainForSelection,
+  normalizeRequestedDomain,
+  coverageSelectionValue,
+  coverageSegmentsForModel,
+  coverageDegradedNote,
+  coverageBadgeLabel,
+  variableIdsMissingDomain,
   resolveScrubDisplayLagHours,
   supportsNwsWarningsOverlay,
   writeAnimationDelayPreference,
@@ -199,6 +206,8 @@ const RUN_AVAILABILITY_BADGE_EXCLUDED_MODELS = new Set(["nws_hazards", "spc", "c
 const DEFAULT_VIEWER_MODEL_ID = "mrms";
 const DEFAULT_VIEWER_VARIABLE_ID = "reflectivity";
 const EMPTY_STATE_MODELS = new Set(["nws_hazards", "spc", "cpc"]);
+/** Stable identity so a gated-off badge list never re-renders the pickers. */
+const EMPTY_STRING_ARRAY: string[] = [];
 const NWS_WARNINGS_REFRESH_MS = 60_000;
 
 // Bucketed to the refresh interval so remounts within the same minute produce the
@@ -432,12 +441,19 @@ export default function App() {
 
   const [model, setModel] = useState("");
   const [region, setRegion] = useState(MAP_VIEW_DEFAULTS.region);
-  // Data domain (Phase 2B): a published build-region ID from the `domain=`
-  // permalink param; null = the model's canonical domain. URL-driven only in
-  // 2B — no UI control until a model actually declares a non-canonical
-  // domain (Phase 3). Sticky: kept in the URL even while a selection that
-  // doesn't support it degrades to canonical requests.
-  const domain = initialPermalink.domain ?? null;
+  // Data domain: a published build-region ID; null = the model's canonical
+  // domain. Seeded from the `domain=` permalink param and, from the global
+  // go-live phase on, also driven by the rail's Coverage control. Sticky
+  // exactly as in Phase 2B — it stays in the URL (and in this state) even
+  // while a selection that doesn't support it degrades to canonical requests
+  // (`resolveDataDomain` → `dataDomain`).
+  //
+  // Absent param → `defaultDataDomainForSelection` (design §7's single flip
+  // point), never a hardcoded null. Capabilities have not loaded at this
+  // point, so bootstrap re-runs the default once they have.
+  const [domain, setDomain] = useState<string | null>(
+    () => initialPermalink.domain ?? defaultDataDomainForSelection(null, null),
+  );
   const [run, setRun] = useState("latest");
   const [newRunNotice, setNewRunNotice] = useState<NewRunNoticeState | null>(null);
   const [variable, setVariable] = useState("");
@@ -981,6 +997,37 @@ export default function App() {
   // variable declares the requested domain in supported_build_regions;
   // otherwise requests silently degrade to canonical (null → no `domain=`).
   const dataDomain = resolveDataDomain(domain, selectedModelCapability, selectedVariableCapability);
+  // ── Coverage control (global go-live design §1-§3) ─────────────────────────
+  // Segments come from the union of the model's variables' declared build
+  // regions, so `[]` (canonical-only models) is what hides the control.
+  const coverageOptions = useMemo(
+    () => coverageSegmentsForModel(selectedModelCapability, regionPresets),
+    [selectedModelCapability, regionPresets],
+  );
+  // The control renders only for a model that offers a non-canonical domain;
+  // the note and the row badges are gated on the SAME predicate, or a sticky
+  // domain carried across a model switch would badge a model that has no
+  // coverage control to explain them (R1).
+  const coverageControlVisible = coverageOptions.length > 1;
+  // U2: the toggle mirrors the REQUESTED domain (sticky), not the resolved one;
+  // an unset domain resolves through the §7 default, never assumed canonical.
+  const coverageValue = coverageSelectionValue(domain, selectedModelCapability, selectedVariableCapability);
+  const coverageNote = useMemo(
+    () => (coverageControlVisible
+      ? coverageDegradedNote(domain, selectedModelCapability, selectedVariableCapability, regionPresets)
+      : null),
+    [coverageControlVisible, domain, selectedModelCapability, selectedVariableCapability, regionPresets],
+  );
+  const coverageBadgeVariableIds = useMemo(
+    () => (coverageControlVisible
+      ? variableIdsMissingDomain(selectedCapabilityVars, coverageValue, selectedModelCapability)
+      : EMPTY_STRING_ARRAY),
+    [coverageControlVisible, selectedCapabilityVars, coverageValue, selectedModelCapability],
+  );
+  const coverageBadgeLabelText = useMemo(
+    () => (coverageBadgeVariableIds.length > 0 ? coverageBadgeLabel(selectedModelCapability) : null),
+    [coverageBadgeVariableIds, selectedModelCapability],
+  );
   // Ensemble stats products (stats design §7, option B): declared on the
   // parent variable's capability; "mean" = today's behavior. An ACTIVE
   // product swaps the requested variable id at data-request boundaries
@@ -2820,6 +2867,13 @@ export default function App() {
     regionRef.current = region;
   }, [region]);
 
+  // Effective (resolved) data domain for the session-end event — design §7
+  // instrumentation. null = canonical.
+  const dataDomainRef = useRef<string | null>(dataDomain);
+  useEffect(() => {
+    dataDomainRef.current = dataDomain;
+  }, [dataDomain]);
+
   useEffect(() => {
     telemetryRunIdRef.current = telemetryRunId;
   }, [telemetryRunId]);
@@ -2842,6 +2896,7 @@ export default function App() {
         run_id: telemetryRunIdRef.current,
         region_id: regionRef.current || null,
         forecast_hour: Number.isFinite(forecastHourRef.current) ? forecastHourRef.current : null,
+        effective_domain: dataDomainRef.current,
         duration_seconds: Math.floor(durationMs / 1000),
       });
     };
@@ -3677,7 +3732,16 @@ export default function App() {
           ?? modelCapability?.canonical_region
           ?? MAP_VIEW_DEFAULTS.region
         ).trim();
-        const nextDataDomain = resolveDataDomain(domain, modelCapability, nextVariableCapability);
+        // §7 single flip point: with no `domain=` in the URL the default comes
+        // from `defaultDataDomainForSelection` (null today), now that the
+        // model/variable capabilities the flip will key on are known.
+        const requestedDomain = initialPermalink.domain ?? null;
+        const nextDomain = requestedDomain
+          ?? defaultDataDomainForSelection(modelCapability, nextVariableCapability);
+        if (nextDomain !== requestedDomain) {
+          setDomain(nextDomain);
+        }
+        const nextDataDomain = resolveDataDomain(nextDomain, modelCapability, nextVariableCapability);
         const regionOptions = filterRegionOptionsForDataDomain(
           regionPresetData,
           canonicalRegion,
@@ -5133,6 +5197,40 @@ export default function App() {
     });
   }, [model, variable, telemetryRunId, forecastHour, region]);
 
+  /**
+   * Coverage (data-domain) toggle — global go-live design §1.
+   *
+   * Segments carry region ids (the canonical segment carries the canonical
+   * region id, never ""). normalizeRequestedDomain decides representation:
+   * a selection equal to the model's default collapses to null so the
+   * permalink drops `domain=` (absence = default, §7). The camera never
+   * moves on a coverage change (§4): only `domain` changes here.
+   */
+  const handleCoverageChange = useCallback((nextValue: string) => {
+    // §7: an explicit selection collapses to null ONLY when it equals the
+    // default; otherwise it is stored (and serialized) verbatim, canonical ids
+    // included — absence means "the default", not "canonical".
+    const nextDomain = normalizeRequestedDomain(
+      nextValue,
+      selectedModelCapability,
+      selectedVariableCapability,
+    );
+    if (nextDomain === domain) {
+      return;
+    }
+    setDomain(nextDomain);
+    // Report the CONCRETE coverage on both sides (never the null that stands
+    // for "the default"), so the flip decision reads the same before and after.
+    captureProductAnalyticsEvent("coverage_selected", {
+      model_id: model || null,
+      variable_id: variable || null,
+      run_id: telemetryRunId,
+      region_id: region || null,
+      from_domain: coverageValue || null,
+      to_domain: coverageSelectionValue(nextDomain, selectedModelCapability, selectedVariableCapability) || null,
+    });
+  }, [domain, coverageValue, model, variable, telemetryRunId, region, selectedModelCapability, selectedVariableCapability]);
+
   const handleModelChange = useCallback((nextModel: string) => {
     const nextModelCapability = capabilities?.model_catalog?.[nextModel] ?? null;
     const nextVariableOptions = makeVariableOptions(normalizeCapabilityVarRows(nextModelCapability), nextModel);
@@ -5243,8 +5341,10 @@ export default function App() {
       run_id: telemetryRunId,
       region_id: region || null,
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
+      // Design §7: effective (resolved) domain per session — null = canonical.
+      effective_domain: dataDomain,
     });
-  }, [firstWeatherFramePainted, hasRenderableSelection, model, variable, telemetryRunId, region, forecastHour]);
+  }, [firstWeatherFramePainted, hasRenderableSelection, model, variable, telemetryRunId, region, forecastHour, dataDomain]);
 
   useEffect(() => {
     if (isPlaying && isScrubbing) {
@@ -6267,6 +6367,12 @@ export default function App() {
     variables,
     variableCatalog: allVariableCatalog,
     supportedVariableIds,
+    coverageOptions,
+    coverageValue,
+    onCoverageChange: handleCoverageChange,
+    coverageDegradedNote: coverageNote,
+    coverageBadgeVariableIds,
+    coverageBadgeLabel: coverageBadgeLabelText,
     ensembleProducts,
     product: product || "mean",
     onProductChange: handleProductChange,
@@ -6347,6 +6453,8 @@ export default function App() {
     region, handleRegionChange, handleLocationJump, model, handleModelChange, run, handleRunChange,
     variable, handleVariableChange, regions, models, runOptions, variables,
     allVariableCatalog, supportedVariableIds,
+    coverageOptions, coverageValue, handleCoverageChange, coverageNote,
+    coverageBadgeVariableIds, coverageBadgeLabelText,
     ensembleProducts, product, handleProductChange, productAvailability,
     loading, isFrameSwitching, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { CompactLegendChip } from "@/components/CompactLegendChip";
+import { CoverageControl } from "@/components/CoverageControl";
 import { MapLegend } from "@/components/map-legend";
 import { ModelPicker } from "@/components/ModelPicker";
 import { StatisticPicker } from "@/components/StatisticPicker";
@@ -89,6 +90,7 @@ export function ViewerRail() {
   const {
     model, onModelChange, models,
     variable, onVariableChange, variables, supportedVariableIds,
+    coverageBadgeVariableIds, coverageBadgeLabel,
     ensembleProducts, product, onProductChange, productAvailability,
     run, onRunChange, runs, runDisplayLabel, runSelectionLocked,
     hasNewerRunAvailable, latestAvailableRunLabel, onViewLatestRun,
@@ -224,6 +226,10 @@ export function ViewerRail() {
               />
             </div>
 
+            {/* Global go-live §1: Coverage sits directly under Model — it is a
+                data-selection act, never the VIEW section's camera preset. */}
+            <CoverageControl labelClassName={FIELD_LABEL_CLASSNAME} />
+
             <div className="flex flex-col gap-1">
               <span data-testid="rail-variable-label" className={FIELD_LABEL_CLASSNAME}>Variable</span>
               <VariablePicker
@@ -237,6 +243,8 @@ export function ViewerRail() {
                 legend={legend}
                 minWidth="w-full"
                 panelOffset={8}
+                coverageBadgeVariableIds={coverageBadgeVariableIds}
+                coverageBadgeLabel={coverageBadgeLabel}
               />
             </div>
 
