@@ -39,6 +39,7 @@ os.environ.setdefault("TOKEN_ENC_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNk
 from app import main as main_module  # noqa: E402
 from app.services import sounding as sounding_service  # noqa: E402
 from app.services import sounding_api as sounding_api_service  # noqa: E402
+from app.services import sounding_indices  # noqa: E402
 
 pytestmark = pytest.mark.anyio
 
@@ -613,3 +614,284 @@ async def test_sounding_rate_limit_returns_429(
     assert int(second.headers["retry-after"]) >= 1
     # Its own bucket: the meteogram window is untouched by sounding traffic.
     assert main_module._meteogram_rate_window == {}
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — indices, parcel path, format_version 1 vs 2
+# ---------------------------------------------------------------------------
+
+
+def _physical_column() -> tuple[dict[int, float], dict[str, float]]:
+    """A convectively UNSTABLE warm-sector column, as {plane: value} + surface.
+
+    Every pixel of the run gets the same column, so the indices assertions do
+    not depend on which cell the test picks.
+
+    The environmental lapse below 200 hPa is ~8 K/km — deliberately steeper
+    than the moist adiabat, so the SB parcel has real positive area and the
+    ``sbcape > 0`` assertions test convection rather than a rounding knife-edge
+    (the original ~6.1 K/km column computed SBCAPE = 0.496 J/kg, which rounds
+    to 0 — caught by verification 2026-07-31).
+    """
+    values: dict[int, float] = {}
+    for level_index, level in enumerate(sounding_service.LEVELS_HPA):
+        # ~8 K/km below 200 hPa via a crude pressure proxy, sharply stable above.
+        if level >= 200:
+            temperature = 30.0 - (1000.0 - level) * 0.075
+        else:
+            temperature = -56.0 + (200.0 - level) * 0.05
+        dewpoint = temperature - (3.0 + (1000.0 - level) * 0.022)
+        values[sounding_service.isobaric_plane_index(level_index, 0)] = temperature
+        values[sounding_service.isobaric_plane_index(level_index, 1)] = dewpoint
+        values[sounding_service.isobaric_plane_index(level_index, 2)] = 5.0 + level_index * 0.4
+        values[sounding_service.isobaric_plane_index(level_index, 3)] = -3.0 + level_index * 0.2
+        values[sounding_service.isobaric_plane_index(level_index, 4)] = -0.1
+    surface = {"pres_sfc": 968.5, "t2m": 32.0, "td2m": 22.0, "u10m": 3.0, "v10m": -2.0}
+    values[sounding_service.surface_plane_index(0)] = surface["pres_sfc"]
+    values[sounding_service.surface_plane_index(1)] = surface["t2m"]
+    values[sounding_service.surface_plane_index(2)] = surface["td2m"]
+    values[sounding_service.surface_plane_index(3)] = surface["u10m"]
+    values[sounding_service.surface_plane_index(4)] = surface["v10m"]
+    return values, surface
+
+
+#: HRRR's own surface CAPE, planted in the v2 stacks below.
+MODEL_CAPE = 1512.0
+
+
+def _write_physical_run(
+    published_root: Path,
+    manifests_root: Path,
+    *,
+    run_id: str = RUN_ID,
+    format_version: int = 2,
+    fhs: list[int] | None = None,
+) -> Path:
+    """Write a run of physically sane stacks in v1 or v2 layout."""
+    fhs = list(FHS if fhs is None else fhs)
+    values, _surface = _physical_column()
+    n_surface = 6 if format_version >= 2 else 5
+    if format_version >= 2:
+        values[sounding_service.surface_plane_index(5)] = MODEL_CAPE
+    n_planes = sounding_service.N_ISOBARIC_PLANES + n_surface
+
+    run_root = published_root / MODEL / run_id
+    run_root.mkdir(parents=True, exist_ok=True)
+    for fh in fhs:
+        codes = np.zeros((HEIGHT, WIDTH, n_planes), dtype=np.uint16)
+        for plane in range(n_planes):
+            pack = sounding_service.pack_for_plane(plane)
+            codes[:, :, plane] = sounding_service.encode_plane(
+                np.full((HEIGHT, WIDTH), values[plane], dtype=np.float32), pack
+            )
+        sidecar = sounding_service.build_sidecar(
+            model=MODEL,
+            run_id=run_id,
+            fh=fh,
+            run_date=RUN_DATE,
+            width=WIDTH,
+            height=HEIGHT,
+            transform=TRANSFORM,
+            projection=PROJECTION,
+            source_width=WIDTH * sounding_service.DECIMATION_STRIDE,
+            source_height=HEIGHT * sounding_service.DECIMATION_STRIDE,
+        )
+        if format_version < 2:
+            # Hand-rolled v1: the writer only emits the current layout.
+            sidecar["format_version"] = 1
+            sidecar["surface_fields"] = sidecar["surface_fields"][:5]
+            sidecar["n_planes"] = n_planes
+            sidecar["bytes_per_pixel"] = n_planes * sounding_service.BYTES_PER_SAMPLE
+            stack_path, sidecar_path = sounding_service.stack_paths(run_root, fh)
+            stack_path.parent.mkdir(parents=True, exist_ok=True)
+            stack_path.write_bytes(
+                np.ascontiguousarray(codes).astype(sounding_service.STACK_DTYPE).tobytes()
+            )
+            sidecar_path.write_text(json.dumps(sidecar))
+        else:
+            sounding_service.write_stack(
+                run_root=run_root, fh=fh, stack=codes, sidecar=sidecar
+            )
+
+    manifest = {
+        "variables": {"tmp2m": {"expected_frames": len(fhs)}},
+        "sounding": sounding_service.manifest_section(run_root=run_root, expected_fhs=fhs),
+    }
+    manifest_dir = manifests_root / MODEL
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / f"{run_id}.json").write_text(json.dumps(manifest))
+    return run_root
+
+
+async def test_every_frame_carries_indices_and_a_parcel_path(
+    client: httpx.AsyncClient, roots
+) -> None:
+    published_root, manifests_root = roots
+    _write_physical_run(published_root, manifests_root)
+    lon, lat = _cell_center_lonlat(6, 9)
+
+    response = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["parcel_definition"] == sounding_indices.PARCEL_DEFINITION
+    assert "virtual" in payload["parcel_definition"].lower()
+
+    expected_keys = {
+        "sbcape",
+        "sbcin",
+        "mlcape",
+        "mlcin",
+        "lcl_hPa",
+        "lcl_C",
+        "lfc_hPa",
+        "el_hPa",
+        "pwat_mm",
+        "model_sbcape",
+    }
+    for frame in payload["frames"]:
+        indices = frame["indices"]
+        assert indices is not None
+        assert set(indices) == expected_keys
+        assert isinstance(indices["sbcape"], int)
+        assert indices["sbcape"] > 0
+        assert indices["pwat_mm"] > 0
+        assert indices["lcl_hPa"] is not None and indices["lcl_hPa"] < 968.5
+
+        parcel = frame["parcel"]
+        assert parcel is not None
+        assert len(parcel["p"]) == len(parcel["t"]) >= 30
+        assert parcel["p"][0] == pytest.approx(968.5, abs=0.1)
+        assert all(
+            parcel["p"][i] >= parcel["p"][i + 1] for i in range(len(parcel["p"]) - 1)
+        )
+
+
+async def test_v2_stack_reports_the_model_sbcape_diagnostic(
+    client: httpx.AsyncClient, roots
+) -> None:
+    published_root, manifests_root = roots
+    _write_physical_run(published_root, manifests_root, format_version=2)
+    lon, lat = _cell_center_lonlat(6, 9)
+
+    payload = (
+        await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    ).json()
+    frame = payload["frames"][0]
+    assert frame["surface"]["cape_sfc"] == pytest.approx(MODEL_CAPE, abs=0.1)
+    assert frame["indices"]["model_sbcape"] == int(round(MODEL_CAPE))
+    # It is a side-by-side diagnostic, never our parcel (decision #5).
+    assert frame["indices"]["sbcape"] != frame["indices"]["model_sbcape"]
+    assert payload["units"]["cape_sfc"] == "J kg-1"
+
+
+async def test_v1_stack_still_serves_with_a_null_model_sbcape(
+    client: httpx.AsyncClient, roots
+) -> None:
+    published_root, manifests_root = roots
+    _write_physical_run(published_root, manifests_root, format_version=1)
+    lon, lat = _cell_center_lonlat(6, 9)
+
+    response = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    assert response.status_code == 200
+    payload = response.json()
+    assert "cape_sfc" not in payload["units"]
+    for frame in payload["frames"]:
+        assert "cape_sfc" not in frame["surface"]
+        assert frame["indices"] is not None
+        assert frame["indices"]["model_sbcape"] is None
+        # Everything else is unchanged by the format bump.
+        assert frame["indices"]["sbcape"] > 0
+        assert frame["parcel"] is not None
+
+
+async def test_mixed_v1_and_v2_stacks_in_one_run_still_serve(
+    client: httpx.AsyncClient, roots
+) -> None:
+    """A scheduler restart mid-run can leave both formats side by side.
+
+    The fh series must not 500 over a surface field the isobaric ladder does not
+    depend on.
+    """
+    published_root, manifests_root = roots
+    _write_physical_run(published_root, manifests_root, format_version=1)
+    # Overwrite the last fh with a v2 stack, leaving the earlier ones at v1.
+    run_root = published_root / MODEL / RUN_ID
+    values, _surface = _physical_column()
+    values[sounding_service.surface_plane_index(5)] = MODEL_CAPE
+    codes = np.zeros((HEIGHT, WIDTH, sounding_service.N_PLANES), dtype=np.uint16)
+    for plane in range(sounding_service.N_PLANES):
+        pack = sounding_service.pack_for_plane(plane)
+        codes[:, :, plane] = sounding_service.encode_plane(
+            np.full((HEIGHT, WIDTH), values[plane], dtype=np.float32), pack
+        )
+    sidecar = sounding_service.build_sidecar(
+        model=MODEL,
+        run_id=RUN_ID,
+        fh=FHS[-1],
+        run_date=RUN_DATE,
+        width=WIDTH,
+        height=HEIGHT,
+        transform=TRANSFORM,
+        projection=PROJECTION,
+        source_width=WIDTH * sounding_service.DECIMATION_STRIDE,
+        source_height=HEIGHT * sounding_service.DECIMATION_STRIDE,
+    )
+    sounding_service.write_stack(run_root=run_root, fh=FHS[-1], stack=codes, sidecar=sidecar)
+    lon, lat = _cell_center_lonlat(6, 9)
+
+    response = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    assert response.status_code == 200
+    frames = response.json()["frames"]
+    assert [frame["fh"] for frame in frames] == FHS
+    assert frames[0]["indices"]["model_sbcape"] is None
+    assert frames[-1]["indices"]["model_sbcape"] == int(round(MODEL_CAPE))
+
+
+async def test_one_frames_index_failure_does_not_poison_the_response(
+    client: httpx.AsyncClient, roots, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    published_root, manifests_root = roots
+    _write_physical_run(published_root, manifests_root)
+    real = sounding_indices.compute_frame_indices
+
+    def _explode_on_one(**kwargs):
+        surface = kwargs.get("surface") or {}
+        if surface.get("_boom"):
+            raise RuntimeError("MetPy blew up")
+        return real(**kwargs)
+
+    monkeypatch.setattr(sounding_indices, "compute_frame_indices", _explode_on_one)
+
+    real_frame_for_fh = sounding_api_service._frame_for_fh
+
+    def _mark_second_frame(**kwargs):
+        frame = real_frame_for_fh(**kwargs)
+        if frame is not None and frame["fh"] == FHS[1]:
+            frame["surface"]["_boom"] = True
+        return frame
+
+    monkeypatch.setattr(sounding_api_service, "_frame_for_fh", _mark_second_frame)
+
+    lon, lat = _cell_center_lonlat(6, 9)
+    response = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    assert response.status_code == 200
+    frames = {frame["fh"]: frame for frame in response.json()["frames"]}
+    assert frames[FHS[1]]["indices"] is None
+    assert frames[FHS[1]]["parcel"] is None
+    assert frames[FHS[0]]["indices"] is not None
+    assert frames[FHS[2]]["indices"] is not None
+
+
+async def test_nodata_pixel_yields_null_indices_not_an_error(
+    client: httpx.AsyncClient, roots
+) -> None:
+    published_root, manifests_root = roots
+    _write_run(published_root, manifests_root, RUN_ID)
+    lon, lat = _cell_center_lonlat(NODATA_ROW, NODATA_COL)
+
+    response = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    assert response.status_code == 200
+    for frame in response.json()["frames"]:
+        assert frame["indices"] is None
+        assert frame["parcel"] is None

@@ -14,11 +14,14 @@ Layout (design §3) — pixel-major uint16::
 
     offset(row, col, plane) = ((row * width + col) * n_planes + plane) * 2
     plane = level_index * 5 + var_index          # 0 .. 184  (isobaric)
-    plane = 185 + surface_field_index            # 185 .. 189 (surface block)
+    plane = 185 + surface_field_index            # 185 ..     (surface block)
 
 Levels run 1000 -> 100 hPa every 25 hPa (37 of them, the extrapolated
 "1013.2 mb" level deliberately excluded); isobaric variables are ordered
-TMP, DPT, UGRD, VGRD, VVEL. One pixel therefore owns a contiguous 380 B run.
+TMP, DPT, UGRD, VGRD, VVEL. One pixel owns a contiguous run of
+``n_planes * 2`` bytes — 380 B at format_version 1, 382 B at 2. **Nothing
+outside this module may assume either number**: readers take ``n_planes`` from
+the sidecar, which is what lets one deployment serve both.
 
 The sidecar written next to each stack is fully self-describing: a reader
 needs the JSON and nothing else (no import of this module, no model
@@ -53,7 +56,13 @@ logger = logging.getLogger(__name__)
 
 #: Bumped whenever the on-disk layout, level ladder or variable set changes.
 #: Old runs are never migrated — they age out with run retention (design §3).
-SOUNDING_FORMAT_VERSION = 1
+#:
+#: * v1 — 185 isobaric planes + 5 surface planes (190 planes / 380 B per pixel).
+#: * v2 — adds ``CAPE:surface`` as a sixth surface plane (191 / 382 B), so the
+#:   panel can show HRRR's own SBCAPE next to ours (decision #5). Readers are
+#:   sidecar-driven and serve v1 stacks unchanged; those simply have no
+#:   ``cape_sfc`` row.
+SOUNDING_FORMAT_VERSION = 2
 
 #: 1000 -> 100 hPa every 25 hPa. "1013.2 mb" is excluded on purpose: it is a
 #: sub-surface extrapolated level (design §1).
@@ -110,6 +119,14 @@ VVEL_PACK = PackSpec(
 PRESSURE_PACK = PackSpec(
     units="hPa", scale=0.02, offset=300.0, valid_min=200.0, valid_max=1200.0
 )
+# Surface CAPE (format_version 2). 0.15 J/kg per code covers 0..9830 J/kg — far
+# above any observed HRRR surface CAPE — at a precision two orders finer than
+# the quantity's own uncertainty. Values beyond the top of that window clip
+# rather than wrap (the Phase 1 encode behaviour); the physical window below is
+# wider still so a genuine units surprise fails the build instead of clipping.
+CAPE_PACK = PackSpec(
+    units="J kg-1", scale=0.15, offset=0.0, valid_min=-1.0, valid_max=15000.0
+)
 
 
 def _identity(values: np.ndarray) -> np.ndarray:
@@ -157,6 +174,9 @@ SURFACE_FIELDS: tuple[SurfaceField, ...] = (
     SurfaceField("td2m", "DPT", "2-HTGL", "2 m above ground", TEMPERATURE_PACK),
     SurfaceField("u10m", "UGRD", "10-HTGL", "10 m above ground", WIND_PACK),
     SurfaceField("v10m", "VGRD", "10-HTGL", "10 m above ground", WIND_PACK),
+    # format_version 2. Appended, never inserted: plane indices of the v1 fields
+    # must not move, or a half-written run would decode as garbage.
+    SurfaceField("cape_sfc", "CAPE", "0-SFC", "surface", CAPE_PACK),
 )
 
 N_ISOBARIC_PLANES = len(LEVELS_HPA) * len(ISOBARIC_VARIABLES)
@@ -182,13 +202,20 @@ def surface_plane_index(field_index: int) -> int:
     return N_ISOBARIC_PLANES + field_index
 
 
-def pixel_byte_offset(row: int, col: int, *, width: int, plane: int = 0) -> int:
-    """Byte offset of ``plane`` within pixel ``(row, col)`` (design §3)."""
-    return ((int(row) * int(width) + int(col)) * N_PLANES + int(plane)) * BYTES_PER_SAMPLE
+def pixel_byte_offset(
+    row: int, col: int, *, width: int, plane: int = 0, n_planes: int = N_PLANES
+) -> int:
+    """Byte offset of ``plane`` within pixel ``(row, col)`` (design §3).
+
+    ``n_planes`` defaults to the *writer's* current layout but must be passed
+    from the sidecar when reading, so a v1 stack stays readable after the
+    module's own plane count moves on.
+    """
+    return ((int(row) * int(width) + int(col)) * int(n_planes) + int(plane)) * BYTES_PER_SAMPLE
 
 
-def expected_stack_size_bytes(*, width: int, height: int) -> int:
-    return int(width) * int(height) * BYTES_PER_PIXEL
+def expected_stack_size_bytes(*, width: int, height: int, n_planes: int = N_PLANES) -> int:
+    return int(width) * int(height) * int(n_planes) * BYTES_PER_SAMPLE
 
 
 # ---------------------------------------------------------------------------
@@ -535,16 +562,23 @@ def write_stack(
 # ---------------------------------------------------------------------------
 
 
-def read_pixel_codes(stack_path: Path, *, width: int, row: int, col: int) -> np.ndarray:
-    """One seek + one 380 B read -> the raw uint16 codes for a grid point."""
-    offset = pixel_byte_offset(row, col, width=width)
+def read_pixel_codes(
+    stack_path: Path, *, width: int, row: int, col: int, n_planes: int = N_PLANES
+) -> np.ndarray:
+    """One seek + one small read -> the raw uint16 codes for a grid point.
+
+    ``n_planes`` comes from the sidecar (380 B for v1, 382 B for v2).
+    """
+    n_planes = int(n_planes)
+    nbytes = n_planes * BYTES_PER_SAMPLE
+    offset = pixel_byte_offset(row, col, width=width, n_planes=n_planes)
     with open(stack_path, "rb") as handle:
         handle.seek(offset)
-        payload = handle.read(BYTES_PER_PIXEL)
-    if len(payload) != BYTES_PER_PIXEL:
+        payload = handle.read(nbytes)
+    if len(payload) != nbytes:
         raise ValueError(
             f"Short read at offset {offset} in sounding stack: {stack_path} "
-            f"({len(payload)} of {BYTES_PER_PIXEL} bytes)"
+            f"({len(payload)} of {nbytes} bytes)"
         )
     return np.frombuffer(payload, dtype=STACK_DTYPE)
 
@@ -565,7 +599,7 @@ def read_profile(stack_path: Path, sidecar: dict[str, Any], *, row: int, col: in
         raise IndexError(f"({row}, {col}) outside sounding grid {height}x{width}")
 
     n_planes = int(sidecar["n_planes"])
-    codes = read_pixel_codes(stack_path, width=width, row=row, col=col)
+    codes = read_pixel_codes(stack_path, width=width, row=row, col=col, n_planes=n_planes)
     if codes.size != n_planes:
         raise ValueError(f"Sounding pixel has {codes.size} planes, sidecar declares {n_planes}")
 

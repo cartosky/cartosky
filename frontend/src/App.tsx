@@ -89,6 +89,7 @@ import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
 import { trackRumDiagnosticMetric } from "@/lib/rum";
 import { selectGridManifestLod } from "@/lib/grid-lod";
+import { useDomainRunAvailability } from "@/lib/use-domain-run-availability";
 import { resolveRunBuildProgress } from "@/lib/viewer-loading-status";
 import { useDisplaySettings } from "@/lib/use-display-settings";
 import { useFrameStatusBadge } from "@/lib/use-frame-status-badge";
@@ -150,6 +151,7 @@ import {
   emptyScrubPhase0aSnapshot,
   readAnimationDelayPreference,
   resolveDataDomain,
+  refineDataDomainForRun,
   defaultDataDomainForSelection,
   normalizeRequestedDomain,
   coverageSelectionValue,
@@ -993,10 +995,12 @@ export default function App() {
     ?? selectedModelCapability?.canonical_region
     ?? MAP_VIEW_DEFAULTS.region
   ).trim().toLowerCase() || MAP_VIEW_DEFAULTS.region;
-  // Effective data domain (Phase 2B): non-null only when the selected
+  // Capability-resolved data domain (Phase 2B): non-null only when the selected
   // variable declares the requested domain in supported_build_regions;
   // otherwise requests silently degrade to canonical (null → no `domain=`).
-  const dataDomain = resolveDataDomain(domain, selectedModelCapability, selectedVariableCapability);
+  // This is layer 2 of 3 — the run-scoped refinement below can still take it
+  // to canonical, and `dataDomain` (the value every REQUEST uses) is its output.
+  const capabilityDataDomain = resolveDataDomain(domain, selectedModelCapability, selectedVariableCapability);
   // ── Coverage control (global go-live design §1-§3) ─────────────────────────
   // Segments come from the union of the model's variables' declared build
   // regions, so `[]` (canonical-only models) is what hides the control.
@@ -1012,12 +1016,6 @@ export default function App() {
   // U2: the toggle mirrors the REQUESTED domain (sticky), not the resolved one;
   // an unset domain resolves through the §7 default, never assumed canonical.
   const coverageValue = coverageSelectionValue(domain, selectedModelCapability, selectedVariableCapability);
-  const coverageNote = useMemo(
-    () => (coverageControlVisible
-      ? coverageDegradedNote(domain, selectedModelCapability, selectedVariableCapability, regionPresets)
-      : null),
-    [coverageControlVisible, domain, selectedModelCapability, selectedVariableCapability, regionPresets],
-  );
   const coverageBadgeVariableIds = useMemo(
     () => (coverageControlVisible
       ? variableIdsMissingDomain(selectedCapabilityVars, coverageValue, selectedModelCapability)
@@ -1043,6 +1041,56 @@ export default function App() {
   // Product var ids are published runtime ids and resolve directly; an
   // ensemble view would be a meaningless extra hop.
   const requestEnsembleView = activeProduct ? "" : ensembleView;
+
+  // ── Run-scoped coverage degradation (layer 3) ──────────────────────────────
+  // Capabilities can declare a domain the SELECTED RUN has no artifacts for
+  // (Wave-1 capability flips landing ahead of the ERA5 baselines, every
+  // pre-baseline run, and every mid-cycle window before a variable's frames
+  // publish). That produced a blank map with no explanation, because the U2
+  // note is capabilities-driven and capabilities said "supported".
+  //
+  // The probe reads the DOMAIN-SCOPED run manifest and `refineDataDomainForRun`
+  // turns a definitive negative into the same silent canonical degrade the
+  // other two layers perform. It is deliberately keyed on the CAPABILITY
+  // domain, never on `dataDomain` — see use-domain-run-availability.ts.
+  const domainRunProbeStatus = useDomainRunAvailability({
+    model,
+    run,
+    requestVariable,
+    dataRegion,
+    ensembleView: requestEnsembleView,
+    domain: capabilityDataDomain,
+  });
+  const domainRefinement = refineDataDomainForRun(capabilityDataDomain, domainRunProbeStatus);
+  // THE effective domain for every REQUEST (frames, manifests, grid, sample,
+  // share capture) and for domain-derived UI such as the World camera preset.
+  // The Coverage toggle and the permalink keep reading the REQUESTED `domain`,
+  // so stickiness is untouched.
+  const dataDomain = domainRefinement.domain;
+  // While the probe is in flight the answer is unknown: request effects HOLD
+  // rather than degrade, so the operator never sees canonical data flash and
+  // then swap (or the reverse).
+  const domainProbePending = domainRefinement.indeterminate;
+  const coverageNote = useMemo(
+    () => (coverageControlVisible
+      ? coverageDegradedNote(
+        domain,
+        selectedModelCapability,
+        selectedVariableCapability,
+        regionPresets,
+        domainRefinement.runDegraded,
+      )
+      : null),
+    [
+      coverageControlVisible,
+      domain,
+      selectedModelCapability,
+      selectedVariableCapability,
+      regionPresets,
+      domainRefinement.runDegraded,
+    ],
+  );
+
   const selectedVariableDefaultFh = selectedCapabilityVarMap.get(variable)?.defaultFh ?? null;
   const selectedModelLatestOnly = readCapabilityLatestOnly(selectedModelCapability);
   const selectedModelSupportsSampling = readCapabilitySupportsSampling(selectedModelCapability);
@@ -1753,6 +1801,14 @@ export default function App() {
   }, [runs, resolvedGridLatestRunId]);
 
   useEffect(() => {
+    // HOLD, don't clear: the run-domain probe has not answered yet, so we do
+    // not know whether to ask for `domain=global` or canonical. Returning
+    // before the `setGridManifest(null)` below keeps the previously drawn
+    // manifest on screen (same no-blank-flash rule as the model/run swap
+    // documented further down) instead of flashing an empty map.
+    if (domainProbePending) {
+      return;
+    }
     if (!prefersGridSubstrate || !hasRenderableSelection || !selectionSupportsGrid) {
       setGridManifest(null);
       return;
@@ -1816,6 +1872,7 @@ export default function App() {
     prefersGridSubstrate,
     dataRegion,
     dataDomain,
+    domainProbePending,
     resolvedRunForRequests,
     run,
     gridOnlySelection,
@@ -2036,6 +2093,12 @@ export default function App() {
       : [];
   }, [gridManifest, model, variable]);
   useEffect(() => {
+    // Hold while the run-domain verdict is unknown (mirrors the primary
+    // grid-manifest effect): return before the clear so the composites already
+    // on screen survive the probe instead of blinking out.
+    if (domainProbePending) {
+      return;
+    }
     if (!model || !resolvedRunForRequests || compositeLayerSpecs.length === 0) {
       setCompositeGridManifests({});
       return;
@@ -2060,7 +2123,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [compositeLayerSpecs, dataRegion, dataDomain, ensembleView, model, resolvedRunForRequests]);
+  }, [compositeLayerSpecs, dataRegion, dataDomain, domainProbePending, ensembleView, model, resolvedRunForRequests]);
   const gridFrameByHour = useMemo(() => {
     const map = new Map<number, NonNullable<typeof selectedGridLod>["frames"][number]>();
     const frames = Array.isArray(selectedGridLod?.frames) ? selectedGridLod.frames : [];
@@ -3147,7 +3210,11 @@ export default function App() {
     return Array.isArray(frameMeta?.pressure_centers) ? frameMeta.pressure_centers : [];
   }, [frameRows, visibleOverlayFrame]);
   const vectorGeoJsonUrl = useMemo(() => {
-    if (!selectionSupportsVector || !model || !variable) {
+    // Hold: with the domain verdict unknown, any URL we built would name a
+    // domain we may be about to drop. Null issues no request and leaves the
+    // layer empty for the probe's duration, which is the same "still loading"
+    // state the grid layer is in.
+    if (domainProbePending || !selectionSupportsVector || !model || !variable) {
       return null;
     }
     return buildVectorLayerUrl({
@@ -3159,7 +3226,7 @@ export default function App() {
       layerKey: "primary",
       domain: dataDomain,
     });
-  }, [apiRoot, currentFrame, model, resolvedRunForRequests, selectionSupportsVector, variable, dataDomain]);
+  }, [apiRoot, currentFrame, model, resolvedRunForRequests, selectionSupportsVector, variable, dataDomain, domainProbePending]);
 
   const [nwsWarningsRefreshToken, setNwsWarningsRefreshToken] = useState(nwsWarningsVersionToken);
   const mrmsNwsWarningsEnabled = supportsNwsWarningsOverlay(model, variable) && nwsWarningsEnabled;
@@ -3211,7 +3278,9 @@ export default function App() {
   const effectiveVectorGeoJsonUrl = mrmsNwsWarningsGeoJsonUrl ?? vectorGeoJsonUrl;
 
   const vectorPrefetchUrls = useMemo(() => {
-    if (!selectionSupportsVector || !model || !variable || frameRows.length <= 1) {
+    // Hold with the live vector URL above — prefetching the outgoing domain's
+    // neighbours is the same wrong request, just earlier.
+    if (domainProbePending || !selectionSupportsVector || !model || !variable || frameRows.length <= 1) {
       return [] as string[];
     }
     if (model === "spc") {
@@ -3239,7 +3308,7 @@ export default function App() {
       }
     }
     return urls;
-  }, [apiRoot, currentFrame, forecastHour, frameRows, model, resolvedRunForRequests, selectionSupportsVector, variable, vectorGeoJsonUrl, dataDomain]);
+  }, [apiRoot, currentFrame, forecastHour, frameRows, model, resolvedRunForRequests, selectionSupportsVector, variable, vectorGeoJsonUrl, dataDomain, domainProbePending]);
 
   const rawLegend = useMemo(() => {
     const normalizedMeta = extractLegendMeta(currentFrame) ?? extractLegendMeta(frameRows[0] ?? null);
@@ -3300,13 +3369,17 @@ export default function App() {
   // percentile/probability map the hover must report that product's value
   // (84%, P50 inches), not the mean's — requestVariable carries the active
   // product's runtime id and falls back to the base variable on "mean".
+  // `domainProbePending` folds into the enable flag: a hover sample carries
+  // `domain=`, so sampling the outgoing domain would report values from a
+  // build the map is not showing.
+  const hoverSamplingReady = hoverSamplingEnabled && !domainProbePending;
   const { tooltip, onHover, onHoverEnd } = useSampleTooltip({
-    model: hoverSamplingEnabled ? model : "",
-    run: hoverSamplingEnabled ? hoverSampleRun : "",
-    varId: hoverSamplingEnabled ? requestVariable : "",
-    ensembleView: hoverSamplingEnabled ? requestEnsembleView : "",
-    domain: hoverSamplingEnabled ? dataDomain : null,
-    fh: hoverSamplingEnabled ? hoverSampleHour : Number.NaN,
+    model: hoverSamplingReady ? model : "",
+    run: hoverSamplingReady ? hoverSampleRun : "",
+    varId: hoverSamplingReady ? requestVariable : "",
+    ensembleView: hoverSamplingReady ? requestEnsembleView : "",
+    domain: hoverSamplingReady ? dataDomain : null,
+    fh: hoverSamplingReady ? hoverSampleHour : Number.NaN,
   });
   const [vectorHoverTooltip, setVectorHoverTooltip] = useState<Exclude<typeof tooltip, null> | null>(null);
   const handleMapHover = useCallback((lat: number, lon: number, x: number, y: number, hoverTooltip?: Exclude<typeof tooltip, null>) => {
@@ -3855,6 +3928,10 @@ export default function App() {
 
   useEffect(() => {
     if (!model) return;
+    // Hold until the run-domain probe answers — the run manifest this effect
+    // loads IS the timeline source, so fetching it against a domain that may
+    // be about to degrade would populate the scrubber from the wrong build.
+    if (domainProbePending) return;
     const controller = new AbortController();
 
     // Staleness is guarded by controller.signal alone: every input this effect
@@ -3941,7 +4018,7 @@ export default function App() {
         }
         setRunManifest(manifestData);
         const resolvedVars = manifestData
-          ? capabilityVarsForManifest(manifestData.variables, baseCapabilityVars, { modelId: model })
+          ? capabilityVarsForManifest(manifestData.variables, baseCapabilityVars, { modelId: model, domainScoped: dataDomain !== null })
           : baseCapabilityVars;
         const resolvedVarsWithKept = keptCapabilityEntry && !resolvedVars.some((entry) => entry.id === keptVariable)
           ? [...resolvedVars, keptCapabilityEntry]
@@ -3964,7 +4041,13 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [dataRegion, model, run, runs, selectedCapabilityVars, selectedModelCapability, gridOnlySelection, resolvedGridLatestRunId, ensembleView, initialPermalink.run, showInitialPermalinkFallbackNotice]);
+    // `dataDomain` (the run-REFINED domain) is a dependency so that a run-scoped
+    // degrade refetches the run manifest with `domain=` dropped — otherwise the
+    // timeline would keep being driven by the domain manifest we just decided
+    // not to render. No loop: the probe that produces the refinement reads only
+    // inputs upstream of it (model/run/variable/capability domain), never this
+    // manifest.
+  }, [dataRegion, dataDomain, domainProbePending, model, run, runs, selectedCapabilityVars, selectedModelCapability, gridOnlySelection, resolvedGridLatestRunId, ensembleView, initialPermalink.run, showInitialPermalinkFallbackNotice]);
 
   useEffect(() => {
     setFrameRows([]);
@@ -3978,6 +4061,17 @@ export default function App() {
     setLoadedFramesKey("");
   }, [selectionKey]);
 
+  // The run-domain probe holds every data effect while it is in flight, so it
+  // has to count as in-flight work itself — otherwise the viewer would look
+  // idle for the duration of the probe instead of loading.
+  useEffect(() => {
+    if (!domainProbePending) {
+      return;
+    }
+    setFrameSwitchCount((count) => count + 1);
+    return () => setFrameSwitchCount((count) => count - 1);
+  }, [domainProbePending]);
+
   // NOTE: gridManifest is NOT eagerly nullified on [model, run, variable]
   // changes. The fetch effect (above, at the useEffect that depends on
   // variable/model/run) will atomically swap the manifest once the new one
@@ -3987,6 +4081,10 @@ export default function App() {
 
   useEffect(() => {
     if (!model || !variable || !hasRenderableSelection) return;
+    // Hold (see the grid-manifest effect): frameRows were already cleared by
+    // the selectionKey effect above, so the viewer stays in its loading state
+    // instead of briefly showing a canonical timeline it may not keep.
+    if (domainProbePending) return;
     if (gridOnlySelection && run === "latest" && !resolvedGridLatestRunId) {
       setFrameRows([]);
       setLoadedFramesKey("");
@@ -4182,6 +4280,7 @@ export default function App() {
     commitForecastHourTransition,
     dataRegion,
     dataDomain,
+    domainProbePending,
     hasRenderableSelection,
     gridOnlySelection,
     rgbManifest,
@@ -4321,6 +4420,10 @@ export default function App() {
     if (!model || !variable || !hasRenderableSelection || run !== "latest" || !isPageVisible) {
       return;
     }
+    // Don't poll against a domain that is still being adjudicated.
+    if (domainProbePending) {
+      return;
+    }
 
     let cancelled = false;
     let tickController: AbortController | null = null;
@@ -4390,7 +4493,7 @@ export default function App() {
               }
               return manifestData;
             });
-            const capabilityVars = capabilityVarsForManifest(manifestData.variables, selectedCapabilityVars, { modelId: model });
+            const capabilityVars = capabilityVarsForManifest(manifestData.variables, selectedCapabilityVars, { modelId: model, domainScoped: dataDomain !== null });
             if (capabilityVars.length > 0) {
               // Keep the selected variable when a fresher manifest transiently
               // lacks it (two-phase publish window) — frameRows are preserved
@@ -4488,10 +4591,14 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, variable, ensembleView, product, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId, prefersGridSubstrate, selectionSupportsGrid, dataRegion, dataDomain]);
+  }, [model, run, variable, ensembleView, product, resolvedRunForRequests, runManifest, isPageVisible, selectedCapabilityVars, selectedModelCapability, hasRenderableSelection, loadedFramesKey, selectionKey, selectedModelLatestOnly, gridOnlySelection, resolvedGridLatestRunId, prefersGridSubstrate, selectionSupportsGrid, dataRegion, dataDomain, domainProbePending]);
 
   useEffect(() => {
     if (!model || run === "latest" || !isPageVisible) {
+      return;
+    }
+    // Don't poll /runs against a domain that is still being adjudicated.
+    if (domainProbePending) {
       return;
     }
 
@@ -4536,7 +4643,7 @@ export default function App() {
       tickController?.abort();
       window.clearInterval(interval);
     };
-  }, [model, run, isPageVisible, dataDomain]);
+  }, [model, run, isPageVisible, dataDomain, domainProbePending]);
 
   useEffect(() => {
     if (!isPlaying || !isGridPlayable || gridFrameHours.length === 0) {

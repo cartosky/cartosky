@@ -20,6 +20,20 @@ export const DOMAIN_VARIABLE = 'tmp2m';
  * degrade to canonical AND surface the inline note / row badge.
  */
 export const DOMAIN_CANONICAL_ONLY_VARIABLE = 'precip_7d_anom';
+/**
+ * Run-scoped degrade, shape A — capabilities DECLARE `global`, and the global
+ * run manifest OMITS the variable entirely.
+ */
+export const DOMAIN_UNPUBLISHED_GLOBAL_VARIABLE = 'tmp2m_anom';
+/**
+ * Run-scoped degrade, shape B — THE operator repro. Capabilities declare
+ * `global` and the global manifest DOES list the variable, declared-but-unbuilt
+ * with zero artifacts behind it. Verified against prod (api.cartosky.com, run
+ * 20260731_12z, `?domain=global`), where the Wave-1 anomalies carry exactly
+ * `{expected_frames, available_frames: 0, ready_through_fh: null,
+ * expected_max_fh, frames: []}` and `/frames` returns `[]`.
+ */
+export const DOMAIN_UNBUILT_GLOBAL_VARIABLE = 'precip_5d_anom';
 export const DOMAIN_ID = 'global';
 
 export const DOMAIN_FRAME_BINARY = new Uint16Array([1320, 1405, 65535, 877]);
@@ -72,6 +86,41 @@ function modelCatalogEntry(modelId: string, options: { supportsGlobal: boolean }
         color_map_id: 'precip_anom',
         render_substrates: ['grid'],
         supported_build_regions: ['conus'],
+        constraints: {},
+        derived: false,
+        derive_strategy_id: null,
+      },
+      [DOMAIN_UNPUBLISHED_GLOBAL_VARIABLE]: {
+        var_key: DOMAIN_UNPUBLISHED_GLOBAL_VARIABLE,
+        display_name: 'Temp Anomaly 2m',
+        kind: 'continuous',
+        units: 'F',
+        group: 'Temperature',
+        default_fh: 0,
+        buildable: true,
+        color_map_id: 'tmp2m',
+        render_substrates: ['grid'],
+        // DECLARED global — but `manifestPayload` omits it from the global
+        // manifest, so only a run-scoped probe can discover it is missing.
+        ...(options.supportsGlobal ? { supported_build_regions: ['conus', DOMAIN_ID] } : {}),
+        constraints: {},
+        derived: false,
+        derive_strategy_id: null,
+      },
+      [DOMAIN_UNBUILT_GLOBAL_VARIABLE]: {
+        var_key: DOMAIN_UNBUILT_GLOBAL_VARIABLE,
+        display_name: '5-Day Precip Anomaly',
+        kind: 'continuous',
+        units: 'in',
+        group: 'Precipitation',
+        default_fh: 0,
+        buildable: true,
+        color_map_id: 'precip_anom',
+        render_substrates: ['grid'],
+        // DECLARED global — and PRESENT in the global manifest, but with zero
+        // artifacts behind it (the Wave-1 capability flip landing ahead of the
+        // ERA5 baselines).
+        ...(options.supportsGlobal ? { supported_build_regions: ['conus', DOMAIN_ID] } : {}),
         constraints: {},
         derived: false,
         derive_strategy_id: null,
@@ -141,31 +190,79 @@ export function regionPayload() {
   };
 }
 
-export function manifestPayload(modelId: string) {
+const MANIFEST_FRAMES = [
+  { fh: 0, valid_time: '2026-07-29T12:00:00Z' },
+  { fh: 1, valid_time: '2026-07-29T13:00:00Z' },
+];
+
+/**
+ * Run manifest, scoped by DATA DOMAIN exactly like the backend's.
+ *
+ * Modelled on prod (api.cartosky.com, run 20260731_12z), which scopes the
+ * manifest strictly by domain:
+ *
+ *  - the global manifest lists ONLY domain-declared variables, so every
+ *    canonical-only variable is absent from it (shape A degrade, and the
+ *    reason the variable picker may not be driven by this manifest);
+ *  - a declared-but-unbuilt variable IS listed, with zero artifacts behind it
+ *    (shape B — the operator repro);
+ *  - `region` reports the domain, which is what the Phase-5 readiness-boundary
+ *    guard in App.tsx compares against the effective domain.
+ *
+ * The healthy global variable is deliberately PARTIALLY built
+ * (`available_frames: 2` of 3, `ready_through_fh: 1` under `expected_max_fh: 2`)
+ * — the normal mid-cycle state. It must render partial global data with the
+ * readiness hatch, never degrade.
+ */
+export function manifestPayload(modelId: string, domain: string | null = null) {
+  const isGlobal = domain === DOMAIN_ID;
+  const variables: Record<string, unknown> = {
+    [DOMAIN_VARIABLE]: {
+      display_name: 'Temperature 2m',
+      kind: 'continuous',
+      units: 'F',
+      frames: MANIFEST_FRAMES,
+      ...(isGlobal
+        ? { expected_frames: 3, available_frames: 2, ready_through_fh: 1, expected_max_fh: 2 }
+        : {}),
+    },
+  };
+  if (isGlobal) {
+    variables[DOMAIN_UNBUILT_GLOBAL_VARIABLE] = {
+      display_name: '5-Day Precip Anomaly',
+      kind: 'continuous',
+      units: 'in',
+      expected_frames: 105,
+      available_frames: 0,
+      ready_through_fh: null,
+      expected_max_fh: 384,
+      frames: [],
+    };
+  } else {
+    variables[DOMAIN_CANONICAL_ONLY_VARIABLE] = {
+      display_name: '7-Day Precip Anomaly',
+      kind: 'continuous',
+      units: 'in',
+      frames: MANIFEST_FRAMES,
+    };
+    variables[DOMAIN_UNPUBLISHED_GLOBAL_VARIABLE] = {
+      display_name: 'Temp Anomaly 2m',
+      kind: 'continuous',
+      units: 'F',
+      frames: MANIFEST_FRAMES,
+    };
+    variables[DOMAIN_UNBUILT_GLOBAL_VARIABLE] = {
+      display_name: '5-Day Precip Anomaly',
+      kind: 'continuous',
+      units: 'in',
+      frames: MANIFEST_FRAMES,
+    };
+  }
   return {
     model: modelId,
     run: DOMAIN_RUN_ID,
-    region: 'conus',
-    variables: {
-      [DOMAIN_VARIABLE]: {
-        display_name: 'Temperature 2m',
-        kind: 'continuous',
-        units: 'F',
-        frames: [
-          { fh: 0, valid_time: '2026-07-29T12:00:00Z' },
-          { fh: 1, valid_time: '2026-07-29T13:00:00Z' },
-        ],
-      },
-      [DOMAIN_CANONICAL_ONLY_VARIABLE]: {
-        display_name: '7-Day Precip Anomaly',
-        kind: 'continuous',
-        units: 'in',
-        frames: [
-          { fh: 0, valid_time: '2026-07-29T12:00:00Z' },
-          { fh: 1, valid_time: '2026-07-29T13:00:00Z' },
-        ],
-      },
-    },
+    region: isGlobal ? DOMAIN_ID : 'conus',
+    variables,
   };
 }
 
@@ -242,6 +339,13 @@ export function gridManifestPayload(modelId: string, domain: string | null, varI
   };
 }
 
+const ALL_FIXTURE_VARIABLES = [
+  DOMAIN_VARIABLE,
+  DOMAIN_CANONICAL_ONLY_VARIABLE,
+  DOMAIN_UNPUBLISHED_GLOBAL_VARIABLE,
+  DOMAIN_UNBUILT_GLOBAL_VARIABLE,
+];
+
 /**
  * Stub every route the viewer/compare boot touches and record every
  * `/api/v4/` request URL (pathname + search) into `recordedApiUrls`.
@@ -304,11 +408,23 @@ export async function stubViewerDomainRoutes(page: Page, recordedApiUrls: string
     });
     for (const runSegment of ['latest', DOMAIN_RUN_ID]) {
       await page.route(`**/api/v4/${modelId}/${runSegment}/manifest**`, async (route) => {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(manifestPayload(modelId)) });
+        const domain = new URL(route.request().url()).searchParams.get('domain');
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(manifestPayload(modelId, domain)),
+        });
       });
-      for (const varId of [DOMAIN_VARIABLE, DOMAIN_CANONICAL_ONLY_VARIABLE]) {
+      for (const varId of ALL_FIXTURE_VARIABLES) {
         await page.route(`**/api/v4/${modelId}/${runSegment}/${varId}/frames**`, async (route) => {
-          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(framesPayload()) });
+          // Prod returns [] for a declared-but-unbuilt variable in its domain.
+          const domain = new URL(route.request().url()).searchParams.get('domain');
+          const unbuilt = domain === DOMAIN_ID && varId === DOMAIN_UNBUILT_GLOBAL_VARIABLE;
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(unbuilt ? [] : framesPayload()),
+          });
         });
         await page.route(`**/api/v4/${modelId}/${runSegment}/${varId}/grid-manifest**`, async (route) => {
           const requestUrl = new URL(route.request().url());
@@ -322,7 +438,7 @@ export async function stubViewerDomainRoutes(page: Page, recordedApiUrls: string
       }
     }
     // Canonical and domain-scoped grid binaries.
-    for (const varId of [DOMAIN_VARIABLE, DOMAIN_CANONICAL_ONLY_VARIABLE]) {
+    for (const varId of ALL_FIXTURE_VARIABLES) {
       await page.route(`**/api/v4/grid/${modelId}/${DOMAIN_RUN_ID}/${varId}/*.bin**`, async (route) => {
         await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: Buffer.from(DOMAIN_FRAME_BINARY.buffer) });
       });

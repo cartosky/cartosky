@@ -28,6 +28,10 @@ export const SOUNDING_EXPECTED_MASKED_LEVELS = 2;
 /** Index (into SOUNDING_LEVELS) whose temperature is nodata in every frame. */
 const NULL_LEVEL_INDEX = 12;
 
+/** Verbatim server string; the panel must render it and not invent its own. */
+export const SOUNDING_PARCEL_DEFINITION =
+  'SB parcel: HRRR 2 m T/Td, virtual-temperature corrected';
+
 const RUN_BASE_MS = Date.UTC(2026, 6, 30, 12, 0, 0);
 
 function validTime(fh: number): string {
@@ -78,13 +82,74 @@ function frameFor(fh: number) {
       td2m: Number((19.0 + warmth * 0.2).toFixed(2)),
       u10m: 3.4,
       v10m: -2.1,
+      // format_version 2 only; fh 2 is deliberately left v1-shaped (below).
+      cape_sfc: fh === SOUNDING_LAST_FH ? null : 1466.0,
     },
     t,
     td,
     u,
     v,
     w,
+    // fh 1 stands in for a frame whose server-side index computation failed:
+    // the profile still draws, every readout row falls back to an em dash.
+    indices: fh === SOUNDING_NULL_INDICES_FH ? null : indicesFor(fh),
+    parcel: fh === SOUNDING_NULL_INDICES_FH ? null : parcelFor(fh),
   };
+}
+
+/** The last frame stands in for a v1 stack: no model SBCAPE, no LFC/EL. */
+export const SOUNDING_LAST_FH = SOUNDING_FRAME_HOURS[SOUNDING_FRAME_HOURS.length - 1];
+
+/** This frame carries `indices: null` / `parcel: null` (per-frame degradation). */
+export const SOUNDING_NULL_INDICES_FH = SOUNDING_FRAME_HOURS[1];
+
+/**
+ * Server-shaped Phase 4 block. Values are per-fh so the scrubber assertions can
+ * tell frames apart; the last frame is the CAPPED case — null LFC/EL and null
+ * `model_sbcape` — which is what drives the "—" assertions.
+ */
+function indicesFor(fh: number) {
+  const capped = fh === SOUNDING_LAST_FH;
+  return {
+    sbcape: 1200 + fh * 137,
+    sbcin: -12 - fh,
+    mlcape: 640 + fh * 40,
+    mlcin: -55 - fh,
+    lcl_hPa: 902.4 - fh * 3,
+    lcl_C: 18.6,
+    lfc_hPa: capped ? null : 780.2,
+    el_hPa: capped ? null : 210.5,
+    pwat_mm: 38.4 + fh,
+    model_sbcape: capped ? null : 1466,
+  };
+}
+
+/**
+ * A monotone dry-then-moist ascent from the surface. Not physically derived —
+ * the client never computes thermodynamics, so the fixture only has to be
+ * shaped like the server's polyline.
+ */
+function parcelFor(fh: number) {
+  const p: number[] = [];
+  const t: number[] = [];
+  const surfaceT = 31.5 + fh * 0.8;
+  const lcl = 902.4 - fh * 3;
+  p.push(SOUNDING_SURFACE_PRESSURE);
+  t.push(Number(surfaceT.toFixed(1)));
+  for (const level of SOUNDING_LEVELS) {
+    if (level >= SOUNDING_SURFACE_PRESSURE) continue;
+    if (p[p.length - 1] > lcl && level < lcl) {
+      p.push(Number(lcl.toFixed(1)));
+      t.push(Number((surfaceT - (SOUNDING_SURFACE_PRESSURE - lcl) * 0.095).toFixed(1)));
+    }
+    const dry = level > lcl;
+    const value = dry
+      ? surfaceT - (SOUNDING_SURFACE_PRESSURE - level) * 0.095
+      : surfaceT - (SOUNDING_SURFACE_PRESSURE - lcl) * 0.095 - (lcl - level) * 0.075;
+    p.push(level);
+    t.push(Number(value.toFixed(1)));
+  }
+  return { p, t };
 }
 
 export function soundingPayload(lat: number, lon: number) {
@@ -102,7 +167,16 @@ export function soundingPayload(lat: number, lon: number) {
       distance_km: 4.7,
     },
     levels_hPa: SOUNDING_LEVELS,
-    units: { t: 'degC', td: 'degC', u: 'm s-1', v: 'm s-1', w: 'Pa s-1', pres_sfc: 'hPa' },
+    units: {
+      t: 'degC',
+      td: 'degC',
+      u: 'm s-1',
+      v: 'm s-1',
+      w: 'Pa s-1',
+      pres_sfc: 'hPa',
+      cape_sfc: 'J kg-1',
+    },
+    parcel_definition: SOUNDING_PARCEL_DEFINITION,
     frames: SOUNDING_FRAME_HOURS.map(frameFor),
     generated_at: '2026-07-30T12:31:00Z',
   };

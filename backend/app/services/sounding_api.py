@@ -32,6 +32,7 @@ from rasterio.transform import Affine
 
 from ..config import sounding_models
 from . import sounding as sounding_service
+from . import sounding_indices
 from .run_ids import RUN_ID_RE
 
 logger = logging.getLogger(__name__)
@@ -243,10 +244,20 @@ def _shape_fingerprint(sidecar: dict[str, Any]) -> tuple:
     Levels and units are stated once at the top of the response, and the
     (row, col) mapping is computed from a single sidecar — so a run whose
     stacks disagree on any of this cannot be served coherently.
+
+    The **surface block is deliberately excluded**: a format bump that appends a
+    surface field (v1 -> v2's ``cape_sfc``) can land mid-run when the scheduler
+    restarts, and that run must still serve. The isobaric ladder is what the
+    per-level arrays are aligned to, so it is the part that genuinely has to
+    agree; a v1 frame inside a v2 run simply carries a shorter surface dict.
     """
+    isobaric_units = sorted(
+        (str(entry["id"]), str(entry.get("units", "")))
+        for entry in list(sidecar.get("variables") or [])
+    )
     return (
         [int(level) for level in sidecar["levels_hPa"]],
-        sorted(_units_map(sidecar).items()),
+        isobaric_units,
         int(sidecar["width"]),
         int(sidecar["height"]),
         tuple(round(float(value), 9) for value in sidecar["transform"]),
@@ -301,16 +312,45 @@ def _frame_for_fh(
     return frame
 
 
+def _attach_indices(frames: list[dict[str, Any]], levels_hpa: list[int]) -> None:
+    """Add ``indices`` / ``parcel`` to every frame, in place (Phase 4).
+
+    Deliberately the LAST step: the stack reads above are a few hundred bytes
+    each, while this is the only expensive part of the request (MetPy parcel
+    ascents, ~20 ms per frame measured). Keeping it after the cheap work means
+    a future response cache can short-circuit the whole thing.
+
+    A failure here is never allowed to cost the profile that the panel can
+    already draw: one bad frame gets ``indices: null`` and the rest are served.
+    """
+    for frame in frames:
+        try:
+            computed = sounding_indices.compute_frame_indices(
+                levels_hpa=levels_hpa,
+                t=frame.get("t") or [],
+                td=frame.get("td") or [],
+                u=frame.get("u"),
+                v=frame.get("v"),
+                surface=frame.get("surface") or {},
+            )
+        except Exception:  # noqa: BLE001 - belt and braces; the module also guards
+            logger.exception("Sounding indices failed for fh%03d", int(frame.get("fh", -1)))
+            computed = {"indices": None, "parcel": None}
+        frame["indices"] = computed.get("indices")
+        frame["parcel"] = computed.get("parcel")
+
+
 def get_sounding(*, model: str, lat: float, lon: float, run: str | None = None) -> dict[str, Any]:
     """Full multi-fh sounding payload for one point (design §5).
 
     Raises :class:`SoundingUnavailableError` (404), :class:`SoundingRequestError`
     (400) or :class:`SoundingDataError` (500); the route maps them.
 
-    No in-process response cache in Phase 2: each fh is a single 380 B seek-read,
-    so a 48-fh response is ~18 KB of I/O. A cache keyed on
-    (model, run, row, col) is the obvious lever if that ever shows up in a
-    profile.
+    No in-process response cache: each fh is a single ~380 B seek-read, so a
+    48-fh response is ~18 KB of I/O, and the Phase 4 MetPy pass measures under
+    the 1.5 s budget for a full 49-frame run. A cache keyed on
+    (model, run, row, col) is the obvious lever if that ever changes — see
+    :func:`_attach_indices` for why the expensive work is ordered last.
     """
     model_norm = str(model or "").strip().lower()
     if not sounding_enabled(model_norm):
@@ -358,12 +398,18 @@ def get_sounding(*, model: str, lat: float, lon: float, run: str | None = None) 
             f"no readable sounding stacks for {model_norm}/{run_id}"
         )
 
+    levels_hpa = [int(level) for level in reference_sidecar["levels_hPa"]]
+    _attach_indices(frames, levels_hpa)
+
     payload: dict[str, Any] = {
         "model": model_norm,
         "run": run_id,
         "location": {"lat": float(lat), "lon": float(lon)},
         "grid_point": grid_point,
-        "levels_hPa": [int(level) for level in reference_sidecar["levels_hPa"]],
+        "levels_hPa": levels_hpa,
+        # Server-owned, displayed verbatim: the client never restates what the
+        # parcel is (design decision #5).
+        "parcel_definition": sounding_indices.PARCEL_DEFINITION,
         "units": _units_map(reference_sidecar),
         "frames": frames,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

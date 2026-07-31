@@ -52,10 +52,11 @@ def test_level_ladder_is_1000_to_100_every_25_excluding_1013() -> None:
     assert 1013 not in sounding.LEVELS_HPA
 
 
-def test_plane_counts_match_the_designed_380_byte_pixel() -> None:
+def test_plane_counts_match_the_designed_382_byte_pixel() -> None:
+    # format_version 2: 185 isobaric + 6 surface planes.
     assert sounding.N_ISOBARIC_PLANES == 185
-    assert sounding.N_PLANES == 190
-    assert sounding.BYTES_PER_PIXEL == 380
+    assert sounding.N_PLANES == 191
+    assert sounding.BYTES_PER_PIXEL == 382
 
 
 def test_isobaric_variable_order_is_t_td_u_v_w() -> None:
@@ -76,8 +77,17 @@ def test_surface_block_order_matches_the_spec() -> None:
         "td2m",
         "u10m",
         "v10m",
+        # v2 append; the v1 five keep their plane indices.
+        "cape_sfc",
     ]
-    assert [sounding.surface_plane_index(i) for i in range(5)] == [185, 186, 187, 188, 189]
+    assert [sounding.surface_plane_index(i) for i in range(6)] == [
+        185,
+        186,
+        187,
+        188,
+        189,
+        190,
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -165,10 +175,15 @@ def test_pack_spec_round_trips_through_a_sidecar_entry() -> None:
 
 def test_pixel_byte_offset_matches_the_design_formula() -> None:
     width = 450
-    for row, col, plane in [(0, 0, 0), (0, 1, 0), (1, 0, 3), (264, 449, 189)]:
+    for row, col, plane in [(0, 0, 0), (0, 1, 0), (1, 0, 3), (264, 449, 190)]:
         assert sounding.pixel_byte_offset(row, col, width=width, plane=plane) == (
-            ((row * width + col) * 190 + plane) * 2
+            ((row * width + col) * 191 + plane) * 2
         )
+    # A v1 stack is still addressable from the same helper: the plane count is
+    # a parameter, never an assumption (that is what keeps old runs readable).
+    assert sounding.pixel_byte_offset(1, 0, width=width, plane=3, n_planes=190) == (
+        ((1 * width + 0) * 190 + 3) * 2
+    )
 
 
 def test_isobaric_plane_index_is_level_outer_var_inner() -> None:
@@ -178,7 +193,7 @@ def test_isobaric_plane_index_is_level_outer_var_inner() -> None:
     assert sounding.isobaric_plane_index(36, 4) == 184  # w @ 100 hPa
 
 
-def test_planted_column_decodes_from_its_own_380_byte_block(tmp_path: Path) -> None:
+def test_planted_column_decodes_from_its_own_pixel_block(tmp_path: Path) -> None:
     """Synthetic small grid: a known pixel's block must decode to its column."""
     height, width = 3, 4
     target_row, target_col = 2, 1
@@ -213,7 +228,7 @@ def test_planted_column_decodes_from_its_own_380_byte_block(tmp_path: Path) -> N
     assert stack_path.stat().st_size == sounding.expected_stack_size_bytes(
         width=width, height=height
     )
-    assert json.loads(sidecar_path.read_text())["n_planes"] == 190
+    assert json.loads(sidecar_path.read_text())["n_planes"] == 191
 
     codes = sounding.read_pixel_codes(stack_path, width=width, row=target_row, col=target_col)
     assert codes.size == sounding.N_PLANES
@@ -426,14 +441,14 @@ def test_sidecar_is_fully_self_describing() -> None:
     }
     assert required <= set(sidecar)
 
-    assert sidecar["format_version"] == 1
+    assert sidecar["format_version"] == 2
     assert sidecar["fh"] == 6
     assert sidecar["valid_time"] == "2026-07-30T18:00:00Z"
     assert sidecar["width"] == 450 and sidecar["height"] == 265
     assert len(sidecar["transform"]) == 6
     assert sidecar["levels_hPa"] == list(sounding.LEVELS_HPA)
-    assert sidecar["n_planes"] == 190
-    assert sidecar["bytes_per_pixel"] == 380
+    assert sidecar["n_planes"] == 191
+    assert sidecar["bytes_per_pixel"] == 382
     assert sidecar["dtype"] == "uint16"
     assert sidecar["byte_order"] == "little"
     assert sidecar["decimation_stride"] == 4
@@ -664,7 +679,7 @@ def test_manifest_section_reports_expected_and_available(tmp_path: Path) -> None
     _write_minimal_stack(tmp_path, 1)
     section = sounding.manifest_section(run_root=tmp_path, expected_fhs=[2, 0, 1, 1])
     assert section == {
-        "format_version": 1,
+        "format_version": 2,
         "path_template": "sounding/fh{fh:03d}.stack.bin",
         "sidecar_template": "sounding/fh{fh:03d}.stack.json",
         "expected_fhs": [0, 1, 2],
@@ -712,6 +727,8 @@ def _synthetic_planes(height: int, width: int) -> dict[int, np.ndarray]:
     planes[sounding.surface_plane_index(2)] = (17.0 + 2.0 * xx).astype(np.float32)
     planes[sounding.surface_plane_index(3)] = (6.0 * np.ones_like(xx)).astype(np.float32)
     planes[sounding.surface_plane_index(4)] = (-2.0 * np.ones_like(xx)).astype(np.float32)
+    # v2: surface CAPE, J/kg.
+    planes[sounding.surface_plane_index(5)] = (250.0 + 900.0 * xx).astype(np.float32)
     return planes
 
 
@@ -794,3 +811,127 @@ def test_build_stacks_for_run_never_raises_on_a_fetch_failure(
     assert built == 0
     assert failed == 2
     assert sounding.available_stack_fhs(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# format_version 1 / 2 compatibility (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+def _write_v1_stack(run_root: Path, fh: int, *, height: int, width: int) -> tuple[Path, dict]:
+    """Write a stack in the RETIRED v1 layout: 190 planes, no ``cape_sfc``.
+
+    Deliberately hand-rolled rather than produced by the current writer — the
+    point of the test is that today's reader can still decode bytes written by
+    code that no longer exists.
+    """
+    v1_surface = sounding.SURFACE_FIELDS[:5]
+    n_planes = sounding.N_ISOBARIC_PLANES + len(v1_surface)
+    assert n_planes == 190
+
+    values: dict[int, float] = {}
+    codes = np.zeros((height, width, n_planes), dtype=np.uint16)
+    for plane in range(n_planes):
+        pack = sounding.pack_for_plane(plane)
+        value = pack.valid_min + (pack.valid_max - pack.valid_min) * 0.4 + plane * pack.scale
+        values[plane] = value
+        codes[:, :, plane] = sounding.encode_plane(
+            np.full((height, width), value, dtype=np.float32), pack
+        )
+
+    sidecar = sounding.build_sidecar(
+        model="hrrr",
+        run_id=RUN_ID,
+        fh=fh,
+        run_date=RUN_DATE,
+        width=width,
+        height=height,
+        transform=(1.0, 0.0, 0.0, 0.0, -1.0, 0.0),
+        projection="EPSG:4326",
+        source_width=width,
+        source_height=height,
+        stride=1,
+    )
+    sidecar["format_version"] = 1
+    sidecar["surface_fields"] = sidecar["surface_fields"][:5]
+    sidecar["n_planes"] = n_planes
+    sidecar["bytes_per_pixel"] = n_planes * sounding.BYTES_PER_SAMPLE
+
+    stack_path, sidecar_path = sounding.stack_paths(run_root, fh)
+    stack_path.parent.mkdir(parents=True, exist_ok=True)
+    stack_path.write_bytes(np.ascontiguousarray(codes).astype(sounding.STACK_DTYPE).tobytes())
+    sidecar_path.write_text(json.dumps(sidecar))
+    return stack_path, {"sidecar": sidecar, "values": values}
+
+
+def test_reader_decodes_a_v1_stack_with_the_v2_module(tmp_path: Path) -> None:
+    height, width = 4, 5
+    stack_path, planted = _write_v1_stack(tmp_path, 3, height=height, width=width)
+    sidecar = planted["sidecar"]
+
+    assert stack_path.stat().st_size == sounding.expected_stack_size_bytes(
+        width=width, height=height, n_planes=190
+    )
+    profile = sounding.read_profile(stack_path, sidecar, row=2, col=3)
+
+    for var_index, var in enumerate(sounding.ISOBARIC_VARIABLES):
+        for level_index in range(len(sounding.LEVELS_HPA)):
+            plane = sounding.isobaric_plane_index(level_index, var_index)
+            assert profile[var.id][level_index] == pytest.approx(
+                planted["values"][plane], abs=_tol(var.pack)
+            )
+    for field_index, field in enumerate(sounding.SURFACE_FIELDS[:5]):
+        plane = sounding.surface_plane_index(field_index)
+        assert profile["surface"][field.id] == pytest.approx(
+            planted["values"][plane], abs=_tol(field.pack)
+        )
+    # The v2-only field is simply absent — never a fabricated zero.
+    assert "cape_sfc" not in profile["surface"]
+
+
+def test_v2_stack_carries_surface_cape(tmp_path: Path) -> None:
+    height, width = 3, 3
+    planes = {
+        plane: np.zeros((height, width), dtype=np.float32)
+        for plane in range(sounding.N_PLANES)
+    }
+    planes[sounding.surface_plane_index(0)] = np.full((height, width), 968.5, dtype=np.float32)
+    planes[sounding.surface_plane_index(5)] = np.full((height, width), 1234.5, dtype=np.float32)
+    stack = sounding.assemble_stack(planes, stride=1)
+    sidecar = sounding.build_sidecar(
+        model="hrrr",
+        run_id=RUN_ID,
+        fh=0,
+        run_date=RUN_DATE,
+        width=width,
+        height=height,
+        transform=(1.0, 0.0, 0.0, 0.0, -1.0, 0.0),
+        projection="EPSG:4326",
+        source_width=width,
+        source_height=height,
+        stride=1,
+    )
+    stack_path, _ = sounding.write_stack(run_root=tmp_path, fh=0, stack=stack, sidecar=sidecar)
+
+    assert sidecar["format_version"] == 2
+    assert [entry["id"] for entry in sidecar["surface_fields"]][-1] == "cape_sfc"
+    profile = sounding.read_profile(stack_path, sidecar, row=1, col=2)
+    # 0.15 J/kg quantization -> 0.075 worst case.
+    assert profile["surface"]["cape_sfc"] == pytest.approx(1234.5, abs=0.075)
+
+
+def test_surface_cape_joins_the_grib_search_and_band_mapping() -> None:
+    pattern = sounding.surface_search_pattern()
+    assert "CAPE:surface" in pattern
+    assert not pattern.startswith("^")
+    assert sounding.plane_index_for_band_tags(
+        {"GRIB_ELEMENT": "CAPE", "GRIB_SHORT_NAME": "0-SFC"}
+    ) == sounding.surface_plane_index(5)
+    # Surface pressure shares the level token; the element keeps them apart.
+    assert sounding.plane_index_for_band_tags(
+        {"GRIB_ELEMENT": "PRES", "GRIB_SHORT_NAME": "0-SFC"}
+    ) == sounding.surface_plane_index(0)
+    # The mixed-layer CAPE messages in the same product must not be captured.
+    assert sounding.plane_index_for_band_tags(
+        {"GRIB_ELEMENT": "CAPE", "GRIB_SHORT_NAME": "18000-0-SPDL"}
+    ) is None

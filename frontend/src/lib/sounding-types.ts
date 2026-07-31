@@ -22,6 +22,35 @@ export type SoundingSurface = {
   /** 10 m wind components, m/s. */
   u10m: number | null;
   v10m: number | null;
+  /** HRRR's own surface CAPE, J/kg. Only on format_version ≥ 2 stacks. */
+  cape_sfc?: number | null;
+};
+
+/**
+ * Server-computed thermodynamics (Phase 4). Every field is independently
+ * nullable: a capped sounding genuinely has no LFC/EL, and a nodata column has
+ * no indices at all. The client does zero thermodynamics — it only formats.
+ */
+export type SoundingIndices = {
+  /** Surface-based CAPE/CIN, J/kg, virtual-temperature corrected. */
+  sbcape: number | null;
+  sbcin: number | null;
+  /** 100 hPa mixed-layer CAPE/CIN, J/kg. */
+  mlcape: number | null;
+  mlcin: number | null;
+  lcl_hPa: number | null;
+  lcl_C: number | null;
+  lfc_hPa: number | null;
+  el_hPa: number | null;
+  pwat_mm: number | null;
+  /** HRRR's native SBCAPE — a side-by-side diagnostic, not our parcel. */
+  model_sbcape: number | null;
+};
+
+/** SB parcel ascent polyline, index-aligned (hPa / °C). */
+export type SoundingParcel = {
+  p: number[];
+  t: number[];
 };
 
 export type SoundingFrame = {
@@ -34,6 +63,9 @@ export type SoundingFrame = {
   u: (number | null)[];
   v: (number | null)[];
   w: (number | null)[];
+  /** Phase 4; absent on responses served before it shipped. */
+  indices?: SoundingIndices | null;
+  parcel?: SoundingParcel | null;
 };
 
 export type SoundingGridPoint = {
@@ -54,6 +86,12 @@ export type SoundingResponse = {
   /** 37 levels, 1000 → 100 hPa descending. */
   levels_hPa: number[];
   units: Record<string, string>;
+  /**
+   * What the SB parcel IS, in the server's own words (design decision #5).
+   * Rendered verbatim — the client must never restate the parcel definition,
+   * or the two can drift apart.
+   */
+  parcel_definition?: string;
   frames: SoundingFrame[];
   generated_at: string;
 };

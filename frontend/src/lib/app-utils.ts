@@ -966,6 +966,125 @@ export function resolveDataDomain(
 }
 
 /**
+ * Outcome of probing the DOMAIN-SCOPED run manifest for the selected variable.
+ *
+ * - `disabled` — no non-canonical domain is in play, so nothing was probed.
+ * - `pending`  — the probe is in flight; the answer is not yet known.
+ * - `present`  — the domain manifest carries the variable with a non-empty
+ *                frame list.
+ * - `absent`   — DEFINITIVE negative: the manifest loaded and the variable is
+ *                missing, or it is declared with NOTHING built, or the domain
+ *                manifest 404s for this run. See
+ *                `domainRunProbeStatusForManifest` for the exact rule.
+ * - `error`    — transient failure (network down, 5xx, unparseable payload).
+ *                NOT a negative: an unreachable API is not "unpublished".
+ */
+export type DomainRunProbeStatus = "disabled" | "pending" | "present" | "absent" | "error";
+
+export type RefinedDataDomain = {
+  /** The domain that REQUESTS must use. `null` = canonical (send no `domain=`). */
+  domain: string | null;
+  /**
+   * The answer is not known yet. Callers must HOLD (stay in loading) rather
+   * than issue requests — degrading preemptively would flash canonical data
+   * and then swap, which is exactly the flicker this layer exists to avoid.
+   */
+  indeterminate: boolean;
+  /** The run-scoped degrade fired — drives the third `coverageDegradedNote` variant. */
+  runDegraded: boolean;
+};
+
+/**
+ * Run-scoped coverage degradation — the third layer, applied DOWNSTREAM of the
+ * capability layer (`resolveDataDomain`).
+ *
+ * Capabilities answer "may this domain be requested for this variable"; they
+ * cannot answer "does this RUN actually have it". A capability flip that lands
+ * before the artifacts do (Wave-1 anomaly baselines), every pre-baseline run,
+ * and every mid-cycle window before a variable's frames publish all produce a
+ * capability-supported domain with nothing behind it — a blank map with no
+ * explanation. This selector turns that into the same silent degrade the other
+ * two layers already perform, plus a run-scoped note.
+ *
+ * Decision table (`effectiveDomain` is `resolveDataDomain`'s output):
+ *
+ *   effectiveDomain | status    | domain | indeterminate | runDegraded
+ *   ----------------+-----------+--------+---------------+------------
+ *   null            | (any)     | null   | false         | false
+ *   "global"        | disabled  | global | false         | false
+ *   "global"        | pending   | global | TRUE          | false
+ *   "global"        | present   | global | false         | false
+ *   "global"        | absent    | null   | false         | TRUE
+ *   "global"        | error     | global | false         | false
+ *
+ * `null` in never degrades further: a capability-unsupported domain already
+ * shows the "this variable"/"this model" note and must not be re-attributed to
+ * the run.
+ */
+/**
+ * Classify one variable inside an already-loaded DOMAIN-SCOPED run manifest.
+ *
+ * Prod (verified against api.cartosky.com) publishes a Wave-1 anomaly that is
+ * declared-but-unbuilt in exactly this shape:
+ *
+ *   { expected_frames: 105, available_frames: 0, ready_through_fh: null,
+ *     expected_max_fh: 384, frames: [] }
+ *
+ * — present in the variables map, zero artifacts behind it. That is the
+ * operator's actual repro, and it must degrade.
+ *
+ * The rule is deliberately asymmetric: ANY positive signal means present, and
+ * `absent` requires every signal that exists to read zero. So a mid-cycle
+ * variable with SOME frames (`available_frames > 0`, a `ready_through_fh`) is
+ * a normal in-progress build — the viewer shows partial global data with the
+ * readiness hatch, exactly as it does canonically, and must NOT be yanked to
+ * canonical halfway through a cycle. Likewise a legacy manifest entry carrying
+ * neither counter nor frame list is unknown, not negative, so it stays
+ * `present`.
+ */
+export function domainRunProbeStatusForManifest(
+  manifest: RunManifestResponse | null | undefined,
+  requestVariable: string,
+): "present" | "absent" {
+  const varKey = String(requestVariable ?? "").trim();
+  const entry = varKey ? manifest?.variables?.[varKey] : undefined;
+  if (!entry) {
+    // Absent from the variables map entirely — a domain manifest that lists
+    // only what it built (today's prod shape for non-declared variables).
+    return "absent";
+  }
+  const availableFrames = Number(entry.available_frames);
+  if (Number.isFinite(availableFrames) && availableFrames > 0) {
+    return "present";
+  }
+  if (Array.isArray(entry.frames) && entry.frames.length > 0) {
+    return "present";
+  }
+  const sawZeroCounter = Number.isFinite(availableFrames) && availableFrames === 0;
+  const sawEmptyFrameList = Array.isArray(entry.frames) && entry.frames.length === 0;
+  return sawZeroCounter || sawEmptyFrameList ? "absent" : "present";
+}
+
+export function refineDataDomainForRun(
+  effectiveDomain: string | null | undefined,
+  probeStatus: DomainRunProbeStatus,
+): RefinedDataDomain {
+  const domain = String(effectiveDomain ?? "").trim().toLowerCase() || null;
+  if (!domain) {
+    return { domain: null, indeterminate: false, runDegraded: false };
+  }
+  if (probeStatus === "pending") {
+    return { domain, indeterminate: true, runDegraded: false };
+  }
+  if (probeStatus === "absent") {
+    return { domain: null, indeterminate: false, runDegraded: true };
+  }
+  // "present", "error" and "disabled" all keep the requested domain: only a
+  // definitive negative may lock a selection into canonical.
+  return { domain, indeterminate: false, runDegraded: false };
+}
+
+/**
  * THE single flip point for global-by-default (global go-live design §7).
  *
  * Returns the data domain a selection uses when the URL carries no `domain=`
@@ -1173,22 +1292,23 @@ export function coverageSegmentsForModel(
  * actually being shown — exactly when a domain was requested but
  * `resolveDataDomain` degraded it to canonical.
  *
- * Two causes, two sentences: the MODEL may not offer the requested coverage at
- * all (a sticky `?domain=mars`, or a domain carried across a model switch), or
- * the model offers it and the selected VARIABLE does not. Attributing the
- * former to the variable would be a lie.
+ * Three causes, three sentences: the MODEL may not offer the requested
+ * coverage at all (a sticky `?domain=mars`, or a domain carried across a model
+ * switch); the model offers it and the selected VARIABLE does not; or both
+ * declare it and THIS RUN has no artifacts for it (`runDegraded`, from
+ * `refineDataDomainForRun`). Attributing any of these to the others would be a
+ * lie — "this variable" on a capability-supported variable would send the
+ * operator hunting for a variable problem that does not exist.
  */
 export function coverageDegradedNote(
   requestedDomain: string | null | undefined,
   modelCapability: CapabilityModel | null | undefined,
   variableCapability: CapabilityVariable | null | undefined,
   regionPresets?: Record<string, RegionPreset> | null,
+  runDegraded: boolean = false,
 ): string | null {
   const requested = String(requestedDomain ?? "").trim().toLowerCase();
   if (!requested) {
-    return null;
-  }
-  if (resolveDataDomain(requested, modelCapability, variableCapability) !== null) {
     return null;
   }
   const canonical = canonicalRegionIdForModel(modelCapability);
@@ -1196,6 +1316,10 @@ export function coverageDegradedNote(
     return null;
   }
   const canonicalLabel = coverageSegmentLabel(canonical, regionPresets) || "the canonical coverage";
+  if (resolveDataDomain(requested, modelCapability, variableCapability) !== null) {
+    // Capability-supported: the only remaining degrade cause is the run.
+    return runDegraded ? `Not available for this run — showing ${canonicalLabel}` : null;
+  }
   const modelOffersRequested = coverageSegmentsForModel(modelCapability, regionPresets)
     .some((segment) => segment.value === requested);
   const subject = modelOffersRequested ? "this variable" : "this model";
@@ -1259,8 +1383,19 @@ export function normalizeCapabilityVarRows(modelCapability: CapabilityModel | nu
 export function capabilityVarsForManifest(
   manifestVars: RunManifestResponse["variables"] | null | undefined,
   capabilityVars: VariableEntry[],
-  options?: { modelId?: string | null },
+  options?: { modelId?: string | null; domainScoped?: boolean },
 ): VariableEntry[] {
+  // A DOMAIN-SCOPED manifest lists only what that domain built (prod's
+  // `?domain=global` manifest carries 22 variables and omits every
+  // canonical-only one). It answers "what does this DOMAIN have", never "what
+  // does this MODEL have", so it must not prune the picker: design U2 says
+  // rows are badged, never hidden or disabled. Selecting a canonical-only row
+  // under Global degrades through the existing capability path.
+  if (options?.domainScoped) {
+    const capabilityIds = new Set(capabilityVars.map((entry) => entry.id));
+    const extras = normalizeManifestVarRows(manifestVars).filter((entry) => !capabilityIds.has(entry.id));
+    return [...capabilityVars, ...extras];
+  }
   // MRMS advances LATEST as soon as the fast radar phase publishes, while
   // hourly recent-precip products refresh asynchronously. Keep its stable
   // capability catalog visible during that transition; the grid loader can

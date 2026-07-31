@@ -1,0 +1,338 @@
+"""Thermodynamic indices + parcel path for one sounding frame (Phase 4).
+
+Normative: ``docs/SKEWT_DESIGN_2026-07-30.md`` §7 Phase 4 and decision #5.
+
+Everything here is **server-side MetPy** — the client contains zero
+thermodynamics (design bullet "Thermo policy"). One call takes a single decoded
+frame (the 37-level ladder plus the surface block that
+:func:`app.services.sounding.read_profile` returns) and gives back:
+
+* ``indices`` — SBCAPE/SBCIN, MLCAPE/MLCIN, LCL, LFC, EL, PWAT
+* ``parcel``  — the (p, T) polyline the Skew-T draws for the SB parcel
+
+## The column (design §2)
+
+Indices are computed on the **anchored** column: the surface block first, then
+only isobaric levels strictly above the ground (``p < pres_sfc``). This mirrors
+the spike's ``step5_indices.py`` exactly — computing on the raw isobaric ladder
+put a fictitious below-ground parcel origin in the integral and moved SBCAPE by
+hundreds of J/kg on the reference profile.
+
+## The SB parcel (decision #5, RESOLVED 2026-07-31)
+
+Origin = HRRR's native **2 m temperature and 2 m dewpoint at the surface
+pressure**. CAPE/CIN carry the **virtual-temperature correction** (Doswell &
+Rasmussen 1994): both the environment and the parcel are converted to virtual
+temperature before the buoyancy integral, via MetPy's documented
+``cape_cin(p, Tv_env, Td, Tv_parcel)`` form. Below the LCL the parcel keeps the
+mixing ratio it started with; above it, it is saturated. That is the *only*
+correction applied — no parcel-origin blending, no mixed-layer fallback, no
+reverse-engineering of another product's undocumented convention.
+
+The definition is published verbatim to the client as
+:data:`PARCEL_DEFINITION` so the UI never has to restate it.
+
+## LFC / EL markers
+
+These annotate the parcel path that is actually **drawn**, so they come from the
+plain (non-Tv) parcel profile — a marker that did not sit on the visible curve
+would be a lie. They are legitimately undefined for a capped sounding and are
+``None`` then, never 0.
+
+## Robustness contract
+
+No input can make this module raise: a frame whose surface block is nodata, or
+whose column collapses to nothing, yields ``{"indices": None, "parcel": None}``.
+Individual metrics degrade to ``None`` on their own without taking the rest of
+the frame down.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+from typing import Any, Mapping, Sequence
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+#: Verbatim UI string — single source of truth for what the SB parcel *is*.
+PARCEL_DEFINITION = "SB parcel: HRRR 2 m T/Td, virtual-temperature corrected"
+
+#: Mixed-layer parcel depth (design §7 Phase 4).
+MIXED_LAYER_DEPTH_HPA = 100.0
+
+#: Below this many usable isobaric levels the column is not worth integrating.
+MIN_COLUMN_LEVELS = 8
+
+
+def _metpy() -> tuple[Any, Any]:
+    """Import MetPy lazily.
+
+    MetPy pulls in pint + a units registry (~1 s of import time); the sounding
+    endpoint is the only caller, so the API process should not pay for it at
+    startup. Same lazy-import pattern as ``sampling.resolve_run``'s ``main``
+    import.
+    """
+    import metpy.calc as mpcalc
+    from metpy.units import units
+
+    return mpcalc, units
+
+
+def _finite(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _scalar(quantity: Any) -> float | None:
+    """Magnitude of a pint scalar, or ``None`` when it is NaN/undefined."""
+    try:
+        return _finite(np.asarray(quantity.m).reshape(-1)[0])
+    except Exception:  # noqa: BLE001 - defensive: never raise out of this module
+        return None
+
+
+def _round_or_none(value: float | None, digits: int | None) -> float | int | None:
+    if value is None:
+        return None
+    return int(round(value)) if digits is None else round(value, digits)
+
+
+class _Column:
+    """The anchored column, in plain floats (units are attached at use time)."""
+
+    __slots__ = ("p", "t", "td")
+
+    def __init__(self, p: np.ndarray, t: np.ndarray, td: np.ndarray) -> None:
+        self.p = p
+        self.t = t
+        self.td = td
+
+
+def build_column(
+    levels_hpa: Sequence[Any],
+    *,
+    t: Sequence[Any],
+    td: Sequence[Any],
+    surface: Mapping[str, Any],
+) -> _Column | None:
+    """Surface-anchored (p, T, Td) column, or ``None`` when it cannot be built.
+
+    Levels whose T or Td is nodata are dropped rather than failing the frame —
+    a hole in the ladder is a data gap, not a broken profile — but a column that
+    falls below :data:`MIN_COLUMN_LEVELS` is not integrated at all.
+    """
+    psfc = _finite(surface.get("pres_sfc"))
+    t2m = _finite(surface.get("t2m"))
+    td2m = _finite(surface.get("td2m"))
+    if psfc is None or t2m is None or td2m is None:
+        return None
+    if not (200.0 <= psfc <= 1100.0):
+        return None
+
+    pressures: list[float] = [psfc]
+    temps: list[float] = [t2m]
+    dewpoints: list[float] = [td2m]
+
+    kept = 0
+    last_p = psfc
+    for index, level in enumerate(levels_hpa):
+        level_p = _finite(level)
+        if level_p is None or level_p >= psfc or level_p >= last_p:
+            continue
+        level_t = _finite(t[index]) if index < len(t) else None
+        level_td = _finite(td[index]) if index < len(td) else None
+        if level_t is None or level_td is None:
+            continue
+        pressures.append(level_p)
+        temps.append(level_t)
+        dewpoints.append(level_td)
+        last_p = level_p
+        kept += 1
+
+    if kept < MIN_COLUMN_LEVELS:
+        return None
+
+    p_array = np.asarray(pressures, dtype=float)
+    t_array = np.asarray(temps, dtype=float)
+    # Quantization can push a saturated level's Td a hundredth of a degree above
+    # T; MetPy treats supersaturation as an error, so clamp it away.
+    td_array = np.minimum(np.asarray(dewpoints, dtype=float), t_array)
+    return _Column(p_array, t_array, td_array)
+
+
+def _parcel_path(mpcalc: Any, units: Any, column: _Column) -> dict[str, list[float]] | None:
+    """(p, T) polyline for the drawn parcel: dry to the LCL, moist above.
+
+    Sampled at the stack's own levels plus the inserted LCL point — enough
+    resolution for a 640 px tall plot, and small enough to ship per frame.
+    """
+    try:
+        p_out, _t_env, _td_env, t_parcel = mpcalc.parcel_profile_with_lcl(
+            column.p * units.hPa, column.t * units.degC, column.td * units.degC
+        )
+        pressures = np.asarray(p_out.to(units.hPa).m, dtype=float)
+        temperatures = np.asarray(t_parcel.to(units.degC).m, dtype=float)
+    except Exception:  # noqa: BLE001
+        logger.debug("Sounding parcel path failed", exc_info=True)
+        return None
+
+    keep = np.isfinite(pressures) & np.isfinite(temperatures)
+    if int(keep.sum()) < 2:
+        return None
+    return {
+        "p": [round(float(value), 1) for value in pressures[keep]],
+        "t": [round(float(value), 1) for value in temperatures[keep]],
+    }
+
+
+def _virtual_temperature_cape_cin(
+    mpcalc: Any, units: Any, column: _Column, parcel: Any, lcl_pressure: Any
+) -> tuple[float | None, float | None]:
+    """SBCAPE/SBCIN with the virtual-temperature correction (decision #5).
+
+    Environment: Tv from the observed mixing ratio.
+    Parcel: constant mixing ratio (its surface saturation value at Td) below the
+    LCL, saturated at the parcel temperature above it. This is the standard
+    Doswell & Rasmussen treatment and reproduces the spike's reference value.
+    """
+    try:
+        p = column.p * units.hPa
+        t = column.t * units.degC
+        td = column.td * units.degC
+        w_env = mpcalc.mixing_ratio_from_relative_humidity(
+            p, t, mpcalc.relative_humidity_from_dewpoint(t, td)
+        )
+        w_parcel = (
+            np.where(
+                column.p >= float(lcl_pressure.to(units.hPa).m),
+                mpcalc.saturation_mixing_ratio(p[0], td[0]).m,
+                mpcalc.saturation_mixing_ratio(p, parcel).m,
+            )
+            * units("kg/kg")
+        )
+        cape, cin = mpcalc.cape_cin(
+            p,
+            mpcalc.virtual_temperature(t, w_env),
+            td,
+            mpcalc.virtual_temperature(parcel, w_parcel),
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("Tv-corrected SBCAPE failed", exc_info=True)
+        return None, None
+    return _scalar(cape), _scalar(cin)
+
+
+def compute_frame_indices(
+    *,
+    levels_hpa: Sequence[Any],
+    t: Sequence[Any],
+    td: Sequence[Any],
+    u: Sequence[Any] | None = None,
+    v: Sequence[Any] | None = None,
+    surface: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """``{"indices": {...} | None, "parcel": {...} | None}`` for one frame.
+
+    ``u``/``v`` are accepted (the caller already has them and Phase 5's
+    hodograph/shear indices will need them) but nothing in Phase 4 reads them.
+
+    Never raises.
+    """
+    empty: dict[str, Any] = {"indices": None, "parcel": None}
+    surface = surface or {}
+
+    try:
+        column = build_column(levels_hpa, t=t, td=td, surface=surface)
+    except Exception:  # noqa: BLE001
+        logger.debug("Sounding column build failed", exc_info=True)
+        return empty
+    if column is None:
+        return empty
+
+    try:
+        mpcalc, units = _metpy()
+    except Exception:  # noqa: BLE001 - MetPy missing on this host
+        logger.warning("MetPy unavailable; sounding indices disabled", exc_info=True)
+        return empty
+
+    p = column.p * units.hPa
+    t_q = column.t * units.degC
+    td_q = column.td * units.degC
+
+    lcl_pressure_q: Any | None = None
+    lcl_hpa: float | None = None
+    lcl_c: float | None = None
+    try:
+        lcl_p, lcl_t = mpcalc.lcl(p[0], t_q[0], td_q[0])
+        lcl_pressure_q = lcl_p
+        lcl_hpa = _scalar(lcl_p.to(units.hPa))
+        lcl_c = _scalar(lcl_t.to(units.degC))
+    except Exception:  # noqa: BLE001
+        logger.debug("LCL failed", exc_info=True)
+
+    parcel_q: Any | None = None
+    try:
+        parcel_q = mpcalc.parcel_profile(p, t_q[0], td_q[0]).to(units.degC)
+    except Exception:  # noqa: BLE001
+        logger.debug("Parcel profile failed", exc_info=True)
+
+    sbcape = sbcin = None
+    if parcel_q is not None and lcl_pressure_q is not None:
+        sbcape, sbcin = _virtual_temperature_cape_cin(
+            mpcalc, units, column, parcel_q, lcl_pressure_q
+        )
+
+    mlcape = mlcin = None
+    try:
+        ml_cape_q, ml_cin_q = mpcalc.mixed_layer_cape_cin(
+            p, t_q, td_q, depth=MIXED_LAYER_DEPTH_HPA * units.hPa
+        )
+        mlcape, mlcin = _scalar(ml_cape_q), _scalar(ml_cin_q)
+    except Exception:  # noqa: BLE001
+        logger.debug("Mixed-layer CAPE/CIN failed", exc_info=True)
+
+    lfc_hpa = el_hpa = None
+    if parcel_q is not None:
+        # A capped sounding legitimately has neither: MetPy returns NaN, which
+        # `_scalar` turns into None.
+        try:
+            lfc_hpa = _scalar(
+                mpcalc.lfc(p, t_q, td_q, parcel_temperature_profile=parcel_q)[0].to(units.hPa)
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("LFC failed", exc_info=True)
+        try:
+            el_hpa = _scalar(
+                mpcalc.el(p, t_q, td_q, parcel_temperature_profile=parcel_q)[0].to(units.hPa)
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("EL failed", exc_info=True)
+
+    pwat_mm = None
+    try:
+        pwat_mm = _scalar(mpcalc.precipitable_water(p, td_q).to(units.mm))
+    except Exception:  # noqa: BLE001
+        logger.debug("PWAT failed", exc_info=True)
+
+    indices = {
+        "sbcape": _round_or_none(sbcape, None),
+        "sbcin": _round_or_none(sbcin, None),
+        "mlcape": _round_or_none(mlcape, None),
+        "mlcin": _round_or_none(mlcin, None),
+        "lcl_hPa": _round_or_none(lcl_hpa, 1),
+        "lcl_C": _round_or_none(lcl_c, 1),
+        "lfc_hPa": _round_or_none(lfc_hpa, 1),
+        "el_hPa": _round_or_none(el_hpa, 1),
+        "pwat_mm": _round_or_none(pwat_mm, 1),
+        # HRRR's own surface CAPE field — present only on format_version >= 2
+        # stacks, and only ever a side-by-side diagnostic (decision #5).
+        "model_sbcape": _round_or_none(_finite(surface.get("cape_sfc")), None),
+    }
+    parcel = _parcel_path(mpcalc, units, column) if parcel_q is not None else None
+    return {"indices": indices, "parcel": parcel}

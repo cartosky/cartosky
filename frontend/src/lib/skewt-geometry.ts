@@ -269,4 +269,9 @@ export const SKEWT_COLORS = {
   axisLabel: "hsl(215 14% 55%)",
   ground: "hsl(30 25% 45%)",
   barb: "hsl(200 30% 74%)",
+  /** SB parcel ascent (Phase 4). Purple: distinct from both traces and from
+   *  every background family (tan / steel-blue / teal). */
+  parcel: "hsl(280 68% 72%)",
+  /** LCL / LFC / EL ticks + labels — quiet annotations, not a fourth trace. */
+  levelMarker: "hsl(280 30% 62%)",
 } as const;

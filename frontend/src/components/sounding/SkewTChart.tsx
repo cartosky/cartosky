@@ -52,10 +52,14 @@ const BARB_STEP = 4.5;
 const LEGEND_ROWS: Array<[string, string, number, string | undefined]> = [
   [SKEWT_COLORS.temperature, "Temperature", 2.1, undefined],
   [SKEWT_COLORS.dewpoint, "Dewpoint", 2.1, undefined],
+  [SKEWT_COLORS.parcel, "Parcel path", 1.6, "4 3"],
   [SKEWT_COLORS.dryAdiabat, "Dry adiabats", 1, undefined],
   [SKEWT_COLORS.moistAdiabat, "Moist adiabats", 1, undefined],
   [SKEWT_COLORS.mixingRatio, "Mixing ratio", 1, "2 3"],
 ];
+
+/** Right-edge tick length for the LCL/LFC/EL annotations (TT convention). */
+const LEVEL_MARKER_TICK = 12;
 
 /**
  * The static background: isotherms, dry/moist adiabats, mixing-ratio lines.
@@ -283,6 +287,36 @@ export function SkewTChart({
     return out;
   }, [geo, profile]);
 
+  /**
+   * The parcel ascent, drawn only when the server sent one (design §7 Phase 4 —
+   * the client owns no thermodynamics, so no path means no path).
+   */
+  const parcelPath = useMemo(() => {
+    const parcel = frame.parcel;
+    if (!parcel || !Array.isArray(parcel.p) || parcel.p.length < 2) return null;
+    const d = dataPath(geo, parcel.p, parcel.t);
+    return d.length > 0 ? d : null;
+  }, [geo, frame.parcel]);
+
+  /**
+   * LCL / LFC / EL ticks at the right edge of the plot. Each is independently
+   * optional: a capped sounding has an LCL but genuinely no LFC or EL, and
+   * inventing one would be worse than omitting it.
+   */
+  const levelMarkers = useMemo(() => {
+    const indices = frame.indices;
+    if (!indices) return [];
+    const entries: Array<[string, number | null | undefined]> = [
+      ["LCL", indices.lcl_hPa],
+      ["LFC", indices.lfc_hPa],
+      ["EL", indices.el_hPa],
+    ];
+    return entries
+      .filter(([, p]) => typeof p === "number" && Number.isFinite(p))
+      .map(([label, p]) => ({ label, p: Number(p), y: geo.yOf(Number(p)) }))
+      .filter((marker) => Number.isFinite(marker.y) && marker.y >= geo.y0 && marker.y <= geo.y1);
+  }, [geo, frame.indices]);
+
   const surfaceY = profile.surfacePressure != null ? geo.yOf(profile.surfacePressure) : null;
   const surfaceMarkers =
     profile.surfacePressure != null
@@ -429,6 +463,21 @@ export function SkewTChart({
 
       {/* --- data traces --- */}
       <g clipPath="url(#skewt-plotclip)">
+        {/* Under the two traces on purpose: the parcel is a derived annotation,
+            the observed profile is the subject. */}
+        {parcelPath ? (
+          <path
+            data-testid="skewt-parcel-path"
+            d={parcelPath}
+            fill="none"
+            stroke={SKEWT_COLORS.parcel}
+            strokeWidth={1.6}
+            strokeDasharray="4 3"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        ) : null}
         <path
           data-testid="skewt-trace-td"
           d={tracePaths.td}
@@ -489,6 +538,37 @@ export function SkewTChart({
               );
             })
           : null}
+      </g>
+
+      {/* --- LCL / LFC / EL ticks at the right edge of the plot --- */}
+      <g data-testid="skewt-level-markers" data-count={levelMarkers.length}>
+        {levelMarkers.map((marker) => (
+          <Fragment key={`level-${marker.label}`}>
+            <line
+              x1={geo.x1 - LEVEL_MARKER_TICK}
+              y1={marker.y}
+              x2={geo.x1}
+              y2={marker.y}
+              stroke={SKEWT_COLORS.levelMarker}
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
+            <text
+              data-testid={`skewt-level-${marker.label.toLowerCase()}`}
+              x={geo.x1 - LEVEL_MARKER_TICK - 3}
+              y={marker.y - 2}
+              fontSize={8.5}
+              fontWeight={600}
+              textAnchor="end"
+              fill={SKEWT_COLORS.levelMarker}
+              stroke={SKEWT_COLORS.plotBackground}
+              strokeWidth={2.4}
+              paintOrder="stroke"
+            >
+              {marker.label}
+            </text>
+          </Fragment>
+        ))}
       </g>
 
       {/* --- wind barbs --- */}

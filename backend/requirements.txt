@@ -6,6 +6,7 @@ h5netcdf[h5py]
 rasterio
 rio-tiler
 scipy
+metpy
 herbie-data
 pyproj
 pyshp

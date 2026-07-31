@@ -1,19 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  capabilityVarsForManifest,
   coverageBadgeLabel,
   coverageDegradedNote,
   coverageSegmentsForModel,
   coverageSelectionValue,
   coverageSelectionValueAgainstDefault,
   defaultDataDomainForSelection,
+  domainRunProbeStatusForManifest,
   filterRegionOptionsForDataDomain,
   normalizeCapabilityVarRows,
   normalizeRequestedDomain,
   normalizeRequestedDomainAgainstDefault,
+  refineDataDomainForRun,
   resolveDataDomain,
   variableIdsMissingDomain,
 } from "@/lib/app-utils";
+import { domainRunProbeKey, resolveDomainRunProbeStatus } from "@/lib/use-domain-run-availability";
 import { buildPermalinkSearch, viewerPermalinkStateFromSelection } from "@/lib/permalink";
 import { readPermalink } from "@/lib/permalink-read";
 import { ANALYTICS_EVENT_NAMES } from "@/lib/analytics-types";
@@ -278,6 +282,256 @@ describe("coverageDegradedNote (design §2 / decision U2)", () => {
     const selected = coverageSelectionValue("mars", GLOBAL_MODEL, globalVar);
     expect(selected).toBe("mars");
     expect(segments.some((segment) => segment.value === selected)).toBe(false);
+  });
+});
+
+describe("domainRunProbeStatusForManifest (what counts as a definitive negative)", () => {
+  const manifestWith = (entry: unknown) =>
+    ({ model: "gfs", run: "20260731_12z", region: "global", variables: { precip_5d_anom: entry } } as never);
+
+  it("treats a variable missing from the map as absent", () => {
+    expect(domainRunProbeStatusForManifest(manifestWith({}), "tmp2m")).toBe("absent");
+  });
+
+  it("treats prod's declared-but-unbuilt shape as absent", () => {
+    // Verified against api.cartosky.com run 20260731_12z, ?domain=global.
+    expect(domainRunProbeStatusForManifest(
+      manifestWith({ expected_frames: 105, available_frames: 0, ready_through_fh: null, expected_max_fh: 384, frames: [] }),
+      "precip_5d_anom",
+    )).toBe("absent");
+  });
+
+  it("treats a PARTIALLY built variable as present — mid-cycle is not missing", () => {
+    // The normal in-progress state: some frames ready, more coming. Degrading
+    // here would yank the operator to canonical halfway through every cycle.
+    expect(domainRunProbeStatusForManifest(
+      manifestWith({ expected_frames: 105, available_frames: 12, ready_through_fh: 33, expected_max_fh: 384, frames: [{ fh: 0 }] }),
+      "precip_5d_anom",
+    )).toBe("present");
+    // A positive counter wins even if the frame LIST is still empty (the
+    // manifest's two signals can lag each other).
+    expect(domainRunProbeStatusForManifest(
+      manifestWith({ available_frames: 12, frames: [] }),
+      "precip_5d_anom",
+    )).toBe("present");
+  });
+
+  it("treats a fully built variable as present", () => {
+    expect(domainRunProbeStatusForManifest(
+      manifestWith({ expected_frames: 2, available_frames: 2, ready_through_fh: 1, frames: [{ fh: 0 }, { fh: 1 }] }),
+      "precip_5d_anom",
+    )).toBe("present");
+  });
+
+  it("treats an unknown-shape entry as present, never absent", () => {
+    // A legacy manifest entry carrying neither counter nor frame list is
+    // unknown, not negative — only evidence may degrade.
+    expect(domainRunProbeStatusForManifest(manifestWith({ display_name: "5d Precip Anomaly" }), "precip_5d_anom"))
+      .toBe("present");
+  });
+
+  it("treats a null manifest / blank variable as absent", () => {
+    expect(domainRunProbeStatusForManifest(null, "precip_5d_anom")).toBe("absent");
+    expect(domainRunProbeStatusForManifest(manifestWith({ frames: [{ fh: 0 }] }), "")).toBe("absent");
+  });
+});
+
+describe("domain-run probe verdict keying (the one-commit staleness window)", () => {
+  const SELECTION_A = {
+    model: "gfs", run: "latest", requestVariable: "precip_5d_anom",
+    dataRegion: "na", ensembleView: "", domain: "global",
+  };
+
+  it("keys the verdict on every input the probe reads", () => {
+    const keyA = domainRunProbeKey(SELECTION_A);
+    for (const [field, value] of Object.entries({
+      model: "ecmwf",
+      run: "20260731_12z",
+      requestVariable: "tmp2m",
+      dataRegion: "conus",
+      ensembleView: "mean",
+      domain: "arctic",
+    })) {
+      expect(
+        domainRunProbeKey({ ...SELECTION_A, [field]: value }),
+        `changing ${field} must change the probe key`,
+      ).not.toBe(keyA);
+    }
+  });
+
+  it("has no key — and so no probe — when no domain applies", () => {
+    expect(domainRunProbeKey({ ...SELECTION_A, domain: null })).toBe("");
+    expect(resolveDomainRunProbeStatus("", { key: "", status: "disabled" })).toBe("disabled");
+  });
+
+  it("returns a stored verdict only for the selection it was reached for", () => {
+    const keyA = domainRunProbeKey(SELECTION_A);
+    expect(resolveDomainRunProbeStatus(keyA, { key: keyA, status: "absent" })).toBe("absent");
+  });
+
+  it("REGRESSION: a verdict for selection A reads as pending under selection B", () => {
+    // Storing the status alone leaked A's verdict for exactly one commit —
+    // React renders the new selection paired with the old status, because
+    // "pending" could only arrive later from the effect. Every hold site read
+    // `indeterminate === false` in that window and fired stale-domain
+    // requests. Keying the verdict closes it in the same commit.
+    const keyA = domainRunProbeKey(SELECTION_A);
+    const keyB = domainRunProbeKey({ ...SELECTION_A, requestVariable: "tmp2m" });
+    expect(keyB).not.toBe(keyA);
+    for (const status of ["present", "absent", "error", "disabled"] as const) {
+      expect(
+        resolveDomainRunProbeStatus(keyB, { key: keyA, status }),
+        `a "${status}" verdict for A must not leak into B`,
+      ).toBe("pending");
+    }
+  });
+
+  it("holds every consumer during that window", () => {
+    const keyA = domainRunProbeKey(SELECTION_A);
+    const keyB = domainRunProbeKey({ ...SELECTION_A, requestVariable: "tmp2m" });
+    // A stale "absent" would otherwise have degraded B to canonical, and a
+    // stale "present" would have fired requests for the outgoing domain.
+    const refined = refineDataDomainForRun("global", resolveDomainRunProbeStatus(keyB, { key: keyA, status: "absent" }));
+    expect(refined).toEqual({ domain: "global", indeterminate: true, runDegraded: false });
+  });
+
+  it("starts pending, never disabled, for a selection that has a domain", () => {
+    // The initial verdict is {key: "", status: "disabled"}; a domain selection
+    // must not read that as "no probe applies".
+    expect(resolveDomainRunProbeStatus(domainRunProbeKey(SELECTION_A), { key: "", status: "disabled" }))
+      .toBe("pending");
+  });
+});
+
+describe("refineDataDomainForRun (run-scoped degradation, layer 3)", () => {
+  const globalVar = GLOBAL_MODEL.variables!.tmp2m;
+  const naOnlyVar = GLOBAL_MODEL.variables!.precip_7d_anom;
+  /** Layer 2's output is layer 3's input; never the raw requested domain. */
+  const supported = resolveDataDomain("global", GLOBAL_MODEL, globalVar);
+  const unsupported = resolveDataDomain("global", GLOBAL_MODEL, naOnlyVar);
+
+  it("keeps the domain when the run manifest carries the variable", () => {
+    expect(refineDataDomainForRun(supported, "present"))
+      .toEqual({ domain: "global", indeterminate: false, runDegraded: false });
+  });
+
+  it("degrades to canonical when the variable is absent from the domain manifest", () => {
+    expect(refineDataDomainForRun(supported, "absent"))
+      .toEqual({ domain: null, indeterminate: false, runDegraded: true });
+  });
+
+  it("keeps the domain for a PARTIALLY built variable (mid-cycle)", () => {
+    // domainRunProbeStatusForManifest maps available_frames > 0 to "present",
+    // so partial global data keeps rendering with its readiness hatch.
+    const partial = domainRunProbeStatusForManifest(
+      { model: "gfs", run: "r", variables: { tmp2m: { available_frames: 12, ready_through_fh: 33, frames: [] } } } as never,
+      "tmp2m",
+    );
+    expect(partial).toBe("present");
+    expect(refineDataDomainForRun(supported, partial))
+      .toEqual({ domain: "global", indeterminate: false, runDegraded: false });
+  });
+
+  it("degrades to canonical when the domain manifest 404s for this run", () => {
+    // The hook classifies a 404 as `absent` — same definitive negative, so the
+    // selector sees one status and the note wording cannot diverge.
+    expect(refineDataDomainForRun(supported, "absent").domain).toBeNull();
+    expect(refineDataDomainForRun(supported, "absent").runDegraded).toBe(true);
+  });
+
+  it("is INDETERMINATE while in flight — no preemptive degrade, no flicker", () => {
+    const pending = refineDataDomainForRun(supported, "pending");
+    expect(pending.indeterminate).toBe(true);
+    // Critically: it does NOT hand back canonical. Callers hold on
+    // `indeterminate` instead of fetching canonical data they may discard.
+    expect(pending.domain).toBe("global");
+    expect(pending.runDegraded).toBe(false);
+  });
+
+  it("does NOT degrade on a transient fetch error", () => {
+    // A network failure or 5xx is not evidence of non-publication; locking
+    // into canonical would strand the selection there until a reload.
+    expect(refineDataDomainForRun(supported, "error"))
+      .toEqual({ domain: "global", indeterminate: false, runDegraded: false });
+  });
+
+  it("is a no-op when the probe never ran", () => {
+    expect(refineDataDomainForRun(supported, "disabled"))
+      .toEqual({ domain: "global", indeterminate: false, runDegraded: false });
+  });
+
+  it("leaves a capability-unsupported selection alone under every status", () => {
+    // Layer 2 already took it to canonical; layer 3 must never re-attribute
+    // that to the run, or the note would blame the wrong thing.
+    expect(unsupported).toBeNull();
+    for (const status of ["disabled", "pending", "present", "absent", "error"] as const) {
+      expect(refineDataDomainForRun(unsupported, status))
+        .toEqual({ domain: null, indeterminate: false, runDegraded: false });
+    }
+  });
+
+  it("produces the run-scoped note for a capability-SUPPORTED variable", () => {
+    const refined = refineDataDomainForRun(supported, "absent");
+    expect(coverageDegradedNote("global", GLOBAL_MODEL, globalVar, REGION_PRESETS, refined.runDegraded))
+      .toBe("Not available for this run — showing North America");
+  });
+
+  it("keeps the variable wording when the cause is capabilities, not the run", () => {
+    const refined = refineDataDomainForRun(unsupported, "absent");
+    expect(refined.runDegraded).toBe(false);
+    expect(coverageDegradedNote("global", GLOBAL_MODEL, naOnlyVar, REGION_PRESETS, refined.runDegraded))
+      .toBe("Not available for this variable — showing North America");
+  });
+
+  it("shows no note while the answer is still pending", () => {
+    const refined = refineDataDomainForRun(supported, "pending");
+    expect(coverageDegradedNote("global", GLOBAL_MODEL, globalVar, REGION_PRESETS, refined.runDegraded))
+      .toBeNull();
+  });
+
+  it("keeps the toggle and the permalink on the REQUESTED domain when degraded", () => {
+    // Stickiness is identical to the other two degrade paths: the run-scoped
+    // degrade moves requests only.
+    const refined = refineDataDomainForRun(supported, "absent");
+    expect(coverageSelectionValue("global", GLOBAL_MODEL, globalVar)).toBe("global");
+    expect(normalizeRequestedDomain("global", GLOBAL_MODEL, globalVar)).toBe("global");
+    expect(refined.domain).toBeNull();
+  });
+
+  it("drops the World camera preset along with the effective domain", () => {
+    const refined = refineDataDomainForRun(supported, "absent");
+    expect(filterRegionOptionsForDataDomain(REGION_PRESETS, "na", refined.domain).map((o) => o.value))
+      .not.toContain("world");
+  });
+});
+
+describe("capabilityVarsForManifest under a domain-scoped manifest (U2: no hiding)", () => {
+  const capabilityVars = normalizeCapabilityVarRows(GLOBAL_MODEL);
+  /** Prod's ?domain=global manifest: only domain-declared variables. */
+  const globalManifestVars = { tmp2m: { frames: [{ fh: 0 }] } } as never;
+
+  it("prunes to the manifest for a CANONICAL manifest (unchanged behavior)", () => {
+    expect(capabilityVarsForManifest(globalManifestVars, capabilityVars, { modelId: "gfs" }).map((e) => e.id))
+      .toEqual(["tmp2m"]);
+  });
+
+  it("keeps every capability variable for a DOMAIN-SCOPED manifest", () => {
+    // The global manifest answers "what does this DOMAIN have", never "what
+    // does this MODEL have". Pruning with it hid precip_7d_anom from the
+    // picker the moment Global was selected — the exact row the §3 badge
+    // exists to advertise.
+    expect(
+      capabilityVarsForManifest(globalManifestVars, capabilityVars, { modelId: "gfs", domainScoped: true })
+        .map((entry) => entry.id),
+    ).toEqual(["precip_7d_anom", "tmp2m"]);
+  });
+
+  it("still appends manifest-only extras under a domain-scoped manifest", () => {
+    const withExtra = { tmp2m: { frames: [{ fh: 0 }] }, surprise_var: { frames: [{ fh: 0 }] } } as never;
+    expect(
+      capabilityVarsForManifest(withExtra, capabilityVars, { modelId: "gfs", domainScoped: true })
+        .map((entry) => entry.id),
+    ).toEqual(["precip_7d_anom", "tmp2m", "surprise_var"]);
   });
 });
 

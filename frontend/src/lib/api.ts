@@ -435,6 +435,22 @@ export function readCapabilitySupportsSampling(model: CapabilityModel | null | u
   return model?.constraints?.supports_sampling !== false;
 }
 
+/**
+ * A non-2xx HTTP response, carrying the status so callers can tell a
+ * DEFINITIVE negative (404 "this run has no such build") apart from a
+ * transient failure (network error, 5xx). The message is byte-identical to the
+ * plain `Error` this replaced, so any code matching on error text is unchanged.
+ */
+export class ApiHttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, statusText: string) {
+    super(`Request failed: ${status} ${statusText}`);
+    this.name = "ApiHttpError";
+    this.status = status;
+  }
+}
+
 async function fetchJson<T>(url: string, options?: FetchOptions): Promise<T> {
   const startedAtMs = startNetworkTimer();
   const request = options?.authorize
@@ -456,7 +472,7 @@ async function fetchJson<T>(url: string, options?: FetchOptions): Promise<T> {
     });
   }
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+    throw new ApiHttpError(response.status, response.statusText);
   }
   return response.json() as Promise<T>;
 }

@@ -17,9 +17,22 @@ import {
   DOMAIN_MODEL,
   DOMAIN_RUN_ID,
   DOMAIN_SECOND_MODEL,
+  DOMAIN_UNBUILT_GLOBAL_VARIABLE,
+  DOMAIN_UNPUBLISHED_GLOBAL_VARIABLE,
   DOMAIN_VARIABLE,
   stubViewerDomainRoutes,
 } from './viewer-domain.fixtures';
+
+/**
+ * In-render mismatch tripwire from grid-webgl (see viewer-domain-coherence
+ * spec for the full contract). Read via a local cast rather than a global
+ * augmentation so the two specs can't disagree on the debug surface's shape.
+ */
+const readDrewMismatched = (page: import('@playwright/test').Page) =>
+  page.evaluate(() =>
+    (window as unknown as {
+      __cartoskyGridCoherence?: { read: () => { drewMismatched: number } };
+    }).__cartoskyGridCoherence?.read().drewMismatched ?? 0);
 
 const CONTROL_API_SEGMENTS = ['/runs', '/manifest', '/frames', '/grid-manifest'];
 
@@ -223,6 +236,96 @@ test.describe('Coverage control', () => {
     }
   });
 
+  /**
+   * Run-scoped degradation (layer 3), both shapes the backend actually
+   * produces. Each variable DECLARES global in capabilities, so
+   * `resolveDataDomain` returns "global" and neither of the first two degrade
+   * layers fires. Before this layer existed the operator got a blank map and
+   * no explanation at all.
+   *
+   *  - shape A: the global manifest OMITS the variable (prod's global manifest
+   *    lists only domain-declared variables);
+   *  - shape B: the global manifest LISTS it declared-but-unbuilt
+   *    (`available_frames: 0`, `ready_through_fh: null`, `frames: []`) and
+   *    `/frames` returns `[]`. This is the operator's actual repro.
+   */
+  for (const { shape, variable } of [
+    { shape: 'A — omitted from the global manifest', variable: DOMAIN_UNPUBLISHED_GLOBAL_VARIABLE },
+    { shape: 'B — declared but unbuilt in the global manifest', variable: DOMAIN_UNBUILT_GLOBAL_VARIABLE },
+  ]) {
+    test(`run-scoped degrade, shape ${shape}`, async ({ page }) => {
+      const recorded: string[] = [];
+      await stubViewerDomainRoutes(page, recorded);
+
+      await page.goto(`/viewer?m=${DOMAIN_MODEL}&r=latest&v=${variable}&fh=0&reg=conus&domain=${DOMAIN_ID}`);
+
+      // Requests degrade: the canonical grid binary is fetched...
+      await page.waitForRequest((request) =>
+        request.url().includes(`/api/v4/grid/${DOMAIN_MODEL}/${DOMAIN_RUN_ID}/${variable}/`));
+
+      // ...and the run-scoped note explains it, naming the canonical coverage.
+      await expect(page.getByTestId('coverage-degraded-note'))
+        .toHaveText('Not available for this run — showing CONUS');
+
+      // Sticky: toggle and URL both stay on the REQUESTED segment.
+      const coverage = page.getByTestId('coverage-control');
+      await expect(coverage.getByRole('radio', { name: 'Global' })).toHaveAttribute('aria-checked', 'true');
+      expect(new URL(page.url()).searchParams.get('domain')).toBe(DOMAIN_ID);
+
+      // Frames/grid-manifest re-issued WITHOUT domain= — the timeline is driven
+      // by the canonical build, not the domain manifest we declined to render.
+      const degradedControlUrls = controlApiUrls(recorded).filter((url) => url.includes(variable));
+      expect(degradedControlUrls.some((url) => url.split('?')[0].endsWith('/frames'))).toBe(true);
+      expect(degradedControlUrls.some((url) => url.split('?')[0].endsWith('/grid-manifest'))).toBe(true);
+      for (const url of degradedControlUrls) {
+        expect(url, `degraded artifact request must not carry domain=: ${url}`).not.toContain('domain=');
+      }
+      // No global artifact was ever fetched, even though the fixture would serve one.
+      expect(recorded.some((url) => url.includes(`/api/v4/grid/domains/${DOMAIN_ID}/`))).toBe(false);
+
+      // The timeline is populated — from the CANONICAL manifest/frames, which
+      // is the whole point of refetching with `domain=` dropped. (Shape B's
+      // global `/frames` returns [], so a timeline here can only be canonical.)
+      await expect(page.getByTestId('viewer-map-slot')).toBeVisible();
+      await expect.poll(() => page.getByTestId('timeline-marker').count()).toBeGreaterThan(0);
+
+      // The transition never paired a manifest with the wrong frame data.
+      expect(await readDrewMismatched(page)).toBe(0);
+    });
+  }
+
+  /**
+   * Control case for the two above: same capability declaration, same code
+   * path — but the run HAS the variable, so nothing degrades. Without this the
+   * run-scoped layer could degrade unconditionally and still pass.
+   *
+   * The fixture's global `tmp2m` is deliberately PARTIALLY built
+   * (`available_frames: 2` of 3, `ready_through_fh: 1` under
+   * `expected_max_fh: 2`) — the normal mid-cycle state. Partial is not
+   * absent: it must render partial global data with the readiness hatch.
+   */
+  test('a partially built variable keeps global requests, shows no note, and keeps its readiness hatch', async ({ page }) => {
+    const recorded: string[] = [];
+    await stubViewerDomainRoutes(page, recorded);
+
+    const binaryRequest = page.waitForRequest((request) =>
+      request.url().includes(`/api/v4/grid/domains/${DOMAIN_ID}/${DOMAIN_MODEL}/`));
+    await page.goto(`/viewer?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_VARIABLE}&fh=0&reg=conus&domain=${DOMAIN_ID}`);
+    await binaryRequest;
+
+    await expect(page.getByTestId('coverage-degraded-note')).toHaveCount(0);
+    for (const url of controlApiUrls(recorded)) {
+      expect(url, `present-in-run selection must keep domain=: ${url}`).toContain(`domain=${DOMAIN_ID}`);
+    }
+
+    // The Phase-5 readiness boundary survives the domain manifest: its
+    // `region: "global"` must match the EFFECTIVE domain, or App's boundary
+    // guard discards the variable entry and the hatch silently disappears.
+    await expect(page.getByTestId('timeline-hatch')).toBeVisible();
+
+    expect(await readDrewMismatched(page)).toBe(0);
+  });
+
   test('a canonical-only model renders no Coverage control, note or badges — even with a sticky domain=', async ({ page }) => {
     const recorded: string[] = [];
     await stubViewerDomainRoutes(page, recorded);
@@ -242,17 +345,128 @@ test.describe('Coverage control', () => {
     await expect(page.getByTestId('variable-coverage-badge')).toHaveCount(0);
   });
 
-  test('variable rows lacking the requested domain carry the canonical chip', async ({ page }) => {
+  /**
+   * R1: the probe verdict must never lag the selection by a commit.
+   *
+   * The verdict lives in state, so a plain `useState` renders the NEW
+   * selection paired with the PREVIOUS selection's status — "pending" could
+   * only arrive later, from the effect. In that one commit `indeterminate`
+   * reads false, every hold site releases, and requests fire against the
+   * OUTGOING domain. Keying the verdict to the selection closes the window
+   * synchronously.
+   *
+   * Both directions are pinned. Each asserts on the requests recorded strictly
+   * AFTER the switch, because the pre-switch state legitimately owns requests
+   * in the other domain.
+   */
+  async function switchVariableTo(page: import('@playwright/test').Page, fromLabel: string, toLabel: string) {
+    await page.getByTestId('rail-source-fields-card').getByRole('button', { name: fromLabel }).click();
+    await expect(page.getByRole('dialog', { name: 'Variable picker' })).toBeVisible();
+    await page.getByPlaceholder('Search variables…').fill(toLabel);
+    // Not `exact`: the row button also contains the coverage chip / search
+    // highlight, so its accessible name is a superset of the label.
+    await page.getByRole('dialog', { name: 'Variable picker' })
+      .getByRole('button', { name: toLabel }).first().click();
+    await expect(page.getByRole('dialog', { name: 'Variable picker' })).toBeHidden();
+  }
+
+  test('R1 forward: run-degraded → global-present issues NO canonical request for the new variable', async ({ page }) => {
+    const recorded: string[] = [];
+    await stubViewerDomainRoutes(page, recorded);
+
+    // Settle in the degraded state: precip_5d_anom is declared-but-unbuilt in
+    // the global manifest, so this selection is running on canonical.
+    await page.goto(
+      `/viewer?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_UNBUILT_GLOBAL_VARIABLE}&fh=0&reg=conus&domain=${DOMAIN_ID}`,
+    );
+    await expect(page.getByTestId('coverage-degraded-note'))
+      .toHaveText('Not available for this run — showing CONUS');
+
+    // Everything from here is attributable to the switch alone.
+    const before = recorded.length;
+    await switchVariableTo(page, '5-day Precip Anomaly', 'Surface Temp');
+
+    // tmp2m IS built globally, so it must never be requested canonically —
+    // not even for the single commit the stale verdict used to open.
+    await page.waitForRequest((request) =>
+      request.url().includes(`/api/v4/grid/domains/${DOMAIN_ID}/${DOMAIN_MODEL}/${DOMAIN_RUN_ID}/${DOMAIN_VARIABLE}/`));
+    await expect(page.getByTestId('coverage-degraded-note')).toHaveCount(0);
+
+    const afterSwitch = recorded.slice(before).filter((url) => url.includes(DOMAIN_VARIABLE));
+    expect(afterSwitch.length, 'the switch must actually issue requests').toBeGreaterThan(0);
+    for (const url of afterSwitch) {
+      expect(
+        url.includes(`domain=${DOMAIN_ID}`) || url.includes(`/domains/${DOMAIN_ID}/`),
+        `stale-domain request for the new variable: ${url}`,
+      ).toBe(true);
+    }
+    expect(await readDrewMismatched(page)).toBe(0);
+  });
+
+  test('R1 reverse: global-present → run-absent issues NO global artifact request beyond the probe', async ({ page }) => {
     const recorded: string[] = [];
     await stubViewerDomainRoutes(page, recorded);
 
     await page.goto(`/viewer?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_VARIABLE}&fh=0&reg=conus&domain=${DOMAIN_ID}`);
-    await page.waitForRequest((request) => request.url().includes('/grid-manifest'));
+    await page.waitForRequest((request) =>
+      request.url().includes(`/api/v4/grid/domains/${DOMAIN_ID}/${DOMAIN_MODEL}/`));
 
-    await page.getByTestId('rail-source-fields-card').getByRole('button', { name: 'Surface Temp' }).click();
-    await expect(page.getByRole('dialog', { name: 'Variable picker' })).toBeVisible();
-    // Search brings both variables into one list regardless of category.
-    await page.getByPlaceholder('Search variables…').fill('e');
+    const before = recorded.length;
+    await switchVariableTo(page, 'Surface Temp', '5-day Precip Anomaly');
+
+    await expect(page.getByTestId('coverage-degraded-note'))
+      .toHaveText('Not available for this run — showing CONUS');
+
+    // The probe's own manifest GET is the ONLY global request the new
+    // selection may make: no global grid-manifest, no global frames, no
+    // global binary. Those would be the wasted pair the stale verdict fired.
+    const afterSwitch = recorded.slice(before).filter((url) => url.includes(DOMAIN_UNBUILT_GLOBAL_VARIABLE));
+    expect(afterSwitch.length, 'the switch must actually issue requests').toBeGreaterThan(0);
+    for (const url of afterSwitch) {
+      expect(
+        url.includes(`domain=${DOMAIN_ID}`) || url.includes(`/domains/${DOMAIN_ID}/`),
+        `unexpected global artifact request for an unbuilt variable: ${url}`,
+      ).toBe(false);
+    }
+    expect(await readDrewMismatched(page)).toBe(0);
+  });
+
+  /**
+   * §3 badges + U2 "no hiding, no disabling".
+   *
+   * Prod's `?domain=global` manifest lists ONLY domain-declared variables, so
+   * a picker populated from the run manifest silently loses every
+   * canonical-only variable the moment Global is selected — the exact rows the
+   * badges exist to advertise. The picker is therefore capabilities-driven,
+   * with the domain manifest contributing extras only.
+   *
+   * Counting rows in both coverages is the load-bearing part: a badge-count
+   * assertion alone passes just as happily when the row is gone.
+   */
+  test('the picker lists every variable under Global, canonical-only rows carrying the chip', async ({ page }) => {
+    const recorded: string[] = [];
+    await stubViewerDomainRoutes(page, recorded);
+
+    const openPicker = async () => {
+      await page.getByTestId('rail-source-fields-card').getByRole('button', { name: 'Surface Temp' }).click();
+      await expect(page.getByRole('dialog', { name: 'Variable picker' })).toBeVisible();
+      // Search brings every variable into one list regardless of category.
+      await page.getByPlaceholder('Search variables…').fill('e');
+      // One favorite control per row — a row count that needs no display names.
+      return page.getByRole('button', { name: /^(Favorite|Remove) / });
+    };
+
+    await page.goto(`/viewer?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_VARIABLE}&fh=0&reg=conus`);
+    await page.waitForRequest((request) => request.url().includes('/grid-manifest'));
+    const canonicalRows = await (await openPicker()).count();
+    expect(canonicalRows).toBeGreaterThan(1);
+    await expect(page.getByTestId('variable-coverage-badge')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    await page.goto(`/viewer?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_VARIABLE}&fh=0&reg=conus&domain=${DOMAIN_ID}`);
+    await page.waitForRequest((request) => request.url().includes('/grid-manifest'));
+    const globalRows = openPicker();
+    await expect(await globalRows).toHaveCount(canonicalRows);
     const badges = page.getByTestId('variable-coverage-badge');
     await expect(badges).toHaveCount(1);
     await expect(badges.first()).toHaveText('CONUS');

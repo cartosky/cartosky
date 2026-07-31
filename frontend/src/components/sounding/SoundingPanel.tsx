@@ -4,7 +4,7 @@ import { Loader2, RotateCw, X } from "lucide-react";
 import { SkewTChart } from "@/components/sounding/SkewTChart";
 import { useSounding } from "@/hooks/useSounding";
 import { cn } from "@/lib/utils";
-import type { SoundingGridPoint } from "@/lib/sounding-types";
+import type { SoundingFrame, SoundingGridPoint } from "@/lib/sounding-types";
 
 /**
  * Map-click sounding panel (Skew-T design §6, Phase 3).
@@ -66,6 +66,96 @@ function formatCoordinate(lat: number, lon: number): string {
 function formatDistance(gridPoint: SoundingGridPoint | undefined): string {
   if (!gridPoint || !Number.isFinite(gridPoint.distance_km)) return "";
   return `~${gridPoint.distance_km.toFixed(1)} km from click`;
+}
+
+/** Every null index renders as an em dash — never 0, never a blank cell. */
+const EMPTY_VALUE = "—";
+
+function formatIndex(
+  value: number | null | undefined,
+  { digits = 0, unit = "" }: { digits?: number; unit?: string } = {},
+): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return EMPTY_VALUE;
+  return `${value.toFixed(digits)}${unit}`;
+}
+
+function IndexRow({ label, value, testId }: { label: string; value: string; testId: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-white/45">{label}</span>
+      <span data-testid={testId} className="tabular-nums text-white/[0.88]">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Server-computed thermodynamics readout (design §7 Phase 4).
+ *
+ * Values are formatted here and computed nowhere — the client contains zero
+ * thermodynamics. The parcel definition underneath is the server's string
+ * verbatim, so the numbers and the label describing them can never drift.
+ */
+function IndicesReadout({
+  frame,
+  parcelDefinition,
+}: {
+  frame: SoundingFrame;
+  parcelDefinition: string | undefined;
+}) {
+  const indices = frame.indices ?? null;
+  const modelSbcape = indices?.model_sbcape;
+  const hasModelSbcape = typeof modelSbcape === "number" && Number.isFinite(modelSbcape);
+
+  return (
+    <div className="mt-3">
+      <div
+        data-testid="sounding-indices"
+        className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2.5 font-['IBM_Plex_Mono',monospace] text-[11px] leading-relaxed"
+      >
+        <IndexRow
+          label="SBCAPE"
+          testId="sounding-index-sbcape"
+          value={formatIndex(indices?.sbcape)}
+        />
+        <IndexRow label="SBCIN" testId="sounding-index-sbcin" value={formatIndex(indices?.sbcin)} />
+        <IndexRow
+          label="MLCAPE"
+          testId="sounding-index-mlcape"
+          value={formatIndex(indices?.mlcape)}
+        />
+        <IndexRow label="MLCIN" testId="sounding-index-mlcin" value={formatIndex(indices?.mlcin)} />
+        <IndexRow
+          label="PWAT"
+          testId="sounding-index-pwat"
+          value={formatIndex(indices?.pwat_mm, { digits: 1, unit: " mm" })}
+        />
+        <IndexRow
+          label="LCL"
+          testId="sounding-index-lcl"
+          value={formatIndex(indices?.lcl_hPa, { digits: 0, unit: " hPa" })}
+        />
+        {/* Only on format_version ≥ 2 stacks; older runs simply lack the row
+            rather than showing a fabricated dash (decision #5). */}
+        {hasModelSbcape ? (
+          <IndexRow
+            label="HRRR SBCAPE"
+            testId="sounding-index-model-sbcape"
+            value={formatIndex(modelSbcape)}
+          />
+        ) : null}
+      </div>
+      {parcelDefinition ? (
+        <p
+          data-testid="sounding-parcel-definition"
+          className="mt-1.5 px-0.5 text-[10px] leading-snug text-white/40"
+        >
+          {parcelDefinition}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 export type SoundingPanelProps = {
@@ -234,11 +324,14 @@ export function SoundingPanel({
         ) : null}
 
         {!loading && !error && data && frame ? (
-          <SkewTChart
-            levelsHPa={data.levels_hPa}
-            frame={frame}
-            title={`${modelLabel} sounding, ${formatCoordinate(data.grid_point.lat, data.grid_point.lon)}`}
-          />
+          <>
+            <SkewTChart
+              levelsHPa={data.levels_hPa}
+              frame={frame}
+              title={`${modelLabel} sounding, ${formatCoordinate(data.grid_point.lat, data.grid_point.lon)}`}
+            />
+            <IndicesReadout frame={frame} parcelDefinition={data.parcel_definition} />
+          </>
         ) : null}
       </div>
 

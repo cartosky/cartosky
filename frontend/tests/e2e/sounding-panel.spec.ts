@@ -7,6 +7,10 @@
  * the dewpoint trace is drawn FULL height (decision #3), below-ground levels
  * never reach the plot (§2 surface anchoring), the scrubber changes frame, and
  * `sounding=` round-trips through the permalink.
+ *
+ * Phase 4 adds the parcel path, the LCL/LFC/EL ticks and the indices readout —
+ * including the capped-frame case where LFC/EL and the HRRR SBCAPE row are null
+ * and must simply not render.
  */
 import { expect, test } from '@playwright/test';
 
@@ -14,6 +18,7 @@ import {
   NO_SOUNDING_MODEL,
   SOUNDING_EXPECTED_MASKED_LEVELS,
   SOUNDING_MODEL,
+  SOUNDING_PARCEL_DEFINITION,
   SOUNDING_SURFACE_PRESSURE,
   SOUNDING_VARIABLE,
   stubSoundingRoutes,
@@ -147,6 +152,88 @@ test.describe('Sounding panel', () => {
 
     // Scrubbing is panel-local: it never issues a second sounding request.
     expect(requests).toHaveLength(1);
+  });
+
+  test('the parcel path, the LCL/LFC/EL ticks and the indices readout render', async ({ page }) => {
+    const requests: SoundingRequestLog = [];
+    const mapSlot = await bootViewer(page, requests);
+    await page.locator('[data-testid="sounding-toggle"]').click();
+    await mapSlot.click({ position: { x: 320, y: 220 } });
+    await expect(page.locator('[data-testid="skewt-chart"]')).toBeVisible();
+
+    // The parcel is drawn, dashed, and distinct from both traces.
+    const parcel = page.locator('[data-testid="skewt-parcel-path"]');
+    await expect(parcel).toHaveCount(1);
+    const parcelPath = (await parcel.getAttribute('d')) ?? '';
+    expect(parcelPath.length).toBeGreaterThan(0);
+    expect(parcelPath).not.toContain('NaN');
+    await expect(parcel).toHaveAttribute('stroke-dasharray', '4 3');
+    const tPath = await page.locator('[data-testid="skewt-trace-t"]').getAttribute('d');
+    expect(parcelPath).not.toBe(tPath);
+    await expect(page.locator('[data-testid="skewt-parcel-path"]')).not.toHaveAttribute(
+      'stroke',
+      (await page.locator('[data-testid="skewt-trace-t"]').getAttribute('stroke')) ?? '',
+    );
+
+    // Frame 0 has all three levels; the legend gained its row.
+    await expect(page.locator('[data-testid="skewt-level-lcl"]')).toBeVisible();
+    await expect(page.locator('[data-testid="skewt-level-lfc"]')).toBeVisible();
+    await expect(page.locator('[data-testid="skewt-level-el"]')).toBeVisible();
+    await expect(page.locator('[data-testid="skewt-legend"]')).toContainText('Parcel path');
+
+    // Readout values are the scrubbed frame's, formatted, with units.
+    await expect(page.locator('[data-testid="sounding-index-sbcape"]')).toHaveText('1200');
+    await expect(page.locator('[data-testid="sounding-index-sbcin"]')).toHaveText('-12');
+    await expect(page.locator('[data-testid="sounding-index-mlcape"]')).toHaveText('640');
+    await expect(page.locator('[data-testid="sounding-index-mlcin"]')).toHaveText('-55');
+    await expect(page.locator('[data-testid="sounding-index-pwat"]')).toHaveText('38.4 mm');
+    await expect(page.locator('[data-testid="sounding-index-lcl"]')).toHaveText('902 hPa');
+    // format_version 2 stack -> the HRRR diagnostic row is present.
+    await expect(page.locator('[data-testid="sounding-index-model-sbcape"]')).toHaveText('1466');
+
+    // The caption is the server's string, verbatim.
+    await expect(page.locator('[data-testid="sounding-parcel-definition"]')).toHaveText(
+      SOUNDING_PARCEL_DEFINITION,
+    );
+  });
+
+  test('null indices show em dashes and the capped frame drops LFC/EL + the HRRR row', async ({ page }) => {
+    const requests: SoundingRequestLog = [];
+    const mapSlot = await bootViewer(page, requests);
+    await page.locator('[data-testid="sounding-toggle"]').click();
+    await mapSlot.click({ position: { x: 320, y: 220 } });
+    await expect(page.locator('[data-testid="skewt-chart"]')).toBeVisible();
+
+    // fh 1 has null indices AND a null parcel: everything degrades to an em
+    // dash and the parcel simply is not drawn — no zeros, no NaN paths.
+    await page.locator('[data-testid="sounding-scrubber"]').fill('1');
+    await expect(page.locator('[data-testid="sounding-scrubber"]')).toHaveValue('1');
+    for (const key of ['sbcape', 'sbcin', 'mlcape', 'mlcin', 'pwat', 'lcl']) {
+      await expect(page.locator(`[data-testid="sounding-index-${key}"]`)).toHaveText('—');
+    }
+    await expect(page.locator('[data-testid="skewt-parcel-path"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="skewt-level-markers"]')).toHaveAttribute(
+      'data-count',
+      '0',
+    );
+    // The profile itself is untouched by a missing indices block.
+    await expect(page.locator('[data-testid="skewt-trace-t"]')).toBeVisible();
+
+    await page.locator('[data-testid="sounding-scrubber"]').fill('2');
+    await expect(page.locator('[data-testid="sounding-scrubber"]')).toHaveValue('2');
+
+    // Indices follow the scrub.
+    await expect(page.locator('[data-testid="sounding-index-sbcape"]')).toHaveText('1474');
+    await expect(page.locator('[data-testid="sounding-index-pwat"]')).toHaveText('40.4 mm');
+
+    // Null LFC/EL: no tick, no invented marker.
+    await expect(page.locator('[data-testid="skewt-level-lcl"]')).toBeVisible();
+    await expect(page.locator('[data-testid="skewt-level-lfc"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="skewt-level-el"]')).toHaveCount(0);
+    // v1-shaped surface block: the HRRR SBCAPE row is absent, not dashed.
+    await expect(page.locator('[data-testid="sounding-index-model-sbcape"]')).toHaveCount(0);
+    // The parcel is still drawn.
+    await expect(page.locator('[data-testid="skewt-parcel-path"]')).toHaveCount(1);
   });
 
   test('the picked point round-trips through `sounding=` and closing clears it', async ({ page }) => {

@@ -215,6 +215,26 @@ elevation-correct ~835 hPa anchoring, mobile sheet). Accepted quirks: rate limit
 on client.host without XFF (matches meteogram precedent — revisit both together);
 viewer→panel fh follow verified by inspection, not e2e.
 
+**Phase 4 status: implemented + verified 2026-07-31** (uncommitted; prod gate = deploy,
+`pip install metpy` into the API venv + restart csky-api, restart csky-hrrr-scheduler
+for v2 stacks). `sounding_indices.py` (new): per-frame SB parcel per decision #5
+(2 m T/Td, Tv-corrected — identity gap +122 J/kg over plain SB, pinned by test), ML
+CAPE/CIN, LCL/LFC/EL (from the drawn parcel curve so markers sit on the visible
+intersection), PWAT, 37-level parcel path; reproduces the spike reference to the digit
+(independent MetPy cross-check). Stack format_version 2 adds native `CAPE:surface`
+(191 planes / 382 B); reader fully sidecar-driven, mixed v1+v2 runs serve (fingerprint
+excludes surface fields — accepted: masks a theoretical surface-unit flip, writer-owned
+constants today). Endpoint degrades per-frame; MetPy missing → nulls, never 500.
+Measured: ~1.2–1.4 s MetPy per 49-frame request on dev hardware — no cache yet;
+the pre-staged lever is an in-process TTL response cache if prod feels slow. Frontend:
+dashed parcel path beneath traces, LCL/LFC/EL edge ticks, indices readout w/ conditional
+HRRR SBCAPE row + server-supplied parcel_definition caption. Verification initially
+REFUTED two endpoint tests — the synthetic fixture column was convectively stable
+(SBCAPE 0.496 → rounds to 0, originally passed on a rounding knife-edge); fixed by
+steepening the fixture lapse to ~8 K/km. `CAPE:surface` confirmed present in real HRRR
+sfc files at f00 (anl) and f06. Backend sounding modules 115 green; e2e 12; build/tsc
+clean.
+
 ## 8. Decisions
 
 1. **VVEL from day one — RESOLVED yes (Brian, 2026-07-30).** +~25% storage/fetch; avoids
@@ -238,10 +258,16 @@ viewer→panel fh follow verified by inspection, not e2e.
    367→758→1276 for 2m Td of 17→18→19 °C, and TT's displayed 65 °F surface Td reproduces
    ~926. We use HRRR's native `DPT:2m` grid value; TT evidently uses something else
    (interpolation, lowest-model-level parcel, or the model's own SBCAPE field).
-   Virtual-temperature correction adds ~120 J/kg more. Before Phase 4: pick our parcel
-   definition (options: raw 2m fields as-is; Tv-corrected; lowest-model-level; or also
-   publish HRRR's native CAPE fields for comparison) and set the parity tolerance
-   accordingly. Sensitivity table recorded in the spike's `indices_v2.json` diagnostics.
+   Virtual-temperature correction adds ~120 J/kg more. Sensitivity table recorded in the
+   spike's `indices_v2.json` diagnostics.
+   **RESOLVED (Brian, 2026-07-31): primary SB parcel = HRRR native 2 m T/Td with the
+   standard virtual-temperature correction, labeled explicitly in the UI. Scientifically
+   defensible and reproducible beats reverse-engineering TT's undocumented convention;
+   TT is a visual reference, not a numerical authority — parity tolerance is set on ML
+   quantities (already within a few %), not SB. HRRR's native SBCAPE ships as a separate
+   diagnostic readout (stack format_version 2 adds CAPE:surface as a 6th surface plane;
+   older v1 stacks simply lack the row), never as a reason to bend the parcel
+   definition.**
 
 ## 9. Spike verification record (2026-07-30)
 
