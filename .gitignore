@@ -111,3 +111,8 @@ prpm.lock
 # .ts, so a committed stale .js silently shadows config edits (bit us 7/06).
 frontend/vite.config.js
 frontend/vite.config.d.ts
+
+# Skew-T Phase 3 sounding panel e2e suite (frontend/tests/* is ignored above
+# with a negated allowlist — without these two lines the spec is invisible).
+!frontend/tests/e2e/sounding-panel.spec.ts
+!frontend/tests/e2e/sounding-panel.fixtures.ts

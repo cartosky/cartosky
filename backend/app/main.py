@@ -301,6 +301,22 @@ METEOGRAM_RATE_LIMIT_MAX_REQUESTS = int(
         default="20",
     )
 )
+# Map-click sounding panels are chattier than meteograms (every pick is a
+# request), so the sounding endpoint gets its own bucket rather than sharing
+# the meteogram one. Each request is ~N_fh seek-reads of 380 B, so the ceiling
+# is generous relative to the meteogram's fan-out.
+SOUNDING_RATE_LIMIT_WINDOW_SECONDS = float(
+    _env_value(
+        "CARTOSKY_SOUNDING_RATE_LIMIT_WINDOW_SECONDS",
+        default="60.0",
+    )
+)
+SOUNDING_RATE_LIMIT_MAX_REQUESTS = int(
+    _env_value(
+        "CARTOSKY_SOUNDING_RATE_LIMIT_MAX_REQUESTS",
+        default="40",
+    )
+)
 
 LOOP_TIER_CONFIG: dict[int, dict[str, int]] = {
     0: {
@@ -2631,6 +2647,8 @@ _sample_rate_window: dict[str, list[float]] = {}
 _sample_lock = threading.Lock()
 _meteogram_rate_window: dict[str, list[float]] = {}
 _meteogram_lock = threading.Lock()
+_sounding_rate_window: dict[str, list[float]] = {}
+_sounding_lock = threading.Lock()
 _capabilities_availability_cache_lock = threading.Lock()
 _capabilities_availability_cache: dict[str, Any] = {
     "expires_at": 0.0,
@@ -3718,6 +3736,33 @@ def _meteogram_rate_limit_allow(client_id: str) -> tuple[bool, float]:
     return True, 0.0
 
 
+def _sounding_rate_limit_allow(client_id: str) -> tuple[bool, float]:
+    """Sliding-window limiter dedicated to the sounding endpoint (design §7 Phase 3).
+
+    Its own bucket so map-click sounding traffic cannot starve either point
+    sampling or meteogram fan-out.
+    """
+    if SOUNDING_RATE_LIMIT_MAX_REQUESTS <= 0:
+        return True, 0.0
+
+    now = time.monotonic()
+    cutoff = now - max(0.01, SOUNDING_RATE_LIMIT_WINDOW_SECONDS)
+    retry_after = max(1.0, SOUNDING_RATE_LIMIT_WINDOW_SECONDS)
+
+    with _sounding_lock:
+        window = _sounding_rate_window.get(client_id)
+        if window is None:
+            window = []
+            _sounding_rate_window[client_id] = window
+        while window and window[0] < cutoff:
+            window.pop(0)
+        if len(window) >= SOUNDING_RATE_LIMIT_MAX_REQUESTS:
+            return False, retry_after
+        window.append(now)
+
+    return True, 0.0
+
+
 def _sample_payload(
     *,
     model: str,
@@ -4120,6 +4165,7 @@ class SoundingRequestIn(BaseModel):
 
 @app.post("/api/v4/forecast/sounding")
 def forecast_sounding(
+    request: Request,
     body: SoundingRequestIn,
     principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
 ):
@@ -4128,6 +4174,15 @@ def forecast_sounding(
     Dark unless the model is in ``CARTOSKY_SOUNDING_MODELS``; no entitlement
     logic in Phase 2. The substance lives in ``services/sounding_api.py``.
     """
+    client_id = request.client.host if request.client and request.client.host else "unknown"
+    allowed, retry_after = _sounding_rate_limit_allow(client_id)
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "rate limit exceeded", "retryAfterSec": retry_after},
+            headers={"Retry-After": str(int(max(1, retry_after)))},
+        )
+
     try:
         payload = sounding_api_service.get_sounding(
             model=body.model,

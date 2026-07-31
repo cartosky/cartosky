@@ -178,9 +178,20 @@ Phases 1–2 are backend-only and shippable dark; Phase 3 is the first user-visi
 manifest sweep working); CLI spot-check at OKC (stack row 160/col 225) matched the spike
 reference — surface pressure 969.2 vs 968.5 hPa, column agreement within diurnal
 evolution. Band-tag→plane mapping validated against real GRIB.
+Implementation: `backend/app/services/sounding.py` (new), `sounding_models()` in config,
+scheduler hook + top-level `sounding` manifest section, 67 new tests; verifier
+hand-decoded a planted pixel's 380-byte block with independent offset arithmetic and
+confirmed exception containment, frontier gating, dark-by-default, zero catalog
+contamination. Watch items: (a) the sounding pass is synchronous inside the catch-up
+loop — each newly eligible fh adds one ~15 s GRIB fetch per round (publish unaffected;
+later-fh build wall clock grows) — thread it if it matters; (b) encode clips silently
+between the physical-validity floor and the representable floor (e.g. −130 °C → −120),
+all physically unreachable for HRRR.
 
-**Phase 2 status: implemented + independently verified 2026-07-30** (uncommitted; prod
-gate pending). `backend/app/services/sounding_api.py` (new) + route in main.py +
+**Phase 2 status: COMPLETE — prod gate closed 2026-07-31.** Deployed with the flag on
+csky-api; live endpoint-vs-direct-decode parity at OKC was exact (worst |Δ| = 0.0 across
+all 190 planes, run 20260731_02z), serving partial runs correctly while stacks trail the
+build frontier. `backend/app/services/sounding_api.py` (new) + route in main.py +
 `tests/test_forecast_sounding_api.py` (18 tests; 105 green across the four
 sounding/meteogram modules). Verification found and we fixed a **run-pin path traversal**
 (`run: "../secret"` could read stacks outside the model root) — now gated by the shared
@@ -190,18 +201,19 @@ decoy and prove it is never read. Also hardened: unprojectable points (poles) �
 chattier than meteograms) and an in-process response cache if needed. Prod gate: add
 `CARTOSKY_SOUNDING_MODELS=hrrr` to csky-api.service + restart, then endpoint-vs-CLI
 parity at OKC.
-`backend/app/services/sounding.py` (new), `sounding_models()` in config, scheduler hook +
-top-level `sounding` manifest section, 67 new tests. Verifier hand-decoded a planted
-pixel's 380-byte block with independent offset arithmetic (exact match), confirmed
-exception containment, frontier gating, dark-by-default, and zero catalog contamination.
-Prod-gate watch items: (a) the sounding pass is synchronous inside the catch-up loop —
-each newly eligible fh adds one ~15 s GRIB fetch per round when the flag is on (publish
-is unaffected; later-fh build wall clock grows) — move to a thread if it matters;
-(b) encode clips silently in the gap between the physical-validity floor and the
-representable floor (e.g. −130 °C → −120), all physically unreachable for HRRR;
-(c) band-tag→plane mapping and range windows were not exercised against real GRIB —
-first prod spot-check should run `python -m app.services.sounding --run <run> --fh 6`
-and compare a profile against direct GRIB decode.
+
+**Phase 3 status: implemented + verified 2026-07-31** (uncommitted; prod gate = deploy +
+real-device pass). Sounding toggle in the top bar (overflow menu on mobile), armed
+map-click → reticle + docked right panel (bottom sheet <768px), SkewTChart SVG ported
+from the v4 prototype with constants verified verbatim against the template, surface
+anchoring/below-ground masking client-side, `sounding=lat,lon` permalink, one-way fh
+follow with panel-local scrub override (no refetch on scrub), route rate limit 40/60s.
+Tests: 16 geometry unit tests, 10-test e2e (deep-link test hardened against dev-server
+compile latency after a flake under worker contention), 19 backend. Visual gate passed
+locally against the live prod endpoint (OKC deep link, Denver re-pick with
+elevation-correct ~835 hPa anchoring, mobile sheet). Accepted quirks: rate limiter keys
+on client.host without XFF (matches meteogram precedent — revisit both together);
+viewer→panel fh follow verified by inspection, not e2e.
 
 ## 8. Decisions
 

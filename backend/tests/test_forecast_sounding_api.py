@@ -172,6 +172,14 @@ def roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     _reset_caches()
 
 
+@pytest.fixture(autouse=True)
+def _reset_sounding_rate_window():
+    """The Phase 3 limiter is a module-level sliding window shared by every test."""
+    main_module._sounding_rate_window.clear()
+    yield
+    main_module._sounding_rate_window.clear()
+
+
 @pytest.fixture
 async def client(roots: tuple[Path, Path]) -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=main_module.app)
@@ -579,3 +587,29 @@ async def test_level_ladder_mismatch_between_fhs_is_500(
     response = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
     assert response.status_code == 500
     assert "disagree" in response.json()["error"]
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting (design §7 Phase 3 — deferred from Phase 2)
+# ---------------------------------------------------------------------------
+
+
+async def test_sounding_rate_limit_returns_429(
+    client: httpx.AsyncClient, roots, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    published_root, manifests_root = roots
+    _write_run(published_root, manifests_root, RUN_ID)
+    lon, lat = _cell_center_lonlat(6, 9)
+
+    monkeypatch.setattr(main_module, "SOUNDING_RATE_LIMIT_MAX_REQUESTS", 1)
+    main_module._sounding_rate_window.clear()
+
+    first = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+    second = await client.post("/api/v4/forecast/sounding", json=_body(lat, lon))
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json()["error"] == "rate limit exceeded"
+    assert int(second.headers["retry-after"]) >= 1
+    # Its own bucket: the meteogram window is untouched by sounding traffic.
+    assert main_module._meteogram_rate_window == {}

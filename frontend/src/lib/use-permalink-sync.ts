@@ -21,6 +21,8 @@ export interface UsePermalinkSyncParams {
   region: string | null;
   /** Data domain (Phase 2B); null = canonical, never serialized. */
   domain?: string | null;
+  /** Open sounding pick (Phase 3); null = no panel, param omitted. */
+  sounding?: { lat: number; lon: number } | null;
   /**
    * While true, URL write-back is paused (hydration detection still runs).
    * Used during autoplay so history.replaceState doesn't fire every UI tick;
@@ -52,6 +54,7 @@ export function usePermalinkSync({
   resolvedForecastHourPermalink,
   region,
   domain,
+  sounding,
   suspended = false,
 }: UsePermalinkSyncParams): void {
   const [permalinkHydrated, setPermalinkHydrated] = useState(false);
@@ -118,6 +121,7 @@ export function usePermalinkSync({
             : undefined,
           region: region || undefined,
           domain: domain || undefined,
+          sounding: sounding || undefined,
           lat: mapView.lat,
           lon: mapView.lon,
           z: mapView.z,
@@ -144,6 +148,10 @@ export function usePermalinkSync({
     resolvedForecastHourPermalink,
     region,
     domain,
+    // Primitive deps: an object identity here would re-fire the debounce on
+    // every parent render.
+    sounding?.lat,
+    sounding?.lon,
     mapViewTick,
     suspended,
     postHydrationFlushTick,

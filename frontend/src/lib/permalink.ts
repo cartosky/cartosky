@@ -49,6 +49,14 @@ export function buildPermalinkSearch(state: PermalinkState): string {
   if (Number.isFinite(state.z) && Number(state.z) >= 0 && Number(state.z) <= 24) {
     params.set("z", fixed(Number(state.z), 2));
   }
+  const sounding = state.sounding;
+  if (
+    sounding &&
+    Number.isFinite(sounding.lat) && sounding.lat >= -90 && sounding.lat <= 90 &&
+    Number.isFinite(sounding.lon) && sounding.lon >= -180 && sounding.lon <= 180
+  ) {
+    params.set("sounding", `${fixed(sounding.lat, 3)},${fixed(sounding.lon, 3)}`);
+  }
   const encoded = params.toString();
   return encoded ? `?${encoded}` : "";
 }

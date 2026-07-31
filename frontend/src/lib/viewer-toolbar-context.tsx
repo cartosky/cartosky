@@ -77,6 +77,13 @@ export type ViewerToolbarProps = {
    * built from grid manifests App.tsx has already fetched. Never a new request.
    */
   compositeLegendLayers?: CompositeLegendLayer[];
+  // Sounding (Skew-T design §6, Phase 3). The toggle ARMS a pick mode; the next
+  // map click drops the marker and opens the panel. State lives in App.tsx —
+  // the bars are presentational consumers.
+  /** False when the active model publishes no soundings (v1: HRRR only). */
+  soundingAvailable?: boolean;
+  soundingMode?: boolean;
+  onSoundingModeToggle?: () => void;
   // Compare
   compareHref?: string;
   // Share

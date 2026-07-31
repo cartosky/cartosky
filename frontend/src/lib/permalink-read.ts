@@ -12,6 +12,8 @@ export type PermalinkState = {
   lat?: number;
   lon?: number;
   z?: number;
+  /** Open sounding point (Skew-T design §6): `sounding=lat,lon`. */
+  sounding?: { lat: number; lon: number };
 };
 
 function readStringParam(params: URLSearchParams, key: string): string | undefined {
@@ -92,6 +94,19 @@ export function readPermalink(): PermalinkState {
   const z = readFiniteNumberParam(params, "z");
   if (Number.isFinite(z) && Number(z) >= 0 && Number(z) <= 24) {
     state.z = Number(z);
+  }
+
+  const sounding = readStringParam(params, "sounding");
+  if (sounding) {
+    const [rawLat, rawLon] = sounding.split(",");
+    const soundingLat = Number(rawLat);
+    const soundingLon = Number(rawLon);
+    if (
+      Number.isFinite(soundingLat) && soundingLat >= -90 && soundingLat <= 90 &&
+      Number.isFinite(soundingLon) && soundingLon >= -180 && soundingLon <= 180
+    ) {
+      state.sounding = { lat: soundingLat, lon: soundingLon };
+    }
   }
 
   return state;

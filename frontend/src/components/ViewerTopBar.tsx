@@ -9,6 +9,7 @@ import {
   MessageSquareText,
   MoreHorizontal,
   Share2,
+  TrendingUp,
   UserRound,
   X,
 } from "lucide-react";
@@ -157,6 +158,30 @@ export function ViewerTopBar() {
 
       {/* §6.1: the center stays empty. */}
       <div className="ml-auto flex items-center gap-1.5">
+        {toolbar?.onSoundingModeToggle ? (
+          <button
+            type="button"
+            data-testid="sounding-toggle"
+            aria-pressed={toolbar.soundingMode === true}
+            disabled={toolbar.soundingAvailable === false}
+            title={
+              toolbar.soundingAvailable === false
+                ? "Soundings available on HRRR"
+                : "Sounding — click the map to sample a vertical profile"
+            }
+            onClick={toolbar.onSoundingModeToggle}
+            className={cn(
+              "inline-flex min-h-8 items-center gap-1.5 rounded-[7px] border px-3 text-[13px] font-semibold transition-colors duration-100 pointer-coarse:min-h-11",
+              toolbar.soundingMode
+                ? "border-cyan-300/40 bg-cyan-300/[0.18] text-cyan-50"
+                : "border-white/[0.11] bg-white/[0.045] text-white/76 hover:border-white/20 hover:bg-white/[0.08] hover:text-white",
+              toolbar.soundingAvailable === false && "cursor-not-allowed opacity-40 hover:border-white/[0.11] hover:bg-white/[0.045] hover:text-white/76",
+            )}
+          >
+            <TrendingUp className="h-3.5 w-3.5" />
+            Sounding
+          </button>
+        ) : null}
         <NavLink
           to={toolbar?.compareHref ?? "/compare"}
           data-tour-target="compare-button"

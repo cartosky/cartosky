@@ -1380,6 +1380,15 @@ type MapCanvasProps = {
   onMapHoverEnd?: () => void;
   onAnchorClick?: (anchor: { id: string; city: string; state: string; st: string }) => void;
   onVectorHazardClick?: (selection: VectorHazardSelection) => void;
+  /**
+   * Sounding pick mode (Skew-T design §6, Phase 3). While armed, the next map
+   * click reports its lat/lon instead of falling through to hazard selection;
+   * plain clicks are untouched when it is off.
+   */
+  soundingModeArmed?: boolean;
+  onSoundingClick?: (lat: number, lon: number) => void;
+  /** Snapped grid point of the open sounding, or null for no marker. */
+  soundingMarker?: { lat: number; lon: number } | null;
   anchorBatchPoints?: AnchorBatchPoint[];
   onAnchorFrameSampled?: (payload: {
     frameHour: number;
@@ -1463,6 +1472,9 @@ export function MapCanvas({
   onMapHoverEnd,
   onAnchorClick,
   onVectorHazardClick,
+  soundingModeArmed = false,
+  onSoundingClick,
+  soundingMarker = null,
   anchorBatchPoints = EMPTY_ANCHOR_BATCH_POINTS,
   onAnchorFrameSampled,
   onCityFrameSampled,
@@ -2363,6 +2375,75 @@ export function MapCanvas({
 
     geolocationMarkerRef.current.setLngLat([geolocationMarker.lon, geolocationMarker.lat]);
   }, [geolocationMarker, isLoaded]);
+
+  // Sounding grid-point marker (design §6): a cyan reticle at the SNAPPED grid
+  // point, so the ~km-scale offset from the click is visible rather than implied.
+  const soundingMarkerRef = useRef<maplibregl.Marker | null>(null);
+  useEffect(() => {
+    return () => {
+      soundingMarkerRef.current?.remove();
+      soundingMarkerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded) {
+      return;
+    }
+    if (
+      !soundingMarker ||
+      !Number.isFinite(soundingMarker.lat) ||
+      !Number.isFinite(soundingMarker.lon)
+    ) {
+      soundingMarkerRef.current?.remove();
+      soundingMarkerRef.current = null;
+      return;
+    }
+
+    if (!soundingMarkerRef.current) {
+      const element = document.createElement("div");
+      element.setAttribute("data-testid", "sounding-marker");
+      element.setAttribute("aria-hidden", "true");
+      element.style.width = "20px";
+      element.style.height = "20px";
+      element.style.borderRadius = "9999px";
+      element.style.border = "1.5px solid rgba(103,232,249,0.92)";
+      element.style.background = "rgba(103,232,249,0.14)";
+      element.style.boxShadow = "0 0 0 1px rgba(4,16,30,0.65), 0 6px 18px rgba(10,18,32,0.45)";
+      element.style.display = "flex";
+      element.style.alignItems = "center";
+      element.style.justifyContent = "center";
+
+      const core = document.createElement("div");
+      core.style.width = "5px";
+      core.style.height = "5px";
+      core.style.borderRadius = "9999px";
+      core.style.background = "rgba(207,250,254,0.98)";
+      element.appendChild(core);
+
+      soundingMarkerRef.current = new maplibregl.Marker({ element, anchor: "center" })
+        .setLngLat([soundingMarker.lon, soundingMarker.lat])
+        .addTo(map);
+      return;
+    }
+
+    soundingMarkerRef.current.setLngLat([soundingMarker.lon, soundingMarker.lat]);
+  }, [isLoaded, soundingMarker]);
+
+  // Arming the mode changes the cursor immediately, without waiting for the
+  // next mousemove (the hover handler keeps it crosshair from then on).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isLoaded || !soundingModeArmed) {
+      return;
+    }
+    const canvas = map.getCanvas();
+    canvas.style.cursor = "crosshair";
+    return () => {
+      canvas.style.cursor = "";
+    };
+  }, [isLoaded, soundingModeArmed]);
 
   const enforceLayerOrder = useCallback((map: maplibregl.Map) => {
     // Coastline is part of the base style and always present once the style is
@@ -3668,6 +3749,10 @@ export function MapCanvas({
   onVectorHazardClickRef.current = onVectorHazardClick;
   const onAnchorClickRef = useRef(onAnchorClick);
   onAnchorClickRef.current = onAnchorClick;
+  const onSoundingClickRef = useRef(onSoundingClick);
+  onSoundingClickRef.current = onSoundingClick;
+  const soundingModeArmedRef = useRef(soundingModeArmed);
+  soundingModeArmedRef.current = soundingModeArmed;
 
   useEffect(() => {
     const map = mapRef.current;
@@ -3707,7 +3792,9 @@ export function MapCanvas({
         ? vectorFeature.properties.fill.trim()
         : null;
       const hazardSelection = hazardSelectionFromFeature(vectorFeature, { x, y });
-      canvas.style.cursor = hazardSelection && onVectorHazardClickRef.current ? "pointer" : onMapHoverRef.current ? "crosshair" : "";
+      canvas.style.cursor = soundingModeArmedRef.current
+        ? "crosshair"
+        : hazardSelection && onVectorHazardClickRef.current ? "pointer" : onMapHoverRef.current ? "crosshair" : "";
       onMapHoverRef.current?.(
         lat,
         lng,
@@ -3726,6 +3813,12 @@ export function MapCanvas({
     };
 
     const handleClick = (e: maplibregl.MapMouseEvent) => {
+      // Sounding pick mode wins outright while armed (design §6 entry): the
+      // click is a location pick, not a hazard selection.
+      if (soundingModeArmedRef.current && onSoundingClickRef.current) {
+        onSoundingClickRef.current(e.lngLat.lat, e.lngLat.lng);
+        return;
+      }
       if (!onVectorHazardClickRef.current) {
         return;
       }

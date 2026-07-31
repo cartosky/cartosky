@@ -9,6 +9,7 @@ import {
   MoreHorizontal,
   PlayCircle,
   Share2,
+  TrendingUp,
   UserRound,
 } from "lucide-react";
 
@@ -170,6 +171,24 @@ export function ViewerMobileBar() {
             <GitCompareArrows className="h-4 w-4 text-white/54" />
             Compare
           </button>
+          {toolbar?.onSoundingModeToggle ? (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="sounding-toggle"
+              aria-pressed={toolbar.soundingMode === true}
+              disabled={toolbar.soundingAvailable === false}
+              className={cn(
+                BAR_MENU_ITEM_CLASSNAME,
+                toolbar.soundingMode && "bg-cyan-300/12 text-cyan-50",
+                toolbar.soundingAvailable === false && "cursor-not-allowed opacity-40",
+              )}
+              onClick={runItem(() => toolbar?.onSoundingModeToggle?.())}
+            >
+              <TrendingUp className="h-4 w-4 text-white/54" />
+              {toolbar.soundingAvailable === false ? "Sounding (HRRR only)" : "Sounding"}
+            </button>
+          ) : null}
           <button type="button" role="menuitem" className={BAR_MENU_ITEM_CLASSNAME} onClick={runItem(() => toolbar?.onReplayTour?.())}>
             <PlayCircle className="h-4 w-4 text-white/54" />
             Replay tour

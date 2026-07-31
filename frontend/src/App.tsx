@@ -83,6 +83,7 @@ import {
   runIdToIso,
 } from "@/lib/time-axis";
 import { buildPermalinkSearch, viewerPermalinkStateFromSelection } from "@/lib/permalink";
+import { modelSupportsSounding } from "@/lib/sounding-types";
 import { buildComparePermalinkSearch } from "@/lib/compare-permalink";
 import { readPermalink } from "@/lib/permalink-read";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
@@ -175,6 +176,9 @@ const NwsCityModal = lazy(() =>
 );
 const NwsHazardModal = lazy(() =>
   import("@/components/nws-hazard-modal").then((module) => ({ default: module.NwsHazardModal }))
+);
+const SoundingPanel = lazy(() =>
+  import("@/components/sounding/SoundingPanel").then((module) => ({ default: module.SoundingPanel }))
 );
 
 const NWS_HAZARDS_CONUS_VIEW_BBOX = [-126.0, 24.0, -66.0, 50.0] as [number, number, number, number];
@@ -539,7 +543,59 @@ export default function App() {
     st: string;
   } | null>(null);
   const [selectedVectorHazard, setSelectedVectorHazard] = useState<VectorHazardSelection | null>(null);
+  // Sounding (Skew-T design §6, Phase 3). `soundingMode` arms the pick;
+  // `soundingPoint` is the CLICKED point (the backend snaps it) and owns the
+  // panel's open state; `soundingGridPoint` is the snapped point the marker
+  // sits on. A deep link opens the panel with the mode NOT armed.
+  const [soundingMode, setSoundingMode] = useState(false);
+  const [soundingPoint, setSoundingPoint] = useState<{ lat: number; lon: number } | null>(
+    () => initialPermalink.sounding ?? null,
+  );
+  const [soundingGridPoint, setSoundingGridPoint] = useState<{ lat: number; lon: number } | null>(null);
+  const soundingAvailable = modelSupportsSounding(model);
   const isCurrentAnalysisSelection = String(model ?? "").trim().toLowerCase() === "current_analysis";
+
+  const handleSoundingModeToggle = useCallback(() => {
+    setSoundingMode((armed) => !armed);
+  }, []);
+
+  const handleSoundingClick = useCallback((lat: number, lon: number) => {
+    // The mode STAYS armed after a pick so the user can move the sounding by
+    // clicking elsewhere; Esc or the toggle leaves the mode.
+    setSoundingPoint({ lat, lon });
+  }, []);
+
+  const handleSoundingClose = useCallback(() => {
+    setSoundingPoint(null);
+    setSoundingGridPoint(null);
+    setSoundingMode(false);
+  }, []);
+
+  // Switching to a model without sounding stacks disarms and closes: the panel
+  // would otherwise keep showing a profile the map no longer represents.
+  useEffect(() => {
+    // `model` is "" until bootstrap resolves it. Clearing on that empty first
+    // render would wipe a `sounding=` deep link before the model ever arrives.
+    if (!model || soundingAvailable) {
+      return;
+    }
+    setSoundingMode(false);
+    setSoundingPoint(null);
+    setSoundingGridPoint(null);
+  }, [model, soundingAvailable]);
+
+  useEffect(() => {
+    if (!soundingMode) {
+      return undefined;
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSoundingMode(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [soundingMode]);
   const [sharePayload, setSharePayload] = useState<SharePayload>({
     permalink: "",
     summary: "CartoSky viewer share",
@@ -6112,6 +6168,7 @@ export default function App() {
     resolvedForecastHourPermalink,
     region,
     domain,
+    sounding: soundingPoint,
     suspended: isPlaying || isGridPreloadingForPlay,
   });
 
@@ -6257,6 +6314,9 @@ export default function App() {
     legend,
     compositeLegendLayers,
     compareHref,
+    soundingAvailable,
+    soundingMode,
+    onSoundingModeToggle: handleSoundingModeToggle,
     onShare: handleOpenShareModal,
     onFeedback: openFeedback,
     mobileControlsOpen,
@@ -6292,6 +6352,7 @@ export default function App() {
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
     pointLabelsEnabled, nwsWarningsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
     legendPopoverOpen, displayPanelOpen, compareHref, handleOpenShareModal, viewerLayoutMode, legend,
+    soundingAvailable, soundingMode, handleSoundingModeToggle,
     compositeLegendLayers,
     telemetryRunId, forecastHour, mobileControlsOpen, replayTour, openFeedback,
     rail, selectedTimeAxisMode, controlAvailableFrameHours, manifestReadyThroughFh,
@@ -6404,6 +6465,9 @@ export default function App() {
               ? setSelectedVectorHazard
               : undefined
           }
+          soundingModeArmed={soundingMode && soundingAvailable}
+          onSoundingClick={handleSoundingClick}
+          soundingMarker={soundingPoint ? soundingGridPoint ?? soundingPoint : null}
           showZoomControls={zoomControlsVisible}
           isDesktopLayout={isDesktopViewerLayout}
           hasViewerRail={isRailLayout}
@@ -6570,6 +6634,22 @@ export default function App() {
             open={!!selectedVectorHazard}
             onClose={() => setSelectedVectorHazard(null)}
             hazard={selectedVectorHazard}
+          />
+        </Suspense>
+      ) : null}
+
+      {soundingPoint && soundingAvailable ? (
+        <Suspense fallback={null}>
+          <SoundingPanel
+            key={`${soundingPoint.lat.toFixed(3)},${soundingPoint.lon.toFixed(3)}`}
+            model={model}
+            modelLabel={selectedModelLabel}
+            lat={soundingPoint.lat}
+            lon={soundingPoint.lon}
+            viewerForecastHour={Number.isFinite(forecastHour) ? forecastHour : null}
+            layout={isRailLayout ? "desktop" : "mobile"}
+            onClose={handleSoundingClose}
+            onGridPoint={setSoundingGridPoint}
           />
         </Suspense>
       ) : null}
