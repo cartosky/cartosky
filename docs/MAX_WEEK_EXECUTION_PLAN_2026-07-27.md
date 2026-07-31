@@ -130,7 +130,7 @@ Verified after **every** phase, not just the ones that look related.
 
 - **ECMWF cycle-length asymmetry** — 06z/18z short-horizon, 00z/12z full-horizon. GFS, AIFS, and AIGFS do not share this. Test both cycle types per model.
 - Forecast hours, variables, cadence, and availability differ per model and per region. Never generalize.
-- **Global anomaly products excluded** — ERA5 baselines are NA-scoped. Exclude anomaly variables from the global capability contract explicitly, not via a runtime check that could silently pass.
+- **Global anomaly products excluded** — ~~ERA5 baselines are NA-scoped. Exclude anomaly variables from the global capability contract explicitly, not via a runtime check that could silently pass.~~ **Superseded 2026-07-30 by Phase 3A Wave 1:** the three instantaneous anomalies (hgt500/tmp2m/tmp850) declare global against native 4326 baselines; precip anomalies stay excluded via a per-variable allowlist pinned in both directions (test_gfs_global_domain.py).
 - **Global-aware scientific sanity ranges** — thresholds tuned on NA will fire constantly on Antarctic temperatures and tropical PWAT. False alarms train you to ignore the gate.
 
 ---
@@ -529,7 +529,7 @@ Per model: global retention, publication, manifest, and latest-pointer behavior;
 - [ ] G3 performance contract measured against the NA LOD baseline; if materially regressed, operator signoff obtained before rollout
 - [ ] G4 screenshot and GIF export verified for the new domain, both capture paths
 - [ ] G5 ran within existing caps; RSS compared against Phase 0 baselines
-- [ ] G6 both cycle types tested; anomaly variables absent from global capabilities; sanity ranges global-aware
+- [ ] G6 both cycle types tested; anomaly capabilities match the Phase 3A wave state (Wave 1: hgt500/tmp2m/tmp850 anomalies declare global, precip anomalies excluded — per-variable allowlist, not blanket absence); sanity ranges global-aware
 - [ ] ~~Canonical and global manifests report the same 25 km model grid~~ **RETRACTED 2026-07-29 (Change A).** Replaced by: global manifests report the native 0.25° EPSG:4326 grid and publish **two named latitude bounds** (true data extent vs Mercator-displayable extent); canonical manifests are byte-identical to today; changing only the camera preset still changes neither resolution nor weather-artifact identity
 - [ ] ~~For AIFS/ECMWF, canonical 9 km → 25 km A/B verification as part of the global rollout~~ **Coupling broken 2026-07-29 (Change A):** their global publish follows the native-4326 policy and no longer implies a canonical-grid migration; the canonical 9 km → 25 km question is a separate future decision with its own A/B gate if ever taken
 - [ ] Domain isolation holds under load: no `LATEST`/retention/pruning crossover observed

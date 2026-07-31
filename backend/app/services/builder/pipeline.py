@@ -26,6 +26,7 @@ import os
 import subprocess
 import tempfile
 import time
+from dataclasses import replace as dc_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -59,7 +60,14 @@ from app.services.builder.fetch import (
 )
 from app.services.colormaps import get_color_map_spec
 from app.services.domains import canonical_domain, domain_scoped_model_root, is_reserved_domain_id
-from app.services.climatology import DEFAULT_BASELINE_SOURCE, get_baseline_grid_params, normalize_baseline_source
+from app.services.climatology import (
+    DEFAULT_BASELINE_SOURCE,
+    get_baseline_grid,
+    get_baseline_grid_params,
+    instantaneous_baseline_assets_present,
+    normalize_baseline_source,
+    resolve_baseline_region,
+)
 from app.services.grid import (
     GRID_FRAME_FORMAT_VERSION,
     expected_grid_frame_size_bytes,
@@ -1435,10 +1443,35 @@ def _resolve_derive_target_grid(
         return None, False
 
     output_region = str(region).strip().lower()
-    derive_region = str(hints.get("baseline_region") or output_region).strip().lower() or output_region
     baseline_source = normalize_baseline_source(
         str(hints.get("baseline_source") or DEFAULT_BASELINE_SOURCE).strip() or DEFAULT_BASELINE_SOURCE
     )
+
+    # A variable that declares a baseline resolves its derive grid through the
+    # baseline registry, build-region-aware (Phase 3A). Everything else keeps
+    # deriving on the output region's own grid.
+    if str(hints.get("baseline_region") or "").strip():
+        derive_region = resolve_baseline_region(
+            model=model,
+            build_region=output_region,
+            hints=hints,
+        )
+        if derive_region is None:
+            # The variable departs from a climatology that does not exist for
+            # this build region (e.g. the precip-window anomalies on the
+            # global domain, whose baselines are Wave 2). No shared grid.
+            return None, False
+        baseline_grid = get_baseline_grid(
+            baseline_source=baseline_source,
+            region=derive_region,
+        )
+        _, output_resolution = get_grid_params(model, output_region)
+        matches_output = derive_region == output_region and abs(
+            float(baseline_grid.resolution) - float(output_resolution)
+        ) <= 1.0e-6
+        return {"region": derive_region, "id": baseline_grid.grid_id}, matches_output
+
+    derive_region = output_region
     try:
         _, derive_grid_m = get_baseline_grid_params(
             baseline_source=baseline_source,
@@ -1462,6 +1495,103 @@ def _resolve_derive_target_grid(
         "region": derive_region,
         "id": f"climatology:{baseline_source}:{derive_region}:{derive_grid_m:.1f}m",
     }, derive_region == output_region and abs(float(derive_grid_m) - float(output_grid_m)) <= 1.0e-6
+
+
+#: Frame status for "this variable has no usable climatology baseline in this
+#: build region". Not a failure: the scheduler treats an unknown status as a
+#: blocked target, so the run continues and the variable simply does not
+#: publish for that domain. Deploy-ordering insurance for Phase 3A — code and
+#: baseline assets can land in either order without a crashing build.
+BASELINE_SKIP_STATUS = "skipped_missing_baseline"
+
+
+def _resolve_build_region_baseline(
+    *,
+    model: str,
+    region: str,
+    var_key: str,
+    fh: int,
+    run_date: datetime,
+    var_spec_model: Any,
+    hints: dict[str, Any],
+) -> tuple[Any, dict[str, Any], str | None]:
+    """Bind a derived variable's baseline hints to the region being built.
+
+    A VarSpec declares its baseline region for the canonical build plus, since
+    Phase 3A, an optional per-build-region override. Rewriting the resolved
+    region onto a *copy* of the spec here is what makes the whole derive path
+    build-region-aware without threading a new argument through every derive
+    strategy: ``derive.py`` keeps reading ``hints["baseline_region"]``.
+
+    Returns ``(var_spec_model, hints, skip_reason)``; a non-``None``
+    ``skip_reason`` means the frame must be skipped, never failed.
+    Canonical builds always return the spec untouched and never skip.
+    """
+    declared = str(hints.get("baseline_region") or "").strip().lower()
+    if not declared:
+        return var_spec_model, hints, None
+
+    resolved = resolve_baseline_region(model=model, build_region=region, hints=hints)
+    if resolved is None:
+        return var_spec_model, hints, "no_baseline_declared_for_build_region"
+    if resolved == declared:
+        # Canonical (and every other legacy metre) build: byte-identical to
+        # pre-Phase-3A behaviour, including a missing baseline still failing
+        # the frame rather than skipping it.
+        return var_spec_model, hints, None
+
+    resolved_hints = dict(hints)
+    resolved_hints["baseline_region"] = resolved
+    selectors = getattr(var_spec_model, "selectors", None)
+    resolved_spec = var_spec_model
+    if selectors is not None:
+        try:
+            resolved_spec = dc_replace(
+                var_spec_model,
+                selectors=dc_replace(selectors, hints=resolved_hints),
+            )
+        except TypeError:
+            resolved_spec = var_spec_model
+
+    if str(getattr(var_spec_model, "derive", "") or "").strip() != "anomaly_departure":
+        return resolved_spec, resolved_hints, None
+
+    baseline_source = normalize_baseline_source(
+        str(hints.get("baseline_source") or DEFAULT_BASELINE_SOURCE).strip()
+        or DEFAULT_BASELINE_SOURCE
+    )
+    baseline_field = str(hints.get("baseline_field") or "").strip().lower() or str(
+        hints.get("base_component") or var_key
+    ).split("__", 1)[0]
+    baseline_version = str(hints.get("baseline_version") or "v1").strip() or "v1"
+    reference_period = str(hints.get("reference_period") or "1991-2020").strip() or "1991-2020"
+    valid_time = (run_date + timedelta(hours=int(fh))).astimezone(timezone.utc)
+    if not instantaneous_baseline_assets_present(
+        version=baseline_version,
+        baseline_source=baseline_source,
+        field=baseline_field,
+        region=resolved,
+        reference_period=reference_period,
+        valid_time=valid_time,
+    ):
+        logger.warning(
+            "climatology_baseline_missing model=%s region=%s var=%s fh=%03d "
+            "baseline_source=%s baseline_field=%s baseline_region=%s "
+            "reference_period=%s valid_time=%s — frame skipped (status=%s)",
+            model,
+            region,
+            var_key,
+            int(fh),
+            baseline_source,
+            baseline_field,
+            resolved,
+            reference_period,
+            valid_time.isoformat(),
+            BASELINE_SKIP_STATUS,
+        )
+        return resolved_spec, resolved_hints, "missing_baseline_assets"
+
+    return resolved_spec, resolved_hints, None
 
 
 def build_frame(
@@ -1593,6 +1723,29 @@ def build_frame(
     hints = getattr(selectors, "hints", {}) if selectors is not None else {}
     if not isinstance(hints, dict):
         hints = {}
+    # Bind the baseline to the region actually being built (Phase 3A). Must
+    # run before anything reads `hints` or `var_spec_model` downstream.
+    var_spec_model, hints, baseline_skip_reason = _resolve_build_region_baseline(
+        model=model,
+        region=region,
+        var_key=var_key,
+        fh=fh,
+        run_date=run_date,
+        var_spec_model=var_spec_model,
+        hints=hints,
+    )
+    if baseline_skip_reason is not None:
+        logger.warning(
+            "Skipping frame without a climatology baseline: %s/%s/%s/%s reason=%s",
+            model,
+            region,
+            var_key,
+            fh_str,
+            baseline_skip_reason,
+        )
+        _log_fetch_cache_stats_once()
+        return _result(None, BASELINE_SKIP_STATUS)
+
     source_product = str(hints.get("product") or product).strip() or product
     warp_resampling = _warp_resampling_for_variable(
         model_id=model,

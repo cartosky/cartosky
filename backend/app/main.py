@@ -87,6 +87,7 @@ from .models.goes_east import GOES_EAST_MODEL_ID, GOES_EAST_RGB_LATEST_FILENAME
 from .services.admin_telemetry import get_build_duration_averages, get_latest_build_durations
 from .services import admin_telemetry, feedback_service, forecast_page as forecast_page_service, frames_404_telemetry, otel_tracing, prometheus_metrics, share_media as share_media_service, stripe_billing
 from .services import nws as nws_service
+from .services import sounding_api as sounding_api_service
 from backend.app import config as app_config
 from backend.app.auth.clerk import ClerkPrincipal, fetch_clerk_user_profile, maybe_clerk_user, require_clerk_admin, require_clerk_user
 from backend.app.auth import entitlements, twf_oauth
@@ -4102,6 +4103,48 @@ def forecast_meteogram(
     # `private` (not `public`): responses vary by per-model entitlement, so they
     # must not be shared at the CDN. The origin in-process cache still absorbs
     # repeat fan-outs; entitlement-aware CDN caching is deferred.
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
+class SoundingRequestIn(BaseModel):
+    model: str = Field(..., min_length=1, max_length=32)
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    # Optional run pin. An ineligible pin degrades to the latest run that has
+    # stacks (the response echoes `requested_run`); it is never a 404.
+    run: str | None = Field(default=None, max_length=32)
+
+
+@app.post("/api/v4/forecast/sounding")
+def forecast_sounding(
+    body: SoundingRequestIn,
+    principal: ClerkPrincipal | None = Depends(maybe_clerk_user),
+):
+    """All published forecast hours of one point's vertical profile (design §5).
+
+    Dark unless the model is in ``CARTOSKY_SOUNDING_MODELS``; no entitlement
+    logic in Phase 2. The substance lives in ``services/sounding_api.py``.
+    """
+    try:
+        payload = sounding_api_service.get_sounding(
+            model=body.model,
+            lat=body.lat,
+            lon=body.lon,
+            run=body.run,
+        )
+    except sounding_api_service.SoundingUnavailableError as exc:
+        return JSONResponse(status_code=404, content={"error": str(exc)})
+    except sounding_api_service.SoundingRequestError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    except sounding_api_service.SoundingDataError as exc:
+        logger.error("Sounding response refused: %s", exc)
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    # `private`: same reasoning as the meteogram route — point payloads are not
+    # worth sharing at the CDN and may become entitlement-varying later.
     return JSONResponse(
         content=payload,
         headers={"Cache-Control": "private, max-age=300"},

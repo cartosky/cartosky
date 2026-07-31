@@ -178,6 +178,18 @@ Phases 1–2 are backend-only and shippable dark; Phase 3 is the first user-visi
 manifest sweep working); CLI spot-check at OKC (stack row 160/col 225) matched the spike
 reference — surface pressure 969.2 vs 968.5 hPa, column agreement within diurnal
 evolution. Band-tag→plane mapping validated against real GRIB.
+
+**Phase 2 status: implemented + independently verified 2026-07-30** (uncommitted; prod
+gate pending). `backend/app/services/sounding_api.py` (new) + route in main.py +
+`tests/test_forecast_sounding_api.py` (18 tests; 105 green across the four
+sounding/meteogram modules). Verification found and we fixed a **run-pin path traversal**
+(`run: "../secret"` could read stacks outside the model root) — now gated by the shared
+`RUN_ID_RE` before any filesystem access, with regression tests that plant a readable
+decoy and prove it is never read. Also hardened: unprojectable points (poles) → 400 not
+500; `run` field length-capped. Deferred to Phase 3: rate limiting (map-click panels are
+chattier than meteograms) and an in-process response cache if needed. Prod gate: add
+`CARTOSKY_SOUNDING_MODELS=hrrr` to csky-api.service + restart, then endpoint-vs-CLI
+parity at OKC.
 `backend/app/services/sounding.py` (new), `sounding_models()` in config, scheduler hook +
 top-level `sounding` manifest section, 67 new tests. Verifier hand-decoded a planted
 pixel's 380-byte block with independent offset arithmetic (exact match), confirmed

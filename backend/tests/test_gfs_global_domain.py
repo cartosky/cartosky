@@ -6,9 +6,11 @@ Two properties dominate, mirroring the Phase 2A test file:
   declared ``supported_build_regions`` are invisible everywhere: the scheduler
   builds ``na`` only and the capability payload is the literal pre-Phase-3
   shape (``supported_build_regions: []`` for every variable of every model).
-* **Anomalies never go global.** ERA5 baselines are North-America-only, so
-  anomaly variables are excluded by omission in the declaration — pinned here
-  against the real catalog, not a fixture.
+* **Anomalies go global only where a global ERA5 baseline exists.** Phase 3A
+  Wave 1 shipped global EPSG:4326 baselines for the three *instantaneous*
+  anomaly fields, so those declare ``global``; the four precip-window
+  anomalies still have NA-only baselines and stay canonical-only. Both
+  directions are pinned here against the real catalog, not a fixture.
 
 The G1 synthetic warp/contour oracles live in their own module.
 """
@@ -53,7 +55,17 @@ FLAG = "CARTOSKY_GLOBAL_DOMAIN_MODELS"
 #: Declared in gfs.py; kept as a literal so a catalog change has to be
 #: deliberate rather than silently absorbed by the tests.
 DECLARING_VAR = "tmp2m"
-ANOMALY_VAR = "tmp2m_anom"
+
+#: Phase 3A Wave 1: instantaneous anomaly fields with global ERA5 baselines.
+GLOBAL_ANOMALY_VARS = ("tmp2m_anom", "tmp850_anom", "hgt500_anom")
+#: Precip-window anomalies — NA-only baselines until Wave 2.
+CANONICAL_ONLY_ANOMALY_VARS = (
+    "precip_5d_anom",
+    "precip_7d_anom",
+    "precip_10d_anom",
+    "precip_16d_anom",
+)
+ANOMALY_VAR = CANONICAL_ONLY_ANOMALY_VARS[0]
 
 
 @pytest.fixture
@@ -119,8 +131,16 @@ def test_allowlisted_model_builds_and_publishes_global(gfs_global_live: None) ->
     assert domains_module.declared_domains_for_model(MODEL) == (CANONICAL, GLOBAL)
     assert domains_module.validate_requested_domain(MODEL, GLOBAL) == GLOBAL
 
-    # …and anomalies stay canonical-only even with the flag on.
-    assert scheduler_module._build_regions_for_var(plugin, ANOMALY_VAR) == [CANONICAL]
+    # …Wave-1 anomalies come along, precip-window anomalies stay canonical-only.
+    for var_key in GLOBAL_ANOMALY_VARS:
+        assert scheduler_module._build_regions_for_var(plugin, var_key) == [
+            CANONICAL,
+            GLOBAL,
+        ], var_key
+    for var_key in CANONICAL_ONLY_ANOMALY_VARS:
+        assert scheduler_module._build_regions_for_var(plugin, var_key) == [
+            CANONICAL
+        ], var_key
 
 
 def test_allowlist_is_per_model(gfs_global_live: None) -> None:
@@ -137,7 +157,10 @@ def test_live_capabilities_expose_global_on_declaring_vars_only(
 ) -> None:
     by_var = _serialized_build_regions(MODEL)
     assert by_var[DECLARING_VAR] == [CANONICAL, GLOBAL]
-    assert by_var[ANOMALY_VAR] == []
+    for var_key in GLOBAL_ANOMALY_VARS:
+        assert by_var[var_key] == [CANONICAL, GLOBAL], var_key
+    for var_key in CANONICAL_ONLY_ANOMALY_VARS:
+        assert by_var[var_key] == [], var_key
     declaring = {var_key for var_key, regions in by_var.items() if GLOBAL in regions}
     assert declaring
     assert all(by_var[var_key] == [CANONICAL, GLOBAL] for var_key in declaring)
@@ -146,8 +169,14 @@ def test_live_capabilities_expose_global_on_declaring_vars_only(
 # ── 3. anomaly pin (plan §2 / G6) ──────────────────────────────────────────
 
 
-def test_no_gfs_anomaly_variable_declares_global() -> None:
-    """Exclusion is by omission — asserted over the real catalog."""
+def test_gfs_anomaly_global_declaration_is_a_per_variable_allowlist() -> None:
+    """Phase 3A Wave 1 (D2): exactly the three instantaneous anomaly fields
+    declare ``global``; the four precip-window anomalies declare nothing.
+
+    Pinned in BOTH directions over the real catalog, and the two sets must
+    exhaust the catalog's anomaly variables — a new anomaly variable has to
+    make a deliberate choice rather than inherit one.
+    """
     catalog = GFS_MODEL.capabilities.variable_catalog
     anomaly_keys = {
         var_key
@@ -155,8 +184,11 @@ def test_no_gfs_anomaly_variable_declares_global() -> None:
         if var_key.endswith("_anom")
         or "anomaly" in str(capability.derive_strategy_id or "")
     }
-    assert anomaly_keys, "expected GFS to have anomaly variables"
-    for var_key in anomaly_keys:
+    assert anomaly_keys == set(GLOBAL_ANOMALY_VARS) | set(CANONICAL_ONLY_ANOMALY_VARS)
+
+    for var_key in GLOBAL_ANOMALY_VARS:
+        assert catalog[var_key].supported_build_regions == [CANONICAL, GLOBAL], var_key
+    for var_key in CANONICAL_ONLY_ANOMALY_VARS:
         assert catalog[var_key].supported_build_regions == [], var_key
 
 

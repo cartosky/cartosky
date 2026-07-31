@@ -28,12 +28,12 @@ import rasterio.crs
 from rasterio.enums import Resampling
 from rasterio.warp import calculate_default_transform, reproject
 
-from app.services.builder.raster_grid import compute_transform_and_shape, get_grid_crs, warp_to_target_grid
+from app.services.builder.raster_grid import get_grid_crs, warp_to_target_grid
 from app.services.builder.fetch import convert_units, fetch_variable, inventory_lines_for_pattern
 from app.services.builder.fetch import HerbieTransientUnavailableError
 from app.services.climatology import (
     DEFAULT_BASELINE_SOURCE,
-    get_baseline_grid_params,
+    get_baseline_grid,
     get_baseline_target_grid,
     load_accumulation_climatology_baseline,
     load_climatology_baseline,
@@ -3316,14 +3316,45 @@ def get_cached_warped_component(
     return cached
 
 
+def _parse_climatology_grid_id(target_grid_id: str) -> Any | None:
+    """The :class:`BaselineGrid` a ``climatology:...`` grid id names.
+
+    ``None`` when the id is not a climatology id, names an unknown baseline
+    region, or does not match that region's current grid label — callers then
+    fall back to the output region's own target grid.
+    """
+    normalized = str(target_grid_id).strip()
+    if not normalized.startswith("climatology:"):
+        return None
+    parts = normalized.split(":", 3)
+    if len(parts) != 4:
+        return None
+    _, baseline_source, baseline_region, _grid_label = parts
+    try:
+        grid = get_baseline_grid(
+            baseline_source=baseline_source,
+            region=baseline_region,
+        )
+    except KeyError:
+        return None
+    if grid.grid_id != normalized:
+        return None
+    return grid
+
+
 def _warped_component_crs(model_id: str, target_region: str, target_grid_id: str) -> Any:
     """CRS of what :func:`_warp_component_to_target_grid` produced.
 
-    Climatology grid ids warp onto the baseline's EPSG:3857 grid regardless of
-    the output region (anomalies are canonical-only); everything else lands on
-    the output region's declared grid CRS.
+    Metre climatology grid ids warp onto the baseline's EPSG:3857 grid
+    regardless of the output region. Native-geographic baselines (Phase 3A
+    global) share the output region's grid exactly, so they land on its
+    declared CRS — as does everything that is not a climatology id.
     """
-    if str(target_grid_id).strip().startswith("climatology:"):
+    grid = _parse_climatology_grid_id(target_grid_id)
+    if grid is not None and not grid.is_native_geographic:
+        return rasterio.crs.CRS.from_epsg(3857)
+    if grid is None and str(target_grid_id).strip().startswith("climatology:"):
+        # Unresolvable climatology id: preserve the legacy assumption.
         return rasterio.crs.CRS.from_epsg(3857)
     return rasterio.crs.CRS.from_user_input(get_grid_crs(model_id, target_region))
 
@@ -3338,33 +3369,32 @@ def _warp_component_to_target_grid(
     target_grid_id: str,
     resampling: str,
 ) -> tuple[np.ndarray, rasterio.transform.Affine]:
-    target_grid_id_normalized = str(target_grid_id).strip()
-    if target_grid_id_normalized.startswith("climatology:"):
-        parts = target_grid_id_normalized.split(":", 3)
-        if len(parts) == 4:
-            _, baseline_source, baseline_region, grid_label = parts
-            expected_bbox, expected_grid_m = get_baseline_grid_params(
-                baseline_source=baseline_source,
-                region=baseline_region,
-            )
-            expected_label = f"{expected_grid_m:.1f}m"
-            if grid_label == expected_label:
-                dst_transform, dst_h, dst_w = compute_transform_and_shape(expected_bbox, expected_grid_m)
-                dst_crs = rasterio.crs.CRS.from_epsg(3857)
-                dst_data = np.full((dst_h, dst_w), float("nan"), dtype=np.float32)
-                reproject(
-                    source=raw_data.astype(np.float64),
-                    destination=dst_data,
-                    src_transform=raw_transform,
-                    src_crs=raw_crs,
-                    dst_transform=dst_transform,
-                    dst_crs=dst_crs,
-                    resampling=Resampling[resampling],
-                    src_nodata=None,
-                    dst_nodata=float("nan"),
-                )
-                return dst_data.astype(np.float32, copy=False), dst_transform
+    baseline_grid = _parse_climatology_grid_id(target_grid_id)
+    if baseline_grid is not None and not baseline_grid.is_native_geographic:
+        dst_transform, dst_h, dst_w = (
+            baseline_grid.transform,
+            baseline_grid.height,
+            baseline_grid.width,
+        )
+        dst_crs = rasterio.crs.CRS.from_epsg(3857)
+        dst_data = np.full((dst_h, dst_w), float("nan"), dtype=np.float32)
+        reproject(
+            source=raw_data.astype(np.float64),
+            destination=dst_data,
+            src_transform=raw_transform,
+            src_crs=raw_crs,
+            dst_transform=dst_transform,
+            dst_crs=dst_crs,
+            resampling=Resampling[resampling],
+            src_nodata=None,
+            dst_nodata=float("nan"),
+        )
+        return dst_data.astype(np.float32, copy=False), dst_transform
 
+    # Native-geographic baselines are, by construction, the same grid as the
+    # domain's own target grid (contract §1), so the shared warp path applies —
+    # and it is the only one that performs the longitude index roll (§5)
+    # instead of a lossy 0…360 → −180…180 reprojection.
     return warp_to_target_grid(
         raw_data,
         raw_crs,

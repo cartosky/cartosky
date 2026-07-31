@@ -7,6 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import rasterio
@@ -21,15 +22,78 @@ if str(BACKEND_ROOT) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from app.services.builder.raster_grid import compute_transform_and_shape
+from app.services.builder.raster_grid import (
+    REGION_BBOX_4326,
+    compute_native_transform_and_shape,
+    compute_transform_and_shape,
+)
 from app.services.climatology import (
     climatology_baseline_root,
+    get_baseline_grid_degrees,
     get_baseline_grid_params,
     normalize_baseline_source,
 )
 
 TIMESTAMP_RE = re.compile(r"(?<!\d)(\d{4})(\d{2})(\d{2})[_-]?(\d{2})(?!\d)")
 SUPPORTED_HOURS = (0, 6, 12, 18)
+
+
+@dataclass(frozen=True)
+class TargetGrid:
+    """Where a baseline region's assets land."""
+
+    crs: str
+    bbox: tuple[float, float, float, float]
+    #: metres for EPSG:3857 regions, degrees for EPSG:4326 regions.
+    resolution: float
+    transform: Any
+    height: int
+    width: int
+
+    @property
+    def is_native_geographic(self) -> bool:
+        return self.crs == "EPSG:4326"
+
+
+def resolve_target_grid(*, baseline_source: str, region: str) -> TargetGrid:
+    """Grid for ``region``, EPSG:3857 metre or EPSG:4326 native-geographic.
+
+    The metre branch is untouched from the pre-Phase-3A script (same
+    ``get_baseline_grid_params`` + ``compute_transform_and_shape`` calls), so
+    NA/CONUS asset generation is byte-identical. ``--region global`` opts into
+    the native-geographic branch: the exact contract grid,
+    ``Affine(0.25, 0, -180.125, 0, -0.25, 90.125)`` at 721 x 1440
+    (``docs/GLOBAL_DOMAIN_4326_CONTRACT.md`` §1).
+    """
+    region_key = str(region).strip().lower()
+    degrees = get_baseline_grid_degrees(
+        baseline_source=baseline_source,
+        region=region_key,
+    )
+    if degrees is not None:
+        bbox = REGION_BBOX_4326[region_key]
+        transform, height, width = compute_native_transform_and_shape(bbox, degrees)
+        return TargetGrid(
+            crs="EPSG:4326",
+            bbox=bbox,
+            resolution=float(degrees),
+            transform=transform,
+            height=int(height),
+            width=int(width),
+        )
+    bbox_3857, grid_m = get_baseline_grid_params(
+        baseline_source=baseline_source,
+        region=region_key,
+    )
+    transform, height, width = compute_transform_and_shape(bbox_3857, grid_m)
+    return TargetGrid(
+        crs="EPSG:3857",
+        bbox=bbox_3857,
+        resolution=float(grid_m),
+        transform=transform,
+        height=int(height),
+        width=int(width),
+    )
 
 
 @dataclass(frozen=True)
@@ -102,11 +166,27 @@ def _convert_values(values: np.ndarray, *, field: str, units_in: str) -> np.ndar
     raise ValueError(f"Unsupported field for climatology asset build: {field}")
 
 
+def _is_same_grid(
+    *,
+    src_crs: Any,
+    src_transform: Any,
+    src_shape: tuple[int, int],
+    target: TargetGrid,
+) -> bool:
+    if CRS.from_user_input(src_crs) != CRS.from_user_input(target.crs):
+        return False
+    if src_shape != (target.height, target.width):
+        return False
+    return all(
+        abs(float(actual) - float(expected)) <= 1.0e-9
+        for actual, expected in zip(src_transform[:6], target.transform[:6])
+    )
+
+
 def _load_and_warp_source(
     source: SourceRaster,
     *,
-    baseline_source: str,
-    region: str,
+    target: TargetGrid,
     field: str,
     units_in: str,
     resampling: str,
@@ -121,19 +201,29 @@ def _load_and_warp_source(
         raise ValueError(f"Source raster missing CRS: {source.path}")
 
     converted = _convert_values(values, field=field, units_in=units_in)
-    target_bbox, target_grid_m = get_baseline_grid_params(
-        baseline_source=baseline_source,
-        region=region,
-    )
-    dst_transform, dst_h, dst_w = compute_transform_and_shape(target_bbox, target_grid_m)
-    warped = np.full((dst_h, dst_w), np.nan, dtype=np.float32)
+
+    # Staged ERA5 rasters land on the exact global contract grid, so the
+    # global build's "warp" is the identity. Take it bit-exactly rather than
+    # letting a bilinear no-op perturb float bits.
+    if target.is_native_geographic and _is_same_grid(
+        src_crs=src_crs,
+        src_transform=src_transform,
+        src_shape=(converted.shape[0], converted.shape[1]),
+        target=target,
+    ):
+        identity = converted.astype(np.float32, copy=True)
+        if src_nodata is not None and np.isfinite(src_nodata):
+            identity[identity == np.float32(src_nodata)] = np.float32("nan")
+        return identity
+
+    warped = np.full((target.height, target.width), np.nan, dtype=np.float32)
     reproject(
         source=converted.astype(np.float32, copy=False),
         destination=warped,
         src_transform=src_transform,
         src_crs=src_crs,
-        dst_transform=dst_transform,
-        dst_crs=CRS.from_epsg(3857),
+        dst_transform=target.transform,
+        dst_crs=CRS.from_user_input(target.crs),
         resampling=Resampling[resampling],
         src_nodata=src_nodata,
         dst_nodata=float("nan"),
@@ -144,8 +234,7 @@ def _load_and_warp_source(
 def _bucket_mean(
     bucket_sources: list[SourceRaster],
     *,
-    baseline_source: str,
-    region: str,
+    target: TargetGrid,
     field: str,
     units_in: str,
     resampling: str,
@@ -156,8 +245,7 @@ def _bucket_mean(
     for source in bucket_sources:
         warped = _load_and_warp_source(
             source,
-            baseline_source=baseline_source,
-            region=region,
+            target=target,
             field=field,
             units_in=units_in,
             resampling=resampling,
@@ -212,6 +300,7 @@ def _write_baseline_asset(
     path: Path,
     values: np.ndarray,
     transform,
+    crs: str,
     field: str,
     reference_period: str,
     sample_count: int,
@@ -226,7 +315,7 @@ def _write_baseline_asset(
         width=values.shape[1],
         count=1,
         dtype="float32",
-        crs="EPSG:3857",
+        crs=crs,
         transform=transform,
         nodata=float("nan"),
         tiled=True,
@@ -266,12 +355,9 @@ def build_climatology_assets(
     if not buckets:
         raise ValueError(f"No source rasters found under {source_root}")
 
-    bbox, grid_m = get_baseline_grid_params(
-        baseline_source=source_key,
-        region=region_key,
-    )
-    transform, height, width = compute_transform_and_shape(bbox, grid_m)
-    expected_shape = (height, width)
+    target = resolve_target_grid(baseline_source=source_key, region=region_key)
+    transform = target.transform
+    expected_shape = (target.height, target.width)
     output_root = climatology_baseline_root(
         data_root=data_root,
         version=version,
@@ -294,8 +380,7 @@ def build_climatology_assets(
                 continue
             bucket_mean = _bucket_mean(
                 bucket_sources,
-                baseline_source=source_key,
-                region=region_key,
+                target=target,
                 field=field_key,
                 units_in=units_in,
                 resampling=resampling,
@@ -317,6 +402,7 @@ def build_climatology_assets(
                 path=output_root / f"doy_{doy:03d}_h{hour:02d}.tif",
                 values=values,
                 transform=transform,
+                crs=target.crs,
                 field=field_key,
                 reference_period=reference_period_key,
                 sample_count=sample_counts[doy - 1],
@@ -340,7 +426,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--version", required=True, help="Climatology asset version, for example v1.")
     parser.add_argument("--baseline-source", required=True, help="Shared baseline source key, for example era5.")
     parser.add_argument("--field", required=True, choices=["tmp2m", "tmp850", "hgt500"], help="Baseline field to build.")
-    parser.add_argument("--region", default="conus", help="Target region key. Default: conus.")
+    parser.add_argument(
+        "--region",
+        default="conus",
+        help=(
+            "Target region key. Default: conus. Legacy metre regions (conus, na) "
+            "build EPSG:3857 assets; 'global' builds native EPSG:4326 0.25 degree "
+            "assets on the global domain contract grid."
+        ),
+    )
     parser.add_argument("--reference-period", required=True, help="Reference period label, for example 1991-2020.")
     parser.add_argument("--units-in", required=True, help="Units of the source rasters, for example C, K, F, m, or dam.")
     parser.add_argument("--smoothing-window-days", type=int, default=15, help="Odd-number circular smoothing window in days. Default: 15.")
@@ -355,11 +449,10 @@ def main() -> int:
     args = parse_args()
     resolved_source = normalize_baseline_source(args.baseline_source)
     resolved_region = str(args.region).strip().lower()
-    bbox, grid_m = get_baseline_grid_params(
+    target = resolve_target_grid(
         baseline_source=resolved_source,
         region=resolved_region,
     )
-    _transform, height, width = compute_transform_and_shape(bbox, grid_m)
     files_written, missing_buckets = build_climatology_assets(
         source_root=Path(args.source_root).resolve(),
         data_root=Path(args.data_root).resolve(),
@@ -384,9 +477,10 @@ def main() -> int:
             "baseline_source": resolved_source,
             "region": resolved_region,
             "version": args.version,
-            "target_bbox_3857": bbox,
-            "target_grid_m": grid_m,
-            "target_shape": [height, width],
+            "target_crs": target.crs,
+            "target_bbox": target.bbox,
+            "target_resolution": target.resolution,
+            "target_shape": [target.height, target.width],
         },
     )
     return 0

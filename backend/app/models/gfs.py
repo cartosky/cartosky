@@ -425,6 +425,9 @@ GFS_VARS: dict[str, VarSpec] = {
                 "baseline_field": "tmp850",
                 "baseline_source": "era5",
                 "baseline_region": "na",
+                # Phase 3A Wave 1: the global domain departs from the global
+                # EPSG:4326 ERA5 baseline, not the NA one.
+                "baseline_region_by_build_region": "global=global",
                 "baseline_version": "v1",
                 "reference_period": "1991-2020",
             }
@@ -484,6 +487,9 @@ GFS_VARS: dict[str, VarSpec] = {
                 "baseline_field": "hgt500",
                 "baseline_source": "era5",
                 "baseline_region": "na",
+                # Phase 3A Wave 1: the global domain departs from the global
+                # EPSG:4326 ERA5 baseline, not the NA one.
+                "baseline_region_by_build_region": "global=global",
                 "baseline_version": "v1",
                 "reference_period": "1991-2020",
                 "anomaly_conversion": "dam_to_m",
@@ -511,6 +517,9 @@ GFS_VARS: dict[str, VarSpec] = {
                 "baseline_field": "tmp2m",
                 "baseline_source": "era5",
                 "baseline_region": "na",
+                # Phase 3A Wave 1: the global domain departs from the global
+                # EPSG:4326 ERA5 baseline, not the NA one.
+                "baseline_region_by_build_region": "global=global",
                 "baseline_version": "v1",
                 "reference_period": "1991-2020",
             }
@@ -1199,14 +1208,28 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.it
 
 
 # Phase 3 (plan §2): every buildable GFS grid variable also builds the 25 km
-# ``global`` domain. Anomaly variables are the one exclusion — their ERA5
-# baselines are North-America-only, so a global anomaly has no climatology to
-# depart from. The exclusion is by omission below (never a runtime check) and
-# is pinned by a test over the real catalog.
+# ``global`` domain. Anomaly variables were the one blanket exclusion — their
+# ERA5 baselines were North-America-only, so a global anomaly had no
+# climatology to depart from.
+#
+# Phase 3A Wave 1 (D2) narrows that exclusion to a per-variable allowlist: the
+# three *instantaneous* anomaly fields now have global EPSG:4326 ERA5
+# baselines and declare ``global``; the four precip-window anomalies still do
+# not (their baselines need the Wave 2 streaming-memory fix first). The
+# exclusion remains by omission below (never a runtime check) and both
+# directions are pinned by tests over the real catalog.
 GFS_GLOBAL_BUILD_REGIONS: tuple[str, ...] = ("na", "global")
+
+#: Anomaly variables that have global ERA5 baselines (Wave 1 — instantaneous
+#: fields only). Everything else ending in ``_anom`` stays canonical-only.
+GFS_GLOBAL_ANOMALY_VAR_KEYS: frozenset[str] = frozenset(
+    {"tmp2m_anom", "tmp850_anom", "hgt500_anom"}
+)
 
 
 def _declares_global_build_region(var_key: str, var_spec: VarSpec) -> bool:
+    if str(var_key) in GFS_GLOBAL_ANOMALY_VAR_KEYS:
+        return True
     if str(var_key).endswith("_anom"):
         return False
     return "anomaly" not in str(var_spec.derive or "")

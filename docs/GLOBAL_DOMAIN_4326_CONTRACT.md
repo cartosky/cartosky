@@ -91,8 +91,10 @@ adopter: the GFS `global` domain. Canonical artifacts are untouched.
 ## 6. Explicitly unchanged
 
 - Canonical domains: EPSG:3857, 25 km, all existing routes and formats.
-- Anomaly variables: canonical-only (ERA5 baseline coupling; separate
-  future decision).
+- Anomaly variables: partially inverted by Phase 3A Wave 1 (2026-07-30,
+  operator decision D2) — hgt500_anom / tmp2m_anom / tmp850_anom declare
+  global against native 4326 ERA5 baselines; the four precip-window
+  anomalies remain canonical-only until Wave 2 (streaming baseline build).
 - Camera never selects resolution; one grid per (model, domain).
 - Canonical artifact routes never accept `domain=`.
 - `CARTOSKY_GLOBAL_DOMAIN_MODELS` default: unset. Nothing serves until the

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +10,15 @@ import numpy as np
 import rasterio
 from rasterio.crs import CRS
 
-from .builder.raster_grid import REGION_BBOX_3857, compute_transform_and_shape
+from .builder.raster_grid import (
+    LEGACY_GRID_CRS,
+    NATIVE_GRID_CRS,
+    REGION_BBOX_3857,
+    REGION_BBOX_4326,
+    compute_native_transform_and_shape,
+    compute_transform_and_shape,
+    get_native_grid_degrees,
+)
 
 _configured_data_root: Path | None = None
 DEFAULT_BASELINE_SOURCE = "era5"
@@ -21,6 +31,23 @@ _BASELINE_SOURCE_GRID_METERS: dict[str, dict[str, float]] = {
         "na": 25_000.0,
     },
 }
+#: Native-geographic (EPSG:4326) baseline grids, in *degrees*. These are the
+#: Phase 3A global ERA5 baselines: the staged ERA5 rasters already land on the
+#: exact grid declared by ``GLOBAL_DOMAIN_4326_CONTRACT.md`` §1, so the build
+#: warp is an identity transform. A region appearing here is EPSG:4326 and is
+#: deliberately absent from ``_BASELINE_SOURCE_GRID_METERS``: the two maps are
+#: disjoint, so ``get_baseline_grid_params`` (metre-only, unchanged) still
+#: raises ``KeyError`` for them.
+_BASELINE_SOURCE_GRID_DEGREES: dict[str, dict[str, float]] = {
+    DEFAULT_BASELINE_SOURCE: {
+        "global": 0.25,
+    },
+}
+
+#: Hint key declaring, per *build* region, which baseline region to resolve.
+#: Value grammar: ``"<build_region>=<baseline_region>[,<build>=<baseline>...]"``
+#: — a flat string so ``VarSelectors.hints`` stays ``dict[str, str]``.
+BASELINE_REGION_BY_BUILD_REGION_HINT = "baseline_region_by_build_region"
 
 
 def configure_data_root(data_root: Path) -> None:
@@ -70,21 +97,224 @@ def get_baseline_grid_params(
     return bbox, float(grid_m)
 
 
+def get_baseline_grid_degrees(
+    *,
+    baseline_source: str,
+    region: str,
+) -> float | None:
+    """Resolution in degrees when a baseline region is native-geographic.
+
+    ``None`` means the pair is a legacy EPSG:3857 metre grid (or unknown);
+    presence of a value is the only signal that a baseline follows the native
+    4326 contract. Mirrors ``raster_grid.get_native_grid_degrees``.
+    """
+    source_key = normalize_baseline_source(baseline_source)
+    region_key = str(region).strip().lower()
+    source_grids = _BASELINE_SOURCE_GRID_DEGREES.get(source_key)
+    if source_grids is None:
+        return None
+    value = source_grids.get(region_key)
+    if value is None:
+        return None
+    return float(value)
+
+
+@dataclass(frozen=True)
+class BaselineGrid:
+    """Full grid description of a climatology baseline region."""
+
+    baseline_source: str
+    region: str
+    crs: str
+    bbox: tuple[float, float, float, float]
+    #: metres for EPSG:3857 regions, degrees for EPSG:4326 regions.
+    resolution: float
+    transform: Any
+    height: int
+    width: int
+    grid_id: str
+
+    @property
+    def is_native_geographic(self) -> bool:
+        return self.crs == NATIVE_GRID_CRS
+
+
+def get_baseline_grid(
+    *,
+    baseline_source: str,
+    region: str,
+) -> BaselineGrid:
+    """Resolve CRS + bbox + transform + shape for a baseline region.
+
+    The single entry point correct for both grid families. ``KeyError`` for an
+    unknown (source, region) pair, exactly like
+    :func:`get_baseline_grid_params`.
+    """
+    source_key = normalize_baseline_source(baseline_source)
+    region_key = str(region).strip().lower()
+
+    degrees = get_baseline_grid_degrees(baseline_source=source_key, region=region_key)
+    if degrees is not None:
+        bbox = REGION_BBOX_4326.get(region_key)
+        if bbox is None:
+            raise KeyError(
+                f"No EPSG:4326 bbox for native-geographic baseline region: {region!r}"
+            )
+        transform, height, width = compute_native_transform_and_shape(bbox, degrees)
+        return BaselineGrid(
+            baseline_source=source_key,
+            region=region_key,
+            crs=NATIVE_GRID_CRS,
+            bbox=tuple(float(value) for value in bbox),  # type: ignore[arg-type]
+            resolution=float(degrees),
+            transform=transform,
+            height=int(height),
+            width=int(width),
+            grid_id=f"climatology:{source_key}:{region_key}:{degrees:g}deg",
+        )
+
+    bbox_3857, grid_m = get_baseline_grid_params(
+        baseline_source=source_key,
+        region=region_key,
+    )
+    transform, height, width = compute_transform_and_shape(bbox_3857, grid_m)
+    return BaselineGrid(
+        baseline_source=source_key,
+        region=region_key,
+        crs=LEGACY_GRID_CRS,
+        bbox=tuple(float(value) for value in bbox_3857),  # type: ignore[arg-type]
+        resolution=float(grid_m),
+        transform=transform,
+        height=int(height),
+        width=int(width),
+        grid_id=f"climatology:{source_key}:{region_key}:{grid_m:.1f}m",
+    )
+
+
 def get_baseline_target_grid(
     *,
     baseline_source: str,
     region: str,
 ) -> dict[str, str]:
-    region_key = str(region).strip().lower()
-    _, grid_m = get_baseline_grid_params(
-        baseline_source=baseline_source,
-        region=region_key,
-    )
-    source_key = normalize_baseline_source(baseline_source)
+    grid = get_baseline_grid(baseline_source=baseline_source, region=region)
     return {
-        "region": region_key,
-        "id": f"climatology:{source_key}:{region_key}:{grid_m:.1f}m",
+        "region": grid.region,
+        "id": grid.grid_id,
     }
+
+
+def _parse_baseline_region_overrides(raw: Any) -> dict[str, str]:
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    overrides: dict[str, str] = {}
+    for item in text.split(","):
+        entry = item.strip()
+        if not entry:
+            continue
+        build_region, _, baseline_region = entry.partition("=")
+        build_key = build_region.strip().lower()
+        baseline_key = baseline_region.strip().lower()
+        if not build_key or not baseline_key:
+            raise ValueError(
+                f"Malformed {BASELINE_REGION_BY_BUILD_REGION_HINT} entry: {entry!r}"
+            )
+        overrides[build_key] = baseline_key
+    return overrides
+
+
+def resolve_baseline_region(
+    *,
+    model: str,
+    build_region: str,
+    hints: Mapping[str, Any],
+) -> str | None:
+    """Which baseline region a variable departs from for *this* build region.
+
+    Resolution order:
+
+    1. An explicit per-build-region declaration
+       (``baseline_region_by_build_region``) always wins.
+    2. Otherwise the plain ``baseline_region`` hint applies — but only to
+       legacy metre build regions. A native-geographic build region (the
+       global domain) with no explicit declaration resolves to ``None``:
+       the NA baseline is not a valid climatology for it, and silently
+       falling back to it is exactly the failure Phase 3A exists to prevent.
+
+    ``None`` means "this variable has no baseline for this build region";
+    callers degrade or skip rather than load the wrong one.
+
+    An override is rejected outright when it crosses grid families — a
+    native-geographic build region declaring a metre baseline, or the reverse.
+    Nothing downstream would catch it: the derive path would load a
+    well-formed baseline on the wrong grid and publish confidently wrong
+    anomalies. Fail loud at resolution time instead.
+    """
+    build_key = str(build_region).strip().lower()
+    overrides = _parse_baseline_region_overrides(
+        hints.get(BASELINE_REGION_BY_BUILD_REGION_HINT)
+    )
+    if build_key in overrides:
+        baseline_key = overrides[build_key]
+        build_is_native = get_native_grid_degrees(model, build_key) is not None
+        baseline_is_native = (
+            get_baseline_grid_degrees(
+                baseline_source=str(hints.get("baseline_source") or DEFAULT_BASELINE_SOURCE),
+                region=baseline_key,
+            )
+            is not None
+        )
+        if build_is_native != baseline_is_native:
+            raise ValueError(
+                f"{BASELINE_REGION_BY_BUILD_REGION_HINT} maps build region "
+                f"{build_key!r} ("
+                f"{'native-geographic EPSG:4326' if build_is_native else 'EPSG:3857 metre'}"
+                f") to baseline region {baseline_key!r} ("
+                f"{'native-geographic EPSG:4326' if baseline_is_native else 'EPSG:3857 metre'}"
+                f") for model {str(model).strip().lower()!r}: a baseline must "
+                f"be on the same grid family as the domain it is subtracted "
+                f"from."
+            )
+        return baseline_key
+
+    declared = str(hints.get("baseline_region") or "").strip().lower()
+    if not declared:
+        return None
+    if get_native_grid_degrees(model, build_key) is not None:
+        return None
+    return declared
+
+
+def instantaneous_baseline_assets_present(
+    *,
+    data_root: Path | None = None,
+    version: str,
+    baseline_source: str,
+    field: str,
+    region: str,
+    reference_period: str,
+    valid_time,
+) -> bool:
+    """Whether the baseline asset backing one frame is installed on disk.
+
+    Mirrors the lookup :func:`load_climatology_baseline` performs (exact hour,
+    then the synoptic round-down bucket), minus the legacy per-model fallback.
+    Used by the build pipeline to skip a frame instead of failing it when a
+    baseline set has not been installed yet.
+    """
+    for candidate_time in (valid_time, _synoptic_bucket_valid_time(valid_time)):
+        path = climatology_baseline_path(
+            data_root=data_root,
+            version=version,
+            baseline_source=baseline_source,
+            field=field,
+            region=region,
+            reference_period=reference_period,
+            valid_time=candidate_time,
+        )
+        if path.is_file():
+            return True
+    return False
 
 
 def climatology_baseline_root(
@@ -235,14 +465,11 @@ def load_climatology_baseline(
                 f"Missing climatology baseline asset: {path}"
             )
 
-    expected_bbox, expected_grid_m = get_baseline_grid_params(
-        baseline_source=source_key,
-        region=region_key,
-    )
-    expected_transform, expected_height, expected_width = compute_transform_and_shape(
-        expected_bbox,
-        expected_grid_m,
-    )
+    grid = get_baseline_grid(baseline_source=source_key, region=region_key)
+    expected_crs = CRS.from_user_input(grid.crs)
+    expected_transform = grid.transform
+    expected_height = grid.height
+    expected_width = grid.width
 
     with rasterio.open(path) as ds:
         data = ds.read(1).astype(np.float32, copy=False)
@@ -253,8 +480,10 @@ def load_climatology_baseline(
 
     if crs is None:
         raise ValueError(f"Climatology baseline asset missing CRS: {path}")
-    if CRS.from_user_input(crs) != CRS.from_epsg(3857):
-        raise ValueError(f"Climatology baseline asset must use EPSG:3857: {path}")
+    if CRS.from_user_input(crs) != expected_crs:
+        raise ValueError(
+            f"Climatology baseline asset must use {grid.crs}: {path}"
+        )
     if height != expected_height or width != expected_width:
         raise ValueError(
             "Climatology baseline asset grid shape mismatch: "
@@ -281,7 +510,7 @@ def load_climatology_baseline(
         "baseline_requested_hour": requested_hour,
         "baseline_resolved_hour": int(resolved_valid_time.hour),
     }
-    return data, CRS.from_epsg(3857), transform, metadata
+    return data, expected_crs, transform, metadata
 
 
 def load_accumulation_climatology_baseline(
