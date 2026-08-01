@@ -34,8 +34,8 @@ import {
   SCRUB_LONG_TIMELINE_FRAMES_MOBILE,
 } from "@/lib/app-utils";
 import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridContourLayerConfig, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
-// [GLOBE SPIKE] dev-only, inert unless the page was loaded with ?globe=1.
-import { GLOBE_SPIKE_ENABLED } from "@/lib/globe-spike";
+import { isGlobeRenderingEnabled, setGlobeProjectionSupported, subscribeGlobeRendering } from "@/lib/globe-projection";
+import { applyGlobeCameraConstrain, isCursorOnGlobe } from "@/lib/globe-map";
 import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 import type { SampleTooltipState } from "@/lib/use-sample-tooltip";
 import { cn } from "@/lib/utils";
@@ -2675,12 +2675,71 @@ export function MapCanvas({
 
     map.touchZoomRotate.disableRotation();
 
-    // [GLOBE SPIKE] dev-only (?globe=1). See docs/GLOBE_SPIKE_2026-08-01.md.
+    // Globe projection. Phase G2 wires the VIEW-section "Globe view" toggle and
+    // the `proj=globe` permalink to the same setter the G1 boot flag
+    // (`?globe=1`) and `window.__cartoskyGlobe.setEnabled` already drove.
+    //
     // setProjection() throws "Style is not done loading" before the style
-    // settles, so it has to wait for `load` — see the on("load") handler below.
-    if (GLOBE_SPIKE_ENABLED) {
-      (window as unknown as Record<string, unknown>).__cartoskyGlobeSpikeMap = map;
+    // settles -- it killed the whole map-init effect during the spike -- so it
+    // can only be applied while the style is loaded. That makes the desired
+    // state and the applied state two different things, and the gap has to be
+    // CLOSED rather than dropped: a toggle during a basemap style reload would
+    // otherwise leave the map flat with the switch reading "on", with no event
+    // to put it right. So the desired state is tracked, and a sync runs on every
+    // opportunity (subscription, load, styledata, idle) until they agree.
+    //
+    // `appliedGlobe` starts false = mercator, which is MapLibre's own default,
+    // so with globe mode off syncProjection() never calls setProjection at all.
+    const globeDebugSurface = (window as unknown as Record<string, Record<string, unknown> | undefined>)
+      .__cartoskyGlobe;
+    if (globeDebugSurface && (SCREENSHOT_MODE || isGlobeRenderingEnabled())) {
+      globeDebugSurface.map = map;
     }
+
+    // Capability probe for the G2 toggle: both the projection switch and the
+    // camera-constrain override have to exist, because polar framing is not
+    // optional (audit item 10c). A miss hides the control entirely.
+    setGlobeProjectionSupported(
+      typeof map.setProjection === "function" &&
+      typeof (map as unknown as { setTransformConstrain?: unknown }).setTransformConstrain === "function",
+    );
+
+    let appliedGlobe = false;
+    const syncProjection = () => {
+      const desired = isGlobeRenderingEnabled();
+      if (desired === appliedGlobe || !map.isStyleLoaded()) {
+        return;
+      }
+      try {
+        map.setProjection({ type: desired ? "globe" : "mercator" });
+        appliedGlobe = desired;
+        // Polar framing (audit item 10c). Installed alongside the projection so
+        // the two can never disagree, and removed on the way back to flat so
+        // the flat map keeps MapLibre's own +-85.051 clamp with none of our
+        // code in the path.
+        applyGlobeCameraConstrain(map, desired);
+        if (!desired) {
+          // Removing the override does not re-constrain a camera that the
+          // globe left out of mercator bounds (a polar centre, a zoom below
+          // minZoom). Re-setting the map's existing minZoom runs MapLibre's
+          // constrain pass and is otherwise a no-op.
+          map.setMinZoom(map.getMinZoom());
+        }
+        // The projection e2e suites drive the camera through this handle and
+        // run a same-session globe/mercator A/B on ONE map instance. Published
+        // only in headless render mode or once the globe has actually been
+        // used, so a plain flat session still exposes no new global.
+        if (globeDebugSurface && desired) {
+          globeDebugSurface.map = map;
+        }
+      } catch (error) {
+        // Left un-applied on purpose: the next styledata/idle retries.
+        console.warn("[map] setProjection failed", error);
+      }
+    };
+    const unsubscribeGlobe = subscribeGlobeRendering(syncProjection);
+    map.on("styledata", syncProjection);
+    map.on("idle", syncProjection);
 
     const handleMapError = (event: { error?: unknown }) => {
       const err = event?.error;
@@ -2702,10 +2761,9 @@ export function MapCanvas({
 
     map.on("error", handleMapError as any);
     map.on("load", () => {
-      // [GLOBE SPIKE]
-      if (GLOBE_SPIKE_ENABLED) {
-        map.setProjection({ type: "globe" });
-      }
+      // Only touched when globe mode is on, so the mercator default is never
+      // re-declared and the flag-off path is byte-identical.
+      syncProjection();
       setIsLoaded(true);
       lastAppliedBasemapModeRef.current = basemapMode;
       applyRoadLayerStyle(map, variable, opacity, basemapMode);
@@ -2742,6 +2800,12 @@ export function MapCanvas({
     }
 
     return () => {
+      unsubscribeGlobe();
+      map.off("styledata", syncProjection);
+      map.off("idle", syncProjection);
+      if (globeDebugSurface?.map === map) {
+        globeDebugSurface.map = undefined;
+      }
       resizeObserver?.disconnect();
       if (resizeRafId !== null) {
         window.cancelAnimationFrame(resizeRafId);
@@ -3778,6 +3842,19 @@ export function MapCanvas({
     const handleMove = (e: maplibregl.MapMouseEvent) => {
       const { lng, lat } = e.lngLat;
       const { x, y } = e.point;
+      // Globe: outside the disc there is no location under the cursor. MapLibre
+      // still hands us one -- `unproject` clamps to the nearest horizon point --
+      // and the audit measured the tooltip rendering that horizon value out at
+      // 1.4 R over empty background, which is worse than a blank because it is
+      // indistinguishable from a real reading (audit item 4, finding 1).
+      //
+      // Suppressed BEFORE onMapHover, not just at render time, so no sample
+      // request is issued for a point that is not on the planet.
+      if (isGlobeRenderingEnabled() && !isCursorOnGlobe(map, x, y)) {
+        canvas.style.cursor = "";
+        onMapHoverEndRef.current?.();
+        return;
+      }
       // MapLibre reports canvas-local coordinates, while viewer overlays are
       // positioned in the surrounding chrome container. Include the map slot's
       // rail/mobile inset so the tooltip stays next to the actual cursor.
@@ -3826,6 +3903,14 @@ export function MapCanvas({
     };
 
     const handleClick = (e: maplibregl.MapMouseEvent) => {
+      // Same disc gate as the hover path, and for the same reason: outside the
+      // disc `e.lngLat` is MapLibre's clamped nearest-horizon point, so an
+      // armed sounding pick in the empty background would silently open a
+      // Skew-T at the limb instead of where the user clicked. One shared
+      // predicate, so the two paths cannot drift apart.
+      if (isGlobeRenderingEnabled() && !isCursorOnGlobe(map, e.point.x, e.point.y)) {
+        return;
+      }
       // Sounding pick mode wins outright while armed (design §6 entry): the
       // click is a location pick, not a hazard selection.
       if (soundingModeArmedRef.current && onSoundingClickRef.current) {

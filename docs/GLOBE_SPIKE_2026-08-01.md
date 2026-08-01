@@ -1,7 +1,45 @@
 # Globe spike — custom WebGL grid layer on MapLibre 5.24 native globe
 
-**Date:** 2026-08-01 · **Status:** spike complete, nothing committed, nothing shipped
+**Date:** 2026-08-01 · **Status:** spike complete
 **Recommendation:** **GO WITH CAVEATS** (see §7)
+
+> **SUPERSEDED BY PHASE G1 (renderer productionization).** The prototype
+> described in §2 and the files listed in §9 no longer exist:
+> `frontend/src/lib/globe-spike.ts` became `frontend/src/lib/globe-projection.ts`,
+> the `[GLOBE SPIKE]` markers in `grid-webgl.ts` / `map-canvas.tsx` dissolved
+> into the production implementation, and `frontend/tests/e2e/globe-spike.spec.ts`
+> + `globe-overlay-audit.spec.ts` were replaced by
+> `frontend/tests/e2e/render-golden-globe.spec.ts` and
+> `frontend/tests/unit/globe-mesh.test.ts`. `frontend/globe-spike-artifacts/`
+> is kept, gitignored, as the historical evidence for the measurements below.
+>
+> This document remains the EVIDENCE BASE — §1 (what MapLibre hands a custom
+> layer), §5 (the transition hard-code) and §6 (perf) are the reasoning behind
+> the shipped design and are still accurate. What changed in G1:
+> - **Poles** (§2.3): §2.3's own recommendation ("production should collapse the
+>   polar row to a single shared vertex + a real fan index list") turned out to be
+>   WRONG and was reverted during review. A vertex carries one texcoord, so a
+>   single apex collapses texture longitude across the whole polar band: measured
+>   141.75 deg of texture-vs-geometry longitude error inside the polar triangles,
+>   against 2.63 deg for the ring — visible as S-bent spokes at 64x32. G1 ships
+>   the spike's own per-column ring, with the two coincident-corner triangles
+>   simply not emitted (so the "degenerate triangle" hazard §2.3 worried about is
+>   gone by construction rather than by trusting the rasterizer to discard them).
+>   Polar latitude is clamped to exactly ±90 rather than the bbox's ±90.125.
+> - **Transition** (§5): production took option (b), the hard flip to the
+>   mercator quad + `fallbackMatrix` whenever `transitionState < 1`. The
+>   fallback branch in the globe vertex shader is therefore deleted, not
+>   implemented — the copied-MapLibre block is ~6 lines, not ~12.
+> - **Mesh density** (§2.3/§6): fixed at 64x32, not 128x64, and not sized from
+>   on-screen extent. Re-measured after productionization: 144 vs 48,384
+>   indices are within noise of each other, so density is not the cost driver.
+> - **Silent garbage** (§1.1 / caveat 2): now an explicit guard —
+>   `GridCoherenceStats.projectionMismatch`, which holds the draw rather than
+>   issuing a mismatched geometry/matrix pair. The matrix's space is derived from
+>   WHICH MATRIX OBJECT it is (reference identity against the arrays MapLibre's
+>   projection data was copied into), never from a label the choosing branch
+>   supplied — a first attempt used a label and was a tautology that let the
+>   documented bug through with the counter reading zero.
 
 Scope: prove that `GridWebglLayerController` (`frontend/src/lib/grid-webgl.ts`) can
 render on `map.setProjection({type:'globe'})`, and cost the production work. A

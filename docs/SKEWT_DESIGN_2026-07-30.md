@@ -169,6 +169,7 @@ time; per-fh requests would waterfall):
 | **3 — Viewer panel (v1 ship)** | Map-click entry, panel, SVG plot, scrubber, URL sync, dark styling | Prod gate: real-phone + desktop review vs TT reference |
 | **4 — Parcel & indices** | MetPy server-side: SB/ML parcel path, CAPE/CIN, LCL/LFC/EL markers, readout panel. **First prod MetPy dependency** — this phase adds `metpy` to backend/requirements.txt + installs into the prod API venv (Phases 1–3 never run MetPy on prod; Phase 3 background lines are generated offline and checked in) | Values match TT/SHARPpy same-data within tolerance (document chosen tolerance) — **requires decision #5 first**; see v2 prototype finding below |
 | **5 — Overlays** | Wet-bulb, hodograph (U/V already in stack), omega strip (VVEL already in stack per decision 2026-07-30), DGZ, θe inset | Per-overlay visual gates |
+| **6 — Multi-model (GFS + ECMWF)** | Designed 2026-08-01, NOT started — see §10 | Per-model parity + visual gates |
 
 Phases 1–2 are backend-only and shippable dark; Phase 3 is the first user-visible ship.
 
@@ -346,6 +347,15 @@ tests (nondeterministic missed clicks; not introduced by this work).
    diagnostic readout (stack format_version 2 adds CAPE:surface as a 6th surface plane;
    older v1 stacks simply lack the row), never as a reason to bend the parcel
    definition.**
+6. **Phase 6 multi-model scope — RESOLVED (Brian, 2026-08-01):** expand to GFS and
+   ECMWF at **0.5° stack resolution**, **full horizon** (GFS 384 h, ECMWF 360 h), and
+   **ship the ECMWF sounding despite its coarse (~10–13 level) ladder**. Details §10.
+7. **Td derivation amendment (Phase 6, 2026-08-01):** the §1 "never derive Td" rule
+   was written for HRRR, which publishes isobaric DPT. GFS/ECMWF do not, so derivation
+   is unavoidable there — but it MUST come from **specific humidity (q)** via vapor
+   pressure (ice/liquid-unambiguous), never from RH (the measured ~11 °C ice-saturation
+   trap that created the rule). Rule restated: *use native DPT when published; else
+   derive from q; RH-derivation remains forbidden.*
 
 ## 9. Spike verification record (2026-07-30)
 
@@ -362,3 +372,67 @@ tests (nondeterministic missed clicks; not introduced by this work).
 - Visual cross-checks: same-run/fh/point comparison against Tropical Tidbits (trace
   shapes and capping structure match; deltas explained by §2 surface anchoring and §6 Td
   policy) and layout comparison against Pivotal/SHARPpy.
+
+## 10. Phase 6 — multi-model expansion: GFS + ECMWF (designed 2026-08-01, NOT started)
+
+Decisions locked (§8 #6–#7): 0.5° stacks, full horizon (GFS 384 h / ECMWF 360 h), ship
+ECMWF despite its coarse ladder, Td-from-q where isobaric DPT is absent. No code exists
+yet; numbers below are derived estimates pending a Phase-6 inventory spike.
+
+### What the existing architecture already covers
+
+The stack format, sidecar-driven reader, endpoint, thermo pool, cache, and chart are
+model-agnostic: ladders, grid geometry, and projections ride in each sidecar (the
+EPSG:4326 short-circuit in the coordinate path is already tested), the flag accepts
+model lists, and the frontend tolerates absent omega/profiles. What is HRRR-specific
+today: the fetch spec + `SUPPORTED_MODELS` in `sounding.py`, and the client's hardcoded
+`SOUNDING_MODELS = ["hrrr"]`.
+
+### Per-model data plan
+
+| | GFS | ECMWF (open data) |
+|---|---|---|
+| Isobaric Td | NOT published → derive from SPFH (q) per §8 #7 | NOT published → derive from Q |
+| Ladder | ~37 levels 1000→100 expected — confirm via inventory | ~10–13 levels — coarse; ship anyway (decision #6) |
+| VVEL / omega strip | available → strip ships | not in open data → strip absent (client already tolerates) |
+| Surface block | PRES:sfc, 2m T/DPT, 10m U/V + CAPE:surface | 2t/2d/10u/10v/sp; native CAPE availability unconfirmed — diagnostic row only if present |
+| Grid → stack | 0.25° source decimated ×2 → 720×361 (0.5°, ~55 km pick) | same |
+| Fetch path | AWS BDP idx subsets (HRRR pattern) | ECMWF open-data index protocol — borrow the repo's existing ECMWF fetch machinery |
+
+### Sizing at the locked decisions (derived, pending inventory)
+
+| | per fh | per run | per day | retention steady state |
+|---|---|---|---|---|
+| GFS (~191 planes, 382 B/px) | ~99 MB | ~13.4 GB @ ~135 fhs | ~54 GB (4 runs) | **~94 GB @ 7 runs** |
+| ECMWF (~58 planes, 116 B/px) | ~30 MB | ~2.6 GB full / ~1.5 GB short | ~8 GB (2+2) | ~12 GB @ 6-run mix |
+
+GFS dominates and is the number to sanity-check against disk headroom at build time;
+the 1° fallback divides it by 4 if it ever matters. Download: GFS ~100–190 MB/fh ≈
+14–26 GB / 30–55 min per run at the measured 8 MB/s — which makes **threading the
+scheduler's synchronous sounding pass a prerequisite**, not a watch item, before GFS
+joins.
+
+### Work items (rough order)
+
+1. Thread the scheduler sounding pass (prerequisite; currently serial in the catch-up
+   loop, fine for HRRR's ~15 s/fh, not for a 65–135-frame global model).
+2. Generalize `sounding.py`: per-model spec table (products, fields, ladder, derivation
+   policy, decimation stride, surface set); expand `SUPPORTED_MODELS`.
+3. Td-from-q derivation in the stack builder (build-time, MetPy, per §8 #7) + parity
+   tests mirroring the HRRR native-DPT tests.
+4. ECMWF fetch adapter reusing the repo's existing ECMWF machinery.
+5. Endpoint: antimeridian/longitude-wrap handling for global grids in
+   `locate_grid_point` (coordinate with the Global 4326 Phase 3 antimeridian work).
+6. Response/pool scaling: ~135-frame GFS responses put the warm pooled thermo at
+   ~1.7 s (est) — likely raise workers on prod and/or measure before gating.
+7. Frontend: capabilities-driven sounding-model list (replace the hardcoded array);
+   coarse-ladder labeling for ECMWF indices; fh-cadence-aware scrubber labels.
+8. Per-model gates: inventory spike first (exact ladders, ECMWF CAPE, GFS published-fh
+   cadence), then the usual parity + visual gates per model.
+
+### Open questions for the Phase-6 inventory spike
+
+- Exact GFS/ECMWF isobaric ladders and CartoSky's published GFS fh cadence (the ~135
+  figure is inherited from the raster pipeline, unverified for soundings).
+- ECMWF open-data CAPE availability (diagnostic row) and index-subset ergonomics.
+- Prod thermo-pool sizing for 135-frame responses (measure, don't assume).

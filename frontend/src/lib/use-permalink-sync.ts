@@ -21,6 +21,8 @@ export interface UsePermalinkSyncParams {
   region: string | null;
   /** Data domain (Phase 2B); null = canonical, never serialized. */
   domain?: string | null;
+  /** Globe camera (Phase G2); false = the flat default, never serialized. */
+  globeProjection?: boolean;
   /** Open sounding pick (Phase 3); null = no panel, param omitted. */
   sounding?: { lat: number; lon: number } | null;
   /**
@@ -54,6 +56,7 @@ export function usePermalinkSync({
   resolvedForecastHourPermalink,
   region,
   domain,
+  globeProjection = false,
   sounding,
   suspended = false,
 }: UsePermalinkSyncParams): void {
@@ -121,6 +124,7 @@ export function usePermalinkSync({
             : undefined,
           region: region || undefined,
           domain: domain || undefined,
+          projection: globeProjection ? "globe" : undefined,
           sounding: sounding || undefined,
           lat: mapView.lat,
           lon: mapView.lon,
@@ -148,6 +152,7 @@ export function usePermalinkSync({
     resolvedForecastHourPermalink,
     region,
     domain,
+    globeProjection,
     // Primitive deps: an object identity here would re-fire the debounce on
     // every parent render.
     sounding?.lat,

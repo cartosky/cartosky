@@ -77,6 +77,14 @@ export type ViewerToolbarProps = {
   onOpacityChange: (next: number) => void;
   zoomControlsVisible: boolean;
   onZoomControlsVisibleChange: (next: boolean) => void;
+  /**
+   * Globe v1 (Phase G2). A CAMERA setting, which is why it sits in VIEW rather
+   * than SOURCE: it changes how the same data is drawn, never which data is
+   * fetched. Undefined = the platform can't switch projections, and the row is
+   * not rendered at all.
+   */
+  globeProjectionEnabled?: boolean;
+  onGlobeProjectionEnabledChange?: (next: boolean) => void;
   legendPopoverOpen: boolean;
   onLegendPopoverOpenChange: (next: boolean) => void;
   // Display panel open state

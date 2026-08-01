@@ -182,6 +182,7 @@ export function ViewerMobileSheet({ peekPx = MOBILE_PEEK_PX }: { peekPx?: number
     pointLabelsEnabled, onPointLabelsEnabledChange,
     nwsWarningsEnabled, onNwsWarningsEnabledChange,
     zoomControlsVisible, onZoomControlsVisibleChange,
+    globeProjectionEnabled, onGlobeProjectionEnabledChange,
     basemapMode, onBasemapModeChange, opacity, onOpacityChange,
     animationDelayMs, onSpeedChange,
   } = toolbar;
@@ -558,6 +559,18 @@ export function ViewerMobileSheet({ peekPx = MOBILE_PEEK_PX }: { peekPx?: number
               onToggle={() => onZoomControlsVisibleChange(!zoomControlsVisible)}
               variant="flat"
             />
+            {/* Globe v1 — same row as the desktop rail's VIEW section, and
+                only when the runtime projection setter exists. */}
+            {onGlobeProjectionEnabledChange ? (
+              <div data-testid="mobile-toggle-globe-view" data-tour-target="globe-toggle">
+                <DisplayRow
+                  label="Globe view"
+                  checked={Boolean(globeProjectionEnabled)}
+                  onToggle={() => onGlobeProjectionEnabledChange(!globeProjectionEnabled)}
+                  variant="flat"
+                />
+              </div>
+            ) : null}
             <DisplayRow
               label="Legend chip"
               checked={toolbar.legendVisible}

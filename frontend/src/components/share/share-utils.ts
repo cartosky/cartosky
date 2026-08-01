@@ -340,18 +340,57 @@ export function screenshotFilename(state: ScreenshotExportState): string {
   return `cartosky-${parts.join("-")}.png`;
 }
 
+/**
+ * Web Mercator latitude limit — the flat map's own centre clamp — truncated to
+ * the 5 decimals this builder serializes at. The exact 85.05112877980659 would
+ * round UP to "85.05113" on the way out, i.e. emit a latitude fractionally
+ * outside the range being clamped to.
+ */
+const FLAT_MAX_CENTER_LATITUDE = 85.05112;
+/** Flat-legal zoom range. Region presets are all minZoom >= 0. */
+const FLAT_MIN_ZOOM = 0;
+const FLAT_MAX_ZOOM = 24;
+
+/**
+ * URL the server-side screenshot service renders.
+ *
+ * THE SERVER RENDER IS ALWAYS FLAT (globe audit item 8d — an explicit v1
+ * decision, not an oversight), so this normalizes the camera into what a flat
+ * map can actually express. It is not enough to avoid ADDING a projection
+ * param: `permalink` is the viewer's own permalink, which carries `proj=globe`
+ * whenever the sharer is on the globe, so the param has to be REMOVED here or
+ * the headless render silently comes back spherical.
+ *
+ * The camera clamps exist for the same reason. A globe camera's zoom is
+ * latitude-adjusted and legitimately negative (whole disc -0.09, framed pole
+ * -6.84), and its centre latitude can reach +-89.9; neither is a camera the
+ * flat map can hold. Clamping degrades a globe camera to its nearest flat one
+ * rather than handing the renderer a value it will silently constrain to
+ * something else. Both clamps are IDENTITY for a flat camera — the transform's
+ * own constrain already keeps flat within these bounds — so an existing share
+ * link is byte-identical.
+ *
+ * NOTE on the reported HTTP 400: it is not these params. `/api/v4/share/
+ * screenshot` (backend/app/main.py:1567) validates only two things, an empty
+ * `url` and a hostname outside `_share_screenshot_allowed_hosts()`; there is no
+ * zoom or latitude validation anywhere in the endpoint or in
+ * screenshot_service.py. See the report accompanying this change.
+ */
 export function screenshotUrlForState(permalink: string, state: ScreenshotExportState): string {
   const base = typeof window !== "undefined" ? window.location.origin : "https://cartosky.com";
   const url = new URL(permalink, base);
+  url.searchParams.delete("proj");
   const [lng, lat] = state.center;
   if (Number.isFinite(lat)) {
-    url.searchParams.set("lat", Number(lat).toFixed(5));
+    const flatLat = Math.max(-FLAT_MAX_CENTER_LATITUDE, Math.min(FLAT_MAX_CENTER_LATITUDE, Number(lat)));
+    url.searchParams.set("lat", flatLat.toFixed(5));
   }
   if (Number.isFinite(lng)) {
     url.searchParams.set("lon", Number(lng).toFixed(5));
   }
   if (Number.isFinite(state.zoom)) {
-    url.searchParams.set("z", Number(state.zoom).toFixed(2));
+    const flatZoom = Math.max(FLAT_MIN_ZOOM, Math.min(FLAT_MAX_ZOOM, Number(state.zoom)));
+    url.searchParams.set("z", flatZoom.toFixed(2));
   }
   if (Number.isFinite(state.fh)) {
     url.searchParams.set("fh", String(Math.round(Number(state.fh))));

@@ -2,6 +2,9 @@ import type maplibregl from "maplibre-gl";
 import type { LayerSpecification } from "maplibre-gl";
 import type { GeoJSON } from "geojson";
 
+import { isLngLatVisibleOnGlobe } from "@/lib/globe-map";
+import { isGlobeRenderingEnabled } from "@/lib/globe-projection";
+
 // Optional-chained so this module can load outside Vite (Playwright imports it
 // into plain Node, where import.meta.env is undefined).
 export const CITIES_GEOJSON_URL = import.meta.env?.DEV
@@ -152,8 +155,68 @@ export function moveCityLabelLayersToTop(map: maplibregl.Map): void {
   }
 }
 
+/**
+ * Names on the hemisphere facing the camera, for the name-only layer's filter.
+ *
+ * The rank pre-filter mirrors `queryVisibleCityPoints` so the two paths cull
+ * the same candidate set; the LAYER's own zoom/rank expression still runs on
+ * top, so this only ever removes far-side cities and never widens the set.
+ */
+function nearHemisphereCityNames(map: maplibregl.Map): string[] {
+  if (!citiesStaticData) return [];
+  const maxRank = cityCandidateMaxRankForZoom(map.getZoom());
+  if (maxRank === 0) return [];
+  const names: string[] = [];
+  for (const feature of citiesStaticData.features) {
+    const rank = feature.properties?.rank as number;
+    if (!rank || rank > maxRank) continue;
+    const geometry = feature.geometry;
+    if (geometry?.type !== "Point") continue;
+    const [lng, lat] = geometry.coordinates;
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+    if (!isLngLatVisibleOnGlobe(map, lng, lat)) continue;
+    const name = String(feature.properties?.name ?? "").trim();
+    if (name) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Keep the name-only layer off the far side of the globe.
+ *
+ * The value-label path is culled inside `queryVisibleCityPoints`, but the
+ * name-only path does NOT go through it: `city-label-candidates` draws straight
+ * off the static source under a zoom/rank expression, so in name-only mode
+ * every rank-passing city on the whole planet renders, back side included.
+ * Re-applied on every refresh, which already runs on move/zoom.
+ *
+ * Inert when flat, and inert while the layer is invisible: the restore is only
+ * issued if a cull was actually installed, so on a flat session the layer's
+ * filter is the exact expression object `initCityLayers` installed and
+ * `setFilter` is never called at all.
+ */
+let cityCandidateCullActive = false;
+
+function applyCityCandidateGlobeCull(map: maplibregl.Map, nameOnly: boolean): void {
+  const shouldCull = nameOnly && isGlobeRenderingEnabled();
+  if (!shouldCull) {
+    if (cityCandidateCullActive) {
+      map.setFilter(CITY_LABEL_CANDIDATES_LAYER_ID, CITY_CANDIDATE_ZOOM_FILTER as never);
+      cityCandidateCullActive = false;
+    }
+    return;
+  }
+  map.setFilter(CITY_LABEL_CANDIDATES_LAYER_ID, [
+    "all",
+    CITY_CANDIDATE_ZOOM_FILTER,
+    ["in", ["get", "name"], ["literal", nearHemisphereCityNames(map)]],
+  ] as never);
+  cityCandidateCullActive = true;
+}
+
 export function setCityLabelNameOnlyMode(map: maplibregl.Map, nameOnly: boolean): void {
   if (!map.getLayer(CITY_LABEL_CANDIDATES_LAYER_ID)) return;
+  applyCityCandidateGlobeCull(map, nameOnly);
   // Show the candidate layer as visible name labels when no values are shown
   map.setPaintProperty(
     CITY_LABEL_CANDIDATES_LAYER_ID,
@@ -380,6 +443,15 @@ export function queryVisibleCityPoints(map: maplibregl.Map): CityLabelPoint[] {
 
   const bounds = map.getBounds();
   const zoom = map.getZoom();
+  // Globe: the near-hemisphere cull below replaces `bounds.contains()`, which is
+  // a flat-viewport assumption (a globe's getBounds() is the bounding box of a
+  // curved cap and admits points behind the planet). Both city symbol layers set
+  // `text-allow-overlap` AND `text-ignore-placement`, so MapLibre does no
+  // placement of its own and will not cull far-side labels for us -- today they
+  // stay hidden only because the rank ladder yields zero labels at z<=3 and the
+  // disc exceeds the canvas by z4. That is a coincidence of two thresholds, not
+  // a guarantee (audit risk 1), so the guard is explicit.
+  const globeActive = isGlobeRenderingEnabled();
 
   // Match the same zoom/rank thresholds as CITY_CANDIDATE_ZOOM_FILTER.
   const maxRank = cityCandidateMaxRankForZoom(zoom);
@@ -395,7 +467,11 @@ export function queryVisibleCityPoints(map: maplibregl.Map): CityLabelPoint[] {
     if (geometry?.type !== "Point") continue;
     const [lng, lat] = geometry.coordinates;
     if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
-    if (!bounds.contains([lng, lat])) continue;
+    if (globeActive) {
+      if (!isLngLatVisibleOnGlobe(map, lng, lat)) continue;
+    } else if (!bounds.contains([lng, lat])) {
+      continue;
+    }
 
     const name = String(feature.properties?.name ?? "").trim();
     if (!name) continue;
@@ -412,6 +488,20 @@ export function queryVisibleCityPoints(map: maplibregl.Map): CityLabelPoint[] {
     const projected = map.project([point.lng, point.lat]);
     if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y)) {
       continue;
+    }
+    // Globe only: the hemisphere cull above admits everything the camera faces,
+    // which above ~z3.5 is far more than fits on the canvas. Without this the
+    // off-screen half of the near hemisphere would eat the per-zoom label
+    // budget. Flat keeps `bounds.contains()` as its sole cull, unchanged.
+    if (globeActive) {
+      const canvas = map.getCanvas();
+      const margin = 64;
+      if (
+        projected.x < -margin || projected.y < -margin ||
+        projected.x > canvas.clientWidth + margin || projected.y > canvas.clientHeight + margin
+      ) {
+        continue;
+      }
     }
     const rect = estimateCityLabelRect(projected, point.name);
     if (occupiedRects.some((occupied) => intersectsRect(rect, occupied))) {

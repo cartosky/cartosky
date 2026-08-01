@@ -236,6 +236,12 @@ export function soundingPayload(lat: number, lon: number) {
 
 const FRAME_BINARY = new Uint16Array([1320, 1405, 65535, 877]);
 
+/** 1x1 fully transparent PNG, used to serve a deterministic empty basemap. */
+const TRANSPARENT_PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=',
+  'base64',
+);
+
 function modelCatalogEntry(modelId: string, name: string) {
   return {
         model_id: modelId,
@@ -439,6 +445,17 @@ export async function stubSoundingRoutes(
   });
   await page.route('**/tiles/v3/**/*.png**', async (route) => {
     await route.fulfill({ status: 404, body: '' });
+  });
+  // Same pin the golden-baseline fixtures carry: the viewer's basemap is Carto
+  // raster PNG fetched from a live third-party CDN. Left unstubbed, MapLibre's
+  // `load` event — which gates the map click-handler binding — waits on real
+  // network tiles, and under worker contention that intermittently exceeded
+  // every test wait (the "click produced no sounding POST" flake). A valid
+  // transparent tile lets the raster source settle deterministically; a 404
+  // would leave the source unsettled forever (see render-golden-baseline
+  // fixtures for the measurement behind this).
+  await page.route('https://*.basemaps.cartocdn.com/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'image/png', body: TRANSPARENT_PNG_1X1 });
   });
 
   await page.route('**/api/v4/capabilities', async (route) => {

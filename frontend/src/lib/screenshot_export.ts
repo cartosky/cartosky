@@ -1,5 +1,9 @@
+import type maplibregl from "maplibre-gl";
+
 import type { LegendPayload } from "@/components/map-legend";
 import { BRAND_LOGO_SRC } from "@/lib/branding";
+import { readGlobeDisc } from "@/lib/globe-map";
+import { isGlobeRenderingEnabled, type GlobeDisc } from "@/lib/globe-projection";
 import type { TimeAxisMode } from "@/lib/time-axis";
 import { formatObservedCompactTime, formatObservedValidTime, validAxisLabel } from "@/lib/time-axis";
 
@@ -400,6 +404,33 @@ function drawMapImageCover(
   }
 
   ctx.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, width, height);
+}
+
+/**
+ * Draw a source rect into the largest centred square that fits the frame
+ * (contain, so the crop is never distorted). Used only by the globe path; the
+ * bars it leaves are already covered by the `drawMapImageCover` background
+ * pass, which on a globe frame is the same empty-space colour the disc sits on.
+ */
+function drawMapImageSquareContain(
+  ctx: CanvasRenderingContext2D,
+  image: CanvasImageSource,
+  crop: { sx: number; sy: number; sWidth: number; sHeight: number },
+  width: number,
+  height: number,
+): void {
+  const side = Math.min(width, height);
+  ctx.drawImage(
+    image,
+    crop.sx,
+    crop.sy,
+    crop.sWidth,
+    crop.sHeight,
+    (width - side) / 2,
+    (height - side) / 2,
+    side,
+    side,
+  );
 }
 
 function drawOverlay(
@@ -1084,7 +1115,164 @@ export type ShareFrameComposeOptions = {
   /** Soft card shadows quantize into dark banding in GIF output — pass false
    * to render flat chrome (default true, matching the stills). */
   chromeShadows?: boolean;
+  /**
+   * Globe silhouette in the CAPTURED MAP IMAGE's own coordinate space (audit
+   * item 8c). When present the map is cropped to a centred square around the
+   * disc so the planet fills the frame instead of floating as a small disc in
+   * a landscape rectangle. Null/absent (the flat map, or a camera whose disc
+   * can't be derived) composes exactly as before.
+   */
+  globeDisc?: GlobeDisc | null;
+  /**
+   * Opaque colour to flatten the frame onto before read-back. Set by the GIF
+   * path only — GIF carries no alpha, so a frame with transparent or
+   * partially-transparent pixels (every globe frame) has to be composited
+   * against something before it is quantized. Absent = today's behaviour, which
+   * keeps the PNG stills' alpha intact.
+   */
+  backdropColor?: string | null;
 };
+
+/**
+ * How much wider than the disc the square crop is, so the limb doesn't graze
+ * the frame edge. 1.08 ≈ 4% of the radius of air on every side.
+ */
+export const DISC_FRAME_PADDING = 1.08;
+
+/**
+ * The centred square of the captured map image that frames the globe disc, or
+ * null when there is nothing to crop (no/invalid disc, or a disc already at
+ * least as large as the frame's short side).
+ *
+ * Pure so the geometry is testable without a canvas. Coordinates are in the
+ * SOURCE IMAGE's pixel space — see `shareGlobeDiscForImage`, which rescales the
+ * map-canvas disc into it.
+ */
+export function globeShareCropRect(
+  disc: GlobeDisc | null | undefined,
+  sourceWidth: number,
+  sourceHeight: number,
+): { sx: number; sy: number; sWidth: number; sHeight: number } | null {
+  if (!disc) {
+    return null;
+  }
+  const { centerX, centerY, radiusPx } = disc;
+  if (
+    !Number.isFinite(centerX) || !Number.isFinite(centerY) || !Number.isFinite(radiusPx)
+    || !Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight)
+    || radiusPx <= 0 || sourceWidth <= 0 || sourceHeight <= 0
+  ) {
+    return null;
+  }
+  const maxSide = Math.min(sourceWidth, sourceHeight);
+  const side = 2 * radiusPx * DISC_FRAME_PADDING;
+  if (side >= maxSide) {
+    // The disc already fills (or overflows) the frame — today's composition is
+    // already disc-filling, so leave it alone.
+    return null;
+  }
+  return {
+    sx: Math.max(0, Math.min(sourceWidth - side, centerX - side / 2)),
+    sy: Math.max(0, Math.min(sourceHeight - side, centerY - side / 2)),
+    sWidth: side,
+    sHeight: side,
+  };
+}
+
+/**
+ * The live map's globe disc, expressed in the captured image's pixel space, or
+ * null whenever the globe isn't the active projection / no map handle is
+ * reachable / the capture isn't a plain uniform downscale.
+ *
+ * The handle is `window.__cartoskyGlobe.map`, the debug seam map-canvas.tsx
+ * publishes whenever globe mode is on (and in headless render mode). Both share
+ * exporters are plain library functions with no React context, and threading a
+ * map ref through ShareModal → useGifExport just for a crop rect would be a
+ * much larger change than the crop itself.
+ */
+/**
+ * The colour the user actually sees behind the map canvas.
+ *
+ * NOT sampled from the frame and NOT a literal. The map canvas is transparent
+ * outside the disc, so its own pixels say nothing about what shows through, and
+ * a hardcoded value would drift the moment the basemap or app chrome changes.
+ * The truthful source is the DOM: the first ancestor of the canvas with a
+ * non-transparent computed `background-color` is, by construction, exactly what
+ * the browser composites the transparent region against on screen.
+ *
+ * Returns null when nothing opaque is found (an unstyled test harness, SSR), in
+ * which case the caller leaves composition alone rather than inventing a colour.
+ */
+export function resolveShareBackdropColor(node: Element | null | undefined): string | null {
+  if (typeof window === "undefined" || !node) {
+    return null;
+  }
+  let current: Element | null = node;
+  while (current) {
+    let color = "";
+    try {
+      color = window.getComputedStyle(current).backgroundColor || "";
+    } catch {
+      return null;
+    }
+    // Anything with a non-zero alpha wins. `rgba(r, g, b, 0)` and
+    // `transparent` are what the walk is stepping past.
+    const match = /^rgba?\(([^)]+)\)$/.exec(color.trim());
+    if (match) {
+      const parts = match[1].split(",").map((part) => Number(part.trim()));
+      const alpha = parts.length > 3 ? parts[3] : 1;
+      if (Number.isFinite(alpha) && alpha > 0 && parts.length >= 3) {
+        // Flattened to fully opaque: it is standing in for the whole stack
+        // below it, and the frame it fills must end up with no alpha at all.
+        return `rgb(${parts[0]}, ${parts[1]}, ${parts[2]})`;
+      }
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+export function shareGlobeDiscForImage(
+  sourceWidth: number,
+  sourceHeight: number,
+): GlobeDisc | null {
+  if (typeof window === "undefined" || !isGlobeRenderingEnabled()) {
+    return null;
+  }
+  const surface = (window as unknown as Record<string, { map?: unknown } | undefined>)
+    .__cartoskyGlobe;
+  const map = surface?.map;
+  if (!map || typeof map !== "object") {
+    return null;
+  }
+  const disc = readGlobeDisc(map as maplibregl.Map);
+  if (!disc) {
+    return null;
+  }
+  // The capture is a uniform downscale of the map canvas, so the disc scales by
+  // the width ratio and stays centred. `disc.centerX * 2` is the transform width
+  // by construction (globeDiscGeometry centres the disc); clientWidth is the
+  // same number read off the DOM, and is preferred so a future off-centre camera
+  // doesn't silently corrupt the scale.
+  let mapWidth = 0;
+  try {
+    mapWidth = (map as maplibregl.Map).getCanvas()?.clientWidth ?? 0;
+  } catch {
+    mapWidth = 0;
+  }
+  if (!Number.isFinite(mapWidth) || mapWidth <= 0) {
+    mapWidth = disc.centerX * 2;
+  }
+  if (!Number.isFinite(mapWidth) || mapWidth <= 0 || !Number.isFinite(sourceWidth) || sourceWidth <= 0) {
+    return null;
+  }
+  const scale = sourceWidth / mapWidth;
+  return {
+    centerX: sourceWidth / 2,
+    centerY: sourceHeight / 2,
+    radiusPx: disc.radiusPx * scale,
+  };
+}
 
 /**
  * Draw one composed share frame (map cover + overlay card + logo + legend)
@@ -1125,7 +1313,40 @@ export async function composeShareFrame(
   outputCtx.scale(pixelRatio, pixelRatio);
   chromeShadowsEnabled = opts.chromeShadows ?? true;
   try {
+    // OPAQUE BACKDROP, before anything else.
+    //
+    // Only the GIF path passes this, and it is the fix for the white pixelated
+    // ring at the limb. On the globe the map canvas is transparent everywhere
+    // outside the disc and the limb is an alpha edge; scaling that edge makes
+    // the browser interpolate in PREMULTIPLIED space, and `getImageData`
+    // un-premultiplies on the way out, so a low-alpha pixel's RGB is divided by
+    // a small number and overshoots. Measured on a 720x583 globe frame: 6,225
+    // partial-alpha pixels, 746 of them near-white (>200 on all channels) over
+    // dark map content. A PNG hides them behind the alpha they came with; GIF
+    // has no alpha, and gifenc at its default `format: "rgb565"` ignores the
+    // alpha channel outright (it reads only R/G/B), so those become a bright
+    // speckled ring.
+    //
+    // Filling first makes every pixel fully opaque before read-back, so the
+    // limb blends map -> backdrop honestly and there is nothing to
+    // un-premultiply. IDENTITY on the flat map: the map image is opaque
+    // everywhere and drawMapImageCover covers the whole frame, so the fill is
+    // painted over completely — pinned by the GIF goldens staying bit-identical.
+    if (opts.backdropColor) {
+      outputCtx.fillStyle = opts.backdropColor;
+      outputCtx.fillRect(0, 0, width, height);
+    }
+    // Background pass, and the whole map pass when there is no disc to frame.
     drawMapImageCover(outputCtx, mapImage, width, height);
+    if (opts.globeDisc) {
+      const sourceDimensions = imageSourceDimensions(mapImage);
+      const crop = sourceDimensions
+        ? globeShareCropRect(opts.globeDisc, sourceDimensions.width, sourceDimensions.height)
+        : null;
+      if (crop) {
+        drawMapImageSquareContain(outputCtx, mapImage, crop, width, height);
+      }
+    }
     drawOverlay(outputCtx, opts.overlayLines, width, scaleFactor);
 
     try {
@@ -1196,6 +1417,7 @@ export async function exportViewerScreenshotPng(
   }
   const liveMapImage = await loadImage(state.capturedMapDataUrl);
   const outputCanvas = document.createElement("canvas");
+  const captureSize = imageSourceDimensions(liveMapImage);
   await composeShareFrame(outputCanvas, liveMapImage, {
     width,
     height,
@@ -1203,6 +1425,9 @@ export async function exportViewerScreenshotPng(
     legend: opts.legend,
     overlayLines,
     isMobile: state.isMobile,
+    globeDisc: captureSize
+      ? shareGlobeDiscForImage(captureSize.width, captureSize.height)
+      : null,
   });
   return canvasToPngBlob(outputCanvas);
 }

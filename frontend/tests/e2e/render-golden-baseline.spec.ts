@@ -97,268 +97,30 @@
  * are allowlisted in the root .gitignore only so the paths are visible, and the
  * task explicitly ends without a commit.
  */
-import fs from 'node:fs';
-import path from 'node:path';
-
-import { test, expect, type Locator, type Page } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 import {
   GOLDEN_CASE_IDS,
   GOLDEN_VIEWPORT,
   GFS_FRAME_HOURS,
   GLOBAL_SEAM_ZOOM_COLUMN_PX,
-  stubGoldenBaselineRoutes,
-  viewerUrlForCase,
   type GoldenCaseId,
 } from './render-golden-baseline.fixtures';
-
-/** Per-pixel channel tolerance for in-page diffs (5/255 ≈ 0.02). */
-const CHANNEL_TOLERANCE = 5;
-/** Fraction of pixels allowed to exceed CHANNEL_TOLERANCE. */
-const MAX_DIFF_PIXEL_RATIO = 0.0005;
-
-// ESM spec module: derive the spec's own directory from import.meta.url rather
-// than __dirname (absent under Playwright's ESM loader here).
-const SPEC_DIR = path.dirname(new URL(import.meta.url).pathname);
-const SNAPSHOT_DIR = path.join(SPEC_DIR, 'render-golden-baseline.spec.ts-snapshots');
-const TIMING_ARTIFACT = path.join(SPEC_DIR, 'render-golden-baseline.timing.json');
+import {
+  MAX_DIFF_PIXEL_RATIO,
+  captureLiveCanvas,
+  diffPngs,
+  expectMatchesGolden,
+  hideChromeOverCanvas,
+  mapCanvas,
+  measureRenderTimings,
+  openCase,
+  writeTimingArtifact,
+  type TimingEntry,
+} from './render-golden-harness';
 
 /** Measured render() samples per still case; written out by the last test. */
-const timingByCase: Record<string, { samples: number[]; median: number; p95: number }> = {};
-
-type DiffReport = {
-  width: number;
-  height: number;
-  totalPixels: number;
-  diffPixels: number;
-  diffRatio: number;
-  maxChannelDelta: number;
-};
-
-/**
- * Decode two PNG sources (data: or blob: URLs) in the page and count pixels
- * whose max channel delta exceeds `tolerance`. Runs in-page so the real
- * chromium PNG decoder is used for both sides — the same decode path the app
- * itself would take, and no Node image dependency.
- */
-async function diffPngs(
-  page: Page,
-  actualSource: string,
-  expectedSource: string,
-  tolerance = CHANNEL_TOLERANCE,
-): Promise<DiffReport> {
-  return page.evaluate(
-    async (args) => {
-      const toImageData = async (source: string) => {
-        const response = await fetch(source);
-        const bitmap = await createImageBitmap(await response.blob());
-        const canvas = document.createElement('canvas');
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-        ctx.drawImage(bitmap, 0, 0);
-        bitmap.close();
-        return ctx.getImageData(0, 0, canvas.width, canvas.height);
-      };
-      const actual = await toImageData(args.actualSource);
-      const expected = await toImageData(args.expectedSource);
-      if (actual.width !== expected.width || actual.height !== expected.height) {
-        return {
-          width: actual.width,
-          height: actual.height,
-          totalPixels: actual.width * actual.height,
-          diffPixels: Number.MAX_SAFE_INTEGER,
-          diffRatio: 1,
-          maxChannelDelta: 255,
-        };
-      }
-      let diffPixels = 0;
-      let maxChannelDelta = 0;
-      const a = actual.data;
-      const b = expected.data;
-      for (let offset = 0; offset < a.length; offset += 4) {
-        const d = Math.max(
-          Math.abs(a[offset] - b[offset]),
-          Math.abs(a[offset + 1] - b[offset + 1]),
-          Math.abs(a[offset + 2] - b[offset + 2]),
-          Math.abs(a[offset + 3] - b[offset + 3]),
-        );
-        if (d > maxChannelDelta) maxChannelDelta = d;
-        if (d > args.tolerance) diffPixels += 1;
-      }
-      const totalPixels = actual.width * actual.height;
-      return {
-        width: actual.width,
-        height: actual.height,
-        totalPixels,
-        diffPixels,
-        diffRatio: totalPixels === 0 ? 1 : diffPixels / totalPixels,
-        maxChannelDelta,
-      };
-    },
-    { actualSource, expectedSource, tolerance },
-  );
-}
-
-/** Read a stored golden PNG back as a data URL usable inside the page. */
-function goldenAsDataUrl(name: string): string | null {
-  const file = path.join(SNAPSHOT_DIR, name);
-  if (!fs.existsSync(file)) {
-    return null;
-  }
-  return `data:image/png;base64,${fs.readFileSync(file).toString('base64')}`;
-}
-
-function writeGolden(name: string, dataUrl: string) {
-  fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
-  const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
-  fs.writeFileSync(path.join(SNAPSHOT_DIR, name), Buffer.from(base64, 'base64'));
-}
-
-/**
- * Compare a PNG data URL against a stored golden, writing the golden on first
- * run (same "first run creates, later runs verify" contract as
- * toHaveScreenshot). Returns the diff report, or null when the golden was just
- * created.
- */
-async function expectMatchesGolden(
-  page: Page,
-  name: string,
-  dataUrl: string,
-): Promise<DiffReport | null> {
-  const expected = goldenAsDataUrl(name);
-  if (!expected) {
-    writeGolden(name, dataUrl);
-    // eslint-disable-next-line no-console
-    console.log(`[golden-write] ${name}`);
-    return null;
-  }
-  const report = await diffPngs(page, dataUrl, expected);
-  // eslint-disable-next-line no-console
-  console.log(
-    `[golden-diff] ${name} ${report.width}x${report.height} ` +
-      `diffPixels=${report.diffPixels}/${report.totalPixels} ` +
-      `ratio=${report.diffRatio.toExponential(2)} maxChannelDelta=${report.maxChannelDelta}`,
-  );
-  if (report.diffRatio > MAX_DIFF_PIXEL_RATIO) {
-    // Persist + attach the actual so a failure is diagnosable the same way a
-    // toHaveScreenshot failure is.
-    const actualPath = test.info().outputPath(name.replace(/\.png$/, '-actual.png'));
-    fs.writeFileSync(
-      actualPath,
-      Buffer.from(dataUrl.replace(/^data:image\/png;base64,/, ''), 'base64'),
-    );
-    await test.info().attach(name, { path: actualPath, contentType: 'image/png' });
-  }
-  expect(
-    report.diffPixels,
-    `${name}: dimensions must match the golden exactly`,
-  ).toBeLessThan(Number.MAX_SAFE_INTEGER);
-  expect(report.diffRatio, `${name}: differing-pixel ratio`).toBeLessThanOrEqual(
-    MAX_DIFF_PIXEL_RATIO,
-  );
-  return report;
-}
-
-/** The MapLibre drawing surface — map content only, no viewer chrome. */
-function mapCanvas(page: Page): Locator {
-  return page
-    .locator('div[role="img"][aria-label="Weather map"] canvas.maplibregl-canvas')
-    .first();
-}
-
-/**
- * The MapLibre canvas fills the map pane, and the viewer's chrome (top bar,
- * rail, timeline, legend chip, build pill) is DOM painted OVER that same box —
- * so a plain element screenshot of the canvas still composites the chrome into
- * the image and would let a chrome change fail the map-content gate.
- *
- * `visibility` is inherited and a more specific !important rule wins, so
- * hiding everything and re-showing only the canvas leaves exactly the WebGL
- * surface painted, with no layout change (visibility never reflows, so the map
- * is not resized and the render is untouched). Applied only immediately before
- * the server-side screenshot.
- */
-async function hideChromeOverCanvas(page: Page) {
-  await page.addStyleTag({
-    content: `
-      *, *::before, *::after { visibility: hidden !important; }
-      canvas.maplibregl-canvas { visibility: visible !important; }
-    `,
-  });
-}
-
-async function captureLiveCanvas(page: Page): Promise<string> {
-  const dataUrl = await page.evaluate(async () => {
-    const w = window as typeof window & {
-      __cartoskyViewerCapture?: () => Promise<string | null>;
-    };
-    return (await w.__cartoskyViewerCapture?.()) ?? null;
-  });
-  expect(dataUrl, 'window.__cartoskyViewerCapture returned a PNG').toBeTruthy();
-  return dataUrl!;
-}
-
-/**
- * Full readiness before any golden is taken.
- *
- * The gate is the app's OWN composite readiness signal, html[data-viewer-ready]
- * (App.tsx maybeSignalViewerReady — the same latch the headless screenshot
- * service waits on). It requires all three of grid_frame_ready, map_idle AND
- * city_labels_ready.
- *
- * Waiting on grid_frame_ready alone — as the colormap spec does, because it only
- * samples individual cells — is NOT enough here and was measured to be the one
- * real determinism failure in this suite: the MapLibre city-label layer resolves
- * label collisions in glyph-arrival order, so capturing before
- * city_labels_ready lands in a *stable but run-dependent* label layout. That
- * showed up as an intermittent 55,056/649,600 (8.5%) cross-run diff with
- * maxChannelDelta 202 — dark label chips over the warm ramp. Note the two-
- * capture idle gate below could not catch it: both captures agreed, the settled
- * state itself differed between runs.
- *
- * After the app's latch: the initial scrim gone, the capture hook installed, and
- * two consecutive live captures agreeing within tolerance.
- */
-async function waitForGoldenReady(page: Page, id: GoldenCaseId) {
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() => document.documentElement.getAttribute('data-viewer-ready')),
-      { timeout: 60_000, message: `${id}: html[data-viewer-ready] (grid + idle + city labels)` },
-    )
-    .toBe('1');
-  await expect(page.getByTestId('viewer-initial-map-scrim')).toBeHidden({ timeout: 20_000 });
-  await expect(mapCanvas(page)).toBeVisible();
-  await expect
-    .poll(
-      () =>
-        page.evaluate(
-          () => typeof (window as typeof window & { __cartoskyViewerCapture?: unknown }).__cartoskyViewerCapture,
-        ),
-      { timeout: 20_000, message: `${id}: capture hook installed` },
-    )
-    .toBe('function');
-
-  // Idle gate: repaint until two back-to-back captures agree within tolerance.
-  await expect
-    .poll(
-      async () => {
-        const first = await captureLiveCanvas(page);
-        const second = await captureLiveCanvas(page);
-        const report = await diffPngs(page, second, first);
-        return report.diffRatio;
-      },
-      { timeout: 30_000, intervals: [500], message: `${id}: map idle` },
-    )
-    .toBeLessThanOrEqual(MAX_DIFF_PIXEL_RATIO);
-}
-
-async function openCase(page: Page, id: GoldenCaseId, sampleRequests?: string[]) {
-  await stubGoldenBaselineRoutes(page, id, undefined, sampleRequests);
-  await page.goto(viewerUrlForCase(id));
-  await waitForGoldenReady(page, id);
-}
+const timingByCase: Record<string, TimingEntry> = {};
 
 type SeamReport = {
   width: number;
@@ -532,62 +294,6 @@ async function probeSeam(
     },
     { source },
   );
-}
-
-/**
- * Timing method (stated per the task): each sample wraps ONE full repaint
- * cycle driven through the app's own GIF frame driver —
- *   performance.now() -> map.triggerRepaint() -> map.once("render") ->
- *   drawImage(canvas) -> performance.now()
- * (src/components/map-canvas.tsx captureCanvasSnapshot). That is the smallest
- * render-completion signal the app exposes without touching src/, so it is an
- * UPPER BOUND on the grid-webgl render pass: it also includes the
- * requestAnimationFrame scheduling latency and one full-size canvas copy. Both
- * addends are constant across the renderer change, and measured cycles land
- * around 130 ms — roughly 8x the ~16.7 ms frame interval — so the SwiftShader
- * render pass dominates and the pre/post comparison on the SAME machine is
- * meaningful. A regression smaller than a few ms should still not be read into
- * this probe.
- * 3 warm-up cycles are discarded, then 20 are measured.
- */
-async function measureRenderTimings(page: Page, id: GoldenCaseId) {
-  const samples = await page.evaluate(async () => {
-    const w = window as typeof window & {
-      __cartoskyGifDriver?: {
-        captureFrame: (maxWidth?: number, expectGridHour?: number | null) => Promise<HTMLCanvasElement | null>;
-      };
-    };
-    const driver = w.__cartoskyGifDriver;
-    if (!driver) {
-      return null;
-    }
-    const measured: number[] = [];
-    for (let i = 0; i < 23; i += 1) {
-      const started = performance.now();
-      const canvas = await driver.captureFrame();
-      const elapsed = performance.now() - started;
-      if (!canvas) {
-        continue;
-      }
-      if (i >= 3) {
-        measured.push(elapsed);
-      }
-    }
-    return measured;
-  });
-
-  expect(samples, `${id}: __cartoskyGifDriver present (dev build) for timing`).not.toBeNull();
-  expect(samples!.length, `${id}: measured render samples`).toBeGreaterThanOrEqual(15);
-  const sorted = [...samples!].sort((a, b) => a - b);
-  const quantile = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
-  const entry = {
-    samples: sorted.map((value) => Number(value.toFixed(3))),
-    median: Number(quantile(0.5).toFixed(3)),
-    p95: Number(quantile(0.95).toFixed(3)),
-  };
-  timingByCase[id] = entry;
-  // eslint-disable-next-line no-console
-  console.log(`[render-timing] ${id} median=${entry.median}ms p95=${entry.p95}ms n=${entry.samples.length}`);
 }
 
 type SeamZoomReport = {
@@ -775,7 +481,7 @@ test.describe('Render golden baseline (Step 1, pre-change)', () => {
 
       // 2. Frame timing baseline for the post-change comparison (also before
       //    any style injection).
-      await measureRenderTimings(page, id);
+      await measureRenderTimings(page, id, timingByCase);
 
       // 3. SERVER-SIDE PATH — Playwright owns this golden. Chrome hidden so the
       //    canvas element screenshot is map content only.
@@ -1037,34 +743,6 @@ test.describe('Render golden baseline (Step 1, pre-change)', () => {
 
   // ── Timing artifact ─────────────────────────────────────────────────────
   test.afterAll(async () => {
-    if (Object.keys(timingByCase).length === 0) {
-      return;
-    }
-    const existing = fs.existsSync(TIMING_ARTIFACT)
-      ? (JSON.parse(fs.readFileSync(TIMING_ARTIFACT, 'utf8')) as Record<string, unknown>)
-      : {};
-    fs.writeFileSync(
-      TIMING_ARTIFACT,
-      `${JSON.stringify(
-        {
-          ...existing,
-          generated_at_note:
-            'Wall time per full repaint cycle (triggerRepaint -> render event -> canvas copy) ' +
-            'through window.__cartoskyGifDriver.captureFrame(). Includes rAF scheduling latency ' +
-            'and one full-size canvas copy, both constant across the renderer change; at ~130 ms ' +
-            'per cycle the SwiftShader render pass dominates those addends by ~8x. Upper bound on ' +
-            'the grid-webgl render pass; same-machine pre/post comparison only. 3 warm-up cycles ' +
-            'discarded, 20 measured, chromium --use-angle=swiftshader.',
-          platform: process.platform,
-          viewport: GOLDEN_VIEWPORT,
-          samples_per_case: 20,
-          cases: timingByCase,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    // eslint-disable-next-line no-console
-    console.log(`[render-timing] wrote ${TIMING_ARTIFACT}`);
+    writeTimingArtifact(timingByCase, GOLDEN_VIEWPORT);
   });
 });

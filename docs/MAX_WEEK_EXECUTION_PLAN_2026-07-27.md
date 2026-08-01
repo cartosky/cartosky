@@ -576,6 +576,17 @@ Per model: global retention, publication, manifest, and latest-pointer behavior;
 - [ ] Disk utilization checkpoint recorded
 - [ ] Mobile: viewer usable and performant at global extent on a real device
 
+**Globe projection v1 (operator green-lit 2026-08-01):** opt-in flat↔globe
+button, default flat. Evidence base: `docs/GLOBE_SPIKE_2026-08-01.md` (GO
+with caveats: custom projection math is a pinned ~12-line maintenance
+surface; hard-flip to mercator during MapLibre's transition; silent-garbage
+tripwire required) + `docs/GLOBE_OVERLAY_AUDIT_2026-08-01.md` (net plan
+≈10.25 d; v1 scope = viewer globe + hover-outside-disc suppression + pole
+framing fix + city-label far-side guard + decided share treatment; compare
+stays flat by explicit gate). Phases: G1 renderer productionization →
+G2 button/URL/analytics + audit fixes. Runs parallel to AIGFS (zero file
+overlap).
+
 **Global LOD chain → default-to-global (operator-committed end state,
 2026-07-31):** the go-live UI ships an opt-in Coverage toggle, but the
 intended end state is global-by-default for global-capable models

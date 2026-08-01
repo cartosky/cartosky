@@ -6,16 +6,19 @@ import { productFetch, type GridManifestResponse } from "@/lib/api";
 import type { AnchorBatchPoint } from "@/lib/anchor-labels";
 import { SCRUB_LAG_BURST_WARM_LIMIT, SCRUB_LAG_BURST_WARM_LIMIT_MOBILE } from "@/lib/app-utils";
 import { sampleGridPoints } from "@/lib/grid-sample";
-// [GLOBE SPIKE] dev-only, inert unless the page was loaded with ?globe=1.
 import {
-  GLOBE_SPIKE_ENABLED,
-  GLOBE_SPIKE_MESH_COLS,
-  GLOBE_SPIKE_MESH_ROWS,
-  GLOBE_SPIKE_VERTEX_SOURCE,
+  GLOBE_MESH_COLS,
+  GLOBE_MESH_ROWS,
+  GLOBE_VERTEX_SOURCE,
   buildGlobeMesh,
-  readGlobeFrameProjection,
-  type GlobeFrameProjection,
-} from "@/lib/globe-spike";
+  deriveMatrixSpace,
+  isProjectionPairingCoherent,
+  readFrameProjection,
+  readProjectionTransitionState,
+  type FrameProjection,
+  type GridGeometryMode,
+  type ProjectionMatrixSpace,
+} from "@/lib/globe-projection";
 import { startNetworkTimer, trackClientProcessingDuration, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 
 export const GRID_WEBGL_LAYER_ID = "twf-grid-webgl";
@@ -681,6 +684,8 @@ function textureCompatKey(manifest: GridManifestResponse | null): string {
   return `${width}x${height}:${resolveGridDtype(grid?.dtype)}`;
 }
 
+export type { GridGeometryMode } from "@/lib/globe-projection";
+
 /**
  * In-render coherence telemetry.
  *
@@ -706,6 +711,18 @@ export interface GridCoherenceStats {
   coherentDraws: number;
   reconciled: number;
   resetForReupload: number;
+  /**
+   * Geometry/matrix projection mismatches caught before the draw. MUST stay 0.
+   *
+   * A mercator quad multiplied by a globe (unit-sphere) matrix draws garbage
+   * with no GL error, no warning and no type change (GLOBE_SPIKE §1.1) — the
+   * one failure mode in this layer that is completely silent. The guard holds
+   * the draw exactly as the manifest/texture guard does.
+   *
+   * Orthogonal to `held`/`drewMismatched`, which are about manifest/texture
+   * identity and know nothing about projection.
+   */
+  projectionMismatch: number;
 }
 
 const gridCoherenceStats: GridCoherenceStats = {
@@ -714,6 +731,7 @@ const gridCoherenceStats: GridCoherenceStats = {
   coherentDraws: 0,
   reconciled: 0,
   resetForReupload: 0,
+  projectionMismatch: 0,
 };
 
 export function readGridCoherenceStats(): GridCoherenceStats {
@@ -721,20 +739,50 @@ export function readGridCoherenceStats(): GridCoherenceStats {
 }
 
 /**
- * [GLOBE SPIKE] Draw-call counters, read from Playwright to prove the
- * world-copy loop really is bypassed on the globe (draws == 1 per frame,
- * mercatorQuadDraws frozen) and to sample the live transition value.
+ * Renderer-projection counters. The world-copy loop is a mercator-only device,
+ * so `mercatorQuadDraws` frozen while `globeMeshDraws` climbs is the proof that
+ * the globe path issues exactly one draw per frame and never double-draws.
  */
-export const globeSpikeStats = {
-  draws: 0,
+export const globeRenderStats = {
+  /**
+   * Frames that reached the draw stage. `globeMeshDraws === drawFrames` (and
+   * `mercatorQuadDraws === 0`) is the exact statement of "one draw per frame,
+   * world-copy loop bypassed" — a bound on the raw draw count is not, because
+   * the number of frames a repaint produces is MapLibre's to choose.
+   */
+  drawFrames: 0,
+  globeMeshDraws: 0,
   mercatorQuadDraws: 0,
-  lastTransition: 0,
+  /** Geometry mode of the last draw the layer issued. */
+  lastGeometryMode: "mercator" as GridGeometryMode,
+  /** Space of the matrix that draw was submitted with. */
+  lastMatrixSpace: "mercator-unit" as ProjectionMatrixSpace,
+  /** MapLibre's projection transition ramp on the last frame (1 = full globe). */
+  lastTransitionState: 0,
   lastIndexCount: 0,
-  /** Last projection data handed to the layer, for the transition probe. */
+  lastPoleFanTriangles: 0,
+  /** Last projection data handed to the layer, for the transition-flip probe. */
   lastMainMatrix: null as number[] | null,
   lastFallbackMatrix: null as number[] | null,
   lastClippingPlane: null as number[] | null,
 };
+
+export function resetGlobeRenderStats() {
+  globeRenderStats.drawFrames = 0;
+  globeRenderStats.globeMeshDraws = 0;
+  globeRenderStats.mercatorQuadDraws = 0;
+  globeRenderStats.lastIndexCount = 0;
+  globeRenderStats.lastPoleFanTriangles = 0;
+  // The `last*` describers are reset too: a stale "globe" left over from before
+  // the reset reads as a fresh observation and would let a test assert on a
+  // frame that never happened.
+  globeRenderStats.lastGeometryMode = "mercator";
+  globeRenderStats.lastMatrixSpace = "mercator-unit";
+  globeRenderStats.lastTransitionState = 0;
+  globeRenderStats.lastMainMatrix = null;
+  globeRenderStats.lastFallbackMatrix = null;
+  globeRenderStats.lastClippingPlane = null;
+}
 
 export function resetGridCoherenceStats() {
   gridCoherenceStats.held = 0;
@@ -742,6 +790,7 @@ export function resetGridCoherenceStats() {
   gridCoherenceStats.coherentDraws = 0;
   gridCoherenceStats.reconciled = 0;
   gridCoherenceStats.resetForReupload = 0;
+  gridCoherenceStats.projectionMismatch = 0;
 }
 
 /**
@@ -760,19 +809,13 @@ if (typeof window !== "undefined") {
     visibleFrameHour: (layerId?: string) =>
       gridControllerRegistry.get(layerId ?? GRID_WEBGL_LAYER_ID)?.visibleFrameHour() ?? null,
   };
-  // [GLOBE SPIKE] test seam, registered unconditionally so a spec can assert
-  // draws === 0 with the flag off.
-  (window as unknown as Record<string, unknown>).__cartoskyGlobeSpike = {
-    enabled: GLOBE_SPIKE_ENABLED,
-    meshCols: GLOBE_SPIKE_MESH_COLS,
-    meshRows: GLOBE_SPIKE_MESH_ROWS,
-    read: () => ({ ...globeSpikeStats }),
-    reset: () => {
-      globeSpikeStats.draws = 0;
-      globeSpikeStats.mercatorQuadDraws = 0;
-      globeSpikeStats.lastTransition = 0;
-      globeSpikeStats.lastIndexCount = 0;
-    },
+  // Renderer-projection debug seam. Registered unconditionally so a spec can
+  // assert globeMeshDraws === 0 with globe mode off.
+  (window as unknown as Record<string, unknown>).__cartoskyGlobeRender = {
+    meshCols: GLOBE_MESH_COLS,
+    meshRows: GLOBE_MESH_ROWS,
+    read: () => ({ ...globeRenderStats }),
+    reset: resetGlobeRenderStats,
   };
 }
 
@@ -1143,13 +1186,15 @@ export class GridWebglLayerController {
   private transitionStartedAt = 0;
   private transitionDurationMs = 0;
   private quadSignature: string | null = null;
-  // [GLOBE SPIKE] second program + mesh buffers, created only under ?globe=1.
+  /**
+   * Globe program + sphere-mesh buffers. Created LAZILY, on the first frame
+   * MapLibre hands this layer a unit-sphere matrix — so with globe mode off the
+   * layer allocates and compiles exactly what it always did.
+   */
   private globeProgram: WebGLProgram | null = null;
   private globeBindings: ProgramBindings | null = null;
   private globeUniforms: {
-    fallbackMatrixLocation: WebGLUniformLocation | null;
     clippingPlaneLocation: WebGLUniformLocation | null;
-    transitionLocation: WebGLUniformLocation | null;
     lonLatLocation: number;
   } | null = null;
   private globeLonLatBuffer: WebGLBuffer | null = null;
@@ -1158,6 +1203,12 @@ export class GridWebglLayerController {
   private globeTexCoordBuffer: WebGLBuffer | null = null;
   private globeMeshSignature: string | null = null;
   private globeMeshIndexCount = 0;
+  private globeMeshPoleFanTriangles = 0;
+  /** Set once a globe-program build has failed, so it is not retried per frame. */
+  private globeProgramFailed = false;
+  /** Builder for the globe fragment source, captured at mercator init time. */
+  private buildFragmentSourceForGlobe: (() => string) | null = null;
+  private buildProgramBindings: ((program: WebGLProgram) => ProgramBindings) | null = null;
 
   constructor(layerId = GRID_WEBGL_LAYER_ID) {
     this.layerId = layerId;
@@ -1329,9 +1380,10 @@ export class GridWebglLayerController {
             ? args
             : Array.from(args.defaultProjectionData.mainMatrix);
 
-        // [GLOBE SPIKE] null on every mercator frame and whenever the flag is
-        // off, so the call below is the pre-spike call.
-        this.render(matrix, readGlobeFrameProjection(args));
+        // `mainMatrixSpace` is "mercator-unit" on every frame MapLibre is not
+        // globe-rendering, which is every frame with globe mode off — so the
+        // call below is the pre-globe call.
+        this.render(matrix, readFrameProjection(args));
       },
       onRemove: () => {
         this.disposeGlResources();
@@ -1642,11 +1694,17 @@ export class GridWebglLayerController {
       }
     `;
     const fragmentPrecision = fragmentFloatPrecisionQualifier(gl);
-    // [GLOBE SPIKE] The fragment source became a function of one boolean so the
-    // globe program can share it. `buildFragmentSource(false)` is byte-identical
-    // to the previous literal — every spike interpolation collapses to "" or to
-    // the exact previous text — so the mercator program compiles the same
-    // source it always did.
+    // ONE fragment source for both programs, parameterised by a single boolean.
+    // `buildFragmentSource(false)` is byte-identical to the pre-globe literal —
+    // both interpolations collapse to "" / to the exact previous text — so the
+    // mercator program compiles the same string it always did, which is what
+    // keeps the existing goldens bit-identical.
+    //
+    // The only difference on the globe variant: `projectedUv()` reads an exact
+    // `v_latRad` varying instead of inverting the mercator y per fragment. For
+    // a 4326 artifact that is strictly MORE accurate (exact at every vertex,
+    // linear in latitude between them) and it is what makes the polar rows
+    // addressable at all.
     const buildFragmentSource = (globeVariant: boolean) => `
       precision ${fragmentPrecision} float;
       varying vec2 v_texCoord;
@@ -2192,8 +2250,8 @@ export class GridWebglLayerController {
       throw new Error("Failed to initialize grid WebGL resources");
     }
 
-    // [GLOBE SPIKE] Extracted verbatim into a builder so the globe program can
-    // reuse it; every `this.program` below became the `program` parameter.
+    // A builder rather than a literal so the globe program can reuse it; every
+    // `this.program` inside became the `program` parameter.
     const buildBindings = (program: WebGLProgram): ProgramBindings => ({
       positionLocation: gl.getAttribLocation(program, "a_pos"),
       texCoordLocation: gl.getAttribLocation(program, "a_texCoord"),
@@ -2252,39 +2310,121 @@ export class GridWebglLayerController {
     });
 
     this.bindings = buildBindings(this.program);
-
-    // [GLOBE SPIKE] Second program, only under ?globe=1. Same fragment shader
-    // modulo the latitude source; different vertex shader (sphere + transition
-    // blend). Building it lazily here keeps the mercator program's compile
-    // inputs untouched when the flag is off.
-    if (GLOBE_SPIKE_ENABLED) {
-      this.globeProgram = createProgram(gl, GLOBE_SPIKE_VERTEX_SOURCE, buildFragmentSource(true));
-      this.globeBindings = buildBindings(this.globeProgram);
-      this.globeUniforms = {
-        fallbackMatrixLocation: gl.getUniformLocation(this.globeProgram, "u_globeFallbackMatrix"),
-        clippingPlaneLocation: gl.getUniformLocation(this.globeProgram, "u_globeClippingPlane"),
-        transitionLocation: gl.getUniformLocation(this.globeProgram, "u_globeTransition"),
-        lonLatLocation: gl.getAttribLocation(this.globeProgram, "a_lonLat"),
-      };
-      this.globeVertexBuffer = gl.createBuffer();
-      this.globeTexCoordBuffer = gl.createBuffer();
-      this.globeLonLatBuffer = gl.createBuffer();
-      this.globeIndexBuffer = gl.createBuffer();
-    }
+    // Captured, not built: the globe program is compiled on the first globe
+    // frame (ensureGlobeProgram) so that with globe mode off this layer
+    // allocates and compiles exactly what it always did.
+    this.buildFragmentSourceForGlobe = () => buildFragmentSource(true);
+    this.buildProgramBindings = buildBindings;
 
     this.uploadQuadVerticesIfNeeded();
   }
 
   /**
-   * [GLOBE SPIKE] Rebuild + upload the subdivided mesh when the artifact
-   * footprint or the mesh density changes. Same cache-by-signature shape as
-   * uploadQuadVerticesIfNeeded().
+   * Compile the globe program + create its mesh buffers, once.
+   *
+   * Returns false if the resources are unavailable, in which case the caller
+   * MUST fall back to the mercator quad against a mercator matrix — never to
+   * the quad against the sphere matrix.
+   */
+  private ensureGlobeProgram(): boolean {
+    // The readiness check covers the BUFFERS too, not just the program. An
+    // earlier revision returned early on `globeProgram && bindings && uniforms`
+    // while a null gl.createBuffer() had left the buffers missing — so every
+    // later frame reported "ready", uploadGlobeMeshIfNeeded() bailed out, and
+    // the layer drew 0 indices: a silently blank globe that never retried.
+    if (this.globeResourcesReady()) {
+      return true;
+    }
+    const gl = this.gl;
+    if (
+      this.globeProgramFailed
+      || !gl
+      || !this.buildFragmentSourceForGlobe
+      || !this.buildProgramBindings
+    ) {
+      return false;
+    }
+    try {
+      const program = createProgram(gl, GLOBE_VERTEX_SOURCE, this.buildFragmentSourceForGlobe());
+      this.globeProgram = program;
+      this.globeBindings = this.buildProgramBindings(program);
+      this.globeUniforms = {
+        clippingPlaneLocation: gl.getUniformLocation(program, "u_globeClippingPlane"),
+        lonLatLocation: gl.getAttribLocation(program, "a_lonLat"),
+      };
+      this.globeVertexBuffer = gl.createBuffer();
+      this.globeTexCoordBuffer = gl.createBuffer();
+      this.globeLonLatBuffer = gl.createBuffer();
+      this.globeIndexBuffer = gl.createBuffer();
+      this.globeMeshSignature = null;
+      if (!this.globeResourcesReady()) {
+        throw new Error("globe mesh buffers could not be created");
+      }
+    } catch (error) {
+      // Latch, and leave NOTHING half-built: a partially-created set would make
+      // the readiness check above pass on some later frame.
+      this.releaseGlobeResources();
+      this.globeProgramFailed = true;
+      console.warn("[grid-webgl] globe program unavailable; staying on the mercator path", error);
+      return false;
+    }
+    return true;
+  }
+
+  /** Every resource the globe draw path touches exists. */
+  private globeResourcesReady(): boolean {
+    return Boolean(
+      this.globeProgram
+      && this.globeBindings
+      && this.globeUniforms
+      && this.globeVertexBuffer
+      && this.globeTexCoordBuffer
+      && this.globeLonLatBuffer
+      && this.globeIndexBuffer,
+    );
+  }
+
+  /** Delete + null the globe GL resources. Safe to call on a partial set. */
+  private releaseGlobeResources() {
+    const gl = this.gl;
+    if (gl) {
+      if (this.globeProgram) {
+        gl.deleteProgram(this.globeProgram);
+      }
+      for (
+        const buffer of [
+          this.globeVertexBuffer,
+          this.globeTexCoordBuffer,
+          this.globeLonLatBuffer,
+          this.globeIndexBuffer,
+        ]
+      ) {
+        if (buffer) {
+          gl.deleteBuffer(buffer);
+        }
+      }
+    }
+    this.globeProgram = null;
+    this.globeBindings = null;
+    this.globeUniforms = null;
+    this.globeVertexBuffer = null;
+    this.globeTexCoordBuffer = null;
+    this.globeLonLatBuffer = null;
+    this.globeIndexBuffer = null;
+    this.globeMeshSignature = null;
+    this.globeMeshIndexCount = 0;
+    this.globeMeshPoleFanTriangles = 0;
+  }
+
+  /**
+   * Rebuild + upload the subdivided sphere mesh when the artifact footprint or
+   * the mesh density changes. Same cache-by-signature shape as
+   * uploadQuadVerticesIfNeeded(), so it is off the per-frame path entirely.
    */
   private uploadGlobeMeshIfNeeded() {
     const gl = this.gl;
     if (
-      !GLOBE_SPIKE_ENABLED
-      || !gl
+      !gl
       || !this.globeVertexBuffer
       || !this.globeTexCoordBuffer
       || !this.globeLonLatBuffer
@@ -2301,8 +2441,8 @@ export class GridWebglLayerController {
       projection,
       geographic,
       fullWorld,
-      GLOBE_SPIKE_MESH_COLS,
-      GLOBE_SPIKE_MESH_ROWS,
+      GLOBE_MESH_COLS,
+      GLOBE_MESH_ROWS,
     );
     if (mesh.signature === this.globeMeshSignature) {
       return;
@@ -2316,6 +2456,7 @@ export class GridWebglLayerController {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.globeIndexBuffer);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
     this.globeMeshIndexCount = mesh.indexCount;
+    this.globeMeshPoleFanTriangles = mesh.poleFanTriangles;
     this.globeMeshSignature = mesh.signature;
   }
 
@@ -3019,7 +3160,47 @@ export class GridWebglLayerController {
     return offsets;
   }
 
-  private render(matrix: number[], globe: GlobeFrameProjection | null = null) {
+  /**
+   * Resolve this frame's geometry mode and the matrix that goes with it.
+   *
+   * Two rules, and the whole projection story is in them:
+   *
+   *  - Globe geometry is used only when MapLibre handed this layer a
+   *    unit-sphere matrix AND its projection transition is complete. During the
+   *    transition (`transitionState < 1`) the layer HARD-FLIPS to the mercator
+   *    quad driven by `fallbackMatrix`. That is GLOBE_SPIKE section 5 option
+   *    (b): MapLibre hard-codes `projectionTransition = 1` for custom layers for
+   *    the whole ramp, so faithfully implementing the blend is impossible from
+   *    the handed-over uniforms; and MapLibre puts the transition at zoom 11-12,
+   *    where globe and mercator have already converged to <= 0.16 px, so the
+   *    flip costs nothing and deletes the fallback branch entirely.
+   *  - This function returns a matrix and a mode, and NOTHING ELSE. It does not
+   *    get to say what space its matrix is in — that is derived from the matrix
+   *    itself at the point of use (`deriveMatrixSpace`), so a bug here cannot
+   *    also supply the alibi for itself.
+   */
+  private resolveFrameGeometry(matrix: number[], frame: FrameProjection): {
+    mode: GridGeometryMode;
+    matrix: number[];
+    transitionState: number;
+  } {
+    const globe = frame.globe;
+    if (!globe) {
+      return { mode: "mercator", matrix, transitionState: 0 };
+    }
+    const transitionState = readProjectionTransitionState(this.map);
+    if (transitionState >= 1 && this.ensureGlobeProgram()) {
+      return { mode: "globe", matrix: globe.mainMatrix, transitionState };
+    }
+    // Mid-transition, or the globe program is unavailable. `fallbackMatrix` is
+    // MapLibre's mercator custom-layer matrix even under globe rendering
+    // (GlobeTransform.getProjectionDataForCustomLayer, maplibre-gl-dev.js:59306
+    // -- `globeData.fallbackMatrix = mercatorData.mainMatrix`), so the quad has
+    // a matrix in its own space and the pair stays coherent.
+    return { mode: "mercator", matrix: globe.fallbackMatrix, transitionState };
+  }
+
+  private render(matrix: number[], frame: FrameProjection = { mainMatrixSpace: "mercator-unit", globe: null }) {
     // The controller MapLibre is driving is the live one — App may construct
     // several (StrictMode remount, composite/sampler layers) that share a
     // layer id, and only this one is on screen. Registering here rather than
@@ -3028,12 +3209,11 @@ export class GridWebglLayerController {
       gridControllerRegistry.set(this.layerId, this);
     }
     const gl = this.gl;
-    // [GLOBE SPIKE] `globe` is non-null only on globe-projection frames under
-    // ?globe=1; otherwise these are the pre-spike `this.program`/`this.bindings`.
-    const globeActive = Boolean(globe)
-      && this.globeProgram !== null
-      && this.globeBindings !== null
-      && this.globeUniforms !== null;
+    // Projection mode is a renderer input, resolved per frame from the map's
+    // projection state. On every non-globe frame this is "mercator" with the
+    // matrix passed straight through, i.e. the pre-globe behaviour.
+    const geometry = this.resolveFrameGeometry(matrix, frame);
+    const globeActive = geometry.mode === "globe";
     const program = globeActive ? this.globeProgram : this.program;
     const bindings = globeActive ? this.globeBindings : this.bindings;
     const grid = this.manifest?.grid;
@@ -3068,8 +3248,9 @@ export class GridWebglLayerController {
     }
 
     this.uploadQuadVerticesIfNeeded();
-    // [GLOBE SPIKE] no-op unless ?globe=1.
-    this.uploadGlobeMeshIfNeeded();
+    if (globeActive) {
+      this.uploadGlobeMeshIfNeeded();
+    }
     this.uploadLutTexture();
 
     const zoom = this.map?.getZoom() ?? 0;
@@ -3090,15 +3271,15 @@ export class GridWebglLayerController {
     gl.enableVertexAttribArray(bindings.texCoordLocation);
     gl.vertexAttribPointer(bindings.texCoordLocation, 2, gl.FLOAT, false, 0, 0);
 
-    // [GLOBE SPIKE] true lon/lat attribute + the three projection uniforms
-    // MapLibre hands custom layers in defaultProjectionData.
-    if (globeActive && globe && this.globeUniforms) {
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.globeLonLatBuffer);
-      gl.enableVertexAttribArray(this.globeUniforms.lonLatLocation);
-      gl.vertexAttribPointer(this.globeUniforms.lonLatLocation, 2, gl.FLOAT, false, 0, 0);
-      gl.uniformMatrix4fv(this.globeUniforms.fallbackMatrixLocation, false, globe.fallbackMatrix);
-      gl.uniform4f(this.globeUniforms.clippingPlaneLocation, ...globe.clippingPlane);
-      gl.uniform1f(this.globeUniforms.transitionLocation, globe.transition);
+    // True lon/lat attribute + the horizon clipping plane, both straight from
+    // what MapLibre hands custom layers in defaultProjectionData.
+    if (globeActive && frame.globe && this.globeUniforms) {
+      if (this.globeUniforms.lonLatLocation >= 0) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.globeLonLatBuffer);
+        gl.enableVertexAttribArray(this.globeUniforms.lonLatLocation);
+        gl.vertexAttribPointer(this.globeUniforms.lonLatLocation, 2, gl.FLOAT, false, 0, 0);
+      }
+      gl.uniform4f(this.globeUniforms.clippingPlaneLocation, ...frame.globe.clippingPlane);
     }
 
     gl.uniform1f(bindings.scaleLocation, Number(grid.scale) || 1);
@@ -3213,6 +3394,39 @@ export class GridWebglLayerController {
     gl.bindTexture(gl.TEXTURE_2D, contourEnabled ? this.currentContourTexture : this.currentTexture);
     gl.uniform1i(bindings.contourDataLocation, 3);
 
+    // ── Silent-garbage tripwire ────────────────────────────────────────────
+    // A mercator quad multiplied by a unit-sphere matrix draws garbage with no
+    // GL error, no warning and no type change; the sphere mesh against a
+    // mercator matrix does the same in reverse. Nothing downstream can detect
+    // it.
+    //
+    // The space of the matrix about to be submitted is DERIVED FROM THE MATRIX
+    // (deriveMatrixSpace: reference identity against the two arrays MapLibre's
+    // projection data was copied into this frame), never from a label the
+    // choosing branch supplied. That is what makes this a check rather than a
+    // restatement: hand the globe branch `fallbackMatrix` and the derivation
+    // says "mercator-unit" against a "globe" geometry, and the draw is held.
+    // A matrix of unknown provenance derives to null, which is also unsafe.
+    //
+    // Placed BEFORE the manifest-coherence counters: a held frame draws
+    // nothing, so it must not be counted as a coherent draw either.
+    const drawMatrixSpace = deriveMatrixSpace(geometry.matrix, matrix, frame);
+    if (drawMatrixSpace === null || !isProjectionPairingCoherent(geometry.mode, drawMatrixSpace)) {
+      gridCoherenceStats.projectionMismatch += 1;
+      // Same response as the manifest/texture guard: HOLD. Never draw the pair.
+      gridCoherenceStats.held += 1;
+      if (import.meta.env?.DEV) {
+        console.error(
+          "[grid-webgl] projection mismatch: refusing to draw "
+            + `${geometry.mode} geometry against a ${drawMatrixSpace ?? "unknown-provenance"} matrix `
+            + `(frame mainMatrixSpace=${frame.mainMatrixSpace}, `
+            + `transitionState=${geometry.transitionState}). `
+            + "This would render silent garbage; see docs/GLOBE_SPIKE_2026-08-01.md section 1.1.",
+        );
+      }
+      return;
+    }
+
     // Tripwire at the point of no return: re-read the pair immediately before
     // issuing geometry, so any future draw path that bypasses the guard above
     // is still caught. This must never fire.
@@ -3224,26 +3438,50 @@ export class GridWebglLayerController {
     } else {
       gridCoherenceStats.drewMismatched += 1;
     }
+
+    globeRenderStats.drawFrames += 1;
+    globeRenderStats.lastGeometryMode = geometry.mode;
+    globeRenderStats.lastMatrixSpace = drawMatrixSpace;
+    globeRenderStats.lastTransitionState = geometry.transitionState;
+    globeRenderStats.lastMainMatrix = frame.globe ? frame.globe.mainMatrix : matrix;
+    globeRenderStats.lastFallbackMatrix = frame.globe?.fallbackMatrix ?? null;
+    globeRenderStats.lastClippingPlane = frame.globe?.clippingPlane ?? null;
+
     if (globeActive) {
-      // [GLOBE SPIKE] Exactly ONE draw. The world-copy loop is a mercator-only
-      // device: translatedWorldMatrix() adds whole mercator worlds to the model
+      // Exactly ONE draw. The world-copy loop is a mercator-only device:
+      // translatedWorldMatrix() adds whole mercator worlds to the model
       // translation, which is meaningless against a unit-sphere matrix, and the
       // sphere already closes on itself so there is nothing to replicate.
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.globeIndexBuffer);
-      gl.uniformMatrix4fv(bindings.matrixLocation, false, matrix);
+      gl.uniformMatrix4fv(bindings.matrixLocation, false, geometry.matrix);
       gl.drawElements(gl.TRIANGLES, this.globeMeshIndexCount, gl.UNSIGNED_SHORT, 0);
-      globeSpikeStats.draws += 1;
-      globeSpikeStats.lastTransition = globe?.transition ?? 0;
-      globeSpikeStats.lastIndexCount = this.globeMeshIndexCount;
-      globeSpikeStats.lastMainMatrix = matrix;
-      globeSpikeStats.lastFallbackMatrix = globe?.fallbackMatrix ?? null;
-      globeSpikeStats.lastClippingPlane = globe?.clippingPlane ?? null;
-    } else {
-    for (const offset of this.visibleWorldOffsets()) {
-      gl.uniformMatrix4fv(bindings.matrixLocation, false, translatedWorldMatrix(matrix, offset));
+      globeRenderStats.globeMeshDraws += 1;
+      globeRenderStats.lastIndexCount = this.globeMeshIndexCount;
+      globeRenderStats.lastPoleFanTriangles = this.globeMeshPoleFanTriangles;
+      // Vertex-attrib enable state is global and outlives this draw. The
+      // mercator program has no a_lonLat, so leaving the array enabled would
+      // hand a later quad draw (or another layer) a stale pointer into the
+      // sphere mesh. Only the globe path enables it, so only the globe path
+      // clears it.
+      if (this.globeUniforms && this.globeUniforms.lonLatLocation >= 0) {
+        gl.disableVertexAttribArray(this.globeUniforms.lonLatLocation);
+      }
+    } else if (frame.globe) {
+      // Mid-transition flip: mercator quad, mercator fallback matrix, and still
+      // exactly one copy. visibleWorldOffsets() derives world indices from
+      // map.unproject() of the canvas corners, which under a globe transform
+      // clamps off-disc corners to horizon longitudes and yields nonsense; and
+      // the transition lives at zoom >= 11, where one world is far wider than
+      // any viewport, so there is no copy to draw anyway.
+      gl.uniformMatrix4fv(bindings.matrixLocation, false, geometry.matrix);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      globeSpikeStats.mercatorQuadDraws += 1;
-    }
+      globeRenderStats.mercatorQuadDraws += 1;
+    } else {
+      for (const offset of this.visibleWorldOffsets()) {
+        gl.uniformMatrix4fv(bindings.matrixLocation, false, translatedWorldMatrix(geometry.matrix, offset));
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        globeRenderStats.mercatorQuadDraws += 1;
+      }
     }
     if (this.hasPreviousTexture && mixAmount < 1) {
       this.requestRepaint();
@@ -3366,22 +3604,6 @@ export class GridWebglLayerController {
       if (this.texCoordBuffer) {
         gl.deleteBuffer(this.texCoordBuffer);
       }
-      // [GLOBE SPIKE] all null unless ?globe=1.
-      if (this.globeProgram) {
-        gl.deleteProgram(this.globeProgram);
-      }
-      for (
-        const buffer of [
-          this.globeVertexBuffer,
-          this.globeTexCoordBuffer,
-          this.globeLonLatBuffer,
-          this.globeIndexBuffer,
-        ]
-      ) {
-        if (buffer) {
-          gl.deleteBuffer(buffer);
-        }
-      }
       for (const entry of this.textureCache.values()) {
         gl.deleteTexture(entry.texture);
       }
@@ -3397,16 +3619,11 @@ export class GridWebglLayerController {
       controller.abort();
     }
     this.frameFetchAbortControllers.clear();
-    // [GLOBE SPIKE]
-    this.globeProgram = null;
-    this.globeBindings = null;
-    this.globeUniforms = null;
-    this.globeVertexBuffer = null;
-    this.globeTexCoordBuffer = null;
-    this.globeLonLatBuffer = null;
-    this.globeIndexBuffer = null;
-    this.globeMeshSignature = null;
-    this.globeMeshIndexCount = 0;
+    // Deletes and nulls the whole globe set (no-op before the first globe frame).
+    this.releaseGlobeResources();
+    this.globeProgramFailed = false;
+    this.buildFragmentSourceForGlobe = null;
+    this.buildProgramBindings = null;
     this.program = null;
     this.bindings = null;
     this.vertexBuffer = null;

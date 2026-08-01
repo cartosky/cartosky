@@ -597,6 +597,13 @@ describe("analytics event contract", () => {
     expect(missing).toEqual([]);
   });
 
+  it("declares the globe projection toggle event", () => {
+    // Globe v1 / Phase G2. Same rule as coverage_selected: an AnalyticsEventName
+    // missing from ALLOWED_EVENT_NAMES is dropped silently at capture time.
+    expect(ANALYTICS_EVENT_NAMES).toContain("projection_selected");
+    expect(ALLOWED_EVENT_NAMES.has("projection_selected")).toBe(true);
+  });
+
   it("declares the coverage toggle event", () => {
     expect(ANALYTICS_EVENT_NAMES).toContain("coverage_selected");
     expect(ALLOWED_EVENT_NAMES.has("coverage_selected")).toBe(true);

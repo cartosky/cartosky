@@ -37,6 +37,16 @@ interface CoherenceStats {
   coherentDraws: number;
   reconciled: number;
   resetForReupload: number;
+  /** Globe renderer tripwire (Phase G1); must stay 0 in every projection. */
+  projectionMismatch: number;
+}
+
+interface GlobeRenderStats {
+  drawFrames: number;
+  globeMeshDraws: number;
+  mercatorQuadDraws: number;
+  lastGeometryMode: 'mercator' | 'globe';
+  lastMatrixSpace: 'mercator-unit' | 'unit-sphere';
 }
 
 declare global {
@@ -45,6 +55,10 @@ declare global {
       read: () => CoherenceStats;
       reset: () => void;
       visibleFrameHour: (layerId?: string) => number | null;
+    };
+    __cartoskyGlobeRender?: {
+      read: () => GlobeRenderStats;
+      reset: () => void;
     };
   }
 }
@@ -59,6 +73,19 @@ const readStats = async (page: Page): Promise<CoherenceStats> =>
         coherentDraws: 0,
         reconciled: 0,
         resetForReupload: 0,
+        projectionMismatch: 0,
+      },
+  );
+
+const readGlobeRenderStats = async (page: Page): Promise<GlobeRenderStats> =>
+  page.evaluate(
+    () =>
+      window.__cartoskyGlobeRender?.read() ?? {
+        drawFrames: 0,
+        globeMeshDraws: 0,
+        mercatorQuadDraws: 0,
+        lastGeometryMode: 'mercator' as const,
+        lastMatrixSpace: 'mercator-unit' as const,
       },
   );
 
@@ -202,6 +229,86 @@ test.describe('Grid manifest/frame coherence', () => {
 
     await expect(coverage.getByRole('radio', { name: 'CONUS' })).toHaveAttribute('aria-checked', 'true');
     await expect(page.getByTestId('viewer-map-slot')).toBeVisible();
+  });
+
+  /**
+   * The same guarantee under MapLibre's globe projection (Phase G1).
+   *
+   * The point of this case is that the coherence guard and the renderer's
+   * projection mode are ORTHOGONAL: the guard compares manifest identity
+   * against the texture's manifest stamp and knows nothing about geometry, so
+   * swapping Coverage NA <-> Global on a sphere must behave exactly as it does
+   * on a flat map. It also pins the globe renderer's own tripwire across the
+   * swap — a coverage toggle changes the artifact footprint, which rebuilds the
+   * sphere mesh, which is precisely where a geometry/matrix pairing could go
+   * wrong without any visible error.
+   */
+  test('the coherence guard is projection-agnostic: same guarantee on the globe', async ({ page }) => {
+    const recorded: string[] = [];
+    await stubViewerDomainRoutes(page, recorded);
+    await delayGridBinaries(page);
+
+    await page.goto(`/viewer?m=${DOMAIN_MODEL}&r=latest&v=${DOMAIN_VARIABLE}&fh=0&reg=conus&globe=1`);
+    await page.waitForRequest((request) => request.url().includes('/grid-manifest'));
+
+    const coverage = page.getByTestId('coverage-control');
+    await expect(coverage).toBeVisible();
+    expect(await page.evaluate(() => typeof window.__cartoskyGlobeRender?.read)).toBe('function');
+
+    await expect
+      .poll(() => recorded.some((url) => url.includes(`/api/v4/grid/${DOMAIN_MODEL}/`)))
+      .toBe(true);
+    await settleAndReset(page);
+
+    // The renderer really is on the sphere before anything is measured.
+    await expect
+      .poll(async () => (await readGlobeRenderStats(page)).lastGeometryMode, { timeout: 30_000 })
+      .toBe('globe');
+
+    await page.evaluate(() => window.__cartoskyGlobeRender?.reset());
+
+    // --- NA -> Global on the globe -----------------------------------------
+    await coverage.getByRole('radio', { name: 'Global' }).click();
+    const forwardSeries = await sampleGateDuringSwap(page, FRAME_LATENCY_MS * 3);
+
+    await expect.poll(() => new URL(page.url()).searchParams.get('domain')).toBe(DOMAIN_ID);
+    await expect
+      .poll(() => recorded.some((url) => url.includes(`/api/v4/grid/domains/${DOMAIN_ID}/${DOMAIN_MODEL}/`)))
+      .toBe(true);
+
+    const heldSamples = forwardSeries.filter((sample) => sample.heldDelta > 0);
+    expect(heldSamples.length, 'the swap must actually reach the hold').toBeGreaterThan(0);
+    expect(
+      heldSamples.every((sample) => sample.hour === null),
+      'visibleFrameHour must report not-visible while the coherence guard holds',
+    ).toBe(true);
+
+    await waitForCoherentDraws(page);
+    const stats = await readStats(page);
+    expect(stats.drewMismatched, 'never drew an incoherent pair on the globe').toBe(0);
+    expect(stats.held, 'the hold path really ran').toBeGreaterThan(0);
+    expect(stats.coherentDraws, 'the hold converged back to drawing').toBeGreaterThan(0);
+    expect(stats.projectionMismatch, 'geometry/matrix tripwire across a domain swap').toBe(0);
+    expect(await readVisibleFrameHour(page)).not.toBeNull();
+
+    // The whole swap stayed on the globe path, one mesh draw per frame, and the
+    // mercator world-copy loop never ran.
+    const globeStats = await readGlobeRenderStats(page);
+    expect(globeStats.lastGeometryMode).toBe('globe');
+    expect(globeStats.lastMatrixSpace).toBe('unit-sphere');
+    expect(globeStats.globeMeshDraws, 'one mesh draw per frame').toBe(globeStats.drawFrames);
+    expect(globeStats.mercatorQuadDraws, 'world-copy loop must not run on the globe').toBe(0);
+
+    // --- Global -> NA on the globe ------------------------------------------
+    await page.evaluate(() => window.__cartoskyGridCoherence?.reset());
+    await coverage.getByRole('radio', { name: 'CONUS' }).click();
+    await expect.poll(() => new URL(page.url()).searchParams.get('domain')).toBeNull();
+
+    await waitForCoherentDraws(page);
+    const afterBack = await readStats(page);
+    expect(afterBack.drewMismatched).toBe(0);
+    expect(afterBack.coherentDraws).toBeGreaterThan(0);
+    expect(afterBack.projectionMismatch).toBe(0);
   });
 
   test('model switching keeps the same coherence guarantee', async ({ page }) => {

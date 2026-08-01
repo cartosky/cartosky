@@ -516,12 +516,51 @@ export const GLOBAL_SEAM_ZOOM_COLUMN_PX =
 
 // ── Shared manifest / capability builders ─────────────────────────────────
 
+// ── Cases F-I: the same fixtures under MapLibre's globe projection ────────
+//
+// Globe (Phase G1) is a RENDERER mode, not a data selection: these cases reuse
+// the 4326 global fixture and the 3857 CONUS fixture byte-for-byte and change
+// only the camera and the `globe=1` boot flag. They live in
+// render-golden-globe.spec.ts; GOLDEN_CASE_IDS below is deliberately left
+// untouched so the mercator goldens keep their exact identities.
+//
+// Camera notes (docs/GLOBE_OVERLAY_AUDIT_2026-08-01.md "one geometry fact"):
+// under globe projection the disc radius is worldSize/2pi, so at zoom 1 the
+// globe is ~326 px across a 1000 px canvas (limb visible all round) and by
+// zoom 4 the disc exceeds the canvas. The world/seam/pole cases sit at zoom 1
+// on purpose — the limb is part of what they pin.
+
+/** Whole-globe view of the 4326 global field, camera off the seam. */
+export const GLOBE_WORLD_VIEW = { lat: 20, lon: -40, zoom: 1 };
+/** Camera exactly on the antimeridian: the seam runs down the disc centre. */
+export const GLOBE_SEAM_VIEW = { lat: 0, lon: 180, zoom: 1 };
+/**
+ * Polar view. Centre latitude is deliberately 70, not 90: at lat 70 / zoom 1
+ * the north polar cap sits inside the disc with the limb still visible, which
+ * is what this golden pins -- the +90 deg apex fan's TOPOLOGY, not the camera.
+ *
+ * It was originally 70 because it had to be: MapLibre hard-clamps centre
+ * latitude to the Web Mercator limit (85.051) even under globe, and an
+ * explicitly supplied zoom is not latitude-adjusted, so approaching the clamp
+ * magnified ~11x and pushed the disc off screen (audit item 10c). Phase G2
+ * lifts that clamp (globe-map.ts, `constrainGlobeCamera`) and pins the polar
+ * camera in globe-view.spec.ts; this golden stays at 70 so its identity is
+ * unchanged across the two phases.
+ */
+export const GLOBE_POLE_VIEW = { lat: 70, lon: 0, zoom: 1 };
+/** Regional EPSG:3857 footprint on the sphere, limb visible. */
+export const GLOBE_REGIONAL_VIEW = { lat: 39.83, lon: -98.58, zoom: 2 };
+
 export type GoldenCaseId =
   | 'gfs-tmp2m'
   | 'hrrr-radar-ptype'
   | 'mrms-reflectivity'
   | 'gfs-global-seam'
-  | 'gfs-global-seam-zoom';
+  | 'gfs-global-seam-zoom'
+  | 'globe-4326-world'
+  | 'globe-4326-seam'
+  | 'globe-4326-pole'
+  | 'globe-3857-regional';
 
 type CaseSpec = {
   id: GoldenCaseId;
@@ -565,6 +604,8 @@ type CaseSpec = {
   /** Region-catalog minZoom. Absent = 2, the value the 3857 cases have always
    *  been served; the seam case needs 0 to fit more than one world copy. */
   regionMinZoom?: number;
+  /** Boots the viewer with `?globe=1`, i.e. MapLibre's globe projection. */
+  globe?: boolean;
 };
 
 const caseBbox = (spec: CaseSpec) => spec.bbox ?? GOLDEN_BBOX;
@@ -576,6 +617,69 @@ const OBSERVED_LOD_LADDER = [
   { level: 1, scaleFactor: 2, minZoom: 4.0, maxZoom: 5.5 },
   { level: 2, scaleFactor: 4, maxZoom: 4.0 },
 ];
+
+/**
+ * Shared fixture bodies for the globe cases: the SAME artifacts the mercator
+ * cases use (4326 global 1440x721 with rows at +/-90, and the 3857 CONUS grid),
+ * so a globe golden can only differ from its mercator sibling by projection.
+ */
+const GOLDEN_CASES_BASE_GLOBAL: Omit<CaseSpec, 'id'> = {
+  model: GLOBAL_SEAM_MODEL,
+  variable: GLOBAL_SEAM_VARIABLE,
+  runId: GLOBAL_SEAM_RUN_ID,
+  frameHours: [0],
+  displayName: 'Temperature 2m',
+  units: 'F',
+  kind: 'continuous',
+  colorMapId: 'tmp2m',
+  product: 'forecast',
+  timeAxisMode: 'forecast',
+  defaultFrameSelection: 'first',
+  grid: { dtype: 'uint16', scale: 0.1, offset: -100.0, nodata: 65535 },
+  palette: {
+    color_map_id: 'tmp2m',
+    kind: 'continuous',
+    transparent_below_min: null,
+    transparent_zero: false,
+  },
+  displayPrep: null,
+  lodLadder: null,
+  legendStops: approvedLegendStops,
+  frameBytes: (_fh, width, height) => globalSeamFrameBytes(width, height),
+  fileSuffix: 'u16',
+  validTime: () => '2026-07-29T12:00:00Z',
+  projection: 'EPSG:4326',
+  bbox: GLOBAL_SEAM_BBOX,
+  gridWidth: GLOBAL_SEAM_GRID_WIDTH,
+  gridHeight: GLOBAL_SEAM_GRID_HEIGHT,
+};
+
+const GOLDEN_CASES_BASE_REGIONAL: Omit<CaseSpec, 'id'> = {
+  model: GFS_MODEL,
+  variable: GFS_VARIABLE,
+  runId: GFS_RUN_ID,
+  frameHours: GFS_FRAME_HOURS,
+  displayName: 'Temperature 2m',
+  units: 'F',
+  kind: 'continuous',
+  colorMapId: 'tmp2m',
+  product: 'forecast',
+  timeAxisMode: 'forecast',
+  defaultFrameSelection: 'first',
+  grid: { dtype: 'uint16', scale: 0.1, offset: -100.0, nodata: 65535 },
+  palette: {
+    color_map_id: 'tmp2m',
+    kind: 'continuous',
+    transparent_below_min: null,
+    transparent_zero: false,
+  },
+  displayPrep: null,
+  lodLadder: null,
+  legendStops: approvedLegendStops,
+  frameBytes: (fh, width, height) => gfsFrameBytes(fh, width, height),
+  fileSuffix: 'u16',
+  validTime: (fh) => `2026-07-29T${String(12 + fh).padStart(2, '0')}:00:00Z`,
+};
 
 const GOLDEN_CASES: Record<GoldenCaseId, CaseSpec> = {
   'gfs-tmp2m': {
@@ -740,6 +844,38 @@ const GOLDEN_CASES: Record<GoldenCaseId, CaseSpec> = {
     gridHeight: GLOBAL_SEAM_GRID_HEIGHT,
     view: GLOBAL_SEAM_ZOOM_VIEW,
   },
+  // ── Globe renderer cases (Phase G1) ────────────────────────────────────
+  // Each is an existing fixture verbatim + a globe camera. `regionMinZoom: 0`
+  // because the region catalog's floor is applied to the map and these cameras
+  // sit at zoom 1-2.
+  'globe-4326-world': {
+    ...GOLDEN_CASES_BASE_GLOBAL,
+    id: 'globe-4326-world',
+    view: GLOBE_WORLD_VIEW,
+    regionMinZoom: 0,
+    globe: true,
+  },
+  'globe-4326-seam': {
+    ...GOLDEN_CASES_BASE_GLOBAL,
+    id: 'globe-4326-seam',
+    view: GLOBE_SEAM_VIEW,
+    regionMinZoom: 0,
+    globe: true,
+  },
+  'globe-4326-pole': {
+    ...GOLDEN_CASES_BASE_GLOBAL,
+    id: 'globe-4326-pole',
+    view: GLOBE_POLE_VIEW,
+    regionMinZoom: 0,
+    globe: true,
+  },
+  'globe-3857-regional': {
+    ...GOLDEN_CASES_BASE_REGIONAL,
+    id: 'globe-3857-regional',
+    view: GLOBE_REGIONAL_VIEW,
+    regionMinZoom: 0,
+    globe: true,
+  },
 };
 
 export function goldenCase(id: GoldenCaseId): CaseSpec {
@@ -754,12 +890,21 @@ export const GOLDEN_CASE_IDS: GoldenCaseId[] = [
   'gfs-global-seam-zoom',
 ];
 
+/** Globe renderer cases. Driven by render-golden-globe.spec.ts. */
+export const GLOBE_GOLDEN_CASE_IDS: GoldenCaseId[] = [
+  'globe-4326-world',
+  'globe-4326-seam',
+  'globe-4326-pole',
+  'globe-3857-regional',
+];
+
 export function viewerUrlForCase(id: GoldenCaseId): string {
   const spec = GOLDEN_CASES[id];
   const view = spec.view ?? GOLDEN_VIEW;
   return (
     `/viewer?m=${spec.model}&r=latest&v=${spec.variable}&fh=0&reg=conus` +
-    `&lat=${view.lat}&lon=${view.lon}&z=${view.zoom}&screenshot=1`
+    `&lat=${view.lat}&lon=${view.lon}&z=${view.zoom}&screenshot=1` +
+    (spec.globe ? '&globe=1' : '')
   );
 }
 

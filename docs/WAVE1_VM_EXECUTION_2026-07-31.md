@@ -62,7 +62,7 @@ cd /root/cartosky && rm -rf /data/era5-raw/single-levels/tmp2m/1991 && for Y in 
 ```bash
 find /data/era5-stage/era5/single-levels/tmp2m -name '*.tif' | wc -l
 ```
-⛔ EXPECT `43830`.
+⛔ EXPECT `43832`.
 
 **6. Build** (VM):
 ```bash
@@ -104,7 +104,7 @@ cd /root/cartosky && rm -rf /data/era5-raw/pressure-levels/tmp850/1991 && for Y 
 ```bash
 find /data/era5-stage/era5/pressure-levels/tmp850 -name '*.tif' | wc -l
 ```
-⛔ EXPECT `43830`.
+⛔ EXPECT `43832`.
 ```bash
 cd /root/cartosky && PYTHONPATH=backend /root/cartosky/.venv/bin/python backend/scripts/build_climatology_baseline_assets.py --source-root /data/era5-stage/era5/pressure-levels/tmp850 --data-root /data/cartosky-global-baselines --version v1 --baseline-source era5 --field tmp850 --region global --reference-period 1991-2020 --units-in K --smoothing-window-days 15 --start-year 1991 --end-year 2020 --require-complete
 ```
@@ -135,7 +135,7 @@ cd /root/cartosky && rm -rf /data/era5-raw/pressure-levels/hgt500/1991 && for Y 
 ```bash
 find /data/era5-stage/era5/pressure-levels/hgt500 -name '*.tif' | wc -l
 ```
-⛔ EXPECT `43830`.
+⛔ EXPECT `43832`.
 ```bash
 cd /root/cartosky && PYTHONPATH=backend /root/cartosky/.venv/bin/python backend/scripts/build_climatology_baseline_assets.py --source-root /data/era5-stage/era5/pressure-levels/hgt500 --data-root /data/cartosky-global-baselines --version v1 --baseline-source era5 --field hgt500 --region global --reference-period 1991-2020 --units-in m --smoothing-window-days 15 --start-year 1991 --end-year 2020 --require-complete
 ```

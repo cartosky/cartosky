@@ -25,6 +25,7 @@ import {
 import type { EnsembleProductOption } from "@/lib/api";
 import { useCapabilities } from "@/lib/capabilities-context";
 import { buildComparePermalinkSearch, readComparePermalink, withForeignSearchParams } from "@/lib/compare-permalink";
+import { setGlobeRenderingEnabled } from "@/lib/globe-projection";
 
 import { mutualDiffEligibleVariables } from "@/lib/compare-diff-eligibility";
 import { useCompareDiff } from "@/lib/use-compare-diff";
@@ -681,6 +682,20 @@ export default function Compare() {
     initialStateRef.current = readComparePermalink();
   }
   const initial = initialStateRef.current;
+
+  // Compare is always FLAT. The `proj=globe` param is not read by
+  // readComparePermalink and is never written by buildComparePermalinkSearch,
+  // and this drops the renderer switch on the way in so a `?globe=1` boot flag
+  // or a globe session that navigated here cannot leave compare spherical.
+  //
+  // A DECISION, not a limitation (docs/GLOBE_OVERLAY_AUDIT_2026-08-01.md item 5
+  // and "Recommended v1 scope"): the flag already reaches both panes and they
+  // sync correctly through a drag, but each pane is ~700 px, so each disc is
+  // clipped at the divider into a half-globe — and compare's whole value is
+  // pixel-comparable panes. Revisit if compare ever gets a full-width mode.
+  useEffect(() => {
+    setGlobeRenderingEnabled(false);
+  }, []);
 
   // Left panel selection.
   const [lModel, setLModel] = useState(initial.lm ?? DEFAULT_MODEL);

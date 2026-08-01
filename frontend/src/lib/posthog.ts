@@ -32,6 +32,7 @@ export const ALLOWED_EVENT_NAMES = new Set<string>([
   "variable_selected",
   "region_selected",
   "coverage_selected",
+  "projection_selected",
   "animation_started",
   "legend_opened",
   "share_clicked",

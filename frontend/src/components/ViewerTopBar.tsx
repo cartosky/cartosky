@@ -3,13 +3,13 @@ import { createPortal } from "react-dom";
 import { NavLink } from "react-router-dom";
 import { Show, UserButton } from "@clerk/react";
 import {
+  Crosshair,
   GitCompareArrows,
   Info,
   Keyboard,
   MessageSquareText,
   MoreHorizontal,
   Share2,
-  TrendingUp,
   UserRound,
   X,
 } from "lucide-react";
@@ -173,7 +173,7 @@ export function ViewerTopBar() {
                 : "border-white/[0.11] bg-white/[0.045] text-white/76 hover:border-white/20 hover:bg-white/[0.08] hover:text-white",
             )}
           >
-            <TrendingUp className="h-3.5 w-3.5" />
+            <Crosshair className="h-3.5 w-3.5" />
             Sounding
           </button>
         ) : null}

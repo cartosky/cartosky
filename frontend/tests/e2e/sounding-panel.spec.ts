@@ -12,7 +12,7 @@
  * including the capped-frame case where LFC/EL and the HRRR SBCAPE row are null
  * and must simply not render.
  */
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 import {
   NO_SOUNDING_MODEL,
@@ -38,18 +38,58 @@ function pathYs(d: string): number[] {
   return [...d.matchAll(/[ML](-?[\d.]+) (-?[\d.]+)/g)].map((match) => Number(match[2]));
 }
 
+/** The map canvas's inline cursor, read off the live DOM ('' when unset). */
+function canvasCursor(page: Page) {
+  return page.evaluate(
+    () => (document.querySelector('.maplibregl-canvas') as HTMLElement | null)?.style.cursor ?? '',
+  );
+}
+
+/**
+ * Arms the pick mode AND waits until the map can actually receive the pick.
+ *
+ * `.maplibregl-canvas` becomes visible before MapLibre finishes loading, and
+ * the map's click handler is only bound once `isLoaded` flips
+ * (map-canvas.tsx) — a synthetic click in that gap is silently dropped, which
+ * was the intermittent "no sounding POST" flake under worker contention. The
+ * armed-mode crosshair cursor is gated on the SAME `isLoaded`, so observing
+ * it proves the click handler is live before we click.
+ */
+async function armPickMode(page: Page) {
+  await page.locator('[data-testid="sounding-toggle"]').click();
+  await expect(page.locator('[data-testid="sounding-toggle"]')).toHaveAttribute('aria-pressed', 'true');
+  // 60 s: the swiftshader map's `load` event scales with host CPU contention
+  // (measured >30 s while parallel suites saturated the machine).
+  await expect
+    .poll(() => canvasCursor(page), {
+      timeout: 60_000,
+      message: 'armed crosshair cursor — proves the map click handler is bound',
+    })
+    .toBe('crosshair');
+}
+
+/**
+ * 120 s per test (config default is 60 s): the software-rendered map boot plus
+ * the arming gate above can legitimately consume >60 s when other suites share
+ * the host. Pure headroom — no assertion is relaxed by it.
+ */
+const SOUNDING_TEST_TIMEOUT = 120_000;
+
 test.describe('Sounding panel', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'Chromium-only contract suite.');
 
   test.beforeEach(async ({ page }) => {
     test.skip(/Mobile/.test(test.info().project.name), 'Desktop docked-panel contract.');
+    test.setTimeout(SOUNDING_TEST_TIMEOUT);
     await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
   });
 
-  async function bootViewer(page: import('@playwright/test').Page, requests: SoundingRequestLog) {
+  async function bootViewer(page: Page, requests: SoundingRequestLog) {
     await stubSoundingRoutes(page, requests);
     await page.goto(VIEWER_URL);
-    await expect(page.locator('.maplibregl-canvas')).toBeVisible();
+    // 60 s, not the 5 s expect default: worker/host contention stalls the
+    // swiftshader map boot (docs/SKEWT_DESIGN_2026-07-30.md Phase 3 status).
+    await expect(page.locator('.maplibregl-canvas')).toBeVisible({ timeout: 60_000 });
     return page.locator('[data-testid="viewer-map-slot"]');
   }
 
@@ -57,24 +97,46 @@ test.describe('Sounding panel', () => {
     const requests: SoundingRequestLog = [];
     const mapSlot = await bootViewer(page, requests);
 
+    // Prove the map's click handler is bound BEFORE the negative-space click:
+    // arm (the crosshair only appears once the handler effect has run), then
+    // disarm. Without this gate the plain click can land in the pre-`isLoaded`
+    // gap where NO click does anything, and the test passes vacuously.
+    await armPickMode(page);
+    await page.locator('[data-testid="sounding-toggle"]').click();
+    await expect(page.locator('[data-testid="sounding-toggle"]')).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => canvasCursor(page)).not.toBe('crosshair');
+
     await mapSlot.click({ position: { x: 320, y: 220 } });
     await page.waitForTimeout(500);
     expect(requests).toHaveLength(0);
     await expect(page.locator('[data-testid="sounding-panel"]')).toHaveCount(0);
 
-    await page.locator('[data-testid="sounding-toggle"]').click();
-    await expect(page.locator('[data-testid="sounding-toggle"]')).toHaveAttribute('aria-pressed', 'true');
+    await armPickMode(page);
     await mapSlot.click({ position: { x: 320, y: 220 } });
 
     await expect(page.locator('[data-testid="sounding-panel"]')).toBeVisible();
-    expect(requests).toHaveLength(1);
+    // The request log is pushed in the Node route handler; the panel opens at
+    // pick time, so poll instead of asserting the length synchronously.
+    await expect.poll(() => requests.length, { message: 'sounding POST recorded' }).toBe(1);
     expect(requests[0].model).toBe(SOUNDING_MODEL);
+  });
+
+  test('the Sounding toggle uses the Crosshair icon', async ({ page }) => {
+    const requests: SoundingRequestLog = [];
+    await bootViewer(page, requests);
+
+    const toggle = page.getByTestId('sounding-toggle');
+    await expect(toggle).toBeVisible();
+    const icon = toggle.locator('svg');
+    await expect(icon).toHaveCount(1);
+    await expect(icon.locator('circle')).toHaveCount(1);
+    await expect(icon.locator('line')).toHaveCount(4);
   });
 
   test('the panel renders both traces, the barb ladder and the header readout', async ({ page }) => {
     const requests: SoundingRequestLog = [];
     const mapSlot = await bootViewer(page, requests);
-    await page.locator('[data-testid="sounding-toggle"]').click();
+    await armPickMode(page);
     await mapSlot.click({ position: { x: 320, y: 220 } });
 
     const chart = page.locator('[data-testid="skewt-chart"]');
@@ -102,7 +164,7 @@ test.describe('Sounding panel', () => {
   test('the dewpoint trace is drawn to the top of the plot and below-ground levels are absent', async ({ page }) => {
     const requests: SoundingRequestLog = [];
     const mapSlot = await bootViewer(page, requests);
-    await page.locator('[data-testid="sounding-toggle"]').click();
+    await armPickMode(page);
     await mapSlot.click({ position: { x: 320, y: 220 } });
 
     const chart = page.locator('[data-testid="skewt-chart"]');
@@ -134,7 +196,7 @@ test.describe('Sounding panel', () => {
   test('the in-panel scrubber changes the rendered frame', async ({ page }) => {
     const requests: SoundingRequestLog = [];
     const mapSlot = await bootViewer(page, requests);
-    await page.locator('[data-testid="sounding-toggle"]').click();
+    await armPickMode(page);
     await mapSlot.click({ position: { x: 320, y: 220 } });
     await expect(page.locator('[data-testid="skewt-chart"]')).toBeVisible();
 
@@ -157,7 +219,7 @@ test.describe('Sounding panel', () => {
   test('the parcel path, the LCL/LFC/EL ticks and the indices readout render', async ({ page }) => {
     const requests: SoundingRequestLog = [];
     const mapSlot = await bootViewer(page, requests);
-    await page.locator('[data-testid="sounding-toggle"]').click();
+    await armPickMode(page);
     await mapSlot.click({ position: { x: 320, y: 220 } });
     await expect(page.locator('[data-testid="skewt-chart"]')).toBeVisible();
 
@@ -200,7 +262,7 @@ test.describe('Sounding panel', () => {
   test('null indices show em dashes and the capped frame drops LFC/EL + the HRRR row', async ({ page }) => {
     const requests: SoundingRequestLog = [];
     const mapSlot = await bootViewer(page, requests);
-    await page.locator('[data-testid="sounding-toggle"]').click();
+    await armPickMode(page);
     await mapSlot.click({ position: { x: 320, y: 220 } });
     await expect(page.locator('[data-testid="skewt-chart"]')).toBeVisible();
 
@@ -239,7 +301,7 @@ test.describe('Sounding panel', () => {
   test('the Phase 5 overlays render: wet-bulb, omega, DGZ, hodograph and theta-e', async ({ page }) => {
     const requests: SoundingRequestLog = [];
     const mapSlot = await bootViewer(page, requests);
-    await page.locator('[data-testid="sounding-toggle"]').click();
+    await armPickMode(page);
     await mapSlot.click({ position: { x: 320, y: 220 } });
     await expect(page.locator('[data-testid="skewt-chart"]')).toBeVisible();
 
@@ -303,7 +365,7 @@ test.describe('Sounding panel', () => {
   test('the DGZ is absent in a warm frame and the inset row is absent without profiles', async ({ page }) => {
     const requests: SoundingRequestLog = [];
     const mapSlot = await bootViewer(page, requests);
-    await page.locator('[data-testid="sounding-toggle"]').click();
+    await armPickMode(page);
     await mapSlot.click({ position: { x: 320, y: 220 } });
     await expect(page.locator('[data-testid="skewt-chart"]')).toBeVisible();
 
@@ -332,11 +394,15 @@ test.describe('Sounding panel', () => {
   test('the picked point round-trips through `sounding=` and closing clears it', async ({ page }) => {
     const requests: SoundingRequestLog = [];
     const mapSlot = await bootViewer(page, requests);
-    await page.locator('[data-testid="sounding-toggle"]').click();
+    await armPickMode(page);
     await mapSlot.click({ position: { x: 320, y: 220 } });
     await expect(page.locator('[data-testid="sounding-panel"]')).toBeVisible();
 
     await expect.poll(() => page.url(), { timeout: 10_000 }).toContain('sounding=');
+    // The `sounding=` param is written from the pick itself, so the URL can
+    // update before the Node route handler records the POST — poll the log
+    // rather than indexing into it immediately.
+    await expect.poll(() => requests.length, { message: 'sounding POST recorded' }).toBe(1);
     const soundingParam = new URL(page.url()).searchParams.get('sounding') ?? '';
     const [lat, lon] = soundingParam.split(',').map(Number);
     expect(Number.isFinite(lat)).toBe(true);
@@ -357,7 +423,7 @@ test.describe('Sounding panel', () => {
 
     // Absorb dev-server compile latency the same way bootViewer does — every
     // other test waits for the map canvas before asserting on the panel.
-    await expect(page.locator('.maplibregl-canvas')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('.maplibregl-canvas')).toBeVisible({ timeout: 60_000 });
     await expect(page.locator('[data-testid="sounding-panel"]')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('[data-testid="skewt-chart"]')).toBeVisible();
     await expect(page.locator('[data-testid="sounding-toggle"]')).toHaveAttribute('aria-pressed', 'false');
@@ -368,7 +434,7 @@ test.describe('Sounding panel', () => {
   test('Escape leaves the pick mode but keeps the open panel', async ({ page }) => {
     const requests: SoundingRequestLog = [];
     const mapSlot = await bootViewer(page, requests);
-    await page.locator('[data-testid="sounding-toggle"]').click();
+    await armPickMode(page);
     await mapSlot.click({ position: { x: 320, y: 220 } });
     await expect(page.locator('[data-testid="sounding-panel"]')).toBeVisible();
 
@@ -381,8 +447,8 @@ test.describe('Sounding panel', () => {
     const requests: SoundingRequestLog = [];
     await stubSoundingRoutes(page, requests, { failFirstSounding: true });
     await page.goto(VIEWER_URL);
-    await expect(page.locator('.maplibregl-canvas')).toBeVisible();
-    await page.locator('[data-testid="sounding-toggle"]').click();
+    await expect(page.locator('.maplibregl-canvas')).toBeVisible({ timeout: 60_000 });
+    await armPickMode(page);
     await page.locator('[data-testid="viewer-map-slot"]').click({ position: { x: 320, y: 220 } });
 
     await expect(page.locator('[data-testid="sounding-error"]')).toBeVisible();
@@ -399,17 +465,27 @@ test.describe('Sounding panel (mobile)', () => {
 
   test('the overflow toggle arms the pick and the panel opens as a bottom sheet', async ({ page }) => {
     test.skip(/Mobile/.test(test.info().project.name), 'Runs on chromium with a mobile viewport.');
+    test.setTimeout(SOUNDING_TEST_TIMEOUT);
     await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
     const requests: SoundingRequestLog = [];
     await stubSoundingRoutes(page, requests);
     await page.goto(VIEWER_URL);
     // Mobile Chrome has no swiftshader flag, so the WebGL canvas may never
     // appear — settle on the chrome the Phase 8 suite uses instead.
-    await expect(page.getByTestId('viewer-initial-map-scrim')).toBeHidden({ timeout: 30_000 });
+    await expect(page.getByTestId('viewer-initial-map-scrim')).toBeHidden({ timeout: 60_000 });
     await expect(page.getByTestId('viewer-mobile-bar')).toBeVisible({ timeout: 20_000 });
 
     await page.getByTestId('mobile-bar-overflow-trigger').click();
     await page.getByTestId('sounding-toggle').click();
+    // Same arming gate as the desktop suite (the overflow item may unmount on
+    // close, so poll the cursor directly instead of reusing armPickMode): the
+    // crosshair proves `isLoaded` flipped and the map click handler is bound.
+    await expect
+      .poll(() => canvasCursor(page), {
+        timeout: 60_000,
+        message: 'armed crosshair cursor — proves the map click handler is bound',
+      })
+      .toBe('crosshair');
     await page.locator('[data-testid="viewer-map-slot"]').click({ position: { x: 160, y: 200 } });
 
     const panel = page.getByTestId('sounding-panel');
@@ -432,6 +508,7 @@ test.describe('Sounding availability', () => {
 
   test('the toggle is hidden entirely on models without soundings', async ({ page }) => {
     test.skip(/Mobile/.test(test.info().project.name), 'Desktop docked-panel contract.');
+    test.setTimeout(SOUNDING_TEST_TIMEOUT);
     await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
     const requests: SoundingRequestLog = [];
     await stubSoundingRoutes(page, requests);
@@ -441,7 +518,7 @@ test.describe('Sounding availability', () => {
 
     // Hidden, not disabled (Brian, Phase 3 prod review). Wait for the viewer to
     // finish booting so absence is meaningful, then assert the toggle never rendered.
-    await expect(page.locator('.maplibregl-canvas')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('.maplibregl-canvas')).toBeVisible({ timeout: 60_000 });
     const toggle = page.locator('[data-testid="sounding-toggle"]');
     await expect(toggle).toHaveCount(0);
   });

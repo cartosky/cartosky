@@ -123,3 +123,45 @@ frontend/vite.config.d.ts
 backend/tests/data
 frontend/tests/unit
 frontend/tests/e2e
+
+# ---------------------------------------------------------------------------
+# Globe v1 Phase G1.
+#
+# `frontend/tests/unit` and `frontend/tests/e2e` immediately above exclude the
+# DIRECTORIES themselves, and git never descends into an excluded directory --
+# so a bare `!<dir>/<file>` cannot re-include anything under one, and the
+# allowlist near the top of this file is dead for any NEW file. Re-open each
+# directory, re-exclude its contents (preserving the original intent), then
+# allowlist what Phase G1 adds.
+# ---------------------------------------------------------------------------
+# Scoped to this phase's file rather than `**`: another session has untracked
+# work in this directory that is not Phase G1's to add.
+!frontend/tests/unit/
+frontend/tests/unit/*
+!frontend/tests/unit/globe-mesh.test.ts
+# Phase G2 (the user-facing globe layer). Same scoping rule as G1 above:
+# named files only, never `**`.
+!frontend/tests/unit/globe-projection-g2.test.ts
+!frontend/tests/unit/globe-share-compose.test.ts
+!frontend/tests/unit/permalink-projection.test.ts
+
+!frontend/tests/e2e/
+frontend/tests/e2e/*
+!frontend/tests/e2e/render-golden-harness.ts
+!frontend/tests/e2e/render-golden-globe.spec.ts
+!frontend/tests/e2e/globe-view.spec.ts
+# Named files only, same rule as the entries above: the 13 mercator PNGs in
+# the baseline snapshot directory are already tracked and are not this phase's
+# to (re)stage, so only the globe goldens G1/G2 added are re-included.
+!frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/
+!frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/globe-4326-world-live-canvas.png
+!frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/globe-4326-seam-live-canvas.png
+!frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/globe-4326-pole-live-canvas.png
+!frontend/tests/e2e/render-golden-baseline.spec.ts-snapshots/globe-3857-regional-live-canvas.png
+
+!frontend/tests/e2e/render-golden-globe.spec.ts-snapshots/
+frontend/tests/e2e/render-golden-globe.spec.ts-snapshots/*
+!frontend/tests/e2e/render-golden-globe.spec.ts-snapshots/globe-4326-world-map-canvas-chromium-darwin.png
+!frontend/tests/e2e/render-golden-globe.spec.ts-snapshots/globe-4326-seam-map-canvas-chromium-darwin.png
+!frontend/tests/e2e/render-golden-globe.spec.ts-snapshots/globe-4326-pole-map-canvas-chromium-darwin.png
+!frontend/tests/e2e/render-golden-globe.spec.ts-snapshots/globe-3857-regional-map-canvas-chromium-darwin.png

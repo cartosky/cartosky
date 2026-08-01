@@ -21,6 +21,10 @@ export const ANALYTICS_EVENT_NAMES = [
   // viewer session events — global go-live design §7 instrumentation, the data
   // the global-by-default flip decision is made on.
   "coverage_selected",
+  // Globe-view toggle flips (Globe v1 / Phase G2), carrying from_projection /
+  // to_projection. `effective_projection` also rides on the viewer session
+  // events, so adoption can be read without joining on the toggle event.
+  "projection_selected",
   "animation_started",
   "legend_opened",
   "share_clicked",

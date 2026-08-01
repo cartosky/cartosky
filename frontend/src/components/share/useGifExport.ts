@@ -356,10 +356,20 @@ export function useGifExport({
     }
     frameDriver.begin();
     const legend = getLegend?.() ?? null;
-    const { buildShareOverlayLines, composeShareFrame } = await import("@/lib/screenshot_export");
+    const { buildShareOverlayLines, composeShareFrame, resolveShareBackdropColor, shareGlobeDiscForImage } =
+      await import("@/lib/screenshot_export");
 
     let worker: Worker | null = null;
     let composeCanvas: HTMLCanvasElement | null = null;
+    // Resolved once per export from the LIVE map canvas in the DOM (the frame
+    // canvases the driver hands back are offscreen and have no ancestors to
+    // read a background off). The backdrop is app chrome, not frame content, so
+    // it cannot change between frames of one GIF.
+    const gifBackdropColor = resolveShareBackdropColor(
+      typeof document === "undefined"
+        ? null
+        : document.querySelector<HTMLCanvasElement>("canvas.maplibregl-canvas"),
+    );
     let dims: { width: number; height: number } | null = null;
     let written = 0;
     // Trend candidates are tried newest first so an incompatible short run can
@@ -458,6 +468,17 @@ export function useGifExport({
           chromeScale: GIF_CHROME_SCALE,
           // Soft shadows quantize into dark banding in the GIF palette.
           chromeShadows: false,
+          // Globe frames crop to a square around the disc (audit item 8c); null
+          // on the flat map, where composition is unchanged. Re-read per frame
+          // because the driver can move the camera between frames.
+          globeDisc: shareGlobeDiscForImage(mapCanvas.width, mapCanvas.height),
+          // GIF carries no alpha. Every globe frame is transparent outside the
+          // disc with an alpha edge at the limb, so it has to be flattened onto
+          // what the viewer actually shows through the canvas before read-back
+          // — otherwise the limb encodes as a bright speckled ring. Read from
+          // the DOM behind the canvas, never hardcoded. No-op on the flat map,
+          // whose frames are already fully opaque.
+          backdropColor: gifBackdropColor,
         });
         const composeCtx = composeCanvas!.getContext("2d");
         if (!composeCtx) {

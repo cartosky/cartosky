@@ -9,12 +9,30 @@ export type PermalinkState = {
   region?: string;
   /** Data domain — a published build-region ID (Phase 2B); absent = canonical. */
   domain?: string;
+  /**
+   * Map projection (Globe v1 / Phase G2): `"globe"` or absent. Absent = the
+   * flat mercator map, which is the default and is never serialized — same
+   * absent-when-default rule as `domain`.
+   *
+   * This is a CAMERA concern, not a data selection: it never influences which
+   * artifact is fetched. See docs/GLOBE_OVERLAY_AUDIT_2026-08-01.md.
+   */
+  projection?: "globe";
   lat?: number;
   lon?: number;
   z?: number;
   /** Open sounding point (Skew-T design §6): `sounding=lat,lon`. */
   sounding?: { lat: number; lon: number };
 };
+
+/**
+ * Lowest zoom a permalink may carry. Mirrors `MIN_PERMALINK_ZOOM` in
+ * permalink.ts — the writer and reader ranges must stay identical or a link
+ * this app emits is one it cannot read back. See that file for why it is
+ * negative (globe cameras are latitude-adjusted; a framed pole is z ~ -6.8 and
+ * the camera constrain's own floor at +-89.9 is -9.16).
+ */
+const MIN_PERMALINK_ZOOM = -10;
 
 function readStringParam(params: URLSearchParams, key: string): string | undefined {
   const raw = params.get(key);
@@ -76,6 +94,14 @@ export function readPermalink(): PermalinkState {
     state.domain = domain.toLowerCase();
   }
 
+  // Unknown values degrade silently to the flat map, exactly as an unknown
+  // `domain` degrades to canonical: a deep link from a future build must never
+  // strand a viewer in a projection this one cannot render.
+  const projection = readStringParam(params, "proj");
+  if (projection && projection.toLowerCase() === "globe") {
+    state.projection = "globe";
+  }
+
   const fh = readFiniteNumberParam(params, "fh");
   if (Number.isFinite(fh) && Number(fh) >= 0) {
     state.fh = Number(fh);
@@ -92,7 +118,7 @@ export function readPermalink(): PermalinkState {
   }
 
   const z = readFiniteNumberParam(params, "z");
-  if (Number.isFinite(z) && Number(z) >= 0 && Number(z) <= 24) {
+  if (Number.isFinite(z) && Number(z) >= MIN_PERMALINK_ZOOM && Number(z) <= 24) {
     state.z = Number(z);
   }
 

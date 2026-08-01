@@ -99,6 +99,7 @@ export function ViewerRail() {
     pointLabelsEnabled, onPointLabelsEnabledChange,
     nwsWarningsEnabled, onNwsWarningsEnabledChange,
     zoomControlsVisible, onZoomControlsVisibleChange,
+    globeProjectionEnabled, onGlobeProjectionEnabledChange,
     basemapMode, onBasemapModeChange, opacity, onOpacityChange,
     onRailToggle, onRailExpandTo,
   } = toolbar;
@@ -381,6 +382,26 @@ export function ViewerRail() {
               variant="flat"
             />
           </div>
+          {/* Globe v1. A camera setting, not a data selection — hence VIEW.
+              Rendered only when the runtime projection setter is actually
+              available, so a MapLibre that stops supporting globe degrades to
+              no button rather than to a dead one.
+
+              NOT gated per model: a canonical (3857) regional artifact costs
+              roughly 3x the frame time on the globe (MapLibre's own globe pass,
+              measured in G1), but it renders correctly and gating the control
+              on the selected model would make the toggle flicker in and out as
+              the user browses. Revisit with the LOD/perf work. */}
+          {onGlobeProjectionEnabledChange ? (
+            <div data-testid="rail-toggle-globe-view" data-tour-target="globe-toggle">
+              <DisplayRow
+                label="Globe view"
+                checked={Boolean(globeProjectionEnabled)}
+                onToggle={() => onGlobeProjectionEnabledChange(!globeProjectionEnabled)}
+                variant="flat"
+              />
+            </div>
+          ) : null}
           {/* Same shared twf.map.legend_visible pref as the mobile sheet row —
               without this, a pref persisted false left desktop with no way to
               bring the collapsed-state chip back. */}

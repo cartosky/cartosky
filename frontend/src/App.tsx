@@ -82,6 +82,12 @@ import {
   parseRunId,
   runIdToIso,
 } from "@/lib/time-axis";
+import {
+  isGlobeProjectionSupported,
+  isGlobeRenderingEnabled,
+  setGlobeRenderingEnabled,
+  subscribeGlobeProjectionSupport,
+} from "@/lib/globe-projection";
 import { buildPermalinkSearch, viewerPermalinkStateFromSelection } from "@/lib/permalink";
 import { modelSupportsSounding } from "@/lib/sounding-types";
 import { buildComparePermalinkSearch } from "@/lib/compare-permalink";
@@ -492,6 +498,30 @@ export default function App() {
     displayPanelOpen, setDisplayPanelOpen,
     opacity, setOpacity,
   } = useDisplaySettings(viewerLayoutMode, isDesktopViewerLayout);
+  // Globe v1 (Phase G2). A CAMERA setting: it changes how the same artifact is
+  // drawn and never which artifact is fetched, which is why it lives in VIEW
+  // and not in SOURCE next to Coverage. Seeded from `proj=globe` (absent =
+  // flat) and pushed into the renderer switch that `?globe=1` already drove.
+  const [globeProjectionEnabled, setGlobeProjectionEnabled] = useState<boolean>(
+    () => initialPermalink.projection === "globe" || isGlobeRenderingEnabled(),
+  );
+  const [globeProjectionSupported, setGlobeProjectionSupportedState] = useState<boolean>(
+    () => isGlobeProjectionSupported(),
+  );
+  useEffect(() => {
+    // Re-read on subscribe, not just on notify: MapCanvas is a child, so its
+    // effects run BEFORE this one and the detection has already happened by the
+    // time we get here. Subscribing alone would miss it forever and the control
+    // would never appear.
+    setGlobeProjectionSupportedState(isGlobeProjectionSupported());
+    return subscribeGlobeProjectionSupport(setGlobeProjectionSupportedState);
+  }, []);
+  useEffect(() => {
+    setGlobeRenderingEnabled(globeProjectionEnabled);
+  }, [globeProjectionEnabled]);
+  const globeProjectionEnabledRef = useRef(globeProjectionEnabled);
+  globeProjectionEnabledRef.current = globeProjectionEnabled;
+
   const [legendPopoverOpen, setLegendPopoverOpen] = useState(false);
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
   // Phase 8 (§8 decision 7): the sheet is never "closed" on the viewer — State
@@ -1749,6 +1779,7 @@ export default function App() {
       fh: feedbackPermalinkForecastHour,
       region,
       dataDomain,
+      globeProjection: globeProjectionEnabled,
       lat: mapView.lat,
       lon: mapView.lon,
       z: mapView.z,
@@ -2960,6 +2991,8 @@ export default function App() {
         region_id: regionRef.current || null,
         forecast_hour: Number.isFinite(forecastHourRef.current) ? forecastHourRef.current : null,
         effective_domain: dataDomainRef.current,
+        // Globe v1: which projection the session was actually left in.
+        effective_projection: globeProjectionEnabledRef.current ? "globe" : "mercator",
         duration_seconds: Math.floor(durationMs / 1000),
       });
     };
@@ -5338,6 +5371,26 @@ export default function App() {
     });
   }, [domain, coverageValue, model, variable, telemetryRunId, region, selectedModelCapability, selectedVariableCapability]);
 
+  const handleGlobeProjectionChange = useCallback((next: boolean) => {
+    // Read through the ref rather than from a state updater: the capture must
+    // fire exactly once per real flip, and a state updater runs twice under
+    // StrictMode.
+    const current = globeProjectionEnabledRef.current;
+    if (current === next) {
+      return;
+    }
+    globeProjectionEnabledRef.current = next;
+    setGlobeProjectionEnabled(next);
+    captureProductAnalyticsEvent("projection_selected", {
+      model_id: model || null,
+      variable_id: variable || null,
+      run_id: telemetryRunId,
+      region_id: region || null,
+      from_projection: current ? "globe" : "mercator",
+      to_projection: next ? "globe" : "mercator",
+    });
+  }, [model, variable, telemetryRunId, region]);
+
   const handleModelChange = useCallback((nextModel: string) => {
     const nextModelCapability = capabilities?.model_catalog?.[nextModel] ?? null;
     const nextVariableOptions = makeVariableOptions(normalizeCapabilityVarRows(nextModelCapability), nextModel);
@@ -5453,8 +5506,10 @@ export default function App() {
       forecast_hour: Number.isFinite(forecastHour) ? forecastHour : null,
       // Design §7: effective (resolved) domain per session — null = canonical.
       effective_domain: dataDomain,
+      // Globe v1: the projection the session opened in ("mercator" = flat).
+      effective_projection: globeProjectionEnabled ? "globe" : "mercator",
     });
-  }, [firstWeatherFramePainted, hasRenderableSelection, model, variable, telemetryRunId, region, forecastHour, dataDomain]);
+  }, [firstWeatherFramePainted, hasRenderableSelection, model, variable, telemetryRunId, region, forecastHour, dataDomain, globeProjectionEnabled]);
 
   useEffect(() => {
     if (isPlaying && isScrubbing) {
@@ -6272,6 +6327,11 @@ export default function App() {
       // null, so the share link and the server-side screenshot render URL stay
       // byte-identical to today for every existing user.
       dataDomain,
+      // Camera, not data: the Image/GIF tabs render on the globe, and the Link
+      // tab's own permalink carries `proj=globe` so a shared link reopens the
+      // way the sharer saw it. The SERVER-side screenshot stays flat — see
+      // screenshotUrlForState() and audit item 8d.
+      globeProjection: globeProjectionEnabled,
       lat: mapView.lat,
       lon: mapView.lon,
       z: mapView.z,
@@ -6382,6 +6442,7 @@ export default function App() {
     resolvedForecastHourPermalink,
     region,
     domain,
+    globeProjection: globeProjectionEnabled,
     sounding: soundingPoint,
     suspended: isPlaying || isGridPreloadingForPlay,
   });
@@ -6397,6 +6458,11 @@ export default function App() {
       run,
       fh: forecastHour,
       dataDomain,
+      // `globeProjection` is deliberately NOT forwarded. Compare never enters
+      // globe (audit item 5 / recommended v1 scope): two ~700 px panes clip the
+      // disc at the divider into two half-globes, and compare's whole value is
+      // pixel-comparable panes. A DECISION, not a limitation — the flag already
+      // reaches both panes and they sync correctly. compare.tsx pins the gate.
       lat: mapView.lat,
       lon: mapView.lon,
       z: mapView.z,
@@ -6527,6 +6593,8 @@ export default function App() {
     onOpacityChange: setOpacity,
     zoomControlsVisible,
     onZoomControlsVisibleChange: setZoomControlsVisible,
+    globeProjectionEnabled,
+    onGlobeProjectionEnabledChange: globeProjectionSupported ? handleGlobeProjectionChange : undefined,
     legendPopoverOpen,
     onLegendPopoverOpenChange: setLegendPopoverOpen,
     displayPanelOpen,
@@ -6573,6 +6641,7 @@ export default function App() {
     loading, isFrameSwitching, selectedRunLabel, latestAvailableRunLabel, hasNewerRunAvailable,
     handleViewLatestRun, selectedModelLatestOnly, observedSourceStatus, runAvailability,
     pointLabelsEnabled, nwsWarningsEnabled, legendVisible, basemapMode, opacity, zoomControlsVisible,
+    globeProjectionEnabled, globeProjectionSupported, handleGlobeProjectionChange,
     legendPopoverOpen, displayPanelOpen, compareHref, handleOpenShareModal, viewerLayoutMode, legend,
     soundingAvailable, soundingMode, handleSoundingModeToggle,
     compositeLegendLayers,
