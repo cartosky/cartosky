@@ -797,9 +797,13 @@ test.describe('Render golden baseline — globe renderer (Phase G1)', () => {
   // only the mesh density differs (the `globeMesh` dev override). The spike
   // found the frame fill-rate bound rather than vertex bound below ~50k
   // indices; this is the check that the finding survived productionization.
+  //
+  // 192x96 (109,440 indices) is in the sweep because it is the shipped default
+  // — the limb-fringe fix raised it there — so the arm has to span the density
+  // actually in production, not stop below it.
   test('globe mesh density is not the frame-time driver', async ({ page }) => {
-    test.setTimeout(180_000);
-    const densities = ['8x4', '64x32', '128x64'];
+    test.setTimeout(240_000);
+    const densities = ['8x4', '64x32', '128x64', '192x96'];
     const byDensity: Record<string, TimingEntry> = {};
     for (const density of densities) {
       await stubGoldenBaselineRoutes(page, 'globe-4326-world');

@@ -155,6 +155,8 @@ frontend/tests/e2e/*
 !frontend/tests/e2e/globe-view.spec.ts
 !frontend/tests/e2e/hover-intent.spec.ts
 !frontend/tests/e2e/new-feature-badges.spec.ts
+# Globe limb fringe fix: the DPR-2 limb-coverage gate.
+!frontend/tests/e2e/globe-limb-coverage.spec.ts
 # Named files only, same rule as the entries above: the 13 mercator PNGs in
 # the baseline snapshot directory are already tracked and are not this phase's
 # to (re)stage, so only the globe goldens G1/G2 added are re-included.

@@ -27,13 +27,46 @@
 // ─── Globe mode switch ───────────────────────────────────────────────────────
 
 /**
- * Mesh density. 64x32 is the spike's measured floor: the smallest density with
- * no visible faceting at whole-globe zooms (§2.3), and at parity with the
- * mercator quad on the frame-time A/B (§6). The frame is fill-rate bound, not
- * vertex bound, below ~50k indices.
+ * Mesh density.
+ *
+ * 64x32 was the spike's measured floor for INTERIOR faceting (§2.3) — no
+ * visible facets in the field itself at whole-globe zooms. It was not enough at
+ * the LIMB, and the limb is a different problem: the mesh's silhouette is a
+ * polygon INSCRIBED in the true circular limb, so every facet's chord sits
+ * inside the limb by its sagitta and a sliver of MapLibre's basemap (which does
+ * reach the true limb) shows between our data edge and space. An operator on a
+ * retina display reported exactly that — a thin light line around the limb,
+ * strongest at the equator and fading toward the poles, which is the mesh's own
+ * pole convergence making the facets shorter there.
+ *
+ * The deficit is ∝ radius / rows², so it is invisible on a small disc at DPR 1
+ * and plain on a large one at DPR 2. Measured by ablation at a 1042-device-px
+ * disc, DPR 2 (tests/e2e/globe-limb-gap.spec.ts, equatorial band, device px):
+ *
+ *     16x8    mean 25.10   max 43.13
+ *     64x32   mean  1.93   max  4.13
+ *     192x96  mean  0.62   max  1.63
+ *
+ * ~0.4 mean / ~1.6 max of every row is the measurement's own floor (nearest-
+ * device-pixel sampling of a hard, unantialiased clip edge), so 192x96 is
+ * within ~0.2 device px of a perfect silhouette at that radius and the residual
+ * stays sub-pixel out past a 2000-device-px disc.
+ *
+ * WHY DENSITY AND NOT AN ANALYTIC PER-FRAGMENT LIMB CLIP: a fragment-side clip
+ * would be density-independent, but it reintroduces the screen-space/DPR
+ * coupling this renderer deliberately avoids, and it would need its own copy of
+ * MapLibre's camera math. Density needs neither, and it is free here — the mesh
+ * is signature-gated, so the build is one-time per footprint, and the perf pass
+ * measured mesh density as a non-driver of frame time (336x the index count sat
+ * inside the noise; the frame is fill-rate bound). Re-confirmed at 192x96.
+ *
+ * 192 is also the ceiling (`MAX_GLOBE_MESH_AXIS`), so this is the densest mesh
+ * the Uint16 index space is guaranteed to hold; there is no headroom left to
+ * spend on a still-larger disc, and the next step would have to be the analytic
+ * clip.
  */
-const DEFAULT_GLOBE_MESH_COLS = 64;
-const DEFAULT_GLOBE_MESH_ROWS = 32;
+const DEFAULT_GLOBE_MESH_COLS = 192;
+const DEFAULT_GLOBE_MESH_ROWS = 96;
 /**
  * Hard bound on the dev `?globeMesh=` override. The index buffer is
  * Uint16Array, so the vertex count (cols+1)*(rows+1) + 2 poles must stay under

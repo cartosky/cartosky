@@ -1,6 +1,7 @@
 import { SegmentedToggle } from "@/components/ui/segmented-toggle";
 import { cn } from "@/lib/utils";
 import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
+import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
 
 /**
  * Coverage (data-domain) row — global go-live design §1/§2/§5.
@@ -33,7 +34,10 @@ export function CoverageControl({
       data-tour-target="coverage-control"
       className={cn("flex flex-col gap-1", className)}
     >
-      <span data-testid="coverage-label" className={labelClassName}>Coverage</span>
+      <span data-testid="coverage-label" className={labelClassName}>
+        Coverage
+      </span>
+      <div className="relative">
       <SegmentedToggle
         value={toolbar.coverageValue ?? ""}
         onChange={(value) => toolbar.onCoverageChange?.(value)}
@@ -41,6 +45,12 @@ export function CoverageControl({
         ariaLabel="Coverage"
         className="w-full [&>button]:flex-1"
       />
+
+      <NewFeatureBadge
+        feature="coverage"
+        className="right-1 translate-x-0"
+      />
+      </div>
       {toolbar.coverageDegradedNote ? (
         <span
           data-testid="coverage-degraded-note"

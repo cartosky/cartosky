@@ -1,4 +1,4 @@
-export type NewFeatureId = "sounding" | "globe-view";
+export type NewFeatureId = "sounding" | "globe-view" | "coverage";
 
 /**
  * Product-managed list of features that should carry the global "New" badge.
@@ -7,6 +7,7 @@ export type NewFeatureId = "sounding" | "globe-view";
 const ACTIVE_NEW_FEATURES = new Set<NewFeatureId>([
   "sounding",
   "globe-view",
+  "coverage",
 ]);
 
 export function isNewFeature(feature: NewFeatureId): boolean {
