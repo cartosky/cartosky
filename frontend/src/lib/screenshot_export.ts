@@ -48,6 +48,26 @@ export type ScreenshotExportOptions = {
   pixelRatio?: number;
   legend?: LegendPayload | null;
   overlayLines?: string[];
+  /**
+   * Where the globe disc that frames the crop (audit item 8c) comes from.
+   *
+   * `"live-map"` (default) is the LIVE-CANVAS capture: the disc is read off THIS
+   * page's map transform by `shareGlobeDiscForImage` and rescaled into the
+   * capture by the width ratio — exact, because the capture is a uniform
+   * downscale of that same canvas.
+   *
+   * `"captured-alpha"` is the SERVER (headless) capture, and it exists because
+   * `"live-map"` is WRONG for it. That image is not this page's canvas: it is
+   * rendered at the poster's WINDOW size (clamped landscape) while the live map
+   * slot is inset by the rail and the mobile top/bottom insets, so its width and
+   * height ratios differ and a width-scaled disc describes the wrong circle
+   * (`radiusPx` also depends on canvas height non-linearly, via
+   * cameraToCenterDistance, so there is no single ratio to rescale by). The
+   * truthful source for a frame this page did not render is the frame itself:
+   * the map canvas is transparent outside the limb, so the opaque region IS the
+   * disc. See `measureOpaqueDisc`.
+   */
+  globeDiscSource?: "live-map" | "captured-alpha";
 };
 
 export type ViewerScreenshotReadiness = {
@@ -1232,6 +1252,96 @@ export function resolveShareBackdropColor(node: Element | null | undefined): str
   return null;
 }
 
+/**
+ * How disc-like the opaque region of a frame has to be before
+ * `measureOpaqueDisc` will call it a globe. A circle inscribed in its own
+ * bounding box fills pi/4 = 0.785 of it; the window allows for the limb's
+ * antialiased edge and for a disc clipped by one frame edge, while rejecting a
+ * rectangle (1.0) or a sliver.
+ */
+const DISC_FILL_MIN = 0.62;
+const DISC_FILL_MAX = 0.92;
+
+/**
+ * The globe disc of a captured frame, measured from the frame's OWN alpha.
+ *
+ * For a frame this page did not render — the headless/server capture — there is
+ * no transform to ask, and the live map's disc does not describe it (see
+ * `ScreenshotExportOptions.globeDiscSource`). The map canvas is transparent
+ * everywhere outside the limb, so the bounding box of the opaque pixels IS the
+ * disc, measured rather than derived.
+ *
+ * Returns null, meaning "compose full-frame", whenever the frame is not a globe:
+ * a flat map is opaque edge to edge, a disc that overflows the frame has nothing
+ * to crop to, and an opaque region whose fill ratio is not circular is something
+ * this function refuses to guess about (a future opaque space backdrop painted
+ * into the canvas lands here and degrades to today's full-frame composition).
+ */
+export function measureOpaqueDisc(image: CanvasImageSource): GlobeDisc | null {
+  const dimensions = imageSourceDimensions(image);
+  if (typeof document === "undefined" || !dimensions) {
+    return null;
+  }
+  const { width, height } = dimensions;
+  const probe = document.createElement("canvas");
+  probe.width = width;
+  probe.height = height;
+  const ctx = probe.getContext("2d", { willReadFrequently: true });
+  if (!ctx) {
+    return null;
+  }
+  ctx.drawImage(image, 0, 0);
+  let data: Uint8ClampedArray;
+  try {
+    data = ctx.getImageData(0, 0, width, height).data;
+  } catch {
+    return null;
+  }
+
+  let minX = width;
+  let maxX = -1;
+  let minY = height;
+  let maxY = -1;
+  let opaque = 0;
+  for (let y = 0; y < height; y += 1) {
+    const rowStart = y * width * 4;
+    for (let x = 0; x < width; x += 1) {
+      // Half alpha: the limb's antialiased edge belongs to the planet, the
+      // near-empty background outside it does not.
+      if (data[rowStart + x * 4 + 3] < 128) {
+        continue;
+      }
+      opaque += 1;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (maxX < 0 || maxY < 0) {
+    return null;
+  }
+  const boxWidth = maxX - minX + 1;
+  const boxHeight = maxY - minY + 1;
+  // Edge to edge in both directions: a flat map, or a disc larger than the
+  // frame. Either way there is no disc to frame.
+  if (boxWidth >= width && boxHeight >= height) {
+    return null;
+  }
+  const fill = opaque / (boxWidth * boxHeight);
+  if (fill < DISC_FILL_MIN || fill > DISC_FILL_MAX) {
+    return null;
+  }
+  // Diameter from the LARGER side: a disc clipped by one frame edge keeps its
+  // true size in the unclipped direction.
+  const diameter = Math.max(boxWidth, boxHeight);
+  return {
+    centerX: minX + boxWidth / 2,
+    centerY: minY + boxHeight / 2,
+    radiusPx: diameter / 2,
+  };
+}
+
 export function shareGlobeDiscForImage(
   sourceWidth: number,
   sourceHeight: number,
@@ -1418,6 +1528,11 @@ export async function exportViewerScreenshotPng(
   const liveMapImage = await loadImage(state.capturedMapDataUrl);
   const outputCanvas = document.createElement("canvas");
   const captureSize = imageSourceDimensions(liveMapImage);
+  const globeDisc = opts.globeDiscSource === "captured-alpha"
+    ? measureOpaqueDisc(liveMapImage)
+    : captureSize
+      ? shareGlobeDiscForImage(captureSize.width, captureSize.height)
+      : null;
   await composeShareFrame(outputCanvas, liveMapImage, {
     width,
     height,
@@ -1425,8 +1540,37 @@ export async function exportViewerScreenshotPng(
     legend: opts.legend,
     overlayLines,
     isMobile: state.isMobile,
-    globeDisc: captureSize
-      ? shareGlobeDiscForImage(captureSize.width, captureSize.height)
+    globeDisc,
+    /**
+     * OPAQUE BACKDROP ON GLOBE STILLS.
+     *
+     * The GIF path has filled the frame since the limb-ring fix; the still PNG
+     * did not, and on a globe capture the result is a frame that is 44.3%
+     * alpha-0 by pixel count — the disc floating in a transparent square, which
+     * a light-background host renders as a planet on white and a dark one as a
+     * planet on black. Neither is what the sharer saw, and neither is space.
+     * Filling first also makes the pillarbox the square-contain crop leaves
+     * read as space rather than as a hole.
+     *
+     * GATED ON `globeDisc`, which is the only honest signal that this frame IS
+     * a disc — measured from the capture's own alpha on the server path, read
+     * off the live transform on the client one. On a flat capture it is null,
+     * `opts.backdropColor` stays null, `composeShareFrame` skips the fill
+     * entirely and the output is byte-identical to today's (pinned by
+     * share-export-baseline and render-golden-baseline).
+     *
+     * The colour is resolved from the LIVE DOM, exactly as the GIF path does
+     * (useGifExport.ts). A disc capture implies the page is on globe — the same
+     * switch drives the projection and the container background — so what comes
+     * back is the space colour, derived rather than hardcoded. Null (an
+     * unstyled harness) leaves composition alone rather than inventing one.
+     */
+    backdropColor: globeDisc
+      ? resolveShareBackdropColor(
+          typeof document === "undefined"
+            ? null
+            : document.querySelector<HTMLCanvasElement>("canvas.maplibregl-canvas"),
+        )
       : null,
   });
   return canvasToPngBlob(outputCanvas);

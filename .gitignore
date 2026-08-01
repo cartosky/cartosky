@@ -123,6 +123,7 @@ frontend/vite.config.d.ts
 backend/tests/data
 frontend/tests/unit
 frontend/tests/e2e
+frontend/dist-sounding-verify/*
 
 # ---------------------------------------------------------------------------
 # Globe v1 Phase G1.
@@ -144,12 +145,16 @@ frontend/tests/unit/*
 !frontend/tests/unit/globe-projection-g2.test.ts
 !frontend/tests/unit/globe-share-compose.test.ts
 !frontend/tests/unit/permalink-projection.test.ts
+# Globe v1.1 (hover intent + space background). Named files only, as above.
+!frontend/tests/unit/hover-intent.test.ts
 
 !frontend/tests/e2e/
 frontend/tests/e2e/*
 !frontend/tests/e2e/render-golden-harness.ts
 !frontend/tests/e2e/render-golden-globe.spec.ts
 !frontend/tests/e2e/globe-view.spec.ts
+!frontend/tests/e2e/hover-intent.spec.ts
+!frontend/tests/e2e/new-feature-badges.spec.ts
 # Named files only, same rule as the entries above: the 13 mercator PNGs in
 # the baseline snapshot directory are already tracked and are not this phase's
 # to (re)stage, so only the globe goldens G1/G2 added are re-included.

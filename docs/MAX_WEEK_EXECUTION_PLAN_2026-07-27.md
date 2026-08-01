@@ -576,6 +576,18 @@ Per model: global retention, publication, manifest, and latest-pointer behavior;
 - [ ] Disk utilization checkpoint recorded
 - [ ] Mobile: viewer usable and performant at global extent on a real device
 
+**Globe projection v1 — SHIPPED TO PROD 2026-08-01.** Operator-gated 8/8
+(incl. share fixes: server-render proj leak, GIF limb alpha ring) + iOS
+WebKit verified live (render, rotation, limb, polar cap). Deferred to a
+future v2, recorded here so they aren't re-litigated: server-side captures
+render flat (globe crop is client-only); compare stays flat; drag alone
+asymptotes ~89.7° short of the poles (MapLibre pan; presets/URLs land
+exact); center clamp ±89.9°; regional 3857-on-globe costs ~3× frame time
+(MapLibre's own globe pass — revisit with the LOD phase); tour step for the
+toggle. Watch: `projection_selected` / `effective_projection` adoption
+metrics.
+
+*(Original green-light record follows.)*
 **Globe projection v1 (operator green-lit 2026-08-01):** opt-in flat↔globe
 button, default flat. Evidence base: `docs/GLOBE_SPIKE_2026-08-01.md` (GO
 with caveats: custom projection math is a pinned ~12-line maintenance
@@ -588,7 +600,14 @@ G2 button/URL/analytics + audit fixes. Runs parallel to AIGFS (zero file
 overlap).
 
 **Global LOD chain → default-to-global (operator-committed end state,
-2026-07-31):** the go-live UI ships an opt-in Coverage toggle, but the
+2026-07-31):** *(Perf evidence added 2026-08-01, globe perf pass: at world
+zoom on the flat map our layer's fill cost is ~39 ms/frame under
+SwiftShader — world-copy loop × full-screen fragment shader — while the
+globe path's is under the noise floor. Real-GPU numbers will be far lower,
+but the LOD chain is the lever for the flat world view specifically.
+Measurement note: the golden timing harness under-measures GPU cost —
+MapLibre's render event fires pre-raster; use the saturated-rAF method
+from tests/e2e/globe-perf-profile.spec.ts for perf claims.)* the go-live UI ships an opt-in Coverage toggle, but the
 intended end state is global-by-default for global-capable models
 (docs/GLOBAL_GOLIVE_UI_DESIGN_2026-07-31.md §7). Prerequisite: a global
 LOD chain (~+33% disk on the global tree) so default-global does not

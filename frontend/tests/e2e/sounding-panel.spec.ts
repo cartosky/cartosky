@@ -56,16 +56,30 @@ function canvasCursor(page: Page) {
  * it proves the click handler is live before we click.
  */
 async function armPickMode(page: Page) {
-  await page.locator('[data-testid="sounding-toggle"]').click();
-  await expect(page.locator('[data-testid="sounding-toggle"]')).toHaveAttribute('aria-pressed', 'true');
-  // 60 s: the swiftshader map's `load` event scales with host CPU contention
-  // (measured >30 s while parallel suites saturated the machine).
-  await expect
-    .poll(() => canvasCursor(page), {
-      timeout: 60_000,
-      message: 'armed crosshair cursor — proves the map click handler is bound',
-    })
-    .toBe('crosshair');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.locator('[data-testid="sounding-toggle"]').click();
+    await expect(page.locator('[data-testid="sounding-toggle"]')).toHaveAttribute('aria-pressed', 'true');
+    try {
+      await expect
+        .poll(() => canvasCursor(page), {
+          timeout: 20_000,
+          message: 'armed crosshair cursor — proves the map click handler is bound',
+        })
+        .toBe('crosshair');
+      return;
+    } catch (error) {
+      if (attempt === 2) throw error;
+      // A healthy boot shows the crosshair in a few seconds; 20 s of nothing
+      // means the software-GL boot WEDGED — MapLibre `load` never fires, the
+      // click handler never binds, and no amount of waiting recovers it
+      // (the long-documented headless WebGL wedge, hit more often the more
+      // maps one browser process has booted). Reload for a fresh GL context;
+      // the Playwright route stubs and localStorage survive a reload.
+      await page.reload();
+      await expect(page.locator('.maplibregl-canvas')).toBeVisible({ timeout: 60_000 });
+      await expect(page.locator('[data-testid="sounding-toggle"]')).toBeVisible({ timeout: 30_000 });
+    }
+  }
 }
 
 /**
@@ -126,7 +140,9 @@ test.describe('Sounding panel', () => {
     await bootViewer(page, requests);
 
     const toggle = page.getByTestId('sounding-toggle');
-    await expect(toggle).toBeVisible();
+    // Boot-scale wait: the toggle renders once capabilities resolve, which
+    // rides the same contended viewer boot as the map canvas.
+    await expect(toggle).toBeVisible({ timeout: 30_000 });
     const icon = toggle.locator('svg');
     await expect(icon).toHaveCount(1);
     await expect(icon.locator('circle')).toHaveCount(1);
@@ -475,17 +491,28 @@ test.describe('Sounding panel (mobile)', () => {
     await expect(page.getByTestId('viewer-initial-map-scrim')).toBeHidden({ timeout: 60_000 });
     await expect(page.getByTestId('viewer-mobile-bar')).toBeVisible({ timeout: 20_000 });
 
-    await page.getByTestId('mobile-bar-overflow-trigger').click();
-    await page.getByTestId('sounding-toggle').click();
-    // Same arming gate as the desktop suite (the overflow item may unmount on
-    // close, so poll the cursor directly instead of reusing armPickMode): the
-    // crosshair proves `isLoaded` flipped and the map click handler is bound.
-    await expect
-      .poll(() => canvasCursor(page), {
-        timeout: 60_000,
-        message: 'armed crosshair cursor — proves the map click handler is bound',
-      })
-      .toBe('crosshair');
+    // Same arming gate + wedge recovery as the desktop suite's armPickMode,
+    // inlined because the toggle lives in the overflow sheet, which must be
+    // reopened after a recovery reload: the crosshair cursor proves `isLoaded`
+    // flipped and the map click handler is bound before the pick click.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await page.getByTestId('mobile-bar-overflow-trigger').click();
+      await page.getByTestId('sounding-toggle').click();
+      try {
+        await expect
+          .poll(() => canvasCursor(page), {
+            timeout: 20_000,
+            message: 'armed crosshair cursor — proves the map click handler is bound',
+          })
+          .toBe('crosshair');
+        break;
+      } catch (error) {
+        if (attempt === 2) throw error;
+        await page.reload();
+        await expect(page.getByTestId('viewer-initial-map-scrim')).toBeHidden({ timeout: 60_000 });
+        await expect(page.getByTestId('viewer-mobile-bar')).toBeVisible({ timeout: 20_000 });
+      }
+    }
     await page.locator('[data-testid="viewer-map-slot"]').click({ position: { x: 160, y: 200 } });
 
     const panel = page.getByTestId('sounding-panel');

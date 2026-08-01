@@ -338,12 +338,14 @@ export function NavbarSelect(props: {
 export function DisplayRow({
   label,
   icon: Icon,
+  badge,
   checked,
   onToggle,
   variant = "card",
 }: {
   label: string;
   icon?: React.ComponentType<{ className?: string }>;
+  badge?: React.ReactNode;
   checked: boolean;
   onToggle: () => void;
   variant?: "card" | "flat";
@@ -355,7 +357,7 @@ export function DisplayRow({
       onClick={onToggle}
       aria-pressed={checked}
       className={cn(
-        "flex min-h-8 w-full items-center justify-between gap-3 text-left transition-colors duration-150 pointer-coarse:min-h-11",
+        "relative flex min-h-8 w-full items-center justify-between gap-3 overflow-visible text-left transition-colors duration-150 pointer-coarse:min-h-11",
         flat
           ? "rounded-md border-0 bg-transparent px-1 py-1 text-white/82 hover:bg-white/[0.045]"
           : checked
@@ -390,6 +392,7 @@ export function DisplayRow({
           {checked ? "On" : "Off"}
         </span>
       )}
+      {badge}
     </button>
   );
 }

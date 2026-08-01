@@ -34,8 +34,14 @@ import {
   SCRUB_LONG_TIMELINE_FRAMES_MOBILE,
 } from "@/lib/app-utils";
 import { GRID_WEBGL_LAYER_ID, GridWebglLayerController, type GridContourLayerConfig, type GridFrameVisiblePayload } from "@/lib/grid-webgl";
-import { isGlobeRenderingEnabled, setGlobeProjectionSupported, subscribeGlobeRendering } from "@/lib/globe-projection";
+import {
+  GLOBE_SPACE_BACKGROUND_COLOR,
+  isGlobeRenderingEnabled,
+  setGlobeProjectionSupported,
+  subscribeGlobeRendering,
+} from "@/lib/globe-projection";
 import { applyGlobeCameraConstrain, isCursorOnGlobe } from "@/lib/globe-map";
+import { HoverIntent } from "@/lib/hover-intent";
 import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 import type { SampleTooltipState } from "@/lib/use-sample-tooltip";
 import { cn } from "@/lib/utils";
@@ -1483,6 +1489,18 @@ export function MapCanvas({
 }: MapCanvasProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapSlotRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Globe mode, mirrored into React state purely so the map container can be
+   * repainted as space (v1.1). The renderer keeps reading the module getter;
+   * this is a second reader of the same switch, not a second source of truth,
+   * and it flips through the same `subscribeGlobeRendering` seam the G2 toggle
+   * and the `proj=globe` permalink already drive.
+   */
+  const [globeActive, setGlobeActive] = useState<boolean>(() => isGlobeRenderingEnabled());
+  useEffect(() => {
+    setGlobeActive(isGlobeRenderingEnabled());
+    return subscribeGlobeRendering(setGlobeActive);
+  }, []);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const gridWebglControllerRef = useRef<GridWebglLayerController | null>(null);
   if (!gridWebglControllerRef.current) {
@@ -3839,6 +3857,36 @@ export function MapCanvas({
     const canvas = map.getCanvas();
     canvas.style.cursor = "";
 
+    /**
+     * HOVER INTENT (v1.1). One controller for both projections and for every
+     * pane that mounts a MapCanvas, so the viewer, the compare panes and the
+     * compare-diff pane cannot acquire different hover semantics.
+     *
+     * The payload is a THUNK: the heavy per-move work (feature query, overlay
+     * offsets, cursor) still runs on the move that produced it, but the
+     * `onMapHover` call — the only thing that reaches the sampling hook and so
+     * the only thing that can issue a request — happens exactly when the
+     * controller says the hover was intent. Suppressed moves never build one.
+     */
+    const hoverIntent = new HoverIntent<() => void>({
+      onShow: (emit) => emit(),
+      onHide: () => onMapHoverEndRef.current?.(),
+      // `map.isMoving()` is MapLibre's own composite of drag, wheel/pinch zoom
+      // and programmatic ease/fly, and it stays true through drag INERTIA after
+      // the pointer is released — which is precisely the window the operator
+      // saw a tooltip stuck in. It is the SOLE ongoing-movement input, polled
+      // on every query: the `movestart` handler below only fires a one-shot
+      // hide, so a `movestart` whose `moveend` never lands costs one hide
+      // rather than wedging hover off for the life of the map.
+      isMoving: () => {
+        try {
+          return map.isMoving();
+        } catch {
+          return false;
+        }
+      },
+    });
+
     const handleMove = (e: maplibregl.MapMouseEvent) => {
       const { lng, lat } = e.lngLat;
       const { x, y } = e.point;
@@ -3852,7 +3900,14 @@ export function MapCanvas({
       // request is issued for a point that is not on the planet.
       if (isGlobeRenderingEnabled() && !isCursorOnGlobe(map, x, y)) {
         canvas.style.cursor = "";
-        onMapHoverEndRef.current?.();
+        hoverIntent.leave();
+        return;
+      }
+      // Mid-drag / mid-move: no sampling, no readout, and anything already up
+      // comes down. Bailing here also skips the queryRenderedFeatures below, so
+      // a drag costs no feature queries either.
+      if (hoverIntent.isSuppressed()) {
+        hoverIntent.cancel();
         return;
       }
       // MapLibre reports canvas-local coordinates, while viewer overlays are
@@ -3885,21 +3940,23 @@ export function MapCanvas({
       canvas.style.cursor = soundingModeArmedRef.current
         ? "crosshair"
         : hazardSelection && onVectorHazardClickRef.current ? "pointer" : onMapHoverRef.current ? "crosshair" : "";
-      onMapHoverRef.current?.(
-        lat,
-        lng,
-        overlayX,
-        overlayY,
-        (hoverLabel || riskLabel)
-          ? {
-              kind: "label",
-              label: hoverLabel || riskLabel,
-              color: fillColor,
-              x: overlayX,
-              y: overlayY,
-            }
-          : undefined,
-      );
+      hoverIntent.pointerMove(x, y, () => {
+        onMapHoverRef.current?.(
+          lat,
+          lng,
+          overlayX,
+          overlayY,
+          (hoverLabel || riskLabel)
+            ? {
+                kind: "label",
+                label: hoverLabel || riskLabel,
+                color: fillColor,
+                x: overlayX,
+                y: overlayY,
+              }
+            : undefined,
+        );
+      });
     };
 
     const handleClick = (e: maplibregl.MapMouseEvent) => {
@@ -3932,8 +3989,23 @@ export function MapCanvas({
 
     const handleLeave = () => {
       canvas.style.cursor = "";
-      onMapHoverEndRef.current?.();
+      hoverIntent.leave();
     };
+
+    // Drag suppression, half one: the pointer itself. `pointerdown` on the
+    // canvas covers mouse, pen and touch; the release is listened for on the
+    // window because a drag very often ends off the canvas (and outside the
+    // browser entirely, which is what `pointercancel` catches).
+    const handlePointerDown = () => hoverIntent.pointerDown();
+    const handlePointerUp = () => hoverIntent.pointerUp();
+    // Half two: the camera. `movestart` is a one-shot "down now" so a
+    // keyboard/zoom-button/timeline ease drops the readout on the same tick it
+    // begins; how long it STAYS down is the `isMoving()` poll's business, which
+    // is also what covers post-release drag inertia. `moveend` is wired for
+    // symmetry and is a no-op — there is no latch for it to clear, and that is
+    // deliberate (an unpaired `movestart` must not wedge hover off).
+    const handleHoverMoveStart = () => hoverIntent.mapMoveStart();
+    const handleHoverMoveEnd = () => hoverIntent.mapMoveEnd();
 
     // City value labels (MapLibre symbol layer) behave like the old anchor
     // chips: pointer cursor on hover, fire onAnchorClick on click.
@@ -3958,15 +4030,26 @@ export function MapCanvas({
     map.on("click", CITY_VALUE_LABELS_LAYER_ID, handleCityClick);
     map.on("mouseenter", CITY_VALUE_LABELS_LAYER_ID, handleCityEnter);
     map.on("mouseleave", CITY_VALUE_LABELS_LAYER_ID, handleCityLeave);
+    map.on("movestart", handleHoverMoveStart);
+    map.on("moveend", handleHoverMoveEnd);
     canvas.addEventListener("mouseleave", handleLeave);
+    canvas.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
 
     return () => {
       map.off("mousemove", handleMove);
+      map.off("movestart", handleHoverMoveStart);
+      map.off("moveend", handleHoverMoveEnd);
       map.off("click", handleClick);
       map.off("click", CITY_VALUE_LABELS_LAYER_ID, handleCityClick);
       map.off("mouseenter", CITY_VALUE_LABELS_LAYER_ID, handleCityEnter);
       map.off("mouseleave", CITY_VALUE_LABELS_LAYER_ID, handleCityLeave);
       canvas.removeEventListener("mouseleave", handleLeave);
+      canvas.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+      hoverIntent.dispose();
       canvas.style.cursor = "";
     };
   }, [isLoaded]);
@@ -3999,7 +4082,27 @@ export function MapCanvas({
         <div
           ref={mapContainerRef}
           className="h-full w-full"
-          style={{ backgroundColor: getMapBackgroundColor(basemapMode) }}
+          /**
+           * THE surface that shows through wherever the map canvas is
+           * transparent — which under globe projection is everything outside
+           * the disc (MapLibre draws the style's `background` layer on the tile
+           * meshes, i.e. on the sphere, not across the viewport). So this one
+           * declaration is where "outside the globe is space" is painted, and
+           * it is also what `resolveShareBackdropColor()` walks the DOM to find
+           * for the still/GIF backdrop — exports therefore sit on space for
+           * free, with no second literal to keep in sync.
+           *
+           * Flat is untouched: `globeActive` is false, so the expression is the
+           * previous call verbatim and the mercator goldens stay bit-identical.
+           * The flat basemap is opaque across the whole canvas anyway, so the
+           * brief window between toggling globe on and MapLibre's style-loaded
+           * `setProjection` landing shows nothing of this colour.
+           */
+          style={{
+            backgroundColor: globeActive
+              ? GLOBE_SPACE_BACKGROUND_COLOR
+              : getMapBackgroundColor(basemapMode),
+          }}
           role="img"
           aria-label="Weather map"
         />

@@ -12,6 +12,7 @@ import {
   GLOBE_VERTEX_SOURCE,
   buildGlobeMesh,
   deriveMatrixSpace,
+  globeMeshSignature,
   isProjectionPairingCoherent,
   readFrameProjection,
   readProjectionTransitionState,
@@ -2434,6 +2435,16 @@ export class GridWebglLayerController {
     }
     const bbox = this.resolveBbox();
     const projection = this.resolveProjection();
+    // Signature FIRST, mesh second. The signature is a pure function of the
+    // arguments already in hand, so an unchanged footprint costs one string
+    // compare instead of a full mesh generation. Checking `mesh.signature`
+    // afterwards skipped only the GL upload: the generator still ran on every
+    // globe frame and threw away four typed arrays (~50 KB) each time, which
+    // profiled as the largest single item in this layer's per-frame JS.
+    const signature = globeMeshSignature(bbox, projection, GLOBE_MESH_COLS, GLOBE_MESH_ROWS);
+    if (signature === this.globeMeshSignature) {
+      return;
+    }
     const geographic = isGeographicProjection(projection);
     const fullWorld = isFullWorldGeographic(projection, bbox);
     const mesh = buildGlobeMesh(
@@ -2444,9 +2455,6 @@ export class GridWebglLayerController {
       GLOBE_MESH_COLS,
       GLOBE_MESH_ROWS,
     );
-    if (mesh.signature === this.globeMeshSignature) {
-      return;
-    }
     gl.bindBuffer(gl.ARRAY_BUFFER, this.globeVertexBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.globeTexCoordBuffer);

@@ -6329,8 +6329,9 @@ export default function App() {
       dataDomain,
       // Camera, not data: the Image/GIF tabs render on the globe, and the Link
       // tab's own permalink carries `proj=globe` so a shared link reopens the
-      // way the sharer saw it. The SERVER-side screenshot stays flat — see
-      // screenshotUrlForState() and audit item 8d.
+      // way the sharer saw it. The SERVER-side screenshot now renders the globe
+      // too — screenshotUrlForState() passes this param through (reversing
+      // audit item 8d), so this permalink is also the headless render's camera.
       globeProjection: globeProjectionEnabled,
       lat: mapView.lat,
       lon: mapView.lon,
@@ -6806,6 +6807,7 @@ export default function App() {
 
         {activeTooltip && (
           <div
+            data-testid="map-sample-tooltip"
             className="pointer-events-none absolute z-50 rounded-xl glass px-2.5 py-1.5 text-xs font-medium shadow-xl"
             style={{
               left: activeTooltip.x + 14,

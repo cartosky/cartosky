@@ -352,45 +352,85 @@ const FLAT_MIN_ZOOM = 0;
 const FLAT_MAX_ZOOM = 24;
 
 /**
+ * Globe-legal camera bounds — the PERMALINK's own range, not the flat map's.
+ * `z` mirrors MIN_PERMALINK_ZOOM in permalink.ts (a globe zoom is
+ * latitude-adjusted and legitimately negative: whole disc -0.09, framed pole
+ * -6.84, camera-constrain floor -9.16), and latitude mirrors readPermalink's
+ * +-90 accept range. Emitting outside either would produce a render URL the
+ * viewer silently drops the param from, i.e. a differently-framed capture.
+ */
+const GLOBE_MIN_ZOOM = -10;
+const GLOBE_MAX_ZOOM = 24;
+const GLOBE_MAX_CENTER_LATITUDE = 90;
+
+/** Case-insensitive read of the permalink's projection param. */
+function permalinkIsGlobe(url: URL): boolean {
+  return (url.searchParams.get("proj") ?? "").trim().toLowerCase() === "globe";
+}
+
+/**
  * URL the server-side screenshot service renders.
  *
- * THE SERVER RENDER IS ALWAYS FLAT (globe audit item 8d — an explicit v1
- * decision, not an oversight), so this normalizes the camera into what a flat
- * map can actually express. It is not enough to avoid ADDING a projection
- * param: `permalink` is the viewer's own permalink, which carries `proj=globe`
- * whenever the sharer is on the globe, so the param has to be REMOVED here or
- * the headless render silently comes back spherical.
+ * PROJECTION PASSES THROUGH. The v1 decision (globe audit item 8d) was that the
+ * server render is always flat, so this used to DELETE `proj` — `permalink` is
+ * the viewer's own permalink and carries `proj=globe` whenever the sharer is on
+ * the globe. That decision is reversed: a signed-in capture taken from a globe
+ * view must come back as a globe, so `proj=globe` now survives into the
+ * headless render. Anything else in `proj` is still removed — an unrecognized
+ * projection is not something to hand a renderer.
  *
- * The camera clamps exist for the same reason. A globe camera's zoom is
- * latitude-adjusted and legitimately negative (whole disc -0.09, framed pole
- * -6.84), and its centre latitude can reach +-89.9; neither is a camera the
- * flat map can hold. Clamping degrades a globe camera to its nearest flat one
- * rather than handing the renderer a value it will silently constrain to
- * something else. Both clamps are IDENTITY for a flat camera — the transform's
- * own constrain already keeps flat within these bounds — so an existing share
- * link is byte-identical.
+ * The camera clamps follow the projection. On the globe the camera is passed
+ * through at PERMALINK range ([-10, 24] zoom, +-90 latitude): a globe zoom is
+ * negative for a whole-disc or polar camera, and clamping it to the flat range
+ * would reframe the capture into a different picture than the sharer's. On the
+ * flat map the old flat clamps stay exactly as they were, and both are IDENTITY
+ * for a real flat camera — the transform's own constrain already keeps flat
+ * within them — so an existing flat share link is byte-identical.
  *
  * NOTE on the reported HTTP 400: it is not these params. `/api/v4/share/
  * screenshot` (backend/app/main.py:1567) validates only two things, an empty
  * `url` and a hostname outside `_share_screenshot_allowed_hosts()`; there is no
  * zoom or latitude validation anywhere in the endpoint or in
- * screenshot_service.py. See the report accompanying this change.
+ * screenshot_service.py.
+ *
+ * COMPOSITION. Full-frame was evaluated and rejected. The globe's screen radius
+ * is set by `worldSize`, i.e. by zoom, and is very nearly canvas-INDEPENDENT, so
+ * a low-zoom globe camera puts a small planet in the middle of whatever frame it
+ * is rendered into: measured on a 1208x720 headless frame, the disc covers 67%
+ * of it at z3 but 8% at z1 and 2% at the whole-disc zoom floor (z -0.09 at lat
+ * 20). Composing that full-frame is the "huge empty margins" case. So the
+ * server capture gets the SAME centred-square crop the client capture has had
+ * since audit item 8c (`globeShareCropRect`, reused not forked) — the only
+ * difference being where the disc comes from, since the client cannot ask a
+ * transform about a frame it did not render. See
+ * `ScreenshotExportOptions.globeDiscSource` and `measureOpaqueDisc`.
  */
 export function screenshotUrlForState(permalink: string, state: ScreenshotExportState): string {
   const base = typeof window !== "undefined" ? window.location.origin : "https://cartosky.com";
   const url = new URL(permalink, base);
-  url.searchParams.delete("proj");
+  const globe = permalinkIsGlobe(url);
+  if (globe) {
+    // `permalinkIsGlobe` reads case-insensitively, so re-emit the canonical
+    // spelling rather than passing `proj=GLOBE` through verbatim: the renderer
+    // is a different reader than this one and need not be as forgiving.
+    // Unreachable through the viewer's own permalink writer, which only ever
+    // writes `globe` — closed because it is one line, not because it is live.
+    url.searchParams.set("proj", "globe");
+  } else {
+    url.searchParams.delete("proj");
+  }
+  const maxLat = globe ? GLOBE_MAX_CENTER_LATITUDE : FLAT_MAX_CENTER_LATITUDE;
+  const minZoom = globe ? GLOBE_MIN_ZOOM : FLAT_MIN_ZOOM;
+  const maxZoom = globe ? GLOBE_MAX_ZOOM : FLAT_MAX_ZOOM;
   const [lng, lat] = state.center;
   if (Number.isFinite(lat)) {
-    const flatLat = Math.max(-FLAT_MAX_CENTER_LATITUDE, Math.min(FLAT_MAX_CENTER_LATITUDE, Number(lat)));
-    url.searchParams.set("lat", flatLat.toFixed(5));
+    url.searchParams.set("lat", Math.max(-maxLat, Math.min(maxLat, Number(lat))).toFixed(5));
   }
   if (Number.isFinite(lng)) {
     url.searchParams.set("lon", Number(lng).toFixed(5));
   }
   if (Number.isFinite(state.zoom)) {
-    const flatZoom = Math.max(FLAT_MIN_ZOOM, Math.min(FLAT_MAX_ZOOM, Number(state.zoom)));
-    url.searchParams.set("z", flatZoom.toFixed(2));
+    url.searchParams.set("z", Math.max(minZoom, Math.min(maxZoom, Number(state.zoom))).toFixed(2));
   }
   if (Number.isFinite(state.fh)) {
     url.searchParams.set("fh", String(Math.round(Number(state.fh))));

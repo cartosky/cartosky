@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 
+import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
 import { BRAND_LOGO_SRC } from "@/lib/branding";
 import { clerkUserButtonProps } from "@/lib/clerk-appearance";
 import { cn } from "@/lib/utils";
@@ -167,7 +168,7 @@ export function ViewerTopBar() {
             title="Sounding — click the map to sample a vertical profile"
             onClick={toolbar.onSoundingModeToggle}
             className={cn(
-              "inline-flex min-h-8 items-center gap-1.5 rounded-[7px] border px-3 text-[13px] font-semibold transition-colors duration-100 pointer-coarse:min-h-11",
+              "relative inline-flex min-h-8 items-center gap-1.5 overflow-visible rounded-[7px] border px-3 text-[13px] font-semibold transition-colors duration-100 pointer-coarse:min-h-11",
               toolbar.soundingMode
                 ? "border-cyan-300/40 bg-cyan-300/[0.18] text-cyan-50"
                 : "border-white/[0.11] bg-white/[0.045] text-white/76 hover:border-white/20 hover:bg-white/[0.08] hover:text-white",
@@ -175,6 +176,7 @@ export function ViewerTopBar() {
           >
             <Crosshair className="h-3.5 w-3.5" />
             Sounding
+            <NewFeatureBadge feature="sounding" />
           </button>
         ) : null}
         <NavLink

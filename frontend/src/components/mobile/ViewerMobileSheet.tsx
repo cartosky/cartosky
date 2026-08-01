@@ -10,6 +10,7 @@ import { StatisticPicker } from "@/components/StatisticPicker";
 import { VariablePicker } from "@/components/VariablePicker";
 import { DisplayRow, NavbarSelect, RegionUtilitySelect } from "@/components/ViewerSiteHeader";
 import { Slider } from "@/components/ui/slider";
+import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
 import { supportsNwsWarningsOverlay } from "@/lib/app-utils";
 import { cn } from "@/lib/utils";
 import {
@@ -565,6 +566,7 @@ export function ViewerMobileSheet({ peekPx = MOBILE_PEEK_PX }: { peekPx?: number
               <div data-testid="mobile-toggle-globe-view" data-tour-target="globe-toggle">
                 <DisplayRow
                   label="Globe view"
+                  badge={<NewFeatureBadge feature="globe-view" className="right-10 translate-x-0" />}
                   checked={Boolean(globeProjectionEnabled)}
                   onToggle={() => onGlobeProjectionEnabledChange(!globeProjectionEnabled)}
                   variant="flat"

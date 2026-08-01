@@ -193,7 +193,15 @@ export function useScreenshotCapture({
       const { exportViewerScreenshotPng } = await import("@/lib/screenshot_export");
       const finalBlob = await exportViewerScreenshotPng(
         stateWithCapture,
-        { legend: getLegend?.() ?? null },
+        {
+          legend: getLegend?.() ?? null,
+          // The disc has to be measured from the returned frame, not read off
+          // this page's map: the headless render is a different canvas at a
+          // different aspect (poster window size vs the rail-inset map slot).
+          // A flat render has no transparent region and composes full-frame
+          // exactly as before. See ScreenshotExportOptions.globeDiscSource.
+          globeDiscSource: "captured-alpha",
+        },
       );
       const objectUrl = URL.createObjectURL(finalBlob);
       const filename = screenshotFilename(state);

@@ -158,6 +158,31 @@ if (typeof window !== "undefined") {
   };
 }
 
+// ─── Space background ────────────────────────────────────────────────────────
+
+/**
+ * What the area OUTSIDE the globe disc is painted.
+ *
+ * Operator report (Globe v1.1): the planet floated on the flat map's own
+ * background grey, which reads as "the map failed to load" rather than as
+ * space.
+ *
+ * COLOUR. Two stops darker than `#04101e`, the deep-navy surface every piece of
+ * viewer glass chrome is built on (top bar, rail popovers, legend chip), so it
+ * belongs to the same palette while still sitting clearly BEHIND that chrome —
+ * chrome at the same value would dissolve into the backdrop over the globe.
+ *
+ * THE SAME IN LIGHT AND DARK CHROME, on purpose, twice over: space is space,
+ * it has no light mode; and share/GIF output derives its backdrop from this
+ * colour (`resolveShareBackdropColor`), so a mode-dependent value would make
+ * exports of the same view differ by the sharer's UI preference.
+ *
+ * SOLID, deliberately. Stars, a limb glow and a vignette are the obvious next
+ * polish and are held back from v1 on purpose: they are texture over a colour
+ * decision, and the colour has to be settled (and pinned by goldens) first.
+ */
+export const GLOBE_SPACE_BACKGROUND_COLOR = "#02060d";
+
 // ─── Disc geometry ───────────────────────────────────────────────────────────
 
 /**
@@ -484,6 +509,28 @@ function latDegFromMercatorUnitY(y: number): number {
 }
 
 /**
+ * The mesh's cache key, as a function of the inputs ALONE.
+ *
+ * Split out of `buildGlobeMesh` so a caller can ask "would this build produce
+ * the mesh I already uploaded?" WITHOUT building it. Checking `mesh.signature`
+ * after the fact still skipped the GL upload, but it ran the whole generator —
+ * measured at 0.041 ms and ~50 KB of throwaway typed arrays on EVERY globe
+ * frame, which was the single largest item in this layer's per-frame JS.
+ *
+ * `geographic` and `fullWorld` are deliberately absent: both are pure functions
+ * of `projection` and `bbox`, so including them could not discriminate anything
+ * the two already do.
+ */
+export function globeMeshSignature(
+  bbox: [number, number, number, number],
+  projection: string | null | undefined,
+  cols: number,
+  rows: number,
+): string {
+  return `${projection ?? ""}|${bbox.join(",")}|${cols}x${rows}`;
+}
+
+/**
  * Subdivided mesh for one grid artifact's footprint, in sphere space.
  *
  * TWO coordinate systems per vertex, on purpose:
@@ -540,7 +587,7 @@ export function buildGlobeMesh(
   cols: number,
   rows: number,
 ): GlobeMesh {
-  const signature = `${projection ?? ""}|${bbox.join(",")}|${cols}x${rows}`;
+  const signature = globeMeshSignature(bbox, projection, cols, rows);
   const vertsX = cols + 1;
 
   // Longitude span of the drawn footprint. A full-world geographic grid is

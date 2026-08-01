@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import { AttributionDialog } from "@/components/ViewerTopBar";
+import { NewFeatureBadge } from "@/components/ui/NewFeatureBadge";
 import { BRAND_LOGO_SRC } from "@/lib/branding";
 import { MOBILE_BAR_PX } from "@/lib/viewer-mobile";
 import { cn } from "@/lib/utils";
@@ -180,12 +181,14 @@ export function ViewerMobileBar() {
               aria-pressed={toolbar.soundingMode === true}
               className={cn(
                 BAR_MENU_ITEM_CLASSNAME,
+                "relative overflow-visible",
                 toolbar.soundingMode && "bg-cyan-300/12 text-cyan-50",
               )}
               onClick={runItem(() => toolbar?.onSoundingModeToggle?.())}
             >
               <TrendingUp className="h-4 w-4 text-white/54" />
               Sounding
+              <NewFeatureBadge feature="sounding" className="right-2 translate-x-0" />
             </button>
           ) : null}
           <button type="button" role="menuitem" className={BAR_MENU_ITEM_CLASSNAME} onClick={runItem(() => toolbar?.onReplayTour?.())}>

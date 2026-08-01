@@ -12,8 +12,9 @@ import type { ScreenshotExportState } from "@/lib/screenshot_export";
  * unit-testable without a canvas; the draw itself is covered by the
  * render-golden-baseline Playwright suite, which must NOT move for flat frames.
  *
- * 8d: the server-side screenshot render stays mercator — nothing about the
- * client's projection is forwarded to it.
+ * 8d (REVERSED): the server-side screenshot render used to stay mercator. It no
+ * longer does — a signed-in capture taken from a globe view renders as a globe,
+ * so `proj=globe` is forwarded and the camera travels at permalink range.
  */
 
 describe("globeShareCropRect", () => {
@@ -83,14 +84,18 @@ describe("globeShareCropRect", () => {
  * else. `screenshotUrlForState` copies the permalink it is given and then sets
  * a fixed set of params.
  *
- * The added-keys assertion below is necessary but WAS NOT SUFFICIENT, and this
- * is the correction: an earlier revision reasoned that a permalink handed in
- * with `proj=` already set keeps it, and called that "a permalink-side concern,
- * not this function's". That was wrong. App.tsx builds the share permalink with
+ * The `proj` behaviour is the reversed decision, and it is asymmetric on
+ * purpose. App.tsx builds the share permalink with
  * `globeProjection: globeProjectionEnabled`, so the permalink fed to this
- * function DOES carry `proj=globe` whenever the sharer is on the globe — and
- * the server render, which is flat by design, was silently being asked for a
- * globe. So the pin is now on the OUTPUT: no projection param, whatever came in.
+ * function carries `proj=globe` exactly when the sharer is on the globe — and
+ * that is now what the headless render must reproduce, so it PASSES THROUGH.
+ * Any other `proj` value is still stripped: an unrecognized projection is not
+ * something to hand a renderer, and a flat permalink has none to begin with, so
+ * flat render URLs stay byte-identical (pinned below).
+ *
+ * The camera clamps follow the projection for the same reason: clamping a globe
+ * camera's negative zoom to the flat floor of 0 would render a DIFFERENT picture
+ * than the sharer's, which is the whole failure this change exists to fix.
  */
 describe("screenshotUrlForState", () => {
   const state = {
@@ -104,7 +109,7 @@ describe("screenshotUrlForState", () => {
     animationEnabled: false,
   } satisfies Partial<ScreenshotExportState> as ScreenshotExportState;
 
-  it("adds only camera + frame params — never a projection param", () => {
+  it("adds only camera + frame params, and invents no projection param", () => {
     const permalink = "/viewer?model=gfs&var=tmp2m";
     const before = new URL(permalink, "https://cartosky.com");
     const after = new URL(screenshotUrlForState(permalink, state));
@@ -116,31 +121,76 @@ describe("screenshotUrlForState", () => {
     expect(added).not.toContain("globe");
   });
 
-  it("strips a projection param the permalink brought with it", () => {
+  it("passes a globe projection param through", () => {
     // The real input shape: the viewer's own share permalink, on the globe.
     const after = new URL(
       screenshotUrlForState("/viewer?model=gfs&var=tmp2m&proj=globe", state),
     );
-    expect(after.searchParams.has("proj")).toBe(false);
-    expect(after.toString()).not.toContain("proj");
+    expect(after.searchParams.get("proj")).toBe("globe");
   });
 
-  it("clamps a globe camera into the flat-legal range", () => {
-    // The server render is flat, so a latitude-adjusted globe zoom (negative)
-    // and a polar centre are not cameras it can hold. Both measured values.
+  it("normalizes the projection param's case on the way out", () => {
+    // `permalinkIsGlobe` reads case-insensitively, so `proj=GLOBE` is
+    // recognized here; without a normalize it would then be forwarded verbatim
+    // to a renderer that need not be as forgiving. Unreachable through the
+    // viewer's own permalink writer (which only ever writes `globe`) — closed
+    // because it is one line, not because it is live.
+    for (const raw of ["GLOBE", "Globe", " globe "]) {
+      const after = new URL(
+        screenshotUrlForState(`/viewer?model=gfs&proj=${encodeURIComponent(raw)}`, state),
+      );
+      expect(after.searchParams.get("proj"), `proj=${raw}`).toBe("globe");
+    }
+  });
+
+  it("strips a projection param that is not the globe", () => {
+    // Pass-through is for the one projection this app renders. Anything else
+    // (a future build's link, a hand-edited URL) degrades to the flat default
+    // exactly the way readPermalink degrades it.
+    const after = new URL(
+      screenshotUrlForState("/viewer?model=gfs&proj=orthographic", state),
+    );
+    expect(after.searchParams.has("proj")).toBe(false);
+  });
+
+  it("keeps a globe camera at permalink range, negative zoom and all", () => {
+    // Measured globe cameras. Clamping these into the flat range would frame a
+    // different picture than the sharer's, and the whole point of the server
+    // globe render is that it reproduces what the sharer saw.
     const polar = new URL(screenshotUrlForState("/viewer?m=gfs&proj=globe", {
       ...state, center: [10, 89.9], zoom: -6.8404,
     }));
-    expect(Number(polar.searchParams.get("z"))).toBeGreaterThanOrEqual(0);
-    expect(polar.searchParams.get("z")).toBe("0.00");
-    expect(Number(polar.searchParams.get("lat"))).toBeLessThanOrEqual(85.05112877980659);
-    expect(polar.searchParams.has("proj")).toBe(false);
+    expect(polar.searchParams.get("proj")).toBe("globe");
+    expect(polar.searchParams.get("z")).toBe("-6.84");
+    expect(polar.searchParams.get("lat")).toBe("89.90000");
 
-    const wholeDisc = new URL(screenshotUrlForState("/viewer?m=gfs", {
+    const wholeDisc = new URL(screenshotUrlForState("/viewer?m=gfs&proj=globe", {
       ...state, center: [-40, 20], zoom: -0.0897,
     }));
-    expect(wholeDisc.searchParams.get("z")).toBe("0.00");
+    expect(wholeDisc.searchParams.get("z")).toBe("-0.09");
     expect(wholeDisc.searchParams.get("lat")).toBe("20.00000");
+  });
+
+  it("keeps the globe camera inside the range readPermalink accepts", () => {
+    // The reader drops `z` below -10 and `lat` outside +-90 outright, which
+    // would silently reframe the capture. Clamp, don't emit-and-lose.
+    const extreme = new URL(screenshotUrlForState("/viewer?m=gfs&proj=globe", {
+      ...state, center: [10, 120], zoom: -40,
+    }));
+    expect(extreme.searchParams.get("z")).toBe("-10.00");
+    expect(extreme.searchParams.get("lat")).toBe("90.00000");
+    expect(Number(extreme.searchParams.get("z"))).toBeGreaterThanOrEqual(-10);
+    expect(Number(extreme.searchParams.get("lat"))).toBeLessThanOrEqual(90);
+  });
+
+  it("still clamps a flat camera into the flat-legal range", () => {
+    // No proj means the flat renderer, which holds neither a negative zoom nor
+    // a latitude past the Web Mercator limit.
+    const flat = new URL(screenshotUrlForState("/viewer?m=gfs", {
+      ...state, center: [10, 89.9], zoom: -6.8404,
+    }));
+    expect(flat.searchParams.get("z")).toBe("0.00");
+    expect(Number(flat.searchParams.get("lat"))).toBeLessThanOrEqual(85.05112877980659);
   });
 
   it("is byte-identical for a flat camera", () => {
