@@ -7,11 +7,13 @@ import gc
 import json
 import logging
 import os
+import queue
 import re
 import shutil
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -153,6 +155,10 @@ ENV_LOOP_SHARPEN_THRESHOLD = (
 # Optional derived bundle mode. Enable when multiple derived snowfall/liquid
 # products (for example Kuchera + 10:1 + precip total) should share caches.
 ENV_DERIVE_BUNDLE = ("CARTOSKY_DERIVE_BUNDLE", "CARTOSKY_V3_DERIVE_BUNDLE", "TWF_V3_DERIVE_BUNDLE")
+# Sounding stacks build on a background worker thread by default. Set
+# CARTOSKY_SOUNDING_BUILD_ASYNC=0 to restore the old inline (synchronous)
+# behaviour, which blocks the catch-up loop for one GRIB fetch per new fh.
+ENV_SOUNDING_BUILD_ASYNC = "CARTOSKY_SOUNDING_BUILD_ASYNC"
 
 DEFAULT_LOOP_PREGENERATE_ENABLED = True
 DEFAULT_LOOP_CACHE_ROOT = DEFAULT_DATA_ROOT / "loop_cache"
@@ -171,6 +177,10 @@ DEFAULT_LOOP_SHARPEN_RADIUS = 1.2
 DEFAULT_LOOP_SHARPEN_PERCENT = 35
 DEFAULT_LOOP_SHARPEN_THRESHOLD = 3
 DEFAULT_DERIVE_BUNDLE = False
+DEFAULT_SOUNDING_BUILD_ASYNC = True
+# Bounded join on scheduler exit: the in-flight job gets a moment to land, then
+# the daemon thread dies with the process.
+DEFAULT_SOUNDING_WORKER_SHUTDOWN_SECONDS = 30.0
 RESTART_ON_SUCCESS_MODELS = frozenset({"gfs", "hrrr", "eps", "gefs", "ecmwf"})
 
 BuildTarget = tuple[str, str, int]
@@ -1319,6 +1329,12 @@ def _resolve_loop_prewarm_fhs(plugin: Any, var_id: str, cycle_hour: int, *, limi
     return tuple(scheduled[backfill_start:pivot_index] + forward)
 
 
+# Serialises every domain publish in this process. The sounding worker thread
+# republishes on its own schedule, so a round publish and a stack republish can
+# otherwise land on the same staging/published tree at the same time.
+_PUBLISH_LOCK = threading.Lock()
+
+
 def _promote_run(data_root: Path, model: str, run_id: str, *, domain: str | None = None) -> None:
     stage_run = _staging_run_root(data_root, model, run_id, domain)
     if not stage_run.is_dir():
@@ -1510,6 +1526,28 @@ def _sounding_complete_fhs(
     return ready
 
 
+def _sounding_pending_fhs(
+    *,
+    data_root: Path,
+    model_id: str,
+    run_id: str,
+    region: str,
+    primary_vars: list[str],
+    candidate_fhs: Iterable[int],
+) -> tuple[Path, list[int]]:
+    """``(run_root, fhs)`` that are frontier-complete and have no stack yet."""
+    run_root = _staging_run_root(data_root, model_id, run_id, region)
+    fhs = _sounding_complete_fhs(
+        data_root=data_root,
+        model_id=model_id,
+        run_id=run_id,
+        region=region,
+        primary_vars=primary_vars,
+        candidate_fhs=candidate_fhs,
+    )
+    return run_root, [fh for fh in fhs if not sounding_service.stack_exists(run_root, fh)]
+
+
 def _run_sounding_pass(
     *,
     data_root: Path,
@@ -1523,13 +1561,15 @@ def _run_sounding_pass(
 ) -> tuple[int, int]:
     """Build any missing stacks for already-complete fhs. Never raises.
 
+    Synchronous path: kept as the CARTOSKY_SOUNDING_BUILD_ASYNC=0 escape hatch
+    and as the deterministic path tests exercise.
+
     Returns ``(built, failed)``.
     """
     if not _sounding_enabled(model_id):
         return 0, 0
     try:
-        run_root = _staging_run_root(data_root, model_id, run_id, region)
-        fhs = _sounding_complete_fhs(
+        run_root, pending = _sounding_pending_fhs(
             data_root=data_root,
             model_id=model_id,
             run_id=run_id,
@@ -1537,7 +1577,6 @@ def _run_sounding_pass(
             primary_vars=primary_vars,
             candidate_fhs=candidate_fhs,
         )
-        pending = [fh for fh in fhs if not sounding_service.stack_exists(run_root, fh)]
         if not pending:
             return 0, 0
         logger.info(
@@ -1567,6 +1606,334 @@ def _run_sounding_pass(
         # A sounding failure must never fail the run publish.
         logger.exception("Sounding pass failed: run=%s model=%s reason=%s", run_id, model_id, reason)
         return 0, 0
+
+
+@dataclass(frozen=True)
+class _SoundingJob:
+    """One forecast hour's stack build, queued for the background worker."""
+
+    model_id: str
+    run_id: str
+    run_dt: datetime
+    run_root: Path
+    fh: int
+
+    @property
+    def key(self) -> tuple[str, str, str, int]:
+        return (self.model_id, self.run_id, str(self.run_root), self.fh)
+
+    @property
+    def batch_key(self) -> tuple[str, str, str]:
+        return (self.model_id, self.run_id, str(self.run_root))
+
+
+class _SoundingBuildWorker:
+    """Serial background builder for sounding stacks.
+
+    One daemon thread per scheduler process drains a FIFO of per-fh jobs. Each
+    job is a ~15 s GRIB fetch plus a GDAL warp — both release the GIL — so a
+    thread (not a process pool) is the right shape, and keeping it serial
+    preserves the memory and upstream-politeness profile of the old inline pass.
+
+    Producers only ever enqueue; nothing on the raster critical path waits on
+    this worker. When a run's queued jobs all finish, the worker fires that
+    run's completion callback exactly once so the manifest's
+    ``sounding.available_fhs`` and the published tree catch up in one republish
+    rather than per-fh.
+    """
+
+    def __init__(self) -> None:
+        self._queue: queue.Queue[_SoundingJob | None] = queue.Queue()
+        self._lock = threading.Lock()
+        self._queued_keys: set[tuple[str, str, str, int]] = set()
+        self._batches: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self._thread: threading.Thread | None = None
+
+    # -- producer side ----------------------------------------------------
+
+    def enqueue(
+        self,
+        jobs: Iterable[_SoundingJob],
+        *,
+        on_batch_complete: Any | None = None,
+    ) -> int:
+        """Queue *jobs*, skipping any already in flight. Returns jobs accepted."""
+        accepted: list[_SoundingJob] = []
+        with self._lock:
+            for job in jobs:
+                if job.key in self._queued_keys:
+                    continue
+                self._queued_keys.add(job.key)
+                batch = self._batches.setdefault(
+                    job.batch_key,
+                    {"pending": 0, "built": 0, "failed": 0, "skipped": 0, "on_complete": None},
+                )
+                batch["pending"] += 1
+                batch["on_complete"] = on_batch_complete
+                accepted.append(job)
+        for job in accepted:
+            self._queue.put(job)
+        if accepted:
+            self._ensure_thread()
+        return len(accepted)
+
+    def pending_count(self) -> int:
+        with self._lock:
+            return len(self._queued_keys)
+
+    # -- consumer side ----------------------------------------------------
+
+    def _ensure_thread(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            thread = threading.Thread(
+                target=self._loop, name="sounding-build-worker", daemon=True
+            )
+            self._thread = thread
+        thread.start()
+
+    def _loop(self) -> None:
+        while True:
+            job = self._queue.get()
+            if job is None:
+                return
+            self._consume(job)
+
+    def drain(self) -> None:
+        """Process everything currently queued, on the CALLING thread.
+
+        Deterministic stand-in for the worker thread in tests.
+        """
+        while True:
+            try:
+                job = self._queue.get_nowait()
+            except queue.Empty:
+                return
+            if job is None:
+                continue
+            self._consume(job)
+
+    def _consume(self, job: _SoundingJob) -> None:
+        outcome = "skipped"
+        try:
+            outcome = self._build(job)
+        except Exception:  # pragma: no cover - _build is already contained
+            outcome = "failed"
+            logger.exception(
+                "Sounding worker job crashed: run=%s model=%s fh%03d",
+                job.run_id,
+                job.model_id,
+                job.fh,
+            )
+        finally:
+            self._finish(job, outcome)
+
+    def _build(self, job: _SoundingJob) -> str:
+        # Retention (or an operator) may have pruned the run while this job sat
+        # in the queue. Building would recreate the run directory, so bail.
+        if not job.run_root.is_dir():
+            logger.info(
+                "Sounding job dropped: run=%s model=%s fh%03d run dir is gone",
+                job.run_id,
+                job.model_id,
+                job.fh,
+            )
+            return "skipped"
+        try:
+            built = sounding_service.build_stack_for_fh(
+                model_id=job.model_id,
+                run_id=job.run_id,
+                run_date=job.run_dt,
+                fh=job.fh,
+                run_root=job.run_root,
+            )
+        except Exception:
+            logger.exception(
+                "Sounding stack build failed (run publish unaffected): model=%s run=%s fh%03d",
+                job.model_id,
+                job.run_id,
+                job.fh,
+            )
+            return "failed"
+        return "built" if built is not None else "skipped"
+
+    def _finish(self, job: _SoundingJob, outcome: str) -> None:
+        with self._lock:
+            self._queued_keys.discard(job.key)
+            batch = self._batches.get(job.batch_key)
+            if batch is None:  # pragma: no cover - defensive
+                return
+            batch[outcome] = int(batch.get(outcome, 0)) + 1
+            batch["pending"] = int(batch["pending"]) - 1
+            if batch["pending"] > 0:
+                return
+            self._batches.pop(job.batch_key, None)
+            summary = dict(batch)
+
+        logger.info(
+            "Sounding worker batch done: run=%s model=%s built=%d failed=%d skipped=%d",
+            job.run_id,
+            job.model_id,
+            summary["built"],
+            summary["failed"],
+            summary["skipped"],
+        )
+        on_complete = summary.get("on_complete")
+        if on_complete is None:
+            return
+        try:
+            on_complete(built=int(summary["built"]), failed=int(summary["failed"]))
+        except Exception:
+            logger.exception(
+                "Sounding batch completion callback failed: run=%s model=%s",
+                job.run_id,
+                job.model_id,
+            )
+
+    # -- lifecycle --------------------------------------------------------
+
+    def shutdown(self, *, timeout: float = DEFAULT_SOUNDING_WORKER_SHUTDOWN_SECONDS) -> None:
+        """Ask the worker to stop after its current job and join, bounded.
+
+        Anything still queued dies with the process. That is safe: stack builds
+        are skip-if-exists idempotent, so the next catch-up cycle re-enqueues
+        exactly the fhs that never landed.
+        """
+        with self._lock:
+            thread = self._thread
+            self._thread = None
+        if thread is None:
+            return
+        self._queue.put(None)
+        thread.join(timeout)
+        if thread.is_alive():
+            logger.warning("Sounding worker still running at shutdown; abandoning it")
+
+
+_SOUNDING_WORKER = _SoundingBuildWorker()
+
+
+def _sounding_worker() -> _SoundingBuildWorker:
+    return _SOUNDING_WORKER
+
+
+def _sounding_build_async_enabled() -> bool:
+    return _bool_from_env(ENV_SOUNDING_BUILD_ASYNC, DEFAULT_SOUNDING_BUILD_ASYNC)
+
+
+def _queue_sounding_pass(
+    *,
+    data_root: Path,
+    model_id: str,
+    run_id: str,
+    run_dt: datetime,
+    region: str,
+    primary_vars: list[str],
+    candidate_fhs: Iterable[int],
+    reason: str,
+    on_batch_complete: Any | None = None,
+) -> int:
+    """Enqueue missing stacks for already-complete fhs. Never raises, never builds.
+
+    Returns the number of jobs accepted (duplicates of in-flight work are
+    dropped, so repeated catch-up rounds are cheap).
+    """
+    if not _sounding_enabled(model_id):
+        return 0
+    try:
+        run_root, pending = _sounding_pending_fhs(
+            data_root=data_root,
+            model_id=model_id,
+            run_id=run_id,
+            region=region,
+            primary_vars=primary_vars,
+            candidate_fhs=candidate_fhs,
+        )
+        if not pending:
+            return 0
+        queued = _sounding_worker().enqueue(
+            [
+                _SoundingJob(
+                    model_id=str(model_id).strip().lower(),
+                    run_id=run_id,
+                    run_dt=run_dt,
+                    run_root=run_root,
+                    fh=int(fh),
+                )
+                for fh in pending
+            ],
+            on_batch_complete=on_batch_complete,
+        )
+        logger.info(
+            "Sounding enqueue: run=%s model=%s reason=%s pending_fhs=%s queued=%d",
+            run_id,
+            model_id,
+            reason,
+            pending,
+            queued,
+        )
+        return queued
+    except Exception:
+        logger.exception(
+            "Sounding enqueue failed: run=%s model=%s reason=%s", run_id, model_id, reason
+        )
+        return 0
+
+
+def _dispatch_sounding_pass(
+    *,
+    data_root: Path,
+    model_id: str,
+    run_id: str,
+    run_dt: datetime,
+    region: str,
+    primary_vars: list[str],
+    candidate_fhs: Iterable[int],
+    reason: str,
+    on_batch_complete: Any | None = None,
+) -> tuple[int, int]:
+    """Async enqueue by default; inline build when the escape hatch is set.
+
+    Returns ``(built_inline, queued)`` — exactly one of the two is ever non-zero.
+    """
+    kwargs = dict(
+        data_root=data_root,
+        model_id=model_id,
+        run_id=run_id,
+        run_dt=run_dt,
+        region=region,
+        primary_vars=primary_vars,
+        candidate_fhs=candidate_fhs,
+        reason=reason,
+    )
+    if not _sounding_build_async_enabled():
+        built, _failed = _run_sounding_pass(**kwargs)
+        return built, 0
+    return 0, _queue_sounding_pass(**kwargs, on_batch_complete=on_batch_complete)
+
+
+def _published_latest_run_id(data_root: Path, model: str, region: str) -> str | None:
+    try:
+        payload = json.loads(
+            _latest_pointer_path(data_root, model, region=region).read_text(encoding="utf-8")
+        )
+    except Exception:
+        return None
+    value = payload.get("run_id") if isinstance(payload, dict) else None
+    return str(value) if value else None
+
+
+def _run_is_superseded_by_latest(data_root: Path, model: str, run_id: str, region: str) -> bool:
+    """Whether LATEST already points at a run newer than *run_id*."""
+    latest = _published_latest_run_id(data_root, model, region)
+    if latest is None or latest == run_id:
+        return False
+    latest_dt = _parse_run_id_datetime(latest)
+    run_dt = _parse_run_id_datetime(run_id)
+    if latest_dt is None or run_dt is None:
+        return False
+    return latest_dt > run_dt
 
 
 def _write_run_manifest(
@@ -2206,6 +2573,12 @@ def _process_run(
     _log_process_cache_stats(stage="run_start")
 
     def _publish_one_domain(*, domain: str, reason: str, ready_regions: list[str]) -> None:
+        # Held for the whole publish: the sounding worker thread republishes
+        # this same tree whenever a batch of stacks lands.
+        with _PUBLISH_LOCK:
+            _publish_one_domain_locked(domain=domain, reason=reason, ready_regions=ready_regions)
+
+    def _publish_one_domain_locked(*, domain: str, reason: str, ready_regions: list[str]) -> None:
         if grid_build_enabled():
             try:
                 manifest_ok = build_grid_manifests_for_run_root(
@@ -2272,6 +2645,40 @@ def _process_run(
             ready_regions,
             canonical_region,
         )
+
+    def _republish_after_sounding_batch(*, built: int, failed: int) -> None:
+        """Promote the stacks the background worker just finished for THIS run.
+
+        Runs on the worker thread, possibly after ``_process_run`` has already
+        returned, so it re-derives everything it needs and never touches loop
+        state. Same code path and reason as the old inline republish — once per
+        drained batch, never per fh.
+        """
+        del failed
+        if built <= 0:
+            return
+        if not published_once:
+            # Nothing was ever promoted for this run; a republish here would
+            # publish an unready run.
+            return
+        try:
+            domain = _default_build_region(plugin)
+            ready_regions = _promotion_ready_regions(
+                data_root, model_id, run_id, primary_vars, promotion_fhs
+            )
+            if _run_is_superseded_by_latest(data_root, model_id, run_id, domain):
+                # A newer run already owns LATEST: promote the stacks, but never
+                # walk the pointer backwards.
+                ready_regions = []
+            _publish_one_domain(
+                domain=domain,
+                reason="sounding_complete",
+                ready_regions=ready_regions,
+            )
+        except Exception:
+            logger.exception(
+                "Sounding republish failed: run=%s model=%s", run_id, model_id,
+            )
 
     def _log_parallel_shared_fetch_cache(*, regions: set[str]) -> None:
         if not regions:
@@ -2807,7 +3214,9 @@ def _process_run(
         # readiness. Only fhs whose frames are already complete are eligible,
         # so this trails the build frontier instead of racing it, and
         # skip-if-exists keeps it idempotent across rounds and restarts.
-        round_stacks, _round_stack_failures = _run_sounding_pass(
+        # This is ENQUEUE-ONLY by default — one round must never cost a GRIB
+        # fetch per newly eligible fh (that scales to 30-55 min/run on GFS).
+        round_stacks, _round_queued = _dispatch_sounding_pass(
             data_root=data_root,
             model_id=model_id,
             run_id=run_id,
@@ -2816,6 +3225,7 @@ def _process_run(
             primary_vars=primary_vars,
             candidate_fhs=[fh for fhs in fhs_by_target.values() for fh in fhs],
             reason=f"catchup_round_{rounds}",
+            on_batch_complete=_republish_after_sounding_batch,
         )
         sounding_built_total += round_stacks
 
@@ -2831,10 +3241,11 @@ def _process_run(
 
     # Run-end sweep: the resume path (every frame already on disk, so the
     # catch-up loop does no rounds) would otherwise never build a stack. It
-    # runs strictly after the final publish; if it produced anything, the
+    # runs strictly after the final publish; when it produces anything, the
     # canonical domain is republished so the stacks land in published/ and the
-    # manifest's `sounding.available_fhs` is accurate.
-    final_stacks, _final_stack_failures = _run_sounding_pass(
+    # manifest's `sounding.available_fhs` is accurate. In async mode the worker
+    # owns that republish (once per drained batch).
+    final_stacks, _final_queued = _dispatch_sounding_pass(
         data_root=data_root,
         model_id=model_id,
         run_id=run_id,
@@ -2843,11 +3254,12 @@ def _process_run(
         primary_vars=primary_vars,
         candidate_fhs=[fh for fhs in fhs_by_target.values() for fh in fhs],
         reason="run_complete",
+        on_batch_complete=_republish_after_sounding_batch,
     )
     sounding_built_total += final_stacks
-    # Republish once if ANY stack was built this run: mid-run stacks land in
-    # staging, and without this they would sit unpromoted whenever no further
-    # progress publish happened after them.
+    # Synchronous path only: republish once if ANY stack was built this run.
+    # Mid-run stacks land in staging, and without this they would sit
+    # unpromoted whenever no further progress publish happened after them.
     if sounding_built_total and published_once:
         try:
             _publish_one_domain(
@@ -3043,7 +3455,11 @@ def _maybe_run_member_pass(
                 "member grid manifest build: run=%s model=%s manifests=%d",
                 run_id, model_id, manifest_ok,
             )
-        _promote_run(data_root, model_id, run_id)
+        # Same lock as _publish_one_domain: _promote_run is not concurrency-safe
+        # against itself, and the async sounding worker can republish the same
+        # canonical tree at any instant (verification finding 2026-08-01).
+        with _PUBLISH_LOCK:
+            _promote_run(data_root, model_id, run_id)
         logger.info(
             "Member frames promoted: run=%s model=%s written=%d complete=%s",
             run_id, model_id, written,
@@ -3130,7 +3546,9 @@ def _maybe_run_stats_pass(
                 "stats grid manifest build: run=%s model=%s manifests=%d",
                 run_id, model_id, manifest_ok,
             )
-        _promote_run(data_root, model_id, run_id)
+        # Same lock as _publish_one_domain (see the member-pass site above).
+        with _PUBLISH_LOCK:
+            _promote_run(data_root, model_id, run_id)
         # Register stats vars in the RUN manifest (merge semantics preserve
         # the mean entries): this is what makes them first-class viewer
         # variables — frame scrubber, product availability, and meteogram
@@ -3607,6 +4025,11 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         logger.info("Scheduler shutdown requested")
         return 0
+    finally:
+        # Daemon thread: this is a courtesy join so an in-flight stack can
+        # land. Whatever is still queued dies with the process and is
+        # re-enqueued next cycle (stack builds are skip-if-exists idempotent).
+        _sounding_worker().shutdown()
 
 
 if __name__ == "__main__":

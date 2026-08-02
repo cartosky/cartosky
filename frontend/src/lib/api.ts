@@ -89,6 +89,12 @@ export type CapabilityModel = {
   constraints?: CapabilityModelConstraints;
   run_discovery?: Record<string, unknown>;
   ensemble?: Record<string, unknown>;
+  /**
+   * Whether this deployment publishes Skew-T sounding stacks for the model
+   * (Skew-T design §10). Absent on payloads served before Phase 6 — treat that
+   * as "unknown" and fall back, never as false (see `modelSupportsSounding`).
+   */
+  soundings?: boolean;
   variables: Record<string, CapabilityVariable>;
 };
 

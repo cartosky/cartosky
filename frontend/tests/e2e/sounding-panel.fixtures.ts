@@ -242,10 +242,13 @@ const TRANSPARENT_PNG_1X1 = Buffer.from(
   'base64',
 );
 
-function modelCatalogEntry(modelId: string, name: string) {
+function modelCatalogEntry(modelId: string, name: string, soundings: boolean) {
   return {
         model_id: modelId,
         name,
+        // Phase 6: the sounding model list is a server-side deployment flag, so
+        // the client reads it here instead of hardcoding an array.
+        soundings,
         product: 'forecast',
         canonical_region: 'conus',
         defaults: {
@@ -298,8 +301,8 @@ function capabilityPayload() {
     contract_version: 'v1',
     supported_models: [SOUNDING_MODEL, NO_SOUNDING_MODEL],
     model_catalog: {
-      [SOUNDING_MODEL]: modelCatalogEntry(SOUNDING_MODEL, 'HRRR'),
-      [NO_SOUNDING_MODEL]: modelCatalogEntry(NO_SOUNDING_MODEL, 'GFS'),
+      [SOUNDING_MODEL]: modelCatalogEntry(SOUNDING_MODEL, 'HRRR', true),
+      [NO_SOUNDING_MODEL]: modelCatalogEntry(NO_SOUNDING_MODEL, 'GFS', false),
     },
     availability: {
       [SOUNDING_MODEL]: availabilityEntry(),
@@ -397,13 +400,144 @@ function gridManifestPayload(modelId: string) {
   };
 }
 
+/** ECMWF's measured 12-level open-data ladder (design §10). */
+export const COARSE_SOUNDING_LEVELS = [
+  1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100,
+];
+
+/** Server-supplied CAPE label for a coarse-ladder model — MU, not SB. */
+export const COARSE_SOUNDING_CAPE_LABEL = 'MUCAPE';
+export const COARSE_SOUNDING_PARCEL_DEFINITION =
+  'SB parcel: ECMWF 2 m T/Td, virtual-temperature corrected';
+export const COARSE_SOUNDING_SURFACE_PRESSURE = 1002.0;
+
+/**
+ * An ECMWF-shaped response: 12 levels instead of 37, `w` present on all of
+ * them, `profiles` present, and a diagnostic CAPE row whose label the panel has
+ * to take from the payload. The client never learns the model's ladder from
+ * anywhere but this response, so serving it under the same selection is a
+ * complete test of the ladder-agnostic path.
+ */
+function coarseFrameFor(fh: number) {
+  const warmth = fh * 0.6;
+  const surfaceHeightKm = 44.3 * (1 - Math.pow(COARSE_SOUNDING_SURFACE_PRESSURE / 1013.25, 0.19));
+  const t: (number | null)[] = [];
+  const td: (number | null)[] = [];
+  const u: (number | null)[] = [];
+  const v: (number | null)[] = [];
+  const w: (number | null)[] = [];
+  const tw: (number | null)[] = [];
+  const thetaE: (number | null)[] = [];
+  const heightM: (number | null)[] = [];
+
+  COARSE_SOUNDING_LEVELS.forEach((p, index) => {
+    const heightKm = 44.3 * (1 - Math.pow(p / 1013.25, 0.19));
+    const temperature = p >= 200 ? 29 + warmth - 6.6 * heightKm : -58 + (200 - p) * 0.05;
+    const depression = 4 + heightKm * 2.4;
+    t.push(Number(temperature.toFixed(2)));
+    td.push(Number((temperature - depression).toFixed(2)));
+    const speed = 4 + heightKm * 2.2;
+    const angle = (index / COARSE_SOUNDING_LEVELS.length) * Math.PI * 0.6;
+    u.push(Number((speed * Math.cos(angle)).toFixed(2)));
+    v.push(Number((speed * Math.sin(angle)).toFixed(2)));
+    w.push(Number((-0.06 * heightKm).toFixed(3)));
+    if (p >= COARSE_SOUNDING_SURFACE_PRESSURE) {
+      tw.push(null);
+      thetaE.push(null);
+      heightM.push(null);
+      return;
+    }
+    tw.push(Number((temperature - depression * 0.35).toFixed(2)));
+    thetaE.push(Number((340 + heightKm * 3.0 + warmth).toFixed(2)));
+    heightM.push(Number(((heightKm - surfaceHeightKm) * 1000).toFixed(1)));
+  });
+
+  const parcelP: number[] = [COARSE_SOUNDING_SURFACE_PRESSURE];
+  const parcelT: number[] = [Number((30.5 + warmth).toFixed(1))];
+  for (const level of COARSE_SOUNDING_LEVELS) {
+    if (level >= COARSE_SOUNDING_SURFACE_PRESSURE) continue;
+    parcelP.push(level);
+    parcelT.push(
+      Number((30.5 + warmth - (COARSE_SOUNDING_SURFACE_PRESSURE - level) * 0.055).toFixed(1)),
+    );
+  }
+
+  return {
+    fh,
+    valid_time: validTime(fh),
+    surface: {
+      pres_sfc: COARSE_SOUNDING_SURFACE_PRESSURE,
+      t2m: Number((30.5 + warmth).toFixed(2)),
+      td2m: Number((21.0 + warmth * 0.2).toFixed(2)),
+      u10m: 2.5,
+      v10m: -3.5,
+      // ECMWF's `mucape`, carried in the same slot under the same field name.
+      cape_sfc: 1875.0,
+    },
+    t,
+    td,
+    u,
+    v,
+    w,
+    indices: {
+      sbcape: 1500 + fh * 90,
+      sbcin: -20 - fh,
+      mlcape: 700 + fh * 30,
+      mlcin: -60 - fh,
+      lcl_hPa: 915.0 - fh * 2,
+      lcl_C: 19.4,
+      lfc_hPa: 810.5,
+      el_hPa: 205.0,
+      pwat_mm: 44.0 + fh,
+      model_sbcape: 1875,
+    },
+    parcel: { p: parcelP, t: parcelT },
+    profiles: {
+      tw,
+      theta_e: thetaE,
+      height_m_agl: heightM,
+      surface_tw: Number((30.5 + warmth - 4.6).toFixed(2)),
+      surface_theta_e: Number((340 + warmth).toFixed(2)),
+    },
+  };
+}
+
+export function coarseSoundingPayload(lat: number, lon: number) {
+  return {
+    model: 'ecmwf',
+    run: SOUNDING_RUN_ID,
+    location: { lat, lon },
+    grid_point: {
+      lat: Number((lat + 0.2).toFixed(5)),
+      lon: Number((lon - 0.15).toFixed(5)),
+      row: 103,
+      col: 525,
+      distance_km: 27.4,
+    },
+    levels_hPa: COARSE_SOUNDING_LEVELS,
+    units: {
+      t: 'degC',
+      td: 'degC',
+      u: 'm s-1',
+      v: 'm s-1',
+      w: 'Pa s-1',
+      pres_sfc: 'hPa',
+      cape_sfc: 'J kg-1',
+    },
+    parcel_definition: COARSE_SOUNDING_PARCEL_DEFINITION,
+    model_cape_label: COARSE_SOUNDING_CAPE_LABEL,
+    frames: SOUNDING_FRAME_HOURS.map(coarseFrameFor),
+    generated_at: '2026-08-02T06:31:00Z',
+  };
+}
+
 export type SoundingRequestLog = Array<{ model: string; lat: number; lon: number }>;
 
 /** Stubs the whole viewer boot plus the sounding endpoint. */
 export async function stubSoundingRoutes(
   page: Page,
   requests: SoundingRequestLog,
-  options: { failFirstSounding?: boolean } = {},
+  options: { failFirstSounding?: boolean; coarseLadder?: boolean } = {},
 ) {
   let soundingCalls = 0;
 
@@ -500,7 +634,11 @@ export async function stubSoundingRoutes(
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(soundingPayload(Number(body.lat), Number(body.lon))),
+      body: JSON.stringify(
+        options.coarseLadder
+          ? coarseSoundingPayload(Number(body.lat), Number(body.lon))
+          : soundingPayload(Number(body.lat), Number(body.lon)),
+      ),
     });
   });
 }

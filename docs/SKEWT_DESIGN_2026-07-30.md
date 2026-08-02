@@ -377,7 +377,14 @@ tests (nondeterministic missed clicks; not introduced by this work).
 
 Decisions locked (§8 #6–#7): 0.5° stacks, full horizon (GFS 384 h / ECMWF 360 h), ship
 ECMWF despite its coarse ladder, Td-from-q where isobaric DPT is absent. No code exists
-yet; numbers below are derived estimates pending a Phase-6 inventory spike.
+yet.
+
+**Inventory spike run 2026-08-02** (measurement only, no code changes). Numbers below are
+now MEASURED unless marked DERIVED. Sources: GFS `noaa-gfs-bdp-pds` 2026-08-02 06z idx at
+f000/f120/f123/f240/f384 (pgrb2 + pgrb2b); ECMWF open data `ecmwf-forecasts`
+(eu-central-1) 2026-08-02 00z/06z `.index` at f0/f120/f240/f360; prod manifests and prod
+`sounding_thermo` on the deployed venv. Three spike findings change the plan — see
+"Spike deltas" below.
 
 ### What the existing architecture already covers
 
@@ -392,25 +399,53 @@ today: the fetch spec + `SUPPORTED_MODELS` in `sounding.py`, and the client's ha
 
 | | GFS | ECMWF (open data) |
 |---|---|---|
-| Isobaric Td | NOT published → derive from SPFH (q) per §8 #7 | NOT published → derive from Q |
-| Ladder | ~37 levels 1000→100 expected — confirm via inventory | ~10–13 levels — coarse; ship anyway (decision #6) |
-| VVEL / omega strip | available → strip ships | not in open data → strip absent (client already tolerates) |
-| Surface block | PRES:sfc, 2m T/DPT, 10m U/V + CAPE:surface | 2t/2d/10u/10v/sp; native CAPE availability unconfirmed — diagnostic row only if present |
+| Isobaric Td | NOT published (MEASURED: zero `DPT:* mb` in pgrb2/pgrb2b) → derive from SPFH (q) per §8 #7 | NOT published (MEASURED: no `d`-as-dewpoint on `pl`) → derive from `q` |
+| Ladder | **21 levels 1000→100** (MEASURED, pgrb2): 1000/975/950/925/900 then 50-hPa 900→100. Identical at f000/f120/f123/f240/f384. | **12 levels 1000→100** (MEASURED): 1000/925/850/700/600/500/400/300/250/200/150/100. Identical at f0/f120/f240/f360. |
+| Ladder ceiling cause | pgrb2b carries the 16 intermediate 25-hPa levels for TMP/UGRD/VGRD/VVEL/RH — but **NOT SPFH** (MEASURED: pgrb2b has only 5 SPFH msgs, all `mb above ground` layers). Td-from-q therefore caps the usable ladder at 21. | Native to the open-data product; 1000→925→850→700 is a 150-hPa boundary-layer gap. |
+| RH | present on all 37 levels (pgrb2 21 + pgrb2b 16) — NOT used, per §8 #7 | `r` present on all 12 — not used |
+| VVEL / omega strip | available on all 21 → strip ships | **`w` IS available on all 12** (MEASURED — corrects the earlier "not in open data") → strip ships |
+| Surface block | PRES:surface, TMP/DPT:2 m, UGRD/VGRD:10 m, CAPE:surface — all 6 present at every probed fh, no late-horizon dropouts (MEASURED) | `sp`, `2t`, `2d`, `10u`, `10v` all present; **`mucape` present** at every probed fh (`cape`/`cin` absent) → diagnostic row uses `mucape` (MEASURED) |
 | Grid → stack | 0.25° source decimated ×2 → 720×361 (0.5°, ~55 km pick) | same |
-| Fetch path | AWS BDP idx subsets (HRRR pattern) | ECMWF open-data index protocol — borrow the repo's existing ECMWF fetch machinery |
+| Fetch path | AWS BDP idx subsets (HRRR pattern) | `https://ecmwf-forecasts.s3.eu-central-1.amazonaws.com/{YYYYMMDD}/{HH}z/ifs/0p25/oper/{YYYYMMDDHHMMSS}-{fxx}h-oper-fc.grib2`, sidecar `-oper-fc.index` (JSON-lines, `_offset`/`_length`). 06z/18z are now `oper` too — `scda` is gone (404). |
 
-### Sizing at the locked decisions (derived, pending inventory)
+### Published fh cadence (MEASURED, prod manifests 2026-08-01/02, `na` and `global` agree)
 
-| | per fh | per run | per day | retention steady state |
-|---|---|---|---|---|
-| GFS (~191 planes, 382 B/px) | ~99 MB | ~13.4 GB @ ~135 fhs | ~54 GB (4 runs) | **~94 GB @ 7 runs** |
-| ECMWF (~58 planes, 116 B/px) | ~30 MB | ~2.6 GB full / ~1.5 GB short | ~8 GB (2+2) | ~12 GB @ 6-run mix |
+| model | cycles | fhs/run | spacing |
+|---|---|---|---|
+| GFS | 00/06/12/18z | **105** | 0–240 @ 3 h (81), 246–384 @ 6 h (24) |
+| ECMWF full (00/12z) | 2/day | **85** | 0–144 @ 3 h (49), 150–360 @ 6 h (36) |
+| ECMWF short (06/18z) | 2/day | **49** | 0–144 @ 3 h |
 
-GFS dominates and is the number to sanity-check against disk headroom at build time;
-the 1° fallback divides it by 4 if it ever matters. Download: GFS ~100–190 MB/fh ≈
-14–26 GB / 30–55 min per run at the measured 8 MB/s — which makes **threading the
-scheduler's synchronous sounding pass a prerequisite**, not a watch item, before GFS
-joins.
+§10's inherited "~135" figure was wrong: **GFS publishes 105 fhs, not 135**. Retention on
+prod is **6 runs on disk** for both models (MEASURED: `ls published/{gfs,ecmwf}`), i.e.
+1.5 days — not the 7 assumed earlier.
+
+### Sizing at the locked decisions (MEASURED ladders + cadences, DERIVED arithmetic)
+
+Grid 720×361 = 259,920 px; u16 → 2 B/px/plane (same packing as §3).
+
+| | planes | B/px | per fh | per run | per day | retention steady state |
+|---|---|---|---|---|---|---|
+| GFS (5 vars × 21 lev + 6 sfc) | 111 | 222 | **57.7 MB** | **6.06 GB @ 105 fhs** | 24.2 GB (4 runs) | **36.3 GB @ 6 runs** |
+| ECMWF (5 vars × 12 lev + 6 sfc) | 66 | 132 | **34.3 MB** | 2.92 GB full / 1.68 GB short | 9.2 GB (2+2) | **13.8 GB @ 6-run mix** |
+
+Combined steady state **≈50 GB** — against 1.2 TB free on prod (`/dev/vda4` 2.0 T, 744 G
+used, 39%; `published/gfs` alone is 197 G today). **Disk verdict: comfortable, ~2.4× under
+the old ~94 GB projection.** The 1° fallback is not needed and the 37-level ambition (if
+the Td-from-q constraint is ever relaxed) would only take GFS to ~62 GB.
+
+Download (MEASURED on the prod path, sequential paced range requests, no throttling, no 302s):
+
+| | bytes/fh | msgs | HTTP ranges | wall | rate | per run |
+|---|---|---|---|---|---|---|
+| GFS pgrb2 f120 | **96.66 MB** (f240 103.9, f384 106.2) | 111 | 68 | **15.75 s** | 6.14 MB/s | ~10.4 GB, **~28 min** |
+| ECMWF oper f120 | **50.04 MB** (with `w`; 35.4 MB without) | 65 | 31 | **33.56 s** | 1.49 MB/s | 4.25 GB full, **~48 min**; 2.45 GB / ~27 min short |
+
+GFS download is ~half the earlier 14–26 GB/run estimate. ECMWF's transatlantic rate
+(1.49 MB/s from eu-central-1) makes its 85-fh full run the **slower** of the two despite
+being 2.4× smaller — worth a source-preference check (google/azure mirrors) at build time.
+Either way **threading the scheduler's synchronous sounding pass remains a prerequisite**,
+not a watch item.
 
 ### Work items (rough order)
 
@@ -423,16 +458,69 @@ joins.
 4. ECMWF fetch adapter reusing the repo's existing ECMWF machinery.
 5. Endpoint: antimeridian/longitude-wrap handling for global grids in
    `locate_grid_point` (coordinate with the Global 4326 Phase 3 antimeridian work).
-6. Response/pool scaling: ~135-frame GFS responses put the warm pooled thermo at
-   ~1.7 s (est) — likely raise workers on prod and/or measure before gating.
+6. Response/pool scaling: raise `MAX_WORKERS_CAP` (see the benchmark below) — the default
+   4 already clears the budget, but 6–8 is nearly free on the 16-core box.
 7. Frontend: capabilities-driven sounding-model list (replace the hardcoded array);
    coarse-ladder labeling for ECMWF indices; fh-cadence-aware scrubber labels.
-8. Per-model gates: inventory spike first (exact ladders, ECMWF CAPE, GFS published-fh
-   cadence), then the usual parity + visual gates per model.
+8. Per-model gates: ~~inventory spike first~~ (done 2026-08-02), then the usual parity +
+   visual gates per model.
 
-### Open questions for the Phase-6 inventory spike
+### Open questions — ANSWERED by the 2026-08-02 inventory spike
 
-- Exact GFS/ECMWF isobaric ladders and CartoSky's published GFS fh cadence (the ~135
-  figure is inherited from the raster pipeline, unverified for soundings).
-- ECMWF open-data CAPE availability (diagnostic row) and index-subset ergonomics.
-- Prod thermo-pool sizing for 135-frame responses (measure, don't assume).
+1. **GFS isobaric ladder** — MEASURED. 21 levels 1000→100 in pgrb2 0.25°
+   (1000/975/950/925/900, then 50 hPa to 100). Not a 25-hPa ladder above 900. The
+   25-hPa infill lives in pgrb2b but **without SPFH**, so under §8 #7 (Td from q) the
+   usable ladder is 21. Identical at f000/f120/f123/f240/f384 — no late-horizon dropouts.
+2. **GFS isobaric DPT** — MEASURED absent (0 messages, both products). RH MEASURED
+   present at all 37 levels; still unused per §8 #7.
+3. **GFS surface set** — MEASURED: all six (PRES:surface, TMP:2 m, DPT:2 m, UGRD:10 m,
+   VGRD:10 m, CAPE:surface) present at every probed fh.
+4. **GFS byte cost** — MEASURED: 96.66 MB / 111 messages / 68 coalesced ranges /
+   15.75 s at 6.14 MB/s for f120; 106.2 MB at f384.
+5. **ECMWF ladder** — MEASURED: 12 levels 1000→100 for `t`/`q`/`u`/`v` (and `w`, `r`,
+   `gh`, `z`, `d`, `vo`). Stable across f0/f120/f240/f360 and across 00z/06z.
+6. **ECMWF isobaric dewpoint** — MEASURED absent; `q` present → same Td-from-q path.
+7. **ECMWF VVEL** — MEASURED **present** (`w`, all 12 levels). §10's earlier "not in open
+   data" was wrong; the omega strip ships for ECMWF too.
+8. **ECMWF surface / CAPE** — MEASURED: `2t`/`2d`/`10u`/`10v`/`sp` all present;
+   **`mucape` present** at every probed fh; no `cape`, no `cin`. Diagnostic row uses
+   `mucape` (label it MU, not SB — it is not comparable to GFS `CAPE:surface`).
+9. **ECMWF byte cost** — MEASURED: 50.04 MB / 65 messages / 31 ranges / 33.56 s at
+   1.49 MB/s (f120, with `w`). Index ergonomics are good: one JSON-lines `.index` per fh
+   with `_offset`/`_length`, 184 records, trivially filterable by `param`/`levtype`/`levelist`.
+10. **Published fh cadence** — MEASURED: GFS 105, ECMWF 85 full / 49 short (table above).
+11. **Prod thermo-pool sizing** — MEASURED on the deployed `/opt/cartosky/backend` +
+    `/opt/cartosky/.venv` (Python 3.13.5, 16 cores), pool pre-warmed, one run per config,
+    load average 6.0 → 10.0 across the sweep (builds running concurrently):
+
+    | frames × levels | serial (workers=0) | default (4) | workers=6 | workers=8 |
+    |---|---|---|---|---|
+    | **GFS 105 × 21** | 6.53 s (62.2 ms/frame) | **1.78 s** (16.9) | 1.28 s (12.2) | 0.89 s (8.5) |
+    | GFS 105 × 37 (reference) | 8.72 s (83.0) | 2.10 s (20.0) | 1.61 s (15.3) | 1.09 s (10.4) |
+    | **ECMWF 85 × 12** | 4.18 s (49.2) | **1.13 s** (13.3) | 0.75 s (8.8) | 0.54 s (6.4) |
+
+    `configured_workers()` honours `CARTOSKY_SOUNDING_THERMO_WORKERS` **uncapped**, so the
+    env var is the lever; `MAX_WORKERS_CAP = 4` only bounds the default. All 105/85 frames
+    returned non-null indices in every config.
+
+### Spike deltas — what changes in the work order
+
+- **GFS ladder is 21, not ~37.** Halves the GFS stack (57.7 MB/fh, not ~99) and the
+  response payload. It also means the Phase-6 spec table must carry an explicit per-model
+  ladder rather than assuming HRRR's 37 — and the ECMWF/GFS ladders differ from each other
+  and from HRRR, so the frontend's level labelling must be sidecar-driven (it already is).
+- **`SPFH` is the ladder-limiting field, not the level list.** If a 37-level GFS profile is
+  ever wanted, the only routes are RH-derived Td above 900 hPa (contradicts §8 #7) or
+  q-interpolation across the pgrb2b levels. Recommend staying at 21 and revisiting only if
+  the coarse mid-levels visibly hurt the parcel curve.
+- **ECMWF ships omega after all**, so the Phase-6 ECMWF stack gains 12 planes
+  (+8.6 MB/fh, +14.6 MB/fh of download) versus the earlier no-VVEL assumption. Cheap;
+  take it. If ECMWF download time becomes the scheduler's long pole, dropping `w` is the
+  first, lowest-cost lever (50.0 → 35.4 MB/fh).
+- **Pool item (work item 6) is nearly a no-op.** 105-frame GFS responses are 1.78 s at the
+  *current* default of 4 workers, close to the 1.7 s estimate; raising the cap to 6–8 buys
+  1.78 → 0.89 s. Do it, but it is not a gate.
+- **Storage is a non-issue** (~50 GB combined steady state vs 1.2 TB free), so the 1°
+  fallback and the retention-shortening contingency can both be dropped from the plan.
+- **ECMWF `scda` is retired** — 06z/18z are `oper` at 144 h. The fetch adapter (work
+  item 4) must not carry an scda branch.

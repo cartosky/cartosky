@@ -600,7 +600,12 @@ export default function App() {
     () => initialPermalink.sounding ?? null,
   );
   const [soundingGridPoint, setSoundingGridPoint] = useState<{ lat: number; lon: number } | null>(null);
-  const soundingAvailable = modelSupportsSounding(model);
+  // Capabilities-driven (Skew-T design §10): the sounding model list is a
+  // deployment flag on the server, not a constant the client can know.
+  const soundingAvailable = modelSupportsSounding(
+    model,
+    model ? capabilities?.model_catalog?.[model] : null,
+  );
   const isCurrentAnalysisSelection = String(model ?? "").trim().toLowerCase() === "current_analysis";
 
   const handleSoundingModeToggle = useCallback(() => {

@@ -602,13 +602,16 @@ def test_sounding_models_parsing(
     assert sounding_models() == frozenset(expected)
 
 
-def test_only_hrrr_is_supported_in_phase_1() -> None:
-    assert sounding.SUPPORTED_MODELS == frozenset({"hrrr"})
+def test_supported_models_are_exactly_the_registry() -> None:
+    # Phase 6 added GFS + ECMWF; SUPPORTED_MODELS is derived from MODEL_SPECS so
+    # a new row cannot be half-wired. The env flag remains the deployment gate.
+    assert sounding.SUPPORTED_MODELS == frozenset({"hrrr", "gfs", "ecmwf"})
+    assert sounding.SUPPORTED_MODELS == frozenset(sounding.MODEL_SPECS)
 
 
 def test_build_stacks_for_run_skips_unsupported_models(tmp_path: Path) -> None:
     built, failed = sounding.build_stacks_for_run(
-        model_id="gfs",
+        model_id="nam",
         run_id=RUN_ID,
         run_date=RUN_DATE,
         run_root=tmp_path,
@@ -743,7 +746,7 @@ def test_end_to_end_build_from_a_synthetic_dataset(
     full_transform = Affine(3000.0, 0.0, -2699020.0, 0.0, -3000.0, 1588193.0)
     calls: list[tuple[str, str]] = []
 
-    def _fake_fetch(*, model_id, product, search_pattern, run_date, fh, wanted_planes):
+    def _fake_fetch(*, model_id, product, search_pattern, run_date, fh, wanted_planes, spec=None):
         calls.append((product, search_pattern))
         subset = {plane: planes[plane] for plane in sorted(wanted_planes)}
         return subset, _FakeCRS(), full_transform

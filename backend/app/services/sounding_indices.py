@@ -60,7 +60,25 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 #: Verbatim UI string — single source of truth for what the SB parcel *is*.
-PARCEL_DEFINITION = "SB parcel: HRRR 2 m T/Td, virtual-temperature corrected"
+#: The parcel definition is identical across models (decision #5); only the name
+#: of the model whose 2 m fields it uses changes, so Phase 6 parameterises that
+#: one token rather than forking the sentence.
+PARCEL_DEFINITION_TEMPLATE = "SB parcel: {model} 2 m T/Td, virtual-temperature corrected"
+
+#: Backwards-compatible HRRR rendering (pre-Phase-6 callers, tests).
+PARCEL_DEFINITION = PARCEL_DEFINITION_TEMPLATE.format(model="HRRR")
+
+_MODEL_LABELS = {"hrrr": "HRRR", "gfs": "GFS", "ecmwf": "ECMWF"}
+
+
+def parcel_definition_for_model(model: str | None) -> str:
+    """The parcel caption naming *model*, e.g. "SB parcel: GFS 2 m T/Td, ...".
+
+    An unknown id falls back to the neutral word "model" rather than shouting a
+    raw internal id at the user.
+    """
+    key = str(model or "").strip().lower()
+    return PARCEL_DEFINITION_TEMPLATE.format(model=_MODEL_LABELS.get(key, "model"))
 
 #: Mixed-layer parcel depth (design §7 Phase 4).
 MIXED_LAYER_DEPTH_HPA = 100.0

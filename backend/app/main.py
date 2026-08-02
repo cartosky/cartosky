@@ -2914,7 +2914,14 @@ def _serialize_variable_capability(model_id: str, capability: Any) -> dict[str, 
 
 
 def _serialize_model_capability(model_id: str, capability: Any) -> dict[str, Any]:
-    return serialize_model_capability(model_id, capability)
+    payload = serialize_model_capability(model_id, capability)
+    # Additive per-model flag (Skew-T design §10 work item 7): the viewer used
+    # to hardcode `SOUNDING_MODELS = ["hrrr"]`, which cannot express a model
+    # list that is set per deployment by CARTOSKY_SOUNDING_MODELS. Computed
+    # from the same gate the endpoint uses, so the toggle and the 404 can never
+    # disagree.
+    payload["soundings"] = bool(sounding_api_service.sounding_enabled(model_id))
+    return payload
 
 
 def _manifest_var_available_frames(var_entry: dict[str, Any]) -> int:

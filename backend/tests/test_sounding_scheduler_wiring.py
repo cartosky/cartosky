@@ -8,7 +8,9 @@ no new manifest key.
 from __future__ import annotations
 
 import json
+import shutil
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,6 +33,7 @@ VAR_ID = "tmp2m"
 @pytest.fixture(autouse=True)
 def _flag_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CARTOSKY_SOUNDING_MODELS", raising=False)
+    monkeypatch.delenv("CARTOSKY_SOUNDING_BUILD_ASYNC", raising=False)
 
 
 def _publish_frames(data_root: Path, fhs: list[int], *, var_id: str = VAR_ID) -> None:
@@ -84,9 +87,23 @@ def test_sounding_enabled_when_the_flag_lists_the_model(monkeypatch: pytest.Monk
 
 
 def test_flagged_but_unsupported_model_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "gfs,nam")
-    assert scheduler_module._sounding_enabled("gfs") is False
+    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "nam,rap")
     assert scheduler_module._sounding_enabled("nam") is False
+    assert scheduler_module._sounding_enabled("rap") is False
+
+
+def test_registry_models_are_enabled_by_the_flag_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 6 wiring check: no scheduler change was needed for GFS/ECMWF.
+
+    The worker is model-agnostic; the only gate is the flag intersected with
+    the registry, so listing a registry model on that unit turns it on.
+    """
+    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "hrrr,gfs,ecmwf")
+    assert scheduler_module._sounding_enabled("gfs") is True
+    assert scheduler_module._sounding_enabled("ecmwf") is True
+    assert scheduler_module._sounding_enabled("hrrr") is True
 
 
 def test_sounding_pass_is_a_no_op_when_the_flag_is_off(
@@ -253,3 +270,273 @@ def test_manifest_sounding_section_is_top_level_and_additive(
     assert section["expected_fhs"] == [0, 1, 2]
     assert section["available_fhs"] == [0, 2]
     assert section["path_template"] == "sounding/fh{fh:03d}.stack.bin"
+
+
+# ---------------------------------------------------------------------------
+# Background build worker (Phase 6 prerequisite): the catch-up loop enqueues,
+# a dedicated thread builds. No GRIB fetch may happen on the loop.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def worker(monkeypatch: pytest.MonkeyPatch) -> scheduler_module._SoundingBuildWorker:
+    """A fresh worker whose thread never starts — drained explicitly instead."""
+    instance = scheduler_module._SoundingBuildWorker()
+    monkeypatch.setattr(instance, "_ensure_thread", lambda: None)
+    monkeypatch.setattr(scheduler_module, "_SOUNDING_WORKER", instance)
+    return instance
+
+
+@pytest.fixture
+def _no_inline_builds(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _explode(**_kwargs):  # pragma: no cover - must never run
+        raise AssertionError("sounding build ran on the catch-up loop")
+
+    monkeypatch.setattr(sounding, "build_stacks_for_run", _explode)
+    monkeypatch.setattr(sounding, "build_stack_for_fh", _explode)
+
+
+def _queue(tmp_path: Path, *, on_batch_complete=None, fhs=(0, 1, 2, 5)) -> int:
+    return scheduler_module._queue_sounding_pass(
+        data_root=tmp_path,
+        model_id=MODEL,
+        run_id=RUN_ID,
+        run_dt=RUN_DT,
+        region="conus",
+        primary_vars=[VAR_ID],
+        candidate_fhs=list(fhs),
+        reason="test",
+        on_batch_complete=on_batch_complete,
+    )
+
+
+def _recording_builder(monkeypatch: pytest.MonkeyPatch, calls: list[int]):
+    def _build(*, model_id, run_id, run_date, fh, run_root, overwrite=False):
+        calls.append(int(fh))
+        _write_stack(run_root, int(fh))
+        return sounding.stack_paths(run_root, int(fh))[0]
+
+    monkeypatch.setattr(sounding, "build_stack_for_fh", _build)
+
+
+def test_queue_pass_enqueues_the_pending_fhs_without_building(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    worker: scheduler_module._SoundingBuildWorker,
+    _no_inline_builds: None,
+) -> None:
+    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "hrrr")
+    _publish_frames(tmp_path, [0, 1, 2])
+    run_root = scheduler_module._staging_run_root(tmp_path, MODEL, RUN_ID, "conus")
+    _write_stack(run_root, 0)  # already built; must not be queued
+
+    assert _queue(tmp_path) == 2
+    assert worker.pending_count() == 2
+
+
+def test_queue_pass_is_a_no_op_when_the_flag_is_off(
+    tmp_path: Path,
+    worker: scheduler_module._SoundingBuildWorker,
+    _no_inline_builds: None,
+) -> None:
+    _publish_frames(tmp_path, [0, 1])
+    assert _queue(tmp_path) == 0
+    assert worker.pending_count() == 0
+
+
+def test_repeated_rounds_do_not_double_enqueue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    worker: scheduler_module._SoundingBuildWorker,
+    _no_inline_builds: None,
+) -> None:
+    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "hrrr")
+    _publish_frames(tmp_path, [0, 1])
+
+    assert _queue(tmp_path) == 2
+    assert _queue(tmp_path) == 0  # same fhs still in flight
+    assert worker.pending_count() == 2
+
+    _publish_frames(tmp_path, [2])
+    assert _queue(tmp_path) == 1
+    assert worker.pending_count() == 3
+
+
+def test_worker_drain_builds_each_fh_and_republishes_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    worker: scheduler_module._SoundingBuildWorker,
+) -> None:
+    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "hrrr")
+    _publish_frames(tmp_path, [0, 1, 2])
+    built_fhs: list[int] = []
+    _recording_builder(monkeypatch, built_fhs)
+    republishes: list[tuple[int, int]] = []
+
+    def _on_complete(*, built: int, failed: int) -> None:
+        republishes.append((built, failed))
+
+    assert _queue(tmp_path, on_batch_complete=_on_complete) == 3
+    worker.drain()
+
+    assert built_fhs == [0, 1, 2]
+    assert republishes == [(3, 0)]  # exactly one republish per drained batch
+    assert worker.pending_count() == 0
+
+    # The stacks are now on disk, so a later round enqueues nothing.
+    assert _queue(tmp_path, on_batch_complete=_on_complete) == 0
+    worker.drain()
+    assert republishes == [(3, 0)]
+
+
+def test_worker_drops_jobs_whose_run_directory_was_pruned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    worker: scheduler_module._SoundingBuildWorker,
+) -> None:
+    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "hrrr")
+    _publish_frames(tmp_path, [0, 1])
+    assert _queue(tmp_path) == 2
+
+    run_root = scheduler_module._staging_run_root(tmp_path, MODEL, RUN_ID, "conus")
+
+    def _explode(**_kwargs):  # pragma: no cover - must never run
+        raise AssertionError("build attempted against a deleted run")
+
+    monkeypatch.setattr(sounding, "build_stack_for_fh", _explode)
+    shutil.rmtree(run_root)  # retention pruned the run while the jobs waited
+
+    worker.drain()
+
+    assert worker.pending_count() == 0
+    assert not run_root.exists()
+
+
+def test_worker_contains_build_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    worker: scheduler_module._SoundingBuildWorker,
+) -> None:
+    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "hrrr")
+    _publish_frames(tmp_path, [0, 1])
+    run_root = scheduler_module._staging_run_root(tmp_path, MODEL, RUN_ID, "conus")
+    run_root.mkdir(parents=True, exist_ok=True)
+
+    def _boom(*, model_id, run_id, run_date, fh, run_root, overwrite=False):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(sounding, "build_stack_for_fh", _boom)
+    outcomes: list[tuple[int, int]] = []
+
+    assert _queue(
+        tmp_path,
+        on_batch_complete=lambda *, built, failed: outcomes.append((built, failed)),
+    ) == 2
+    worker.drain()  # must not raise
+
+    assert outcomes == [(0, 2)]
+    assert worker.pending_count() == 0
+
+
+def test_worker_thread_drains_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "hrrr")
+    instance = scheduler_module._SoundingBuildWorker()
+    monkeypatch.setattr(scheduler_module, "_SOUNDING_WORKER", instance)
+    _publish_frames(tmp_path, [0, 1])
+    built_fhs: list[int] = []
+    _recording_builder(monkeypatch, built_fhs)
+    done = threading.Event()
+    seen: list[tuple[int, int]] = []
+
+    def _on_complete(*, built: int, failed: int) -> None:
+        seen.append((built, failed))
+        done.set()
+
+    try:
+        assert _queue(tmp_path, on_batch_complete=_on_complete) == 2
+        assert done.wait(timeout=10.0), "worker thread never drained the batch"
+    finally:
+        instance.shutdown(timeout=5.0)
+
+    assert sorted(built_fhs) == [0, 1]
+    assert seen == [(2, 0)]
+    run_root = scheduler_module._staging_run_root(tmp_path, MODEL, RUN_ID, "conus")
+    assert sounding.available_stack_fhs(run_root) == [0, 1]
+
+
+# ---------------------------------------------------------------------------
+# Dispatch / escape hatch
+# ---------------------------------------------------------------------------
+
+
+def _dispatch(tmp_path: Path) -> tuple[int, int]:
+    return scheduler_module._dispatch_sounding_pass(
+        data_root=tmp_path,
+        model_id=MODEL,
+        run_id=RUN_ID,
+        run_dt=RUN_DT,
+        region="conus",
+        primary_vars=[VAR_ID],
+        candidate_fhs=[0, 1],
+        reason="test",
+    )
+
+
+def test_dispatch_enqueues_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    worker: scheduler_module._SoundingBuildWorker,
+    _no_inline_builds: None,
+) -> None:
+    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "hrrr")
+    _publish_frames(tmp_path, [0, 1])
+
+    assert _dispatch(tmp_path) == (0, 2)
+    assert worker.pending_count() == 2
+
+
+def test_dispatch_falls_back_to_the_synchronous_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    worker: scheduler_module._SoundingBuildWorker,
+) -> None:
+    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "hrrr")
+    monkeypatch.setenv("CARTOSKY_SOUNDING_BUILD_ASYNC", "0")
+    _publish_frames(tmp_path, [0, 1])
+
+    requested: list[list[int]] = []
+
+    def _fake_build(*, model_id, run_id, run_date, run_root, fhs):
+        fhs = sorted(fhs)
+        requested.append(fhs)
+        for fh in fhs:
+            _write_stack(run_root, fh)
+        return len(fhs), 0
+
+    monkeypatch.setattr(sounding, "build_stacks_for_run", _fake_build)
+
+    # Same inline semantics as before the worker existed: builds happen on the
+    # calling thread and nothing is queued.
+    assert _dispatch(tmp_path) == (2, 0)
+    assert requested == [[0, 1]]
+    assert worker.pending_count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Republish guard: a background batch must never walk LATEST backwards
+# ---------------------------------------------------------------------------
+
+
+def test_run_is_superseded_only_when_latest_points_at_a_newer_run(tmp_path: Path) -> None:
+    assert scheduler_module._run_is_superseded_by_latest(tmp_path, MODEL, RUN_ID, "conus") is False
+
+    scheduler_module._write_latest_pointer(tmp_path, MODEL, RUN_ID, region="conus")
+    assert scheduler_module._run_is_superseded_by_latest(tmp_path, MODEL, RUN_ID, "conus") is False
+
+    scheduler_module._write_latest_pointer(tmp_path, MODEL, "20260730_18z", region="conus")
+    assert scheduler_module._run_is_superseded_by_latest(tmp_path, MODEL, RUN_ID, "conus") is True
+
+    scheduler_module._write_latest_pointer(tmp_path, MODEL, "20260730_06z", region="conus")
+    assert scheduler_module._run_is_superseded_by_latest(tmp_path, MODEL, RUN_ID, "conus") is False

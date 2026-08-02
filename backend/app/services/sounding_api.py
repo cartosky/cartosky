@@ -160,6 +160,40 @@ def resolve_sounding_run(model: str, requested_run: str | None) -> tuple[str, li
 
 
 @lru_cache(maxsize=8)
+def _sounding_is_geographic(projection: str) -> bool:
+    """Whether the sidecar's CRS is lat/lon (so longitudes can be wrapped).
+
+    HRRR's LCC is not; the GFS/ECMWF global grids are. An unparseable CRS is
+    treated as projected — the wrap is an *extra* affordance, and guessing it
+    onto a projected grid would silently move points.
+    """
+    text = str(projection or "").strip()
+    if not text or text.upper() == "EPSG:4326":
+        return True
+    try:
+        from pyproj import CRS
+
+        return bool(CRS.from_user_input(text).is_geographic)
+    except Exception:  # noqa: BLE001 - unknown CRS: no wrapping
+        logger.debug("Sounding projection not parseable for wrap check", exc_info=True)
+        return False
+
+
+def _longitude_frame(affine: Affine, width: int) -> tuple[float, float] | None:
+    """``(lon_min, span)`` when the affine covers a full 360 deg of longitude.
+
+    Global GFS/ECMWF grids are published 0 -> 359.75, so a request at
+    lon = -97.5 (or at 359.9, in the gap between the last column's edge and
+    360) has to be folded into the grid's own longitude frame before the
+    inverse affine is applied.
+    """
+    span = float(affine.a) * int(width)
+    if abs(abs(span) - 360.0) > 1.0:
+        return None
+    return float(affine.c), span
+
+
+@lru_cache(maxsize=8)
 def _sounding_transformer(projection: str) -> Transformer:
     """lat/lon -> stack projection. Keyed on the sidecar's WKT string.
 
@@ -209,11 +243,25 @@ def locate_grid_point(sidecar: dict[str, Any], *, lat: float, lon: float) -> dic
         raise SoundingRequestError(
             "point cannot be projected into the model grid"
         )
-    col_f, row_f = ~affine * (x, y)
-    row, col = int(math.floor(row_f)), int(math.floor(col_f))
 
     width = int(sidecar["width"])
     height = int(sidecar["height"])
+
+    # Global lat/lon grids (GFS, ECMWF: 0 -> 359.75) — design §10 work item 5.
+    # Fold the request longitude into the grid's own frame, then close the wrap
+    # gap between the last column's east edge and lon_min + 360.
+    frame = _longitude_frame(affine, width) if _sounding_is_geographic(projection) else None
+    if frame is not None:
+        lon_min, _span = frame
+        x = lon_min + math.fmod(math.fmod(x - lon_min, 360.0) + 360.0, 360.0)
+
+    col_f, row_f = ~affine * (x, y)
+    row, col = int(math.floor(row_f)), int(math.floor(col_f))
+    if frame is not None and col == width:
+        # Only reachable from the gap / float edge; that longitude is nearer
+        # column 0's sample than the last column's.
+        col = 0
+
     if not (0 <= row < height and 0 <= col < width):
         raise SoundingRequestError(
             f"point ({lat:.4f}, {lon:.4f}) is outside the sounding grid for this model"
@@ -221,6 +269,9 @@ def locate_grid_point(sidecar: dict[str, Any], *, lat: float, lon: float) -> dic
 
     center_x, center_y = affine * (col + 0.5, row + 0.5)
     grid_lat, grid_lon = _unproject(center_x, center_y, projection)
+    if frame is not None:
+        # Report the snapped point in the caller's -180..180 convention.
+        grid_lon = ((float(grid_lon) + 180.0) % 360.0) - 180.0
     return {
         "lat": round(grid_lat, 5),
         "lon": round(grid_lon, 5),
@@ -240,6 +291,22 @@ def _units_map(sidecar: dict[str, Any]) -> dict[str, str]:
     for entry in list(sidecar.get("variables") or []) + list(sidecar.get("surface_fields") or []):
         units[str(entry["id"])] = str(entry.get("units", ""))
     return units
+
+
+def _model_cape_label(sidecar: dict[str, Any]) -> str | None:
+    """Display label for the model's own CAPE diagnostic, or ``None``.
+
+    The ``model_sbcape`` response field is a stable contract and keeps its name
+    across models even where the quantity is NOT surface-based (ECMWF ships
+    ``mucape``); the label is what tells the panel which it is. Sidecars written
+    before Phase 6 carry no ``display_label`` — the client falls back.
+    """
+    for entry in list(sidecar.get("surface_fields") or []):
+        if str(entry.get("id") or "") != "cape_sfc":
+            continue
+        label = str(entry.get("display_label") or "").strip()
+        return label or None
+    return None
 
 
 def _shape_fingerprint(sidecar: dict[str, Any]) -> tuple:
@@ -541,7 +608,10 @@ def get_sounding(*, model: str, lat: float, lon: float, run: str | None = None) 
         "levels_hPa": levels_hpa,
         # Server-owned, displayed verbatim: the client never restates what the
         # parcel is (design decision #5).
-        "parcel_definition": sounding_indices.PARCEL_DEFINITION,
+        "parcel_definition": sounding_indices.parcel_definition_for_model(model_norm),
+        # Server-owned label for the `indices.model_sbcape` row (Phase 6): the
+        # client renders whatever this says instead of hardcoding "HRRR SBCAPE".
+        "model_cape_label": _model_cape_label(reference_sidecar),
         "units": _units_map(reference_sidecar),
         "frames": frames,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

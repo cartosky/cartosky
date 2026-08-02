@@ -102,9 +102,12 @@ function IndexRow({ label, value, testId }: { label: string; value: string; test
 function IndicesReadout({
   frame,
   parcelDefinition,
+  modelCapeLabel,
 }: {
   frame: SoundingFrame;
   parcelDefinition: string | undefined;
+  /** Server-supplied name for the model's own CAPE diagnostic. */
+  modelCapeLabel: string | undefined;
 }) {
   const indices = frame.indices ?? null;
   const modelSbcape = indices?.model_sbcape;
@@ -139,10 +142,13 @@ function IndicesReadout({
           value={formatIndex(indices?.lcl_hPa, { digits: 0, unit: " hPa" })}
         />
         {/* Only on format_version ≥ 2 stacks; older runs simply lack the row
-            rather than showing a fabricated dash (decision #5). */}
+            rather than showing a fabricated dash (decision #5). The label is
+            the server's (Phase 6) — the quantity differs per model, and ECMWF's
+            is most-unstable, not surface-based. Responses served before Phase 6
+            carry no label and can only be HRRR. */}
         {hasModelSbcape ? (
           <IndexRow
-            label="HRRR SBCAPE"
+            label={modelCapeLabel ?? "HRRR SBCAPE"}
             testId="sounding-index-model-sbcape"
             value={formatIndex(modelSbcape)}
           />
@@ -360,7 +366,11 @@ export function SoundingPanel({
                 />
               </div>
             ) : null}
-            <IndicesReadout frame={frame} parcelDefinition={data.parcel_definition} />
+            <IndicesReadout
+              frame={frame}
+              parcelDefinition={data.parcel_definition}
+              modelCapeLabel={data.model_cape_label ?? undefined}
+            />
           </>
         ) : null}
       </div>

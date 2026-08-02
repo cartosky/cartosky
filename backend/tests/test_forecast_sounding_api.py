@@ -236,11 +236,11 @@ async def test_flag_off_is_404(client: httpx.AsyncClient, roots, monkeypatch) ->
 async def test_flagged_but_unsupported_model_is_404(
     client: httpx.AsyncClient, roots, monkeypatch
 ) -> None:
-    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "gfs")
-    assert "gfs" not in sounding_service.SUPPORTED_MODELS
+    monkeypatch.setenv("CARTOSKY_SOUNDING_MODELS", "nam")
+    assert "nam" not in sounding_service.SUPPORTED_MODELS
 
     response = await client.post(
-        "/api/v4/forecast/sounding", json={"model": "gfs", "lat": 38.5, "lon": -97.5}
+        "/api/v4/forecast/sounding", json={"model": "nam", "lat": 38.5, "lon": -97.5}
     )
     assert response.status_code == 404
 

@@ -15,6 +15,9 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import {
+  COARSE_SOUNDING_CAPE_LABEL,
+  COARSE_SOUNDING_LEVELS,
+  COARSE_SOUNDING_PARCEL_DEFINITION,
   NO_SOUNDING_MODEL,
   SOUNDING_EXPECTED_MASKED_LEVELS,
   SOUNDING_MODEL,
@@ -268,6 +271,10 @@ test.describe('Sounding panel', () => {
     await expect(page.locator('[data-testid="sounding-index-lcl"]')).toHaveText('902 hPa');
     // format_version 2 stack -> the HRRR diagnostic row is present.
     await expect(page.locator('[data-testid="sounding-index-model-sbcape"]')).toHaveText('1466');
+    // This fixture carries NO `model_cape_label` — a pre-Phase-6 response. The
+    // row must still be labelled, falling back to HRRR (the only model that
+    // served soundings before the label existed) rather than going blank.
+    await expect(page.locator('[data-testid="sounding-indices"]')).toContainText('HRRR SBCAPE');
 
     // The caption is the server's string, verbatim.
     await expect(page.locator('[data-testid="sounding-parcel-definition"]')).toHaveText(
@@ -527,6 +534,75 @@ test.describe('Sounding panel (mobile)', () => {
     expect(box.y + box.height).toBeCloseTo(viewport.height, 0);
     // §8: the sheet never eats the whole screen — map stays visible above it.
     expect(box.height).toBeLessThan(viewport.height * 0.9);
+  });
+});
+
+test.describe('Coarse-ladder sounding (ECMWF-shaped)', () => {
+  test.skip(({ browserName }) => browserName !== 'chromium', 'Chromium-only contract suite.');
+
+  /**
+   * Phase 6: the panel is driven entirely by the response, so a 12-level ECMWF
+   * payload has to render the same components a 37-level HRRR one does — plus
+   * the diagnostic row must take its LABEL from the server, because ECMWF ships
+   * most-unstable CAPE under the same field name that HRRR uses for SBCAPE.
+   */
+  test('a 12-level payload renders the chart, omega, hodograph and the served CAPE label', async ({
+    page,
+  }) => {
+    test.skip(/Mobile/.test(test.info().project.name), 'Desktop docked-panel contract.');
+    test.setTimeout(SOUNDING_TEST_TIMEOUT);
+    await page.addInitScript(() => localStorage.setItem('csky_viewer_tour_v1', 'completed'));
+
+    const requests: SoundingRequestLog = [];
+    await stubSoundingRoutes(page, requests, { coarseLadder: true });
+    await page.goto(VIEWER_URL);
+    await expect(page.locator('.maplibregl-canvas')).toBeVisible({ timeout: 60_000 });
+    const mapSlot = page.locator('[data-testid="viewer-map-slot"]');
+
+    await armPickMode(page);
+    await mapSlot.click({ position: { x: 320, y: 220 } });
+    await expect(page.locator('[data-testid="skewt-chart"]')).toBeVisible();
+
+    // --- both traces draw, with no gaps invented and no NaN in the geometry.
+    const tPath = (await page.locator('[data-testid="skewt-trace-t"]').getAttribute('d')) ?? '';
+    const tdPath = (await page.locator('[data-testid="skewt-trace-td"]').getAttribute('d')) ?? '';
+    expect(tPath).not.toContain('NaN');
+    expect(tdPath).not.toContain('NaN');
+    // 12 levels, all above ground here, plus the surface anchor.
+    expect(pathYs(tPath).length).toBe(COARSE_SOUNDING_LEVELS.length + 1);
+    expect(pathYs(tdPath).length).toBe(COARSE_SOUNDING_LEVELS.length + 1);
+
+    // --- omega strip: ECMWF DOES publish `w` on all 12 levels, so it ships.
+    const omega = page.locator('[data-testid="skewt-omega"]');
+    await expect(omega).toHaveCount(1);
+    expect(Number(await omega.getAttribute('data-bars'))).toBeGreaterThan(3);
+
+    // --- hodograph: height colouring still bands correctly on 12 levels, even
+    // though there are far fewer points to colour.
+    await expect(page.locator('[data-testid="sounding-hodograph"]')).toBeVisible();
+    const segments = page.locator('[data-testid="hodograph-segment"]');
+    expect(await segments.count()).toBeGreaterThanOrEqual(2);
+    const strokes = await segments.evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute('stroke')),
+    );
+    expect(new Set(strokes).size).toBe(strokes.length);
+    await expect(page.locator('[data-testid="hodograph-surface"]')).toHaveCount(1);
+
+    // --- theta-e inset and the parcel path survive the coarse ladder.
+    await expect(page.locator('[data-testid="sounding-thetae"]')).toBeVisible();
+    await expect(page.locator('[data-testid="skewt-parcel-path"]')).toHaveCount(1);
+
+    // --- the diagnostic row is labelled by the SERVER, not by the client.
+    const capeRow = page.locator('[data-testid="sounding-index-model-sbcape"]');
+    await expect(capeRow).toHaveText('1875');
+    await expect(page.locator('[data-testid="sounding-indices"]')).toContainText(
+      COARSE_SOUNDING_CAPE_LABEL,
+    );
+    await expect(page.locator('[data-testid="sounding-indices"]')).not.toContainText('SBCAPE (model)');
+    await expect(page.locator('[data-testid="sounding-indices"]')).not.toContainText('HRRR SBCAPE');
+    await expect(page.locator('[data-testid="sounding-parcel-definition"]')).toHaveText(
+      COARSE_SOUNDING_PARCEL_DEFINITION,
+    );
   });
 });
 

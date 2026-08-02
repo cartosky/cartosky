@@ -5,12 +5,34 @@
  * them rather than bridging or emitting NaN.
  */
 
-/** Models that publish sounding stacks. v1 ships HRRR only (§7 Phase 3). */
-export const SOUNDING_MODELS = ["hrrr"] as const;
+/**
+ * Fallback model list, used ONLY when the capabilities payload predates the
+ * per-model `soundings` flag (Phase 6). It exists so a capabilities blob cached
+ * by an older client cannot hide the sounding toggle for HRRR, which has been
+ * live since Phase 3.
+ */
+export const SOUNDING_MODELS_FALLBACK = ["hrrr"] as const;
 
-export function modelSupportsSounding(model: string | null | undefined): boolean {
+/** Shape this module needs from a capabilities model-catalog entry. */
+export type SoundingCapability = { soundings?: boolean } | null | undefined;
+
+/**
+ * Whether the sounding panel should be offered for `model`.
+ *
+ * The server computes `soundings` from the same gate the endpoint enforces
+ * (`CARTOSKY_SOUNDING_MODELS` ∩ the pipeline's supported models), so the toggle
+ * and the 404 cannot disagree. An entry that simply lacks the key is an old
+ * payload, not a "no" — hence the fallback.
+ */
+export function modelSupportsSounding(
+  model: string | null | undefined,
+  capability?: SoundingCapability,
+): boolean {
   const normalized = String(model ?? "").trim().toLowerCase();
-  return (SOUNDING_MODELS as readonly string[]).includes(normalized);
+  if (!normalized) return false;
+  const flag = capability?.soundings;
+  if (typeof flag === "boolean") return flag;
+  return (SOUNDING_MODELS_FALLBACK as readonly string[]).includes(normalized);
 }
 
 export type SoundingSurface = {
@@ -22,7 +44,11 @@ export type SoundingSurface = {
   /** 10 m wind components, m/s. */
   u10m: number | null;
   v10m: number | null;
-  /** HRRR's own surface CAPE, J/kg. Only on format_version ≥ 2 stacks. */
+  /**
+   * The model's own CAPE diagnostic, J/kg. Only on format_version ≥ 2 stacks.
+   * NOT the same quantity across models — HRRR/GFS ship surface-based CAPE,
+   * ECMWF ships most-unstable — which is why `model_cape_label` exists.
+   */
   cape_sfc?: number | null;
 };
 
@@ -43,7 +69,11 @@ export type SoundingIndices = {
   lfc_hPa: number | null;
   el_hPa: number | null;
   pwat_mm: number | null;
-  /** HRRR's native SBCAPE — a side-by-side diagnostic, not our parcel. */
+  /**
+   * The model's native CAPE — a side-by-side diagnostic, never our parcel.
+   * Stable field name across models; `model_cape_label` on the response says
+   * which quantity it actually is.
+   */
   model_sbcape: number | null;
 };
 
@@ -108,7 +138,11 @@ export type SoundingResponse = {
   requested_run?: string;
   location: { lat: number; lon: number };
   grid_point: SoundingGridPoint;
-  /** 37 levels, 1000 → 100 hPa descending. */
+  /**
+   * The model's own ladder, descending: 37 levels for HRRR, 21 for GFS, 12 for
+   * ECMWF (design §10). Never assume a length — every overlay indexes this
+   * array in parallel with the per-level series.
+   */
   levels_hPa: number[];
   units: Record<string, string>;
   /**
@@ -117,6 +151,14 @@ export type SoundingResponse = {
    * or the two can drift apart.
    */
   parcel_definition?: string;
+  /**
+   * Label for the `indices.model_sbcape` row, from the stack sidecar
+   * ("HRRR SBCAPE" / "GFS SBCAPE" / "MUCAPE"). The field name is a stable
+   * contract but the quantity is NOT the same across models — ECMWF ships
+   * most-unstable CAPE — so the label must come from the server, never the
+   * client. Absent on pre-Phase-6 responses.
+   */
+  model_cape_label?: string | null;
   frames: SoundingFrame[];
   generated_at: string;
 };
