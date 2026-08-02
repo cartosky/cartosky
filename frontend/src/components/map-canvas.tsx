@@ -865,6 +865,53 @@ function buildPressureCenterScreenLabels(
   return labels;
 }
 
+/**
+ * Draws the H/L markers into a captured map frame. The live markers are DOM
+ * overlays (`.map-pressure-center` in globals.css), so every canvas read-back
+ * — server headless screenshots, signed-out live captures, draft previews —
+ * loses them unless they are re-painted here. Geometry and styling mirror the
+ * CSS: 24px/900 letter with a 10px/800 value beneath, centred on the projected
+ * point, white halo, red H / blue L. `scale` converts CSS px (label x/y) to
+ * canvas device px.
+ */
+function drawPressureCenterLabelsOnCapture(
+  ctx: CanvasRenderingContext2D,
+  labels: PressureCenterScreenLabel[],
+  scale: number,
+): void {
+  const fontFamily =
+    'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  labels.forEach((label) => {
+    const color = label.type === "H" ? "rgb(255, 0, 0)" : "rgb(0, 80, 255)";
+    const x = label.x * scale;
+    const y = label.y * scale;
+    // Column layout from the CSS block: letter centred ~4.5px above the anchor
+    // when a value renders beneath it, dead-centre otherwise.
+    const letterY = label.valueLabel ? y - 4.5 * scale : y;
+    const drawText = (text: string, textY: number, fontPx: number, weight: number) => {
+      ctx.font = `${weight} ${fontPx * scale}px ${fontFamily}`;
+      // White halo standing in for the CSS text-shadow ring.
+      ctx.shadowColor = "rgba(255, 255, 255, 0.9)";
+      ctx.shadowBlur = 3 * scale;
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+      ctx.lineWidth = 2 * scale;
+      ctx.strokeText(text, x, textY);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, textY);
+    };
+    drawText(label.type, letterY, 24, 900);
+    if (label.valueLabel) {
+      drawText(label.valueLabel, y + 11.5 * scale, 10, 800);
+    }
+  });
+  ctx.restore();
+}
+
 function getLakeFillColor(basemapMode: BasemapMode): string {
   return basemapMode === "dark" ? "#2C353C" : "#d4dadc";
 }
@@ -1599,6 +1646,13 @@ export function MapCanvas({
   const scheduleCityLabelRefreshRef = useRef<() => void>(() => {});
   const [vectorCacheRevision, setVectorCacheRevision] = useState(0);
   const [pressureCenterScreenLabels, setPressureCenterScreenLabels] = useState<PressureCenterScreenLabel[]>([]);
+  // Latest pressure-center inputs for the []-dep capture effect: the H/L
+  // markers are DOM overlays, so a bare canvas read-back drops them — captures
+  // recompute and composite them from these refs at read time.
+  const pressureCentersRef = useRef(pressureCenters);
+  pressureCentersRef.current = pressureCenters;
+  const globeActiveRef = useRef(globeActive);
+  globeActiveRef.current = globeActive;
 
   const geolocationMarkerRef = useRef<maplibregl.Marker | null>(null);
   const prevGridFrameHourRef = useRef<number | null>(null);
@@ -2592,10 +2646,37 @@ export function MapCanvas({
         const timeoutId = window.setTimeout(() => finish(null), 2000);
         map.once("render", () => {
           try {
+            const source = map.getCanvas();
+            // The H/L markers are DOM overlays, invisible to a canvas read;
+            // composite them onto the capture so screenshots match the live
+            // view. Recomputed here (not read from React state) so the
+            // positions are exact for THIS paint, and skipped entirely when
+            // there are no centers — those captures stay byte-identical.
+            let target: HTMLCanvasElement = source;
+            const centerLabels = buildPressureCenterScreenLabels(
+              pressureCentersRef.current,
+              map,
+              globeActiveRef.current,
+            );
+            if (centerLabels.length > 0) {
+              const composed = document.createElement("canvas");
+              composed.width = source.width;
+              composed.height = source.height;
+              const ctx = composed.getContext("2d");
+              if (ctx) {
+                ctx.drawImage(source, 0, 0);
+                drawPressureCenterLabelsOnCapture(
+                  ctx,
+                  centerLabels,
+                  source.width / (source.clientWidth || source.width),
+                );
+                target = composed;
+              }
+            }
             finish(
               format === "png"
-                ? map.getCanvas().toDataURL("image/png")
-                : map.getCanvas().toDataURL("image/jpeg", 0.7),
+                ? target.toDataURL("image/png")
+                : target.toDataURL("image/jpeg", 0.7),
             );
           } catch {
             finish(null);
