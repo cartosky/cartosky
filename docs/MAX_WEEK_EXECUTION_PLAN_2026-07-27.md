@@ -32,7 +32,7 @@ Per-model 25 km global additions and the AIFS/ECMWF canonical-grid conversion
 |---|---|---|---|
 | Today | — | 584 GiB | 31% |
 | + GFS global | ~~390.7 GiB~~ **≈161 GiB (Change A, 2026-07-29)** | ~745 GiB | ~40% |
-| + AIGFS global | 58.8 GiB *(pre-amendment figure — recompute under native-4326 when scheduled)* | — | — |
+| + AIGFS global | ~~58.8 GiB~~ **≈23 GiB (recomputed 2026-08-02: 649 global frames/run vs GFS 2621, scaled from GFS measured 23 GiB/run → ≈5.7 GiB/run × keep_runs 4; verify against `du` after first prod build)** | — | — |
 | + AIFS + ECMWF global, ~~canonical grids migrated to 25 km~~ | ~−14 GiB *(derivation void — see amendment note)* | — | — |
 | + Tier 1 NA ensemble members (signed off) | ~98 GiB | — | — |
 

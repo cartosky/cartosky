@@ -109,6 +109,16 @@ AIGFS_REGIONS: dict[str, RegionSpec] = {
         bbox_wgs84=(-134.0, 24.0, -60.0, 55.0),
         clip=True,
     ),
+    # Phase 3 — the whole globe on the source's native 0.25° EPSG:4326 grid.
+    # Data coverage is the full globe including both poles; the mercator
+    # viewer's ±85.05° clip is a display limit, not a coverage limit. No
+    # source clipping (the AIGFS grid already covers the domain).
+    "global": RegionSpec(
+        id="global",
+        name="Global",
+        bbox_wgs84=(-180.0, -90.0, 180.0, 90.0),
+        clip=False,
+    ),
 }
 
 
@@ -230,6 +240,36 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.it
         _days,
         PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
     )
+
+
+# Phase 3 (plan §2): every buildable AIGFS grid variable also builds the
+# ``global`` domain — AIGFS is a 0.25° global source, so it adopts the native
+# EPSG:4326 contract verbatim (docs/GLOBAL_DOMAIN_4326_CONTRACT.md). Anomaly
+# variables were the one blanket exclusion — their ERA5 baselines were
+# North-America-only, so a global anomaly had no climatology to depart from.
+#
+# Phase 3A Wave 1 (D2) narrows that exclusion to a per-variable allowlist: the
+# three *instantaneous* anomaly fields now have global EPSG:4326 ERA5
+# baselines (shared with GFS — the baseline path has no model segment) and
+# declare ``global``; the four precip-window anomalies still do not (their
+# baselines need the Wave 2 streaming-memory fix first). The exclusion remains
+# by omission below (never a runtime check) and both directions are pinned by
+# tests over the real catalog.
+AIGFS_GLOBAL_BUILD_REGIONS: tuple[str, ...] = ("na", "global")
+
+#: Anomaly variables that have global ERA5 baselines (Wave 1 — instantaneous
+#: fields only). Everything else ending in ``_anom`` stays canonical-only.
+AIGFS_GLOBAL_ANOMALY_VAR_KEYS: frozenset[str] = frozenset(
+    {"tmp2m_anom", "tmp850_anom", "hgt500_anom"}
+)
+
+
+def _declares_global_build_region(var_key: str, capability: VariableCapability) -> bool:
+    if str(var_key) in AIGFS_GLOBAL_ANOMALY_VAR_KEYS:
+        return True
+    if str(var_key).endswith("_anom"):
+        return False
+    return "anomaly" not in str(capability.derive_strategy_id or "")
 
 
 AIGFS_VARIABLE_CATALOG = {
@@ -399,6 +439,19 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.it
         group="Anomalies",
         constraints=_precip_anom_constraint,
     )
+
+# Apply the global-domain declaration in ONE place, after the whole catalog
+# (literals + generated precip anomalies) exists. AIGFS carries no
+# ptype_intensity companion components, so buildability is the only gate
+# besides the anomaly allowlist above.
+for _var_key, _capability in list(AIGFS_VARIABLE_CATALOG.items()):
+    if _capability.buildable and _declares_global_build_region(_var_key, _capability):
+        AIGFS_VARIABLE_CATALOG[_var_key] = replace(
+            _capability,
+            supported_build_regions=list(AIGFS_GLOBAL_BUILD_REGIONS),
+        )
+
+
 AIGFS_CAPABILITIES = ModelCapabilities(
     model_id="aigfs",
     name="AIGFS",
@@ -407,6 +460,12 @@ AIGFS_CAPABILITIES = ModelCapabilities(
     grid_meters_by_region={
         "conus": 25_000.0,
         "na": 25_000.0,
+    },
+    # The global domain is published on the source's own 0.25° EPSG:4326 grid
+    # (1440 × 721, both poles included) rather than a mercator warp — see
+    # docs/GLOBAL_DOMAIN_4326_CONTRACT.md.
+    grid_native_degrees_by_region={
+        "global": 0.25,
     },
     run_discovery={
         "probe_var_key": "tmp2m",
