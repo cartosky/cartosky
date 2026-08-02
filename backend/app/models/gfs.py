@@ -1060,6 +1060,30 @@ def _precip_anomaly_var_spec(
         "baseline_field": f"precip_{days}d",
         "baseline_source": "era5",
         "baseline_region": "na",
+        # Phase 3A Wave 2 — NA-only ON PURPOSE, and this is the flip site.
+        #
+        # Unlike the three instantaneous anomaly specs above, there is no
+        # "baseline_region_by_build_region": "global=global" here. Per
+        # `resolve_baseline_region`, a native-geographic build region with no
+        # explicit declaration resolves to None, so a global build *skips*
+        # these variables rather than subtracting the NA climatology. That is
+        # the intended state until the global precip baselines exist on disk.
+        #
+        # The Wave 2 capability flip must, together:
+        #   1. add "baseline_region_by_build_region": "global=global" here;
+        #   2. invert the per-variable allowlist that currently asserts no
+        #      precip anomaly declares global (GFS_GLOBAL_ANOMALY_VAR_KEYS and
+        #      the global-domain test pins);
+        #   3. decide the accumulation missing-baseline pre-check — the
+        #      instantaneous path skips a frame when its baseline asset is
+        #      absent (`instantaneous_baseline_assets_present`, applied in
+        #      pipeline.py `_resolve_build_region_baseline`), but there is no
+        #      accumulation counterpart, so a missing precip baseline would
+        #      hard-fail the frame instead of skipping it.
+        #
+        # The build side is ready: build_precip_accumulation_climatology_assets.py
+        # supports --region global, and load_accumulation_climatology_baseline
+        # validates against the EPSG:4326 contract grid.
         "baseline_version": "v1",
         "reference_period": "1991-2020",
         "accumulation_window_hours": str(days * 24),

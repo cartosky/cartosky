@@ -817,3 +817,195 @@ def test_hgt500_anomaly_derives_against_the_global_baseline(
     sidecar = ctx.derive_quality[("hgt500_anom", 0)]["sidecar_metadata"]
     assert sidecar["baseline_region"] == GLOBAL
     assert sidecar["reference_period"] == "1991-2020"
+
+
+# ── 8. accumulation baseline serving path (Wave 2) ─────────────────────────
+#
+# `load_accumulation_climatology_baseline` was EPSG:3857-only by deliberate
+# Wave-1 deferral. It now resolves through the same `get_baseline_grid`
+# registry as the instantaneous loader, so the global precip windows validate
+# against the contract grid instead of being rejected outright.
+
+
+def _install_accumulation_baseline(
+    tmp_path: Path,
+    values: np.ndarray,
+    *,
+    region: str,
+    crs: str,
+    transform,
+    reference_date: datetime,
+    field: str = "precip_5d",
+) -> Path:
+    path = climatology.climatology_accumulation_baseline_path(
+        data_root=tmp_path,
+        version="v1",
+        baseline_source=SOURCE,
+        field=field,
+        region=region,
+        reference_period="1991-2020",
+        reference_date=reference_date,
+    )
+    _write_raster(path, values, crs=crs, transform=transform)
+    return path
+
+
+def test_global_accumulation_baseline_loads_and_validates(tmp_path: Path) -> None:
+    climatology.configure_data_root(tmp_path)
+    reference_date = datetime(2026, 4, 21, 0, tzinfo=timezone.utc)
+    values = _global_values()
+    _install_accumulation_baseline(
+        tmp_path,
+        values,
+        region=GLOBAL,
+        crs="EPSG:4326",
+        transform=CONTRACT_TRANSFORM,
+        reference_date=reference_date,
+    )
+
+    loaded, crs, transform, meta = climatology.load_accumulation_climatology_baseline(
+        version="v1",
+        baseline_source=SOURCE,
+        field="precip_5d",
+        reference_date=reference_date,
+        region=GLOBAL,
+        reference_period="1991-2020",
+    )
+    assert loaded.shape == (CONTRACT_HEIGHT, CONTRACT_WIDTH)
+    assert np.allclose(loaded, values)
+    assert crs.to_epsg() == 4326
+    assert transform == CONTRACT_TRANSFORM
+    assert meta["baseline_region"] == GLOBAL
+    assert meta["baseline_temporal_resolution"] == "daily_accumulation_window"
+    assert meta["baseline_reference_doy"] == reference_date.timetuple().tm_yday
+
+
+def test_metre_accumulation_baseline_is_unchanged(tmp_path: Path) -> None:
+    climatology.configure_data_root(tmp_path)
+    reference_date = datetime(2026, 4, 21, 0, tzinfo=timezone.utc)
+    transform, height, width = compute_transform_and_shape(
+        REGION_BBOX_3857[CANONICAL], 25_000.0
+    )
+    values = np.full((height, width), 1.25, dtype=np.float32)
+    _install_accumulation_baseline(
+        tmp_path,
+        values,
+        region=CANONICAL,
+        crs="EPSG:3857",
+        transform=transform,
+        reference_date=reference_date,
+    )
+
+    loaded, crs, loaded_transform, meta = climatology.load_accumulation_climatology_baseline(
+        version="v1",
+        baseline_source=SOURCE,
+        field="precip_5d",
+        reference_date=reference_date,
+        region=CANONICAL,
+        reference_period="1991-2020",
+    )
+    assert loaded.shape == (height, width)
+    assert crs.to_epsg() == 3857
+    assert loaded_transform == transform
+    assert meta["baseline_region"] == CANONICAL
+
+
+@pytest.mark.parametrize(
+    ("region", "crs", "transform", "expected_message"),
+    [
+        (GLOBAL, "EPSG:3857", CONTRACT_TRANSFORM, "must use EPSG:4326"),
+        (CANONICAL, "EPSG:4326", CONTRACT_TRANSFORM, "must use EPSG:3857"),
+    ],
+)
+def test_accumulation_baseline_rejects_the_wrong_crs(
+    tmp_path: Path,
+    region: str,
+    crs: str,
+    transform,
+    expected_message: str,
+) -> None:
+    climatology.configure_data_root(tmp_path)
+    reference_date = datetime(2026, 4, 21, 0, tzinfo=timezone.utc)
+    _install_accumulation_baseline(
+        tmp_path,
+        _global_values(),
+        region=region,
+        crs=crs,
+        transform=transform,
+        reference_date=reference_date,
+    )
+    with pytest.raises(ValueError, match=expected_message):
+        climatology.load_accumulation_climatology_baseline(
+            version="v1",
+            baseline_source=SOURCE,
+            field="precip_5d",
+            reference_date=reference_date,
+            region=region,
+            reference_period="1991-2020",
+        )
+
+
+def test_global_accumulation_baseline_rejects_the_wrong_shape(tmp_path: Path) -> None:
+    climatology.configure_data_root(tmp_path)
+    reference_date = datetime(2026, 4, 21, 0, tzinfo=timezone.utc)
+    _install_accumulation_baseline(
+        tmp_path,
+        np.zeros((180, 360), dtype=np.float32),
+        region=GLOBAL,
+        crs="EPSG:4326",
+        transform=from_origin(-180.5, 90.5, 1.0, 1.0),
+        reference_date=reference_date,
+    )
+    with pytest.raises(ValueError, match="grid shape mismatch"):
+        climatology.load_accumulation_climatology_baseline(
+            version="v1",
+            baseline_source=SOURCE,
+            field="precip_5d",
+            reference_date=reference_date,
+            region=GLOBAL,
+            reference_period="1991-2020",
+        )
+
+
+def test_global_accumulation_baseline_rejects_a_half_cell_offset(tmp_path: Path) -> None:
+    climatology.configure_data_root(tmp_path)
+    reference_date = datetime(2026, 4, 21, 0, tzinfo=timezone.utc)
+    _install_accumulation_baseline(
+        tmp_path,
+        _global_values(),
+        region=GLOBAL,
+        crs="EPSG:4326",
+        transform=Affine(0.25, 0.0, -180.0, 0.0, -0.25, 90.0),
+        reference_date=reference_date,
+    )
+    with pytest.raises(ValueError, match="transform mismatch"):
+        climatology.load_accumulation_climatology_baseline(
+            version="v1",
+            baseline_source=SOURCE,
+            field="precip_5d",
+            reference_date=reference_date,
+            region=GLOBAL,
+            reference_period="1991-2020",
+        )
+
+
+def test_accumulation_baseline_for_an_unknown_region_raises(tmp_path: Path) -> None:
+    climatology.configure_data_root(tmp_path)
+    reference_date = datetime(2026, 4, 21, 0, tzinfo=timezone.utc)
+    _install_accumulation_baseline(
+        tmp_path,
+        _global_values(),
+        region="atlantis",
+        crs="EPSG:4326",
+        transform=CONTRACT_TRANSFORM,
+        reference_date=reference_date,
+    )
+    with pytest.raises(KeyError):
+        climatology.load_accumulation_climatology_baseline(
+            version="v1",
+            baseline_source=SOURCE,
+            field="precip_5d",
+            reference_date=reference_date,
+            region="atlantis",
+            reference_period="1991-2020",
+        )

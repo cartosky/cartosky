@@ -21,12 +21,17 @@ if str(BACKEND_ROOT) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from app.services.builder.raster_grid import compute_transform_and_shape
 from app.services.climatology import (
+    BaselineGrid,
     climatology_baseline_root,
-    get_baseline_grid_params,
+    get_baseline_grid,
     normalize_baseline_source,
 )
+
+#: Build regions this script knows how to target. ``na`` is the legacy
+#: EPSG:3857 metre grid; ``global`` is the native EPSG:4326 0.25 degree
+#: contract grid (``docs/GLOBAL_DOMAIN_4326_CONTRACT.md`` §1).
+SUPPORTED_REGIONS = ("na", "global")
 
 METERS_TO_INCHES = np.float32(39.37007874015748)
 MM_TO_INCHES = np.float32(1.0 / 25.4)
@@ -106,11 +111,27 @@ def _expected_dates(start_year: int, end_year: int) -> list[date]:
     return dates
 
 
+def _is_same_grid(
+    *,
+    src_crs,
+    src_transform,
+    src_shape: tuple[int, int],
+    grid: BaselineGrid,
+) -> bool:
+    if CRS.from_user_input(src_crs) != CRS.from_user_input(grid.crs):
+        return False
+    if src_shape != (grid.height, grid.width):
+        return False
+    return all(
+        abs(float(actual) - float(expected)) <= 1.0e-9
+        for actual, expected in zip(src_transform[:6], grid.transform[:6])
+    )
+
+
 def _load_and_warp_daily(
     source: DailyPrecipRaster,
     *,
-    baseline_source: str,
-    region: str,
+    grid: BaselineGrid,
     units_in: str,
     resampling: str,
 ) -> np.ndarray:
@@ -124,19 +145,33 @@ def _load_and_warp_daily(
         raise ValueError(f"Source raster missing CRS: {source.path}")
 
     converted = _convert_precip_to_inches(values, units_in=units_in)
-    target_bbox, target_grid_m = get_baseline_grid_params(
-        baseline_source=baseline_source,
-        region=region,
-    )
-    dst_transform, dst_h, dst_w = compute_transform_and_shape(target_bbox, target_grid_m)
-    warped = np.full((dst_h, dst_w), np.nan, dtype=np.float32)
+
+    # Staged ERA5 daily precip rasters land on the exact global contract grid
+    # (`stage_era5_precip_daily_source._transform_from_latlon` reproduces
+    # `REGION_BBOX_4326["global"]` exactly), so the global build's "warp" is
+    # the identity. Take it bit-exactly rather than letting a bilinear no-op
+    # perturb float bits. Mirrors the instantaneous build's fast path; legacy
+    # metre regions never reach it, so NA output is unchanged.
+    if grid.is_native_geographic and _is_same_grid(
+        src_crs=src_crs,
+        src_transform=src_transform,
+        src_shape=(converted.shape[0], converted.shape[1]),
+        grid=grid,
+    ):
+        # No nodata remap here: the masked read above (`ds.read(1,
+        # masked=True).filled(np.nan)`) is the nodata handler, and it runs
+        # before unit conversion. Comparing converted values against the raw
+        # `src_nodata` would be wrong for any `units_in` other than inches.
+        return converted.astype(np.float32, copy=True)
+
+    warped = np.full((grid.height, grid.width), np.nan, dtype=np.float32)
     reproject(
         source=converted.astype(np.float32, copy=False),
         destination=warped,
         src_transform=src_transform,
         src_crs=src_crs,
-        dst_transform=dst_transform,
-        dst_crs=CRS.from_epsg(3857),
+        dst_transform=grid.transform,
+        dst_crs=CRS.from_user_input(grid.crs),
         resampling=Resampling[resampling],
         src_nodata=src_nodata,
         dst_nodata=float("nan"),
@@ -144,59 +179,131 @@ def _load_and_warp_daily(
     return warped.astype(np.float32, copy=False)
 
 
-def _mean_arrays(arrays: list[np.ndarray]) -> np.ndarray:
-    if not arrays:
+def _bucket_mean(
+    bucket_sources: list[DailyPrecipRaster],
+    *,
+    grid: BaselineGrid,
+    units_in: str,
+    resampling: str,
+) -> np.ndarray:
+    """Streaming NaN-aware mean of one day-of-year bucket.
+
+    Holds a single running sum plus a valid-sample count instead of a stack of
+    warped rasters, so peak memory is O(one grid) rather than O(years).
+
+    Two details are load-bearing for byte-identity with the pre-streaming
+    ``np.nanmean(stack, axis=0)`` and must not be "cleaned up":
+
+    * **float32 accumulator.** ``nanmean`` on a float32 stack sums in float32.
+      The instantaneous build's ``_bucket_mean`` uses float64; copying that
+      here would shift bits on every NA asset.
+    * **Masked in-place add into a zero-initialised sum**, not
+      ``sum += np.where(finite, x, 0)``. ``np.add.reduce`` starts from the
+      ``+0.0`` identity, so an all-``-0.0`` cell reduces to ``+0.0``; the
+      ``np.where`` fold would carry the sign through and yield ``-0.0``.
+      Numerically irrelevant, bitwise not — and this form matches ``nanmean``
+      universally, so it removes the whole counterexample class.
+    """
+    if not bucket_sources:
         raise ValueError("Cannot average an empty daily precip bucket")
-    stack = np.stack(arrays, axis=0).astype(np.float32, copy=False)
-    return np.nanmean(stack, axis=0).astype(np.float32, copy=False)
+
+    sum_values: np.ndarray | None = None
+    valid_counts: np.ndarray | None = None
+
+    for source in bucket_sources:
+        warped = _load_and_warp_daily(
+            source,
+            grid=grid,
+            units_in=units_in,
+            resampling=resampling,
+        )
+        finite = np.isfinite(warped)
+        if sum_values is None:
+            sum_values = np.zeros(warped.shape, dtype=np.float32)
+            valid_counts = np.zeros(warped.shape, dtype=np.int64)
+        assert valid_counts is not None
+        sum_values[finite] += warped[finite]
+        valid_counts += finite
+
+    assert sum_values is not None and valid_counts is not None
+    mean = np.full(sum_values.shape, np.nan, dtype=np.float32)
+    np.divide(
+        sum_values,
+        valid_counts,
+        out=mean,
+        where=valid_counts > 0,
+        casting="unsafe",
+    )
+    return mean.astype(np.float32, copy=False)
 
 
 def _daily_normals_by_doy(
     sources_by_date: dict[date, DailyPrecipRaster],
     *,
-    baseline_source: str,
-    region: str,
+    grid: BaselineGrid,
     units_in: str,
     resampling: str,
 ) -> tuple[list[np.ndarray | None], list[int]]:
-    buckets: dict[int, list[np.ndarray]] = defaultdict(list)
-    sample_counts = [0] * 366
+    """Per-day-of-year climatological daily normals, one bucket at a time.
 
+    Only the paths are grouped up front; each bucket's rasters are read,
+    warped and folded into a running sum inside :func:`_bucket_mean`, so at
+    most one warped raster is resident at a time. Resident output is the 366
+    normals themselves (1.42 GiB at global 721x1440 float32), not the ~11 000
+    daily rasters the pre-streaming build stacked (~42 GiB, sizing doc R2).
+    """
+    paths_by_doy: dict[int, list[DailyPrecipRaster]] = defaultdict(list)
     for valid_date, source in sorted(sources_by_date.items()):
-        doy = _month_day_to_doy(valid_date.month, valid_date.day)
-        warped = _load_and_warp_daily(
-            source,
-            baseline_source=baseline_source,
-            region=region,
+        paths_by_doy[_month_day_to_doy(valid_date.month, valid_date.day)].append(source)
+
+    sample_counts = [0] * 366
+    daily_normals: list[np.ndarray | None] = [None] * 366
+    for doy in range(1, 367):
+        bucket_sources = paths_by_doy.get(doy, [])
+        sample_counts[doy - 1] = len(bucket_sources)
+        if not bucket_sources:
+            continue
+        daily_normals[doy - 1] = _bucket_mean(
+            bucket_sources,
+            grid=grid,
             units_in=units_in,
             resampling=resampling,
         )
-        buckets[doy].append(warped)
-
-    daily_normals: list[np.ndarray | None] = [None] * 366
-    for doy in range(1, 367):
-        arrays = buckets.get(doy, [])
-        sample_counts[doy - 1] = len(arrays)
-        if arrays:
-            daily_normals[doy - 1] = _mean_arrays(arrays)
     return daily_normals, sample_counts
 
 
-def _rolling_accumulations(daily_normals: list[np.ndarray | None], *, window_days: int) -> list[np.ndarray | None]:
+def _window_accumulation(
+    daily_normals: list[np.ndarray | None],
+    *,
+    doy_index: int,
+    window_days: int,
+) -> np.ndarray | None:
+    """Rolling forward sum of ``window_days`` daily normals from ``doy_index``.
+
+    ``None`` when any day in the (circular) window has no normal. Computed one
+    day-of-year at a time so the caller can write and drop each accumulation
+    instead of materialising all 366 of them per window.
+
+    Sequential float32 accumulation matches ``np.sum(stack, axis=0,
+    dtype=np.float32)`` bit-for-bit. NaNs propagate, exactly as before: the
+    window is a plain sum, never NaN-aware.
+
+    The accumulator is zero-initialised rather than seeded with the first
+    day's copy, for the same reason as :func:`_bucket_mean`: ``np.add.reduce``
+    starts from the ``+0.0`` identity, so an all-``-0.0`` window must sum to
+    ``+0.0``.
+    """
     if int(window_days) <= 0:
         raise ValueError("Precip accumulation window must be positive")
-    accumulations: list[np.ndarray | None] = [None] * 366
-    for doy_index in range(366):
-        window_arrays: list[np.ndarray] = []
-        for offset in range(int(window_days)):
-            values = daily_normals[(doy_index + offset) % 366]
-            if values is None:
-                window_arrays = []
-                break
-            window_arrays.append(values)
-        if window_arrays:
-            accumulations[doy_index] = np.sum(np.stack(window_arrays, axis=0), axis=0, dtype=np.float32)
-    return accumulations
+    total: np.ndarray | None = None
+    for offset in range(int(window_days)):
+        values = daily_normals[(doy_index + offset) % len(daily_normals)]
+        if values is None:
+            return None
+        if total is None:
+            total = np.zeros(values.shape, dtype=np.float32)
+        total += values
+    return total
 
 
 def _write_baseline_asset(
@@ -204,6 +311,7 @@ def _write_baseline_asset(
     path: Path,
     values: np.ndarray,
     transform,
+    crs: str,
     field: str,
     reference_period: str,
     window_days: int,
@@ -220,7 +328,7 @@ def _write_baseline_asset(
         width=values.shape[1],
         count=1,
         dtype="float32",
-        crs="EPSG:3857",
+        crs=crs,
         transform=transform,
         nodata=float("nan"),
         tiled=True,
@@ -258,8 +366,11 @@ def build_precip_accumulation_climatology_assets(
     source_key = normalize_baseline_source(baseline_source)
     region_key = str(region).strip().lower()
     reference_period_key = str(reference_period).strip()
-    if region_key != "na":
-        raise ValueError("Precip accumulation climatology currently supports region=na")
+    if region_key not in SUPPORTED_REGIONS:
+        raise ValueError(
+            "Precip accumulation climatology supports region in "
+            f"{', '.join(SUPPORTED_REGIONS)}; got {region_key!r}"
+        )
     if source_key != "era5":
         raise ValueError("Precip accumulation climatology currently supports baseline_source=era5")
     if start_year is None or end_year is None:
@@ -277,17 +388,13 @@ def build_precip_accumulation_climatology_assets(
             + (" ..." if len(missing_dates) > 20 else "")
         )
 
-    bbox, grid_m = get_baseline_grid_params(
-        baseline_source=source_key,
-        region=region_key,
-    )
-    transform, height, width = compute_transform_and_shape(bbox, grid_m)
-    expected_shape = (height, width)
+    grid = get_baseline_grid(baseline_source=source_key, region=region_key)
+    transform = grid.transform
+    expected_shape = (grid.height, grid.width)
 
     daily_normals, daily_sample_counts = _daily_normals_by_doy(
         sources_by_date,
-        baseline_source=source_key,
-        region=region_key,
+        grid=grid,
         units_in=units_in,
         resampling=resampling,
     )
@@ -313,9 +420,16 @@ def build_precip_accumulation_climatology_assets(
             region=region_key,
             reference_period=reference_period_key,
         )
-        accumulations = _rolling_accumulations(daily_normals, window_days=window)
         window_written = 0
-        for doy, values in enumerate(accumulations, start=1):
+        for doy in range(1, 367):
+            # One accumulation at a time: materialising all 366 per window
+            # would add another full 366-grid set (1.42 GiB at global) on top
+            # of the daily normals.
+            values = _window_accumulation(
+                daily_normals,
+                doy_index=doy - 1,
+                window_days=window,
+            )
             if values is None:
                 continue
             if values.shape != expected_shape:
@@ -327,6 +441,7 @@ def build_precip_accumulation_climatology_assets(
                 path=output_root / f"doy_{doy:03d}.tif",
                 values=values,
                 transform=transform,
+                crs=grid.crs,
                 field=field,
                 reference_period=reference_period_key,
                 window_days=window,
@@ -349,7 +464,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-root", required=True, help="CartoSky data root where climatology assets will be written.")
     parser.add_argument("--version", default="v1", help="Climatology asset version. Default: v1.")
     parser.add_argument("--baseline-source", default="era5", help="Shared baseline source key. Default: era5.")
-    parser.add_argument("--region", default="na", help="Target region key. Default: na.")
+    parser.add_argument(
+        "--region",
+        default="na",
+        help=(
+            "Target region key. Default: na. 'na' builds EPSG:3857 metre assets; "
+            "'global' builds native EPSG:4326 0.25 degree assets on the global "
+            "domain contract grid."
+        ),
+    )
     parser.add_argument("--reference-period", default="1991-2020", help="Reference period label. Default: 1991-2020.")
     parser.add_argument("--windows", nargs="+", type=int, default=[5, 7, 10, 15], help="Accumulation windows in days. Default: 5 7 10 15.")
     parser.add_argument("--units-in", default="inches", help="Units of staged daily rasters. Default: inches.")
@@ -364,11 +487,10 @@ def main() -> int:
     args = parse_args()
     resolved_source = normalize_baseline_source(args.baseline_source)
     resolved_region = str(args.region).strip().lower()
-    bbox, grid_m = get_baseline_grid_params(
+    grid = get_baseline_grid(
         baseline_source=resolved_source,
         region=resolved_region,
     )
-    _transform, height, width = compute_transform_and_shape(bbox, grid_m)
     files_written, files_by_window, missing_dates = build_precip_accumulation_climatology_assets(
         source_root=Path(args.source_root).resolve(),
         data_root=Path(args.data_root).resolve(),
@@ -394,9 +516,10 @@ def main() -> int:
             "version": args.version,
             "reference_period": args.reference_period,
             "units": "inches",
-            "target_bbox_3857": bbox,
-            "target_grid_m": grid_m,
-            "target_shape": [height, width],
+            "target_crs": grid.crs,
+            "target_bbox": grid.bbox,
+            "target_resolution": grid.resolution,
+            "target_shape": [grid.height, grid.width],
         },
     )
     return 0

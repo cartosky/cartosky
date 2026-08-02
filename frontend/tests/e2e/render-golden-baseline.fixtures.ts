@@ -550,6 +550,8 @@ export const GLOBE_SEAM_VIEW = { lat: 0, lon: 180, zoom: 1 };
 export const GLOBE_POLE_VIEW = { lat: 70, lon: 0, zoom: 1 };
 /** Regional EPSG:3857 footprint on the sphere, limb visible. */
 export const GLOBE_REGIONAL_VIEW = { lat: 39.83, lon: -98.58, zoom: 2 };
+/** Whole-globe camera for the pressure-centre case. Same as GLOBE_WORLD_VIEW. */
+export const GLOBE_CENTERS_VIEW = { lat: 20, lon: -40, zoom: 1 };
 
 export type GoldenCaseId =
   | 'gfs-tmp2m'
@@ -560,7 +562,39 @@ export type GoldenCaseId =
   | 'globe-4326-world'
   | 'globe-4326-seam'
   | 'globe-4326-pole'
+  | 'globe-4326-centers'
   | 'globe-3857-regional';
+
+/**
+ * H/L pressure centres for the `globe-4326-centers` case.
+ *
+ * The real payload is `frames[].meta.meta.pressure_centers` (backend
+ * pressure_centers.py, Wave 1) — the same place the viewer reads it from
+ * (App.tsx, `extractLegendMeta(...).pressure_centers`), so this mirrors the
+ * live sidecar shape rather than a convenient subset.
+ *
+ * Chosen relative to GLOBE_CENTERS_VIEW (lat 20, lon -40): four centres well
+ * inside the near hemisphere, and four on the FAR side — including an "L 534"
+ * and an "L 487" at the reported longitudes, which are the markers the operator
+ * screenshot showed hanging in black space. Rotating the camera to lon 140
+ * swaps the two groups, which is what the rotation-release assertion uses.
+ * Values are unique so a test can identify a marker from its rendered text.
+ */
+export const GLOBE_PRESSURE_CENTERS = [
+  // Near hemisphere at lon -40.
+  { type: 'L', lat: 44, lon: -38, value: 984, units: 'hPa', source: 'test' },
+  { type: 'H', lat: 12, lon: -68, value: 1028, units: 'hPa', source: 'test' },
+  { type: 'L', lat: -22, lon: -12, value: 996, units: 'hPa', source: 'test' },
+  { type: 'H', lat: 30, lon: -4, value: 1021, units: 'hPa', source: 'test' },
+  // Far hemisphere at lon -40 (all > 100 deg of arc from the camera centre).
+  { type: 'L', lat: 20, lon: 140, value: 534, units: 'hPa', source: 'test' },
+  { type: 'L', lat: 58, lon: 172, value: 487, units: 'hPa', source: 'test' },
+  { type: 'H', lat: -38, lon: 158, value: 1032, units: 'hPa', source: 'test' },
+  { type: 'H', lat: 4, lon: 118, value: 1013, units: 'hPa', source: 'test' },
+];
+
+/** Longitude the rotation-release assertion drives the camera to. */
+export const GLOBE_CENTERS_ROTATED_VIEW = { lat: 20, lon: 140, zoom: 1 };
 
 type CaseSpec = {
   id: GoldenCaseId;
@@ -606,6 +640,10 @@ type CaseSpec = {
   regionMinZoom?: number;
   /** Boots the viewer with `?globe=1`, i.e. MapLibre's globe projection. */
   globe?: boolean;
+  /** H/L sidecar, emitted into `frames[].meta.meta.pressure_centers`. Absent
+   *  = the key is omitted entirely, which is what every pre-existing golden
+   *  was captured with. */
+  pressureCenters?: Array<Record<string, unknown>>;
 };
 
 const caseBbox = (spec: CaseSpec) => spec.bbox ?? GOLDEN_BBOX;
@@ -869,6 +907,17 @@ const GOLDEN_CASES: Record<GoldenCaseId, CaseSpec> = {
     regionMinZoom: 0,
     globe: true,
   },
+  // Same fixture bytes and same camera as `globe-4326-world`, plus a
+  // pressure-centre sidecar. A SEPARATE case on purpose: the four globe
+  // goldens above must stay byte-identical, and centres draw pixels.
+  'globe-4326-centers': {
+    ...GOLDEN_CASES_BASE_GLOBAL,
+    id: 'globe-4326-centers',
+    view: GLOBE_CENTERS_VIEW,
+    regionMinZoom: 0,
+    globe: true,
+    pressureCenters: GLOBE_PRESSURE_CENTERS,
+  },
   'globe-3857-regional': {
     ...GOLDEN_CASES_BASE_REGIONAL,
     id: 'globe-3857-regional',
@@ -1006,6 +1055,7 @@ function legendMeta(spec: CaseSpec, fh: number) {
     ...(spec.ptype
       ? { ptype_order: spec.ptype.order, ptype_breaks: spec.ptype.breaks }
       : {}),
+    ...(spec.pressureCenters ? { pressure_centers: spec.pressureCenters } : {}),
   };
 }
 

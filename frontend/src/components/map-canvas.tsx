@@ -40,7 +40,7 @@ import {
   setGlobeProjectionSupported,
   subscribeGlobeRendering,
 } from "@/lib/globe-projection";
-import { applyGlobeCameraConstrain, isCursorOnGlobe } from "@/lib/globe-map";
+import { applyGlobeCameraConstrain, isCursorOnGlobe, isLngLatVisibleOnGlobe } from "@/lib/globe-map";
 import { HoverIntent } from "@/lib/hover-intent";
 import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
 import type { SampleTooltipState } from "@/lib/use-sample-tooltip";
@@ -686,6 +686,9 @@ type PressureCenterScreenLabel = {
   id: string;
   type: "H" | "L";
   valueLabel: string;
+  /** Source geographic position, echoed to the DOM so the globe cull is testable. */
+  lon: number;
+  lat: number;
   x: number;
   y: number;
 };
@@ -796,9 +799,23 @@ function pressureCenterValueLabel(center: PressureCenter): string {
     : numericValue.toFixed(1).replace(/\.0$/, "");
 }
 
+/**
+ * H/L markers are DOM nodes positioned by `map.project()`, which under the
+ * globe is a PERSPECTIVE projection: a far-hemisphere point still returns a
+ * point, and once it passes behind the camera plane the perspective divide
+ * mirrors it clear off the disc — the operator-reported "L 534 floating in
+ * black space". Points just past the limb land near it instead, which reads as
+ * a misaligned marker. Both are the same missing cull.
+ *
+ * Same predicate as the city-label far-side cull (city-labels.ts:471) rather
+ * than a second horizon test: `isLngLatVisibleOnGlobe` is MapLibre's own
+ * horizon plane, so a marker this admits is one the basemap is also drawing.
+ * Gated on `globeActive`, so flat runs the identical code path it ran before.
+ */
 function buildPressureCenterScreenLabels(
   centers: PressureCenter[] | null | undefined,
-  map: maplibregl.Map
+  map: maplibregl.Map,
+  globeActive: boolean
 ): PressureCenterScreenLabel[] {
   if (!Array.isArray(centers) || centers.length === 0) {
     return [];
@@ -819,7 +836,13 @@ function buildPressureCenterScreenLabels(
     if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
       return;
     }
+    if (globeActive && !isLngLatVisibleOnGlobe(map, lon, lat)) {
+      return;
+    }
     const point = map.project([lon, lat]);
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+      return;
+    }
     if (
       point.x < -marginPx ||
       point.y < -marginPx ||
@@ -832,6 +855,8 @@ function buildPressureCenterScreenLabels(
       id: `${type}-${index}-${lat.toFixed(3)}-${lon.toFixed(3)}`,
       type,
       valueLabel: pressureCenterValueLabel(center),
+      lon,
+      lat,
       x: point.x,
       y: point.y,
     });
@@ -1275,7 +1300,7 @@ export function buildMapStyle(
         paint: {
           "line-color": CONTOUR_LINE_COLOR,
           "line-opacity": 0.9,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.5, 8, 2.5, 12, 3.5],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.25, 8, 2.0, 12, 3.0],
         },
       },
       {
@@ -2930,7 +2955,7 @@ export function MapCanvas({
       }
       rafId = window.requestAnimationFrame(() => {
         rafId = null;
-        setPressureCenterScreenLabels(buildPressureCenterScreenLabels(pressureCenters, map));
+        setPressureCenterScreenLabels(buildPressureCenterScreenLabels(pressureCenters, map, globeActive));
       });
     };
 
@@ -2947,7 +2972,9 @@ export function MapCanvas({
         window.cancelAnimationFrame(rafId);
       }
     };
-  }, [isLoaded, pressureCenters]);
+    // `globeActive` is a dep so a projection flip re-culls immediately rather
+    // than waiting for the next camera move.
+  }, [globeActive, isLoaded, pressureCenters]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -4106,22 +4133,37 @@ export function MapCanvas({
           role="img"
           aria-label="Weather map"
         />
-      </div>
 
-      {pressureCenterScreenLabels.map((item) => (
-        <div
-          key={item.id}
-          className={`map-pressure-center map-pressure-center--${item.type.toLowerCase()}`}
-          style={{
-            left: item.x,
-            top: item.y,
-          }}
-          aria-hidden="true"
-        >
-          <div className="map-pressure-center__letter">{item.type}</div>
-          {item.valueLabel && <div className="map-pressure-center__value">{item.valueLabel}</div>}
-        </div>
-      ))}
+        {/*
+          INSIDE the map slot, not a sibling of it. `item.x`/`item.y` come from
+          `map.project()`, which is canvas-relative, but the slot is inset from
+          the viewport by `--viewer-rail-width` (Phase 6 chrome) and by the
+          mobile top/bottom insets (Phase 8). Rendered outside the slot the
+          markers took the full-viewport wrapper as their offset parent and
+          every H/L sat exactly one rail-width (72 px desktop) LEFT of its
+          centre — the second half of the operator's globe report, and the
+          reason the leftmost markers appeared to hang off the disc entirely.
+          Flat had the same shift; it is just far less legible without a limb
+          to measure against.
+        */}
+        {pressureCenterScreenLabels.map((item) => (
+          <div
+            key={item.id}
+            className={`map-pressure-center map-pressure-center--${item.type.toLowerCase()}`}
+            data-testid="map-pressure-center"
+            data-center-lon={item.lon}
+            data-center-lat={item.lat}
+            style={{
+              left: item.x,
+              top: item.y,
+            }}
+            aria-hidden="true"
+          >
+            <div className="map-pressure-center__letter">{item.type}</div>
+            {item.valueLabel && <div className="map-pressure-center__value">{item.valueLabel}</div>}
+          </div>
+        ))}
+      </div>
 
       {(showZoomControls || legendButtonVisible) && (
         <div
