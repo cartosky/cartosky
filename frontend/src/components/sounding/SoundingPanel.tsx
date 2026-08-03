@@ -361,7 +361,14 @@ export function SoundingPanel({
                   className={cn(
                     isMobile
                       ? "mt-3 flex flex-col gap-3 min-[384px]:flex-row min-[384px]:gap-2.5"
-                      : "flex w-[236px] shrink-0 flex-col justify-between gap-2.5",
+                      : // 211px is measured, not arbitrary: at the 812px panel it
+                        // makes (hodograph + θe + headers + gap) exactly equal the
+                        // chart's rendered height (delta 0.0px), so the column
+                        // bottom aligns with the skew-t (Brian, Phase 6 review).
+                        // Both sides are viewBox-scaled SVGs, so the balance point
+                        // shifts only if PANEL_WIDTH_PX or the inset chrome changes
+                        // — re-measure then.
+                        "flex w-[211px] shrink-0 flex-col justify-between gap-2.5",
                   )}
                 >
                   <Hodograph
