@@ -26,10 +26,10 @@ import type { SoundingFrame, SoundingGridPoint } from "@/lib/sounding-types";
  * inspection surface.
  */
 
-// 440 → 520 (Brian, Phase 6 prod review): every SVG in the panel is
-// viewBox-scaled at width:100%, so the whole diagram set — strokes, text,
-// barbs — renders ~18% larger from this one constant.
-const PANEL_WIDTH_PX = 520;
+// Phase 6 review (Brian): no-scroll two-column desktop layout — the chart
+// keeps its ~520px rendering (SVGs are viewBox-scaled at width:100%), the
+// right column holds the hodograph + θe at 236px, indices strip underneath.
+const PANEL_WIDTH_PX = 812;
 /** Bottom controls + breathing room, so the panel never sits under them. */
 const DESKTOP_BOTTOM_GUTTER_PX = 136;
 
@@ -106,11 +106,14 @@ function IndicesReadout({
   frame,
   parcelDefinition,
   modelCapeLabel,
+  wide = false,
 }: {
   frame: SoundingFrame;
   parcelDefinition: string | undefined;
   /** Server-supplied name for the model's own CAPE diagnostic. */
   modelCapeLabel: string | undefined;
+  /** Desktop no-scroll layout: spread the values across four columns. */
+  wide?: boolean;
 }) {
   const indices = frame.indices ?? null;
   const modelSbcape = indices?.model_sbcape;
@@ -120,7 +123,10 @@ function IndicesReadout({
     <div className="mt-3">
       <div
         data-testid="sounding-indices"
-        className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2.5 font-['IBM_Plex_Mono',monospace] text-[11px] leading-relaxed"
+        className={cn(
+          "grid gap-x-4 gap-y-1 rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2.5 font-['IBM_Plex_Mono',monospace] text-[11px] leading-relaxed",
+          wide ? "grid-cols-4 gap-x-6" : "grid-cols-2",
+        )}
       >
         <IndexRow
           label="SBCAPE"
@@ -336,43 +342,51 @@ export function SoundingPanel({
 
         {!loading && !error && data && frame ? (
           <>
-            <SkewTChart
-              levelsHPa={data.levels_hPa}
-              frame={frame}
-              title={`${modelLabel} sounding, ${formatCoordinate(data.grid_point.lat, data.grid_point.lon)}`}
-            />
-            {/* Stacked sections, never floating insets on the chart (Brian,
-                Phase 5): chart → [hodograph | θe] → indices. The row collapses
-                to one column below a 384px VIEWPORT (a proxy for content width
-                that is exact today: mobile content is viewport−24px and the
-                desktop panel is fixed 440px — revisit if the panel ever
-                becomes resizable). */}
-            {frame.profiles ? (
-              <div
-                data-testid="sounding-insets"
-                className="mt-3 flex flex-col gap-3 min-[384px]:flex-row min-[384px]:gap-2.5"
-              >
-                <Hodograph
-                  className="min-w-0 flex-1"
-                  u={frame.u}
-                  v={frame.v}
-                  heightM={frame.profiles.height_m_agl}
-                  surfaceU={frame.surface?.u10m}
-                  surfaceV={frame.surface?.v10m}
-                />
-                <ThetaEInset
-                  className="min-w-0 flex-1"
+            {/* No-scroll composition (Brian, Phase 6 review — TT's own layout):
+                desktop puts the chart LEFT with the hodograph stacked over θe
+                in a RIGHT column, indices as a full-width strip underneath, so
+                everything is visible without scrolling. Mobile keeps the
+                Phase 5 vertical stack — there is no width to spend there. */}
+            <div className={cn(!isMobile && "flex items-stretch gap-2.5")}>
+              <div className={cn(!isMobile && "min-w-0 flex-1")}>
+                <SkewTChart
                   levelsHPa={data.levels_hPa}
-                  thetaE={frame.profiles.theta_e}
-                  surfaceP={frame.surface?.pres_sfc}
-                  surfaceValue={frame.profiles.surface_theta_e}
+                  frame={frame}
+                  title={`${modelLabel} sounding, ${formatCoordinate(data.grid_point.lat, data.grid_point.lon)}`}
                 />
               </div>
-            ) : null}
+              {frame.profiles ? (
+                <div
+                  data-testid="sounding-insets"
+                  className={cn(
+                    isMobile
+                      ? "mt-3 flex flex-col gap-3 min-[384px]:flex-row min-[384px]:gap-2.5"
+                      : "flex w-[236px] shrink-0 flex-col justify-between gap-2.5",
+                  )}
+                >
+                  <Hodograph
+                    className="min-w-0 flex-1"
+                    u={frame.u}
+                    v={frame.v}
+                    heightM={frame.profiles.height_m_agl}
+                    surfaceU={frame.surface?.u10m}
+                    surfaceV={frame.surface?.v10m}
+                  />
+                  <ThetaEInset
+                    className="min-w-0 flex-1"
+                    levelsHPa={data.levels_hPa}
+                    thetaE={frame.profiles.theta_e}
+                    surfaceP={frame.surface?.pres_sfc}
+                    surfaceValue={frame.profiles.surface_theta_e}
+                  />
+                </div>
+              ) : null}
+            </div>
             <IndicesReadout
               frame={frame}
               parcelDefinition={data.parcel_definition}
               modelCapeLabel={data.model_cape_label ?? undefined}
+              wide={!isMobile}
             />
           </>
         ) : null}
