@@ -13,6 +13,8 @@
  *   [data-testid="viewer-overflow-menu"]          overflow menu panel
  *   [data-testid="viewer-rail"][data-rail-state]  the rail, expanded|collapsed
  *   [data-testid="rail-source"] / [data-testid="rail-view"]      sections
+ *   [data-testid="rail-source-toggle"|"rail-view-toggle"|"rail-legend-toggle"]
+ *                                                 section disclosure controls
  *   [data-testid="rail-availability"]             §5.4 truthful availability line
  *   [data-testid="rail-region-value"]             region display name as text
  *   [data-testid="rail-opacity-value"]            opacity % readout
@@ -169,7 +171,7 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     await expect(header.getByRole('button', { name: 'Surface Temp' })).toHaveCount(0);
   });
 
-  test('welcome tour spotlights Compare at its dedicated top-bar button', async ({ page }) => {
+  test('welcome tour reveals each rail target and spotlights Compare at its dedicated top-bar button', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openViewer(page);
     await page.evaluate(() => localStorage.removeItem('csky_viewer_tour_v1'));
@@ -182,8 +184,16 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     await welcome.getByRole('button', { name: 'Get started →' }).click();
 
     const tooltip = page.getByTestId('tour-tooltip');
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 2; index += 1) {
       await expect(tooltip).toBeVisible();
+      await tooltip.getByRole('button', { name: 'Next' }).click();
+    }
+    await expect(tooltip).toHaveAttribute('aria-label', /Legend/);
+    await expect(page.getByTestId('rail-source-toggle')).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByTestId('rail-view-toggle')).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByTestId('rail-legend-toggle')).toHaveAttribute('aria-expanded', 'true');
+
+    for (let index = 0; index < 2; index += 1) {
       await tooltip.getByRole('button', { name: 'Next' }).click();
     }
     await expect(tooltip).toHaveAttribute('aria-label', /Compare/);
@@ -219,8 +229,9 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     await expect(source.getByTestId('rail-freshness')).toContainText(/^Updated /);
     await expect(source.getByTestId('rail-availability')).toHaveCount(0);
 
-    // VIEW: region value readable without opening anything (§6.2).
+    // VIEW: region value remains readable once the section is disclosed.
     const view = page.getByTestId('rail-view');
+    await page.getByTestId('rail-view-toggle').click();
     await expect(view.getByTestId('rail-region-value')).toHaveText('CONUS');
     await expect(view.getByRole('button', { name: /City labels/i })).toBeVisible();
     await expect(view.getByRole('button', { name: /Dark basemap/i })).toBeVisible();
@@ -228,6 +239,7 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
 
     // Legend is a third labeled section below View, hosting the existing
     // normalized MapLegend rendering.
+    await page.getByTestId('rail-legend-toggle').click();
     await expect(page.getByTestId('rail-legend-heading')).toHaveText('Legend');
     const mount = page.locator('[data-legend-mount="rail"]');
     await expect(mount).toBeVisible();
@@ -237,6 +249,57 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     expect(viewBox).not.toBeNull();
     expect(legendBox).not.toBeNull();
     expect(legendBox!.y).toBeGreaterThanOrEqual(viewBox!.y + viewBox!.height);
+  });
+
+  test('rail sections disclose independently and rail entry chooses the initial open section', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openViewer(page);
+
+    const rail = page.getByTestId('viewer-rail');
+    const sourceToggle = page.getByTestId('rail-source-toggle');
+    const viewToggle = page.getByTestId('rail-view-toggle');
+    const legendToggle = page.getByTestId('rail-legend-toggle');
+
+    // A normally expanded rail starts with Source only.
+    await expect(sourceToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(viewToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(legendToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByTestId('rail-source-body')).toBeVisible();
+    await expect(page.getByTestId('rail-view-body')).toBeHidden();
+    await expect(page.getByTestId('rail-legend-body')).toBeHidden();
+    await expect(page.getByTestId('rail-view-body').getByTestId('rail-region-row')).toHaveCount(1);
+    await expect(page.getByTestId('rail-legend-body').getByRole('complementary', { name: 'Map legend' })).toHaveCount(1);
+
+    // Once open, sections are independent rather than a forced accordion.
+    await viewToggle.click();
+    await expect(sourceToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(viewToggle).toHaveAttribute('aria-expanded', 'true');
+    await legendToggle.click();
+    await expect(sourceToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(viewToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(legendToggle).toHaveAttribute('aria-expanded', 'true');
+
+    // A destination in the collapsed rail opens only its owning section.
+    await collapseRail(page);
+    await expect(page.getByTestId('rail-legend-body').locator('[role="complementary"][aria-label="Map legend"]')).toHaveCount(1);
+    await page.getByTestId('rail-collapsed-legend').click();
+    await expect(rail).toHaveAttribute('data-rail-state', 'expanded');
+    await expect(sourceToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(viewToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(legendToggle).toHaveAttribute('aria-expanded', 'true');
+
+    await collapseRail(page);
+    await page.getByTestId('rail-collapsed-region').click();
+    await expect(sourceToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(viewToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(legendToggle).toHaveAttribute('aria-expanded', 'false');
+
+    // The edge chevron always resets the expanded rail to Source only.
+    await collapseRail(page);
+    await page.getByTestId('rail-expand-toggle').click();
+    await expect(sourceToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(viewToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(legendToggle).toHaveAttribute('aria-expanded', 'false');
   });
 
   test('expanded rail removes decorative label icons and separates Source from View', async ({ page }) => {
@@ -322,6 +385,7 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openViewer(page);
 
+    await page.getByTestId('rail-view-toggle').click();
     const row = page.getByTestId('rail-region-row');
     await expect(row.locator(':scope > span', { hasText: /^Region$/ })).toHaveCount(0);
     const trigger = row.getByRole('button', { name: 'Region: CONUS' });
@@ -372,6 +436,7 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openViewer(page);
 
+    await page.getByTestId('rail-view-toggle').click();
     for (const testId of ['rail-toggle-city-labels', 'rail-toggle-dark-basemap', 'rail-toggle-zoom-controls']) {
       const row = page.getByTestId(testId);
       const button = row.getByRole('button');
@@ -464,8 +529,9 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
     );
     await expect(chip.getByTestId('legend-gradient')).toBeVisible();
     await expect(chip.getByTestId('compact-legend-chip-toggle')).toBeVisible();
-    // Never a floating full legend behind the chip in the collapsed state.
-    await expect(page.locator('[data-legend-mount="rail"] [data-testid="legend-presentation"]')).toHaveCount(0);
+    // The full legend stays mounted to preserve state, but the compact chip is
+    // the only legend surface visible while the rail itself is collapsed.
+    await expect(page.locator('[data-legend-mount="rail"] [data-testid="legend-presentation"]')).toBeHidden();
 
     // Clicking a caption expands scrolled to that section.
     await page.getByTestId('rail-collapsed-view').click();
@@ -543,12 +609,20 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
       }
     });
 
+    for (const testId of ['rail-source-toggle', 'rail-view-toggle', 'rail-legend-toggle']) {
+      await page.getByTestId(testId).click();
+      await page.getByTestId(testId).click();
+    }
+
     await collapseRail(page);
     // Generous budget: under full-suite parallel load the first post-toggle
     // evaluate round-trip on the swiftshader map can take >5 s by itself.
     await expect
       .poll(async () => Math.round((await canvas.boundingBox())!.x), { timeout: 20_000 })
       .toBeLessThanOrEqual(RAIL_COLLAPSED_PX + 2);
+    await expect
+      .poll(async () => (await canvas.boundingBox())!.width, { timeout: 20_000 })
+      .toBeGreaterThan(expandedBox!.width);
     const collapsedBox = await canvas.boundingBox();
     expect(collapsedBox!.width).toBeGreaterThan(expandedBox!.width);
 
@@ -595,6 +669,7 @@ test.describe('Viewer chrome — top bar and rail (Phase 6)', () => {
       expect(await measure(page.getByTestId('viewer-overflow-trigger'))).toBeGreaterThanOrEqual(44);
 
       await expandRail(page);
+      await page.getByTestId('rail-view-toggle').click();
       for (const testId of ['rail-region-row', 'rail-toggle-city-labels']) {
         expect(await measure(page.getByTestId(testId)), `${testId} min side`).toBeGreaterThanOrEqual(44);
       }

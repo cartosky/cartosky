@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { MOBILE_PEEK_PX, MOBILE_TIMELINE_PX } from "@/lib/viewer-mobile";
+import type { RailSection } from "@/lib/viewer-rail";
 
 export type TourStepDef = {
   /** CSS selector for the spotlight target. null = dim only, no cutout. */
@@ -24,7 +25,7 @@ export type TourStepDef = {
    */
   mobileSheetSection?: "source" | "view" | "legend";
   /** Signal to App.tsx to expand the Phase 6 rail so the target is on screen. */
-  expandRail?: "source" | "view";
+  expandRail?: RailSection;
 };
 
 type Props = {

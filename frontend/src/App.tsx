@@ -683,7 +683,7 @@ export default function App() {
       targetSelector: '[data-tour-target="legend-button"]',
       title: "Legend",
       body: "The color scale for the current variable sits at the bottom of the rail",
-      expandRail: "view",
+      expandRail: "legend",
     },
     {
       targetSelector: '[data-tour-target="share-button"]',

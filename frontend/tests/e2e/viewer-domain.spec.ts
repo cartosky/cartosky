@@ -499,6 +499,9 @@ test.describe('World camera preset gating', () => {
   });
 
   async function openRegionOptions(page: import('@playwright/test').Page) {
+    if ((await page.getByTestId('rail-view-toggle').getAttribute('aria-expanded')) === 'false') {
+      await page.getByTestId('rail-view-toggle').click();
+    }
     await page.getByTestId('rail-region-row').getByRole('button').first().click();
     await expect(page.getByTestId('region-picker-panel')).toBeVisible();
     return page.getByTestId('region-picker-panel');

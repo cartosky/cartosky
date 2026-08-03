@@ -109,6 +109,9 @@ const DESKTOP_SURFACES: Surface[] = [
     // section owns the toggles, the opacity slider and the region row.
     name: 'rail-view',
     setup: async (page) => {
+      if ((await page.getByTestId('rail-view-toggle').getAttribute('aria-expanded')) === 'false') {
+        await page.getByTestId('rail-view-toggle').click();
+      }
       const view = page.getByTestId('rail-view');
       await view.scrollIntoViewIfNeeded();
       await expect(view.getByTestId('rail-region-value')).toBeVisible();
@@ -632,6 +635,9 @@ test.describe('Viewer design tokens (Phase 4)', () => {
 
     test('rail VIEW controls meet the 44px floor', async ({ page }) => {
       await openViewer(page);
+      if ((await page.getByTestId('rail-view-toggle').getAttribute('aria-expanded')) === 'false') {
+        await page.getByTestId('rail-view-toggle').click();
+      }
       const view = page.getByTestId('rail-view');
       await view.scrollIntoViewIfNeeded();
       await expect(view.getByTestId('rail-region-value')).toBeVisible();

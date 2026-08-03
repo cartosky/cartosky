@@ -59,6 +59,10 @@ async function expandRail(page: Page) {
     await page.getByTestId('rail-expand-toggle').click();
   }
   await expect(page.getByTestId('viewer-rail')).toHaveAttribute('data-rail-state', 'expanded');
+  if ((await page.getByTestId('rail-legend-toggle').getAttribute('aria-expanded')) === 'false') {
+    await page.getByTestId('rail-legend-toggle').click();
+  }
+  await expect(page.getByTestId('rail-legend-toggle')).toHaveAttribute('aria-expanded', 'true');
 }
 
 async function collapseRail(page: Page) {
@@ -413,6 +417,7 @@ test.describe('Viewer legend (Phase 7)', () => {
     // persisted false must be recoverable from desktop, not only from the
     // mobile sheet (the pre-toggle dead-end).
     await expandRail(page);
+    await page.getByTestId('rail-view-toggle').click();
     const legendChipRow = page.getByTestId('rail-toggle-legend-chip').getByRole('button');
     await expect(legendChipRow).toHaveAttribute('aria-pressed', 'false');
     await legendChipRow.click();
