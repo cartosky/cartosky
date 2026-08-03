@@ -270,14 +270,45 @@ def test_anomaly_specs_carry_the_global_baseline_hints() -> None:
         assert catalog_hints.get("baseline_region_by_build_region") == "global=global", var_key
 
 
-def test_global_baseline_hint_is_not_pushed_back_onto_ecmwf() -> None:
-    """The shared ECMWF specs AIFS borrows must stay untouched — ECMWF is a
-    later step in the rollout and has to stay dark in every respect."""
+def test_global_baseline_hint_wrapper_does_not_mutate_the_shared_ecmwf_specs() -> None:
+    """AIFS's wrapper must COPY, never mutate, the ``ECMWF_VARS`` spec objects
+    it borrows.
+
+    ECMWF now declares ``baseline_region_by_build_region`` itself (its own
+    global rollout, and it is the origin of these specs), so its absence is no
+    longer the thing worth pinning — what matters is that ``replace()`` copy
+    semantics hold, so a future divergence in either model's hint cannot leak
+    into the other. The wrapper merging an identical hint must also stay
+    idempotent.
+    """
     from app.models.ecmwf import ECMWF_VARS
 
     for var_key in GLOBAL_ANOMALY_VARS:
-        hints = ECMWF_VARS[var_key].selectors.hints or {}
-        assert "baseline_region_by_build_region" not in hints, var_key
+        ecmwf_spec = ECMWF_VARS[var_key]
+        aifs_spec = AIFS_VARS[var_key]
+
+        # Distinct spec and hint-mapping objects: mutating one cannot reach
+        # the other.
+        assert aifs_spec is not ecmwf_spec, var_key
+        assert aifs_spec.selectors is not ecmwf_spec.selectors, var_key
+        assert aifs_spec.selectors.hints is not ecmwf_spec.selectors.hints, var_key
+
+        # Both models route the global domain at the same shared baseline —
+        # they must not disagree about which climatology a global anomaly
+        # departs from. (Other hints legitimately differ: AIFS overrides a few
+        # of the borrowed specs downstream.)
+        hint_key = "baseline_region_by_build_region"
+        assert (ecmwf_spec.selectors.hints or {}).get(hint_key) == "global=global", var_key
+        assert (aifs_spec.selectors.hints or {}).get(hint_key) == "global=global", var_key
+
+        # …and re-applying it over a spec that already carries the hint is a
+        # no-op on the hint mapping.
+        from app.models.aifs import _with_global_baseline_hint
+
+        assert (
+            _with_global_baseline_hint(aifs_spec).selectors.hints
+            == aifs_spec.selectors.hints
+        ), var_key
 
 
 # ── 5. global region geometry (plan §1) ────────────────────────────────────
@@ -294,11 +325,19 @@ def test_global_regionspec_covers_the_whole_globe_unclipped() -> None:
 
 def test_canonical_regionspecs_are_the_ecmwf_ones_verbatim() -> None:
     """The global entry is additive: ``na``/``conus`` are the same objects the
-    model carried before, so the canonical domains cannot drift."""
-    for region_id, spec in ECMWF_REGIONS.items():
-        assert AIFS_MODEL.get_region(region_id) is spec, region_id
+    model carried before, so the canonical domains cannot drift.
+
+    ECMWF now carries its own ``global`` RegionSpec (its rollout landed after
+    AIFS's); ``AIFS_REGIONS`` still declares AIFS's own, so identity is pinned
+    over the canonical regions only, with equality of the two global specs
+    checked separately.
+    """
+    canonical_region_ids = set(ECMWF_REGIONS) - {GLOBAL}
+    assert canonical_region_ids == {"na", "conus"}
+    for region_id in canonical_region_ids:
+        assert AIFS_MODEL.get_region(region_id) is ECMWF_REGIONS[region_id], region_id
     assert set(AIFS_MODEL.regions) == set(ECMWF_REGIONS) | {GLOBAL}
-    assert GLOBAL not in ECMWF_REGIONS
+    assert AIFS_MODEL.get_region(GLOBAL) == ECMWF_REGIONS[GLOBAL]
 
 
 def test_global_grid_is_native_4326_at_quarter_degree() -> None:

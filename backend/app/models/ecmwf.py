@@ -13,6 +13,7 @@ Herbie wiring:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from .kuchera import kuchera_hint_overrides
@@ -253,6 +254,18 @@ ECMWF_REGIONS: dict[str, RegionSpec] = {
         bbox_wgs84=(-134.0, 24.0, -60.0, 55.0),
         tile_matrix="WebMercatorQuad",
         clip=True,
+    ),
+    # Phase 3 — the whole globe on the source's native 0.25° EPSG:4326 grid.
+    # Data coverage is the full globe including both poles; the mercator
+    # viewer's ±85.05° clip is a display limit, not a coverage limit. No
+    # source clipping (the IFS grid already covers the domain). Purely
+    # additive: `na`/`conus` are untouched, so the canonical 9 km EPSG:3857
+    # domains cannot drift.
+    "global": RegionSpec(
+        id="global",
+        name="Global",
+        bbox_wgs84=(-180.0, -90.0, 180.0, 90.0),
+        clip=False,
     ),
 }
 
@@ -569,6 +582,9 @@ ECMWF_VARS: dict[str, VarSpec] = {
                 "baseline_field": "tmp850",
                 "baseline_source": "era5",
                 "baseline_region": "na",
+                # Phase 3A Wave 1: the global domain departs from the global
+                # EPSG:4326 ERA5 baseline, not the NA one.
+                "baseline_region_by_build_region": "global=global",
                 "baseline_version": "v1",
                 "reference_period": "1991-2020",
             }
@@ -628,6 +644,9 @@ ECMWF_VARS: dict[str, VarSpec] = {
                 "baseline_field": "hgt500",
                 "baseline_source": "era5",
                 "baseline_region": "na",
+                # Phase 3A Wave 1: the global domain departs from the global
+                # EPSG:4326 ERA5 baseline, not the NA one.
+                "baseline_region_by_build_region": "global=global",
                 "baseline_version": "v1",
                 "reference_period": "1991-2020",
                 "anomaly_conversion": "dam_to_m",
@@ -655,6 +674,9 @@ ECMWF_VARS: dict[str, VarSpec] = {
                 "baseline_field": "tmp2m",
                 "baseline_source": "era5",
                 "baseline_region": "na",
+                # Phase 3A Wave 1: the global domain departs from the global
+                # EPSG:4326 ERA5 baseline, not the NA one.
+                "baseline_region_by_build_region": "global=global",
                 "baseline_version": "v1",
                 "reference_period": "1991-2020",
             }
@@ -1161,6 +1183,38 @@ for _precip_anom_key, _precip_anom_fh in ECMWF_PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.
     ECMWF_CONSTRAINTS_BY_VAR_KEY[_precip_anom_key] = _precip_anom_constraint
 
 
+# Phase 3 (plan §2): every buildable ECMWF grid variable also builds the
+# ``global`` domain — the IFS open data is a 0.25° global field, so it adopts
+# the native EPSG:4326 contract verbatim
+# (docs/GLOBAL_DOMAIN_4326_CONTRACT.md). This is the global domain ONLY: the
+# ECMWF canonical grids stay 9 km EPSG:3857, untouched (Change A).
+#
+# Anomaly variables were the one blanket exclusion — their ERA5 baselines were
+# North-America-only, so a global anomaly had no climatology to depart from.
+# Phase 3A Wave 1 (D2) narrows that to a per-variable allowlist: the three
+# *instantaneous* anomaly fields now have global EPSG:4326 ERA5 baselines
+# (shared across models — the baseline path has no model segment) and declare
+# ``global``; the four precip-window anomalies still do not (their baselines
+# need the Wave 2 streaming-memory fix first). The exclusion remains by
+# omission below (never a runtime check) and both directions are pinned by
+# tests over the real catalog.
+ECMWF_GLOBAL_BUILD_REGIONS: tuple[str, ...] = ("na", "global")
+
+#: Anomaly variables that have global ERA5 baselines (Wave 1 — instantaneous
+#: fields only). Everything else ending in ``_anom`` stays canonical-only.
+ECMWF_GLOBAL_ANOMALY_VAR_KEYS: frozenset[str] = frozenset(
+    {"tmp2m_anom", "tmp850_anom", "hgt500_anom"}
+)
+
+
+def _declares_global_build_region(var_key: str, capability: VariableCapability) -> bool:
+    if str(var_key) in ECMWF_GLOBAL_ANOMALY_VAR_KEYS:
+        return True
+    if str(var_key).endswith("_anom"):
+        return False
+    return "anomaly" not in str(capability.derive_strategy_id or "")
+
+
 def _capability_from_var_spec(var_key: str, var_spec: VarSpec) -> VariableCapability:
     is_buildable = bool(var_spec.primary or var_spec.derived)
     hints = getattr(getattr(var_spec, "selectors", None), "hints", {}) or {}
@@ -1204,6 +1258,33 @@ ECMWF_VARIABLE_CATALOG: dict[str, VariableCapability] = {
     var_key: _capability_from_var_spec(var_key, var_spec)
     for var_key, var_spec in ECMWF_VARS.items()
 }
+
+# Apply the global-domain declaration in ONE place, after the whole catalog
+# (literals + generated precip anomalies) exists.
+for _var_key, _capability in list(ECMWF_VARIABLE_CATALOG.items()):
+    if _capability.buildable and _declares_global_build_region(_var_key, _capability):
+        ECMWF_VARIABLE_CATALOG[_var_key] = replace(
+            _capability,
+            supported_build_regions=list(ECMWF_GLOBAL_BUILD_REGIONS),
+        )
+
+# Composite components (``ptype_intensity_*``) are deliberately non-buildable,
+# but the scheduler still resolves their build regions through their own
+# ``_build_regions_for_var`` call — so they must carry their composite parent's
+# declaration verbatim, or a global ``ptype_intensity`` manifest advertises
+# component layers whose frames were never built in the global domain (GFS
+# verifier finding, 2026-07-29; see ``gfs.py``'s inline equivalent).
+for _var_key in list(ECMWF_VARIABLE_CATALOG):
+    if not _var_key.startswith("ptype_intensity_"):
+        continue
+    ECMWF_VARIABLE_CATALOG[_var_key] = replace(
+        ECMWF_VARIABLE_CATALOG[_var_key],
+        supported_build_regions=list(
+            ECMWF_VARIABLE_CATALOG["ptype_intensity"].supported_build_regions or []
+        ),
+    )
+
+
 ECMWF_CAPABILITIES = ModelCapabilities(
     model_id="ecmwf",
     name="ECMWF",
@@ -1212,6 +1293,13 @@ ECMWF_CAPABILITIES = ModelCapabilities(
     grid_meters_by_region={
         "conus": 9_000.0,
         "na": 9_000.0,
+    },
+    # The global domain is published on the source's own 0.25° EPSG:4326 grid
+    # (1440 × 721, both poles included) rather than a mercator warp — see
+    # docs/GLOBAL_DOMAIN_4326_CONTRACT.md. The canonical 9 km metre grids above
+    # are untouched.
+    grid_native_degrees_by_region={
+        "global": 0.25,
     },
     run_discovery={
         "probe_var_key": "tmp2m",
