@@ -338,7 +338,10 @@ def _ecmwf_surface_fields() -> tuple[SurfaceField, ...]:
             "surface",
             CAPE_PACK,
             idx_name="mucape",
-            level_token_aliases=("0-EATM", "0-UNKNOWN", "255-UNKNOWN", "0-RESERVED"),
+            # "0-" is what GDAL actually emits for the live message (measured
+            # 2026-08-02 from the open-data mirror: ELEMENT='CAPE',
+            # SHORT_NAME='0-' — level type 17 renders as a bare prefix).
+            level_token_aliases=("0-", "0-EATM", "0-UNKNOWN", "255-UNKNOWN", "0-RESERVED"),
             element_aliases=("MUCAPE", "CAPES", "MXCAPES"),
             display_label="MUCAPE",
             required=False,

@@ -26,7 +26,10 @@ import type { SoundingFrame, SoundingGridPoint } from "@/lib/sounding-types";
  * inspection surface.
  */
 
-const PANEL_WIDTH_PX = 440;
+// 440 → 520 (Brian, Phase 6 prod review): every SVG in the panel is
+// viewBox-scaled at width:100%, so the whole diagram set — strokes, text,
+// barbs — renders ~18% larger from this one constant.
+const PANEL_WIDTH_PX = 520;
 /** Bottom controls + breathing room, so the panel never sits under them. */
 const DESKTOP_BOTTOM_GUTTER_PX = 136;
 
