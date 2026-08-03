@@ -130,8 +130,12 @@ def _split_scope_by_buildable(
     fundamental failure: there is no capability to consult, so no publish
     path can vouch for it. This is distinct from the buckets below (which all
     reason from an existing entry); its typical root cause is a cross-model
-    packing loop injecting a key for a model whose own catalog opted out
-    (e.g. ecmwf's ``precip_16d_anom`` from the gfs-family precip-anom loop).
+    packing loop injecting a key for a model whose own catalog opted out. No
+    model currently lands in this bucket — the known case (ecmwf's
+    ``precip_16d_anom``, injected by the gfs-family precip-anom loop even
+    though ECMWF's long-range convention is 15-day) was fixed at the source in
+    ``app.services.grid``, and ``test_grid_value_decode`` now pins the
+    packing/catalog reconciliation — but the bucket stays as a generic guard.
 
     A variable is excluded as non-buildable when its capability says
     ``buildable=False`` and it is neither companion-published nor

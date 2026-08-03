@@ -317,17 +317,20 @@ def test_precip_anomaly_grid_packing_supported_for_exposed_products() -> None:
 
     from app.services.grid import _PACKING_BY_MODEL_VAR, grid_code_supported
 
-    expected_vars = (
+    short_range_vars = (
         "precip_5d_anom",
         "precip_7d_anom",
         "precip_10d_anom",
-        "precip_15d_anom",
-        "precip_16d_anom",
     )
-    for model_id in ("gfs", "ecmwf", "aigfs"):
-        for var_key in expected_vars:
-            if var_key == "precip_15d_anom":
-                continue
+    # Long-range convention differs by model family: GFS-family is 16-day,
+    # ECMWF is 15-day (precip_16d_anom is only an input alias there).
+    long_range_var_by_model = {
+        "gfs": "precip_16d_anom",
+        "ecmwf": "precip_15d_anom",
+        "aigfs": "precip_16d_anom",
+    }
+    for model_id, long_range_var in long_range_var_by_model.items():
+        for var_key in short_range_vars + (long_range_var,):
             assert grid_code_supported(model_id, var_key)
             assert _PACKING_BY_MODEL_VAR[(model_id, var_key)] == {
                 "scale": 0.01,

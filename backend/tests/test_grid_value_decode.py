@@ -141,6 +141,31 @@ def test_gfs_scope_includes_loop_registered_precip_anomaly_vars() -> None:
         )
 
 
+@pytest.mark.parametrize("model", ("gfs", "ecmwf", "aigfs"))
+def test_precip_anom_packing_keys_match_catalog(model: str) -> None:
+    """The loop-registered precip-anomaly packing keys must equal exactly the
+    model's cataloged precip-anomaly variables — no strays in either direction.
+
+    The GFS family's long-range convention is 16-day and ECMWF's is 15-day, so
+    a shared registration loop can easily inject a key for a model whose own
+    catalog opted out (this pinned ecmwf/precip_16d_anom, which was packed but
+    uncataloged and therefore never buildable).
+    """
+    from backend.tests.helpers_variable_scope import _capability_catalog_for_model
+
+    def _precip_anom(names) -> set[str]:
+        return {n for n in names if n.startswith("precip_") and n.endswith("_anom")}
+
+    packed = _precip_anom(_vars_for_model(model))
+    cataloged = _precip_anom(_capability_catalog_for_model(model))
+    assert packed, f"no precip-anomaly packing entries found for {model}"
+    assert packed == cataloged, (
+        f"{model} precip-anomaly packing/catalog mismatch — "
+        f"packed-only: {sorted(packed - cataloged)}, "
+        f"cataloged-only: {sorted(cataloged - packed)}"
+    )
+
+
 @pytest.mark.parametrize("model", MODELS_UNDER_TEST)
 def test_model_scope_is_nonempty(model: str) -> None:
     """A packing-table refactor must never silently empty a model's scope —
@@ -291,8 +316,8 @@ def test_ensemble_scope_partitions_cleanly_and_pins_dead_aliases(model: str) -> 
     assert set(in_scope).isdisjoint(excluded_dead_alias)
     assert set(in_scope).isdisjoint(excluded_non_buildable)
     # Both ensemble models' packed entries are fully cataloged (the
-    # uncataloged bucket exists for cross-model packing-loop strays, e.g.
-    # ecmwf's precip_16d_anom).
+    # uncataloged bucket stays as a generic guard against cross-model
+    # packing-loop strays; no model currently has one).
     assert excluded_uncataloged == []
 
     # The dead-alias set is exactly what the Phase G audit established.

@@ -1109,6 +1109,13 @@ _PRECIP_ANOM_VARS = (
 )
 for _precip_anom_var in ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_16d_anom"):
     for _precip_anom_model in ("gfs", "ecmwf", "aigfs"):
+        if _precip_anom_model == "ecmwf" and _precip_anom_var == "precip_16d_anom":
+            # ECMWF's long-range anomaly convention is 15-day: precip_16d_anom
+            # is only an input alias there (normalize_var_id -> precip_15d_anom)
+            # and its capability catalog deliberately has no such entry, so
+            # registering packing for it would create a packed-but-uncataloged
+            # stray. ECMWF's 15-day entry is registered just below.
+            continue
         _PACKING_BY_MODEL_VAR[(_precip_anom_model, _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
     _PACKING_BY_MODEL_VAR[("gefs", _precip_anom_var)] = dict(_PRECIP_ANOM_PACKING)
     _PACKING_BY_MODEL_VAR[("gefs", f"{_precip_anom_var}__mean")] = dict(_PRECIP_ANOM_PACKING)
