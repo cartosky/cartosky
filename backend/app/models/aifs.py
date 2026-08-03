@@ -22,7 +22,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .base import HerbieRequest, ModelCapabilities, VarSelectors, VarSpec
+from .base import (
+    HerbieRequest,
+    ModelCapabilities,
+    RegionSpec,
+    VarSelectors,
+    VariableCapability,
+    VarSpec,
+)
 from .ecmwf import ECMWFPlugin, ECMWF_REGIONS, ECMWF_VARS, _capability_from_var_spec
 from .gfs import (
     PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY,
@@ -75,9 +82,47 @@ class AIFSPlugin(ECMWFPlugin):
         )
 
 
+AIFS_REGIONS: dict[str, RegionSpec] = {
+    **ECMWF_REGIONS,
+    # Phase 3 — the whole globe on the source's native 0.25° EPSG:4326 grid.
+    # Data coverage is the full globe including both poles; the mercator
+    # viewer's ±85.05° clip is a display limit, not a coverage limit. No
+    # source clipping (the AIFS grid already covers the domain). The canonical
+    # regions are spread in verbatim so they stay identical by construction.
+    "global": RegionSpec(
+        id="global",
+        name="Global",
+        bbox_wgs84=(-180.0, -90.0, 180.0, 90.0),
+        clip=False,
+    ),
+}
+
+
+def _with_global_baseline_hint(var_spec: VarSpec) -> VarSpec:
+    """Point the global domain of an anomaly at the global ERA5 baseline.
+
+    AIFS's anomaly specs come from ``ECMWF_VARS``, which carry only the
+    North-America baseline hints. The global EPSG:4326 ERA5 baselines are
+    shared — the baseline path has no model segment — so AIFS rides the ones
+    built for GFS free; all it needs is the same per-build-region routing hint
+    GFS declares (see ``gfs.py``). Declared here rather than in ``ecmwf.py``
+    because ECMWF itself is a later step in the rollout.
+    """
+    return replace(
+        var_spec,
+        selectors=replace(
+            var_spec.selectors,
+            hints={
+                **(var_spec.selectors.hints or {}),
+                "baseline_region_by_build_region": "global=global",
+            },
+        ),
+    )
+
+
 AIFS_VARS = {
     "tmp2m": ECMWF_VARS["tmp2m"],
-    "tmp2m_anom": ECMWF_VARS["tmp2m_anom"],
+    "tmp2m_anom": _with_global_baseline_hint(ECMWF_VARS["tmp2m_anom"]),
     "dp2m": ECMWF_VARS["dp2m"],
     "rh2m": ECMWF_VARS["rh2m"],
     "rh700": VarSpec(
@@ -99,7 +144,7 @@ AIFS_VARS = {
         units="%",
     ),
     "tmp850": ECMWF_VARS["tmp850"],
-    "tmp850_anom": ECMWF_VARS["tmp850_anom"],
+    "tmp850_anom": _with_global_baseline_hint(ECMWF_VARS["tmp850_anom"]),
     "tmp700": ECMWF_VARS["tmp700"],
     "q700": VarSpec(
         id="q700",
@@ -129,7 +174,7 @@ AIFS_VARS = {
     "hgt300": ECMWF_VARS["hgt300"],
     "wspd300": ECMWF_VARS["wspd300"],
     "hgt500": ECMWF_VARS["hgt500"],
-    "hgt500_anom": ECMWF_VARS["hgt500_anom"],
+    "hgt500_anom": _with_global_baseline_hint(ECMWF_VARS["hgt500_anom"]),
     "precip_total": ECMWF_VARS["precip_total"],
     "precip_5d_anom": ECMWF_VARS["precip_5d_anom"],
     "precip_7d_anom": ECMWF_VARS["precip_7d_anom"],
@@ -148,6 +193,38 @@ AIFS_VARS = {
 
 
 AIFS_OPER_FHS = list(range(0, 361, 6))
+
+
+# Phase 3 (plan §2): every buildable AIFS grid variable also builds the
+# ``global`` domain — the open AIFS source is a 0.25° global field, so it
+# adopts the native EPSG:4326 contract verbatim
+# (docs/GLOBAL_DOMAIN_4326_CONTRACT.md). This is the global domain ONLY: the
+# AIFS canonical grid stays 9 km EPSG:3857, untouched.
+#
+# Anomaly variables were the one blanket exclusion — their ERA5 baselines were
+# North-America-only, so a global anomaly had no climatology to depart from.
+# Phase 3A Wave 1 (D2) narrows that to a per-variable allowlist: the three
+# *instantaneous* anomaly fields now have global EPSG:4326 ERA5 baselines
+# (shared across models — the baseline path has no model segment) and declare
+# ``global``; the four precip-window anomalies still do not (their baselines
+# need the Wave 2 streaming-memory fix first). The exclusion remains by
+# omission below (never a runtime check) and both directions are pinned by
+# tests over the real catalog.
+AIFS_GLOBAL_BUILD_REGIONS: tuple[str, ...] = ("na", "global")
+
+#: Anomaly variables that have global ERA5 baselines (Wave 1 — instantaneous
+#: fields only). Everything else ending in ``_anom`` stays canonical-only.
+AIFS_GLOBAL_ANOMALY_VAR_KEYS: frozenset[str] = frozenset(
+    {"tmp2m_anom", "tmp850_anom", "hgt500_anom"}
+)
+
+
+def _declares_global_build_region(var_key: str, capability: VariableCapability) -> bool:
+    if str(var_key) in AIFS_GLOBAL_ANOMALY_VAR_KEYS:
+        return True
+    if str(var_key).endswith("_anom"):
+        return False
+    return "anomaly" not in str(capability.derive_strategy_id or "")
 
 
 AIFS_VARIABLE_CATALOG = {
@@ -313,6 +390,20 @@ AIFS_VARIABLE_CATALOG["snowfall_total"] = replace(
 )
 
 
+# Apply the global-domain declaration in ONE place, after the whole catalog
+# (literals, generated precip anomalies and every per-variable ``replace``)
+# exists. AIFS carries no composite/companion component variables, so
+# buildability is the only gate besides the anomaly allowlist above —
+# ``hgt500`` is a non-buildable internal contour component and declares
+# nothing.
+for _var_key, _capability in list(AIFS_VARIABLE_CATALOG.items()):
+    if _capability.buildable and _declares_global_build_region(_var_key, _capability):
+        AIFS_VARIABLE_CATALOG[_var_key] = replace(
+            _capability,
+            supported_build_regions=list(AIFS_GLOBAL_BUILD_REGIONS),
+        )
+
+
 AIFS_CAPABILITIES = ModelCapabilities(
     model_id="aifs",
     name="AIFS",
@@ -321,6 +412,13 @@ AIFS_CAPABILITIES = ModelCapabilities(
     grid_meters_by_region={
         "conus": 9_000.0,
         "na": 9_000.0,
+    },
+    # The global domain is published on the source's own 0.25° EPSG:4326 grid
+    # (1440 × 721, both poles included) rather than a mercator warp — see
+    # docs/GLOBAL_DOMAIN_4326_CONTRACT.md. The canonical 9 km metre grids above
+    # are untouched.
+    grid_native_degrees_by_region={
+        "global": 0.25,
     },
     run_discovery={
         "probe_var_key": "tmp2m",
@@ -348,7 +446,7 @@ AIFS_CAPABILITIES = ModelCapabilities(
 AIFS_MODEL = AIFSPlugin(
     id="aifs",
     name="AIFS",
-    regions=ECMWF_REGIONS,
+    regions=AIFS_REGIONS,
     vars=AIFS_VARS,
     product="oper",
     capabilities=AIFS_CAPABILITIES,
