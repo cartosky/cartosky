@@ -237,13 +237,21 @@ test.describe('Viewer timeline (Phase 5)', () => {
     await expect(page.getByTestId('timeline-availability')).toBeVisible();
   });
 
-  test('valid mode: period and issue time only', async ({ page }) => {
-    await openTimeline(page, FIXTURES.valid);
-    await expect(page.getByTestId('timeline-availability')).toBeVisible({ timeout: 20_000 });
-    const bodyText = await page.evaluate(() => document.body.innerText);
-    expect(bodyText).toMatch(/Aug|ASO/i); // the valid period is on screen
-    expect(bodyText).not.toMatch(/Building|ready through|queued|forecast hours/i);
-    await expect(page.getByTestId('timeline-hatch')).toHaveCount(0);
+  test.describe('CPC issuance', () => {
+    test.use({ timezoneId: 'America/Chicago' });
+
+    test('valid mode: period and frame issue time only', async ({ page }) => {
+      await openTimeline(page, FIXTURES.valid);
+      await expandViewerRail(page);
+      await expect(page.getByTestId('timeline-availability')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('rail-run-trigger')).toContainText(/Issued Aug 3.*2:15 PM/i);
+      await expect(page.getByTestId('timeline-panel')).toContainText(/ISSUED: August 3, 2026, 2:15PM CDT/i);
+      await expect(page.getByTestId('timeline-panel')).not.toContainText(/July 28, 2026/i);
+      const bodyText = await page.evaluate(() => document.body.innerText);
+      expect(bodyText).toMatch(/Aug|ASO/i); // the valid period is on screen
+      expect(bodyText).not.toMatch(/Building|ready through|queued|forecast hours/i);
+      await expect(page.getByTestId('timeline-hatch')).toHaveCount(0);
+    });
   });
 
   test('keyboard map works from a cold load and never pans the map', async ({ page }) => {

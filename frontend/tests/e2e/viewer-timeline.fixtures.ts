@@ -24,6 +24,8 @@ export type TimelineFixture = {
   omitScalars?: boolean;
   /** Optional CPC-style valid-period metadata on every frame. */
   cpcValid?: { seas: string; start: string; end: string };
+  /** Operational issuance timestamp carried by frame metadata. */
+  issueTime?: string;
   /** Optional operational labels for day-indexed products such as SPC outlooks. */
   dayLabels?: Record<number, string>;
   /** Per-run overrides for run-switch scenarios (keyed by concrete run id). */
@@ -134,6 +136,7 @@ export const FIXTURES: Record<string, TimelineFixture> = {
     timeAxisMode: 'valid',
     publishedFhs: [0],
     omitScalars: true,
+    issueTime: '2026-08-03T19:15:00Z',
     cpcValid: { seas: 'ASO 2026', start: '2026-08-01', end: '2026-10-31' },
   },
   spcDays: {
@@ -255,6 +258,7 @@ function frameMeta(fixture: TimelineFixture, fh: number) {
       units: 'F',
       kind: 'continuous',
       display_name: fixture.displayName,
+      ...(fixture.issueTime ? { issue_time: fixture.issueTime } : {}),
       ...(fixture.cpcValid
         ? {
             // Production frame-meta key names (backend cpc_outlook.py emits

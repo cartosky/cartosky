@@ -3384,6 +3384,7 @@ export default function App() {
 
   const effectiveRunId = currentFrame?.run ?? resolvedRunForRequests;
   const runDateTimeISO = runIdToIso(effectiveRunId);
+  const issuedTimeISO = frameIssueTime(currentFrame) ?? frameIssueTime(frameRows[0] ?? null);
   const hoverSampleFrame = currentFrame ?? frameRows[0] ?? null;
   const hoverSampleHour = selectedModelSupportsSampling && selectionSupportsGrid
     ? (Number.isFinite(presentedGridDisplayHour) ? Number(presentedGridDisplayHour) : Number.NaN)
@@ -5782,7 +5783,7 @@ export default function App() {
   }, [models, model]);
   const selectedRunLabel = useMemo(() => {
     if (selectedTimeAxisMode === "valid") {
-      const issuedAtLabel = formatIssuedTimeISO(frameIssueTime(currentFrame) ?? frameIssueTime(frameRows[0] ?? null));
+      const issuedAtLabel = formatIssuedTimeISO(issuedTimeISO);
       if (issuedAtLabel) {
         return `Issued ${issuedAtLabel}`;
       }
@@ -5795,7 +5796,7 @@ export default function App() {
       return latestRunLabel(latestRunId, selectedTimeAxisMode);
     }
     return formatRunLabel(run, selectedTimeAxisMode);
-  }, [runOptions, run, latestRunId, selectedTimeAxisMode, currentFrame, frameRows]);
+  }, [runOptions, run, latestRunId, selectedTimeAxisMode, issuedTimeISO]);
   const latestAvailableRunLabel = useMemo(() => {
     return latestRunId ? formatRunLabel(latestRunId, selectedTimeAxisMode) : null;
   }, [latestRunId, selectedTimeAxisMode]);
@@ -6518,6 +6519,7 @@ export default function App() {
     const display = formatTimelineDisplay({
       modelId: model,
       runDateISO: runDateTimeISO,
+      issuedTimeISO,
       forecastHour,
       timeAxisMode: selectedTimeAxisMode,
       variableId: variable,
@@ -6533,7 +6535,7 @@ export default function App() {
       ? `${display.shortDate} · ${display.secondary}`
       : display.shortDate;
   }, [
-    isRailLayout, model, runDateTimeISO, forecastHour, selectedTimeAxisMode, variable,
+    isRailLayout, model, runDateTimeISO, issuedTimeISO, forecastHour, selectedTimeAxisMode, variable,
     frameDayLabel, frameValidTimesByHour, displayedValidTimeISO,
   ]);
 
@@ -6871,6 +6873,7 @@ export default function App() {
           animationDelayMs={animationDelayMs}
           onSpeedChange={handleAnimationSpeedChange}
           runDateTimeISO={runDateTimeISO}
+          issuedTimeISO={model === "cpc" ? issuedTimeISO : null}
           timeAxisMode={selectedTimeAxisMode}
           validTimeISO={displayedValidTimeISO}
           cpcValidSeas={cpcValidSeas}

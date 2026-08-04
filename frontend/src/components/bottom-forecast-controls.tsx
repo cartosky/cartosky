@@ -40,6 +40,7 @@ type BottomForecastControlsProps = {
   animationDelayMs: number;
   onSpeedChange: (delayMs: number) => void;
   runDateTimeISO: string | null;
+  issuedTimeISO?: string | null;
   timeAxisMode?: TimeAxisMode;
   validTimeISO?: string | null;
   cpcValidSeas?: string | null;
@@ -164,6 +165,7 @@ function formatCpcValidSeasDisplay(
 export function formatTimelineDisplay(params: {
   modelId?: string | null;
   runDateISO: string | null;
+  issuedTimeISO?: string | null;
   forecastHour: number;
   timeAxisMode: TimeAxisMode;
   variableId?: string | null;
@@ -177,7 +179,7 @@ export function formatTimelineDisplay(params: {
   axisLabel: string;
 } | null {
   if (params.modelId === "cpc") {
-    const issuedAt = formatCpcIssuedDisplay(params.runDateISO);
+    const issuedAt = formatCpcIssuedDisplay(params.issuedTimeISO ?? params.runDateISO);
     if (issuedAt) {
       return {
         primary: issuedAt,
@@ -296,6 +298,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
   animationDelayMs,
   onSpeedChange,
   runDateTimeISO,
+  issuedTimeISO = null,
   timeAxisMode = "forecast",
   validTimeISO = null,
   cpcValidSeas = null,
@@ -345,6 +348,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
     () => formatTimelineDisplay({
       modelId,
       runDateISO: runDateTimeISO,
+      issuedTimeISO,
       forecastHour: previewHour ?? forecastHour,
       timeAxisMode,
       variableId,
@@ -354,8 +358,11 @@ export const BottomForecastControls = memo(function BottomForecastControls({
           ? frameValidTimesByHour?.[previewHour ?? forecastHour] ?? validTimeISO
           : validTimeISO,
     }),
-    [modelId, runDateTimeISO, forecastHour, previewHour, timeAxisMode, variableId, frameDayLabel, validTimeISO, frameValidTimesByHour]
+    [modelId, runDateTimeISO, issuedTimeISO, forecastHour, previewHour, timeAxisMode, variableId, frameDayLabel, validTimeISO, frameValidTimesByHour]
   );
+  const cpcIssuedLabel = modelId === "cpc"
+    ? formatCpcIssuedDisplay(issuedTimeISO ?? runDateTimeISO)
+    : null;
 
   const hasFrames = availableFrames.length > 0;
   const isDesktopLayout = layoutMode === "desktop" || layoutMode === "tablet-touch";
@@ -628,10 +635,10 @@ export const BottomForecastControls = memo(function BottomForecastControls({
       readyThroughFh={readyThroughFh}
       expectedMaxFh={expectedMaxFh}
       validPeriodLabel={staticSnapshotLabel}
-      issuedLabel={modelId === "cpc" ? formatCpcIssuedDisplay(runDateTimeISO) : null}
+      issuedLabel={cpcIssuedLabel}
       availabilityOverride={
         staticSnapshotLabel
-          ? [staticSnapshotLabel, modelId === "cpc" ? formatCpcIssuedDisplay(runDateTimeISO) : null]
+          ? [staticSnapshotLabel, cpcIssuedLabel]
             .filter(Boolean)
             .join(" · ")
           : null
