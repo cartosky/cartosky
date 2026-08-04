@@ -54,6 +54,7 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
         "sbcape",
         "mlcape",
         "mucape",
+        "ltng",
         "pwat",
         "snowfall_total",
         "snowfall_kuchera_total",
@@ -313,6 +314,45 @@ def test_hrrr_mucape_selector_and_alias_invariants() -> None:
     }
     assert mucape_spec.selectors.hints["upstream_var"] == "mucape"
     assert mucape_spec.selectors.hints["cape_layer"] == "255-0 mb above ground"
+
+
+def test_hrrr_ltng_capability_invariants() -> None:
+    """Standalone so it actually runs.
+
+    These assertions originally lived in
+    ``test_hrrr_capabilities_schema_snapshot_invariants``, which fails earlier
+    on a pre-existing ``soundings`` payload-key drift (present on clean HEAD),
+    making anything after that point dead code.
+    """
+    capabilities = HRRR_MODEL.capabilities
+    assert capabilities is not None
+    payload = _serialize_model_capability("hrrr", capabilities)
+
+    ltng = payload["variables"]["ltng"]
+    assert ltng["var_key"] == "ltng"
+    assert ltng["buildable"] is True
+    assert ltng["derived"] is False
+    assert ltng["kind"] == "continuous"
+    assert ltng["units"] == "flashes/km^2/5min"
+    assert ltng["display_name"] == "Lightning Flash Density"
+    assert ltng["group"] == "Instability"
+    assert ltng["color_map_id"] == "ltng"
+    assert ltng["display_resampling_override"] is None
+
+
+def test_hrrr_ltng_selector_and_alias_invariants() -> None:
+    assert HRRR_MODEL.normalize_var_id("ltng") == "ltng"
+    assert HRRR_MODEL.normalize_var_id("lightning") == "ltng"
+
+    ltng_spec = HRRR_MODEL.get_var("ltng")
+    assert ltng_spec is not None
+    assert ltng_spec.primary is True
+    assert ltng_spec.derived is False
+    assert ltng_spec.kind == "continuous"
+    assert ltng_spec.units == "flashes/km^2/5min"
+    assert ltng_spec.selectors.search == [":LTNG:entire atmosphere:"]
+    assert ltng_spec.selectors.filter_by_keys == {"shortName": "ltng"}
+    assert ltng_spec.selectors.hints["upstream_var"] == "ltng"
 
 
 def test_hrrr_pwat_selector_and_alias_invariants() -> None:

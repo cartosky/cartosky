@@ -944,6 +944,38 @@ MLCAPE_LEGEND_COLORS = [
 MLCAPE_COLOR_ANCHORS = list(zip(MLCAPE_LEGEND_LEVELS, MLCAPE_LEGEND_COLORS))
 MLCAPE_RANGE = (0.0, 6250.0)
 
+# HRRR McCaul lightning threat 3 (flashes/km^2/5 min). Values are 0 almost
+# everywhere; storm cores run 0.5–8 with extremes near 15, so the ladder is
+# packed low and the top bin absorbs everything above 12.
+LTNG_LEGEND_LEVELS = [
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    6.0,
+    8.0,
+    10.0,
+    12.0,
+]
+LTNG_LEGEND_COLORS = [
+    "#fff3b0",
+    "#ffe066",
+    "#ffc93c",
+    "#ffa726",
+    "#fb8c00",
+    "#f4661b",
+    "#e64414",
+    "#d32020",
+    "#b3126b",
+    "#c31fa0",
+    "#e14ad6",
+]
+LTNG_COLOR_ANCHORS = list(zip(LTNG_LEGEND_LEVELS, LTNG_LEGEND_COLORS))
+LTNG_RANGE = (0.0, 12.0)
+
 # 850mb temperature (°C) continuous palette anchors and range
 TMP850_COLOR_ANCHORS = [
     (-40.0, "#90d8cb"), (-39.0, "#96cec9"), (-38.0, "#95c5c6"), (-37.0, "#9bc3cb"), (-36.0, "#9ec0cf"),
@@ -1409,6 +1441,19 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_title": "Mixed-Layer CAPE (J/kg)",
         "legend_stops": list(zip(MLCAPE_LEGEND_LEVELS, MLCAPE_LEGEND_COLORS)),
         "transparent_below_min": 25.0,
+    },
+    "ltng": {
+        "type": "continuous",
+        "display_palette_kind": "discrete",
+        "units": "flashes/km^2/5min",
+        "range": LTNG_RANGE,
+        "anchors": LTNG_COLOR_ANCHORS,
+        "colors": LTNG_LEGEND_COLORS,
+        "display_name": "Lightning Flash Density",
+        "legend_title": "Flash Density (flashes/km²/5 min)",
+        "legend_stops": list(zip(LTNG_LEGEND_LEVELS, LTNG_LEGEND_COLORS)),
+        "allow_dry_frame": True,
+        "transparent_below_min": 0.1,
     },
     "wspd10m": {
         "type": "continuous",

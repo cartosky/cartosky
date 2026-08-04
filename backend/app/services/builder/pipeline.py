@@ -1292,6 +1292,7 @@ def _format_units(units: str) -> str:
         "mm/hr": "mm/hr",
         "in/hr": "in/hr",
         "in": "in",
+        "flashes/km^2/5min": "flashes/km²/5 min",
     }
     return mapping.get(units, units)
 

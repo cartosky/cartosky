@@ -39,6 +39,8 @@ class HRRRPlugin(BaseModelPlugin):
             return "mucape"
         if normalized in {"pwat", "precipitable_water", "precipitablewater"}:
             return "pwat"
+        if normalized in {"ltng", "lightning", "flash_density"}:
+            return "ltng"
         if normalized in {"snowfall_total", "asnow", "snow10", "snow_10to1", "total_snow", "totalsnow"}:
             return "snowfall_total"
         if normalized == "snowfall_kuchera_total":
@@ -449,6 +451,22 @@ HRRR_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="J/kg",
     ),
+    "ltng": VarSpec(
+        id="ltng",
+        name="Lightning Flash Density",
+        selectors=VarSelectors(
+            search=[":LTNG:entire atmosphere:"],
+            filter_by_keys={
+                "shortName": "ltng",
+            },
+            hints={
+                "upstream_var": "ltng",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="flashes/km^2/5min",
+    ),
     "pwat": VarSpec(
         id="pwat",
         name="Precipitable Water",
@@ -804,6 +822,7 @@ HRRR_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "sbcape": "mlcape",
     "mlcape": "mlcape",
     "mucape": "mlcape",
+    "ltng": "ltng",
     "pwat": "pwat",
     "snowfall_total": "snowfall_total",
     "snowfall_kuchera_total": "snowfall_total",
@@ -820,6 +839,7 @@ HRRR_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
 
 HRRR_DEFAULT_FH_BY_VAR_KEY: dict[str, int] = {
     "radar_ptype": 1,
+    "ltng": 1,
     "precip_total": 1,
     "snowfall_total": 1,
     "snowfall_kuchera_total": 1,
@@ -839,6 +859,7 @@ HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
     "sbcape": "Instability",
     "mlcape": "Instability",
     "mucape": "Instability",
+    "ltng": "Instability",
     "pwat": "Moisture",
     "precip_total": "Precipitation",
     "snowfall_total": "Precipitation",

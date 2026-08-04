@@ -17,6 +17,7 @@ import {
   refineDataDomainForRun,
   resolveDataDomain,
   variableIdsMissingDomain,
+  viewerVariableGroup,
 } from "@/lib/app-utils";
 import { domainRunProbeKey, resolveDomainRunProbeStatus } from "@/lib/use-domain-run-availability";
 import { buildPermalinkSearch, viewerPermalinkStateFromSelection } from "@/lib/permalink";
@@ -69,6 +70,15 @@ const SPC_MODEL = {
     wind_prob: { display_name: "SPC Wind Probability" },
     hail_prob: { display_name: "SPC Hail Probability" },
     convective: { display_name: "SPC Convective Outlook" },
+  },
+} as unknown as CapabilityModel;
+
+const HRRR_SEVERE_MODEL = {
+  variables: {
+    ltng: { display_name: "Lightning Flash Density" },
+    sbcape: { display_name: "Surface-Based CAPE" },
+    mlcape: { display_name: "Mixed-Layer CAPE" },
+    mucape: { display_name: "Most-Unstable CAPE" },
   },
 } as unknown as CapabilityModel;
 
@@ -584,6 +594,22 @@ describe("SPC variable option ordering", () => {
       "wind_prob",
       "hail_prob",
     ]);
+  });
+});
+
+describe("HRRR severe variable option ordering", () => {
+  it("lists lightning flash density in SEVERE, immediately after the CAPE variables", () => {
+    const options = makeVariableOptions(normalizeCapabilityVarRows(HRRR_SEVERE_MODEL), "hrrr");
+    expect(options.map((option) => option.value)).toEqual([
+      "mucape",
+      "mlcape",
+      "sbcape",
+      "ltng",
+    ]);
+    expect(viewerVariableGroup("ltng", "Instability")).toBe("SEVERE");
+    expect(options.find((option) => option.value === "ltng")?.label).toBe(
+      "Lightning Flash Density",
+    );
   });
 });
 

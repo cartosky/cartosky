@@ -592,6 +592,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   mucape: { label: "Most-Unstable CAPE", group: "SEVERE", order: 20 },
   mlcape: { label: "Mixed-Layer CAPE", group: "SEVERE", order: 21 },
   sbcape: { label: "Surface-Based CAPE", group: "SEVERE", order: 22 },
+  ltng: { label: "Lightning Flash Density", group: "SEVERE", order: 23 },
   vort500: { label: "500mb Heights + Vorticity", group: "UPPER AIR", order: 33 },
   hgt500_anom: { label: "500mb Height Anomaly", group: "UPPER AIR", order: 33.5 },
   ir13: { label: "Clean IR", group: "SATELLITE", order: 0 },

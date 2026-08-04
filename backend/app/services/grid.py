@@ -178,6 +178,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "J/kg",
     },
+    ("hrrr", "ltng"): {
+        "scale": 0.001,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "flashes/km^2/5min",
+    },
     ("hrrr", "pwat"): {
         "scale": 0.01,
         "offset": 0.0,

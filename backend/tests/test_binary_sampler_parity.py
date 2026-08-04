@@ -323,8 +323,8 @@ EXPECTED_GROUP_PARTITION = {
         **{
             var: 2
             for var in (
-                "radar_ptype_rain", "radar_ptype_snow", "radar_ptype_sleet",
-                "radar_ptype_frzr",
+                "ltng", "radar_ptype_rain", "radar_ptype_snow",
+                "radar_ptype_sleet", "radar_ptype_frzr",
             )
         },
         "radar_ptype": 4,
@@ -603,6 +603,73 @@ def test_observed_partition_matches_classifier_and_canary_scope() -> None:
         assert covered == set(in_scope) - transformed
         assert not [var for (mdl, var) in GROUP2_PARAMS if mdl == model]
         assert not [var for (mdl, var) in GROUP4_PARAMS if mdl == model]
+
+
+@pytest.mark.parametrize(("model", "var"), GROUP2_PARAMS)
+def test_group2_continuous_upscale_parity_on_model_native_grid(
+    model: str, var: str, tmp_path: Path
+) -> None:
+    """Group 2 (continuous upscale): the binary stores a finer, display-prepped
+    grid, so the authoritative parity statement is against the display-prep
+    output at the fine pixel the meta transform maps the point to — within
+    packing quantization (scale/2) only. Comparing against the RAW coarse
+    source is exactly what Group 2 does NOT promise; that divergence is the
+    upscale, and it is what separates this group from Group 1.
+    """
+    transform, projection = _model_grid_geometry(model)
+    packing = _PACKING_BY_MODEL_VAR[(model, var)]
+    scale = float(packing["scale"])
+    config = grid_display_prep_config(model, var)
+    assert config is not None
+
+    # Smooth gradient comfortably above the display-prep support threshold so
+    # zero-support masking never engages (load-bearing for the sparse
+    # preserve_zero_support variables: hrrr/ltng and the precip totals).
+    base = float(config.support_min_value or 0.0) + 10.0 * scale
+    step = 25.0 * scale
+    height = width = 5
+    values = (
+        base + np.arange(height * width, dtype=np.float64) * step
+    ).reshape(height, width).astype(np.float32)
+
+    frame_path, meta_path = _write_pair(
+        tmp_path,
+        model=model,
+        var=var,
+        values=values,
+        transform=transform,
+        projection=projection,
+    )
+
+    display_values, prep_meta = prepare_grid_display_values(model=model, var=var, values=values)
+    assert prep_meta is not None
+    upscale_factor = int(prep_meta["upscale_factor"])
+    assert upscale_factor > 1
+    meta = json.loads(meta_path.read_text())
+    assert (meta["height"], meta["width"]) == (height * upscale_factor, width * upscale_factor)
+
+    for row_f, col_f in [(1.25, 1.75), (2.5, 3.5), (3.9, 0.6)]:
+        lat, lon = _lonlat_at(transform, projection, row_f, col_f)
+        raw, no_data = read_binary_sample_value(
+            frame_path, meta_path, model=model, var=var, lat=lat, lon=lon
+        )
+        assert no_data is False
+        assert raw is not None
+
+        fine_row, fine_col = _meta_index(meta_path, lon=lon, lat=lat)
+        expected = float(display_values[fine_row, fine_col])
+        assert raw == pytest.approx(expected, abs=scale / 2 + 1e-4), (
+            f"{model}/{var}: binary sample diverged from display-prepped field "
+            f"at ({row_f}, {col_f}): raw={raw} expected={expected}"
+        )
+
+    # Point outside the model's bbox reads as nodata, not a wrapped pixel.
+    lat, lon = _lonlat_at(transform, projection, -50.0, -50.0)
+    raw, no_data = read_binary_sample_value(
+        frame_path, meta_path, model=model, var=var, lat=lat, lon=lon
+    )
+    assert raw is None
+    assert no_data is True
 
 
 def test_seek_sampler_matches_full_read_on_mrms_uint8_and_uint16(tmp_path: Path) -> None:
