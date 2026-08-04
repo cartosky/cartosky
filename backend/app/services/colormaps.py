@@ -946,35 +946,35 @@ MLCAPE_RANGE = (0.0, 6250.0)
 
 # HRRR McCaul lightning threat 3 (flashes/km^2/5 min). Values are 0 almost
 # everywhere; storm cores run 0.5–8 with extremes near 15, so the ladder is
-# packed low and the top bin absorbs everything above 12.
+# packed low and the top bin absorbs everything above 8.
 LTNG_LEGEND_LEVELS = [
     0.1,
     0.25,
     0.5,
     1.0,
+    1.5,
     2.0,
     3.0,
     4.0,
+    5.0,
     6.0,
     8.0,
-    10.0,
-    12.0,
 ]
 LTNG_LEGEND_COLORS = [
-    "#fff3b0",
-    "#ffe066",
-    "#ffc93c",
-    "#ffa726",
-    "#fb8c00",
-    "#f4661b",
-    "#e64414",
-    "#d32020",
-    "#b3126b",
-    "#c31fa0",
-    "#e14ad6",
+    "#00e5ff",
+    "#00b8d4",
+    "#0091ea",
+    "#2962ff",
+    "#304ffe",
+    "#3f1dcb",
+    "#6200ea",
+    "#7b1fa2",
+    "#8e24aa",
+    "#ab47bc",
+    "#ce93d8",
 ]
 LTNG_COLOR_ANCHORS = list(zip(LTNG_LEGEND_LEVELS, LTNG_LEGEND_COLORS))
-LTNG_RANGE = (0.0, 12.0)
+LTNG_RANGE = (0.0, 8.0)
 
 # 850mb temperature (°C) continuous palette anchors and range
 TMP850_COLOR_ANCHORS = [
