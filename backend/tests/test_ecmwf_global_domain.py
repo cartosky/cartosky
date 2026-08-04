@@ -70,16 +70,20 @@ FLAG = "CARTOSKY_GLOBAL_DOMAIN_MODELS"
 #: deliberate rather than silently absorbed by the tests.
 DECLARING_VAR = "tmp2m"
 
-#: Phase 3A Wave 1: instantaneous anomaly fields with global ERA5 baselines.
-GLOBAL_ANOMALY_VARS = ("tmp2m_anom", "tmp850_anom", "hgt500_anom")
-#: Precip-window anomalies — NA-only baselines until Wave 2. ECMWF's long
-#: window is 15 d (the 16 d input alias maps onto it; see commit 9a76a1c3).
-CANONICAL_ONLY_ANOMALY_VARS = (
+#: Phase 3A Wave 1 (instantaneous) + Wave 2 (precip windows): every anomaly
+#: field now has a global ERA5 baseline. ECMWF's long window is 15 d (the 16 d
+#: input alias maps onto it and is absent from this catalog; see 9a76a1c3).
+WAVE1_ANOMALY_VARS = ("tmp2m_anom", "tmp850_anom", "hgt500_anom")
+WAVE2_PRECIP_ANOMALY_VARS = (
     "precip_5d_anom",
     "precip_7d_anom",
     "precip_10d_anom",
     "precip_15d_anom",
 )
+GLOBAL_ANOMALY_VARS = WAVE1_ANOMALY_VARS + WAVE2_PRECIP_ANOMALY_VARS
+#: Empty since Wave 2. Kept as a named set so the exhaustion assertion still
+#: forces an explicit decision for any anomaly variable added later.
+CANONICAL_ONLY_ANOMALY_VARS: tuple[str, ...] = ()
 
 #: Every buildable non-anomaly ECMWF variable, spelled out rather than derived
 #: from the catalog so that dropping one is a test failure.
@@ -316,12 +320,23 @@ def test_anomaly_specs_declare_the_global_baseline_hints_inline() -> None:
         assert catalog_hints.get("baseline_region_by_build_region") == "global=global", var_key
 
 
-def test_precip_window_anomaly_specs_carry_no_global_baseline_hint() -> None:
-    """The Wave 2 exclusion is by omission — the routing hint must not be
-    present on the four precip-window anomalies either."""
-    for var_key in CANONICAL_ONLY_ANOMALY_VARS:
+def test_precip_window_anomaly_specs_carry_the_global_baseline_hint() -> None:
+    """Wave 2 flip (2026-08-03): inverted from the pre-flip assertion that the
+    routing hint was absent. ECMWF is the origin of these specs, so the hint
+    is passed at construction.
+
+    The window set is load-bearing: ECMWF is 5/7/10/**15** d. ``precip_16d_anom``
+    is an input alias deliberately absent from this catalog (9a76a1c3) and must
+    stay absent — a 16 d entry here would be a resurrection, not a flip.
+    """
+    for var_key in WAVE2_PRECIP_ANOMALY_VARS:
         hints = ECMWF_VARS[var_key].selectors.hints or {}
-        assert "baseline_region_by_build_region" not in hints, var_key
+        assert hints.get("baseline_region_by_build_region") == "global=global", var_key
+        assert hints.get("baseline_region") == CANONICAL, var_key
+
+    assert "precip_16d_anom" not in ECMWF_VARS
+    assert "precip_16d_anom" not in ECMWF_MODEL.capabilities.variable_catalog
+    assert "precip_15d_anom" in WAVE2_PRECIP_ANOMALY_VARS
 
 
 # ── 5. composite components inherit the parent's declaration ───────────────
@@ -450,11 +465,30 @@ def test_global_domain_inherits_the_cycle_schedule_per_var(
         bucket = global_fhs if region == GLOBAL else canonical_fhs
         bucket.setdefault(var_key, set()).add(fh)
 
-    assert set(global_fhs) == set(declaring)
+    # Wave 2 put the precip-window anomalies on the global domain, and their
+    # min_fh (168/240/360) exceeds the SHORT cycle's 144 h horizon — so on
+    # 06/18z they schedule nothing at all, in BOTH domains. Deriving the
+    # expected key set the same way (rather than asserting every declaring var
+    # appears) keeps this a real per-var binding assertion instead of one that
+    # silently depends on the horizon.
+    scheduled = {
+        var_key
+        for var_key in declaring
+        if ECMWF_MODEL.scheduled_fhs_for_var(var_key, cycle_hour)
+    }
+    assert set(global_fhs) == scheduled
+    assert set(canonical_fhs) == scheduled
     for var_key in declaring:
         expected = set(ECMWF_MODEL.scheduled_fhs_for_var(var_key, cycle_hour))
-        assert global_fhs[var_key] == expected, var_key
-        assert canonical_fhs[var_key] == expected, var_key
+        assert global_fhs.get(var_key, set()) == expected, var_key
+        assert canonical_fhs.get(var_key, set()) == expected, var_key
+
+    # The asymmetry is real and load-bearing, so pin its direction explicitly.
+    if cycle_hour in (6, 18):
+        assert "precip_15d_anom" not in scheduled
+        assert "precip_5d_anom" in scheduled  # min_fh 120 ≤ 144
+    else:
+        assert {"precip_5d_anom", "precip_15d_anom"} <= scheduled
 
 
 @pytest.mark.parametrize(
@@ -593,8 +627,21 @@ def test_global_frame_counts_are_derived_per_cycle_type() -> None:
             if GLOBAL in (capability.supported_build_regions or [])
         )
 
-    assert _total(0) == _total(12) == 1949
-    assert _total(6) == _total(18) == 1121
+    # Wave 2 (2026-08-03) added the four precip-window anomalies to the global
+    # domain: +100 frames on a long cycle (45 + 33 + 21 + 1) and +9 on a short
+    # one (only precip_5d_anom clears the 144 h horizon).
+    assert _total(0) == _total(12) == 2049
+    assert _total(6) == _total(18) == 1130
+
+    precip_long = sum(
+        len(ECMWF_MODEL.scheduled_fhs_for_var(var_key, 0))
+        for var_key in WAVE2_PRECIP_ANOMALY_VARS
+    )
+    precip_short = sum(
+        len(ECMWF_MODEL.scheduled_fhs_for_var(var_key, 6))
+        for var_key in WAVE2_PRECIP_ANOMALY_VARS
+    )
+    assert (precip_long, precip_short) == (100, 9)
 
 
 # ── 8. model-id boundary (the 18z-outage class) ────────────────────────────

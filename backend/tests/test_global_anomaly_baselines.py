@@ -1,4 +1,4 @@
-"""Phase 3A Wave 1 — global EPSG:4326 ERA5 baselines for anomaly variables.
+"""Phase 3A Waves 1 + 2 — global EPSG:4326 ERA5 baselines for anomaly variables.
 
 Four properties, all pinned against the real catalog and the real registry:
 
@@ -6,13 +6,15 @@ Four properties, all pinned against the real catalog and the real registry:
   (``docs/GLOBAL_DOMAIN_4326_CONTRACT.md`` §1) and the loader validates it
   exactly — CRS, shape and transform — while metre regions keep their
   byte-identical EPSG:3857 validation.
-* **Resolution.** The three Wave-1 anomaly variables depart from the NA
-  baseline on canonical builds and from the global baseline on global builds.
-  The precip-window anomalies resolve *nothing* on global (Wave 2).
+* **Resolution.** Every anomaly variable departs from the NA baseline on
+  canonical builds and from the global baseline on global builds — the three
+  Wave-1 instantaneous fields since 2026-07-30, the four precip-window
+  accumulation fields since the Wave 2 flip (2026-08-03).
 * **Graceful skip.** A global anomaly build whose baseline assets are not
   installed yet skips the frame with one log line; canonical builds are
-  untouched by that path. Deploy-ordering insurance: code and assets may land
-  in either order.
+  untouched by that path. Both the instantaneous (hourly ``doy_NNN_hHH.tif``)
+  and the accumulation (daily ``doy_NNN.tif``) pre-checks are covered.
+  Deploy-ordering insurance: code and assets may land in either order.
 * **Generation script.** ``--region global`` computes the contract transform
   and takes the identity fast path when the staged raster is already on it.
 """
@@ -21,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +44,9 @@ from app.services.builder import pipeline as pipeline_module  # noqa: E402
 from app.services.builder.raster_grid import (  # noqa: E402
     REGION_BBOX_3857,
     compute_transform_and_shape,
+)
+from app.services.builder.derive import (  # noqa: E402
+    derive_variable as REAL_DERIVE_VARIABLE,
 )
 from scripts import build_climatology_baseline_assets as build_script  # noqa: E402
 
@@ -67,6 +72,21 @@ PRECIP_ANOM_VARS = (
     "precip_10d_anom",
     "precip_16d_anom",
 )
+#: GFS precip anomaly windows: 5/7/10/16 days (15 d is the AIFS/ECMWF window).
+#: The value is both the accumulation window and the earliest buildable fh, so
+#: at exactly this fh the window opens at the run itself.
+PRECIP_ANOM_TARGET_FH = {
+    "precip_5d_anom": 120,
+    "precip_7d_anom": 168,
+    "precip_10d_anom": 240,
+    "precip_16d_anom": 384,
+}
+PRECIP_ANOM_BASELINE_FIELD = {
+    "precip_5d_anom": "precip_5d",
+    "precip_7d_anom": "precip_7d",
+    "precip_10d_anom": "precip_10d",
+    "precip_16d_anom": "precip_16d",
+}
 
 
 def _hints(var_key: str) -> dict[str, str]:
@@ -272,10 +292,19 @@ def test_wave1_anomaly_resolves_na_on_canonical_and_global_on_global(
 
 
 @pytest.mark.parametrize("var_key", PRECIP_ANOM_VARS)
-def test_precip_anomaly_resolves_nothing_on_global(var_key: str) -> None:
+def test_precip_anomaly_resolves_na_on_canonical_and_global_on_global(
+    var_key: str,
+) -> None:
+    """Wave 2 flip: the precip-window anomalies now carry the override too.
+
+    Before the flip these resolved ``None`` on global (no declaration ⇒ a
+    native-geographic build resolves nothing ⇒ skip). This is that assertion
+    inverted; the canonical direction is unchanged.
+    """
     hints = _hints(var_key)
     assert hints["baseline_region"] == CANONICAL
-    assert climatology.BASELINE_REGION_BY_BUILD_REGION_HINT not in hints
+    assert hints[climatology.BASELINE_REGION_BY_BUILD_REGION_HINT] == f"{GLOBAL}={GLOBAL}"
+    assert hints["baseline_field"] == PRECIP_ANOM_BASELINE_FIELD[var_key]
     assert (
         climatology.resolve_baseline_region(
             model=MODEL, build_region=CANONICAL, hints=hints
@@ -286,7 +315,7 @@ def test_precip_anomaly_resolves_nothing_on_global(var_key: str) -> None:
         climatology.resolve_baseline_region(
             model=MODEL, build_region=GLOBAL, hints=hints
         )
-        is None
+        == GLOBAL
     )
 
 
@@ -370,13 +399,31 @@ def test_derive_target_grid_global_is_the_global_baseline(var_key: str) -> None:
 
 
 @pytest.mark.parametrize("var_key", PRECIP_ANOM_VARS)
-def test_derive_target_grid_global_degrades_for_precip_anomalies(var_key: str) -> None:
+def test_derive_target_grid_canonical_is_the_na_baseline_for_precip(
+    var_key: str,
+) -> None:
+    """Canonical precip anomalies are byte-identical across the Wave 2 flip."""
     assert pipeline_module._resolve_derive_target_grid(
+        model=MODEL,
+        region=CANONICAL,
+        hints=_hints(var_key),
+        derive_component_warp_cache=True,
+    ) == ({"region": CANONICAL, "id": "climatology:era5:na:25000.0m"}, True)
+
+
+@pytest.mark.parametrize("var_key", PRECIP_ANOM_VARS)
+def test_derive_target_grid_global_is_the_global_baseline_for_precip(
+    var_key: str,
+) -> None:
+    """Wave 2 flip: was ``(None, False)`` (degrade) before the override hint."""
+    grid, matches = pipeline_module._resolve_derive_target_grid(
         model=MODEL,
         region=GLOBAL,
         hints=_hints(var_key),
         derive_component_warp_cache=True,
-    ) == (None, False)
+    )
+    assert grid == {"region": GLOBAL, "id": "climatology:era5:global:0.25deg"}
+    assert matches is True
 
 
 def test_non_baseline_derived_var_keeps_its_own_grid() -> None:
@@ -406,17 +453,39 @@ def test_non_baseline_derived_var_keeps_its_own_grid() -> None:
 RUN_DATE = datetime(2026, 4, 21, 0, tzinfo=timezone.utc)
 
 
-def _bind(var_key: str, region: str):
+def _bind(var_key: str, region: str, fh: int = 12):
     spec = GFS_MODEL.get_var(var_key)
     return pipeline_module._resolve_build_region_baseline(
         model=MODEL,
         region=region,
         var_key=var_key,
-        fh=12,
+        fh=fh,
         run_date=RUN_DATE,
         var_spec_model=spec,
         hints=_hints(var_key),
     )
+
+
+def _install_global_accumulation_baseline(
+    tmp_path: Path,
+    *,
+    field: str,
+    reference_date: datetime,
+    values: np.ndarray | None = None,
+) -> Path:
+    path = climatology.climatology_accumulation_baseline_path(
+        data_root=tmp_path,
+        version="v1",
+        baseline_source=SOURCE,
+        field=field,
+        region=GLOBAL,
+        reference_period="1991-2020",
+        reference_date=reference_date,
+    )
+    if values is None:
+        values = np.zeros((CONTRACT_HEIGHT, CONTRACT_WIDTH), dtype=np.float32)
+    _write_raster(path, values, crs="EPSG:4326", transform=CONTRACT_TRANSFORM)
+    return path
 
 
 @pytest.mark.parametrize("var_key", WAVE1_VARS)
@@ -467,37 +536,294 @@ def test_global_build_binds_the_global_baseline_when_installed(
     assert spec.selectors.hints["baseline_region"] == GLOBAL
 
 
+# ── 4b. accumulation (precip window) baselines — Wave 2 ────────────────────
+
+
 @pytest.mark.parametrize("var_key", PRECIP_ANOM_VARS)
-def test_global_build_skips_variables_with_no_global_baseline(
+def test_canonical_precip_build_is_untouched_by_the_binding(
     var_key: str, tmp_path: Path
 ) -> None:
+    """The NA precip anomalies never reach the new accumulation pre-check.
+
+    They resolve ``na``, which equals the declared region, so the binding
+    returns the registry spec by identity and no skip — byte-identical to the
+    pre-Wave-2 behaviour, including a missing NA baseline still *failing* the
+    frame downstream rather than skipping it.
+    """
     climatology.configure_data_root(tmp_path)
-    spec, hints, skip = _bind(var_key, GLOBAL)
-    assert skip == "no_baseline_declared_for_build_region"
+    spec, hints, skip = _bind(var_key, CANONICAL, fh=PRECIP_ANOM_TARGET_FH[var_key])
+    assert skip is None
+    assert spec is GFS_MODEL.get_var(var_key)
     assert hints["baseline_region"] == CANONICAL
 
 
-def test_build_frame_returns_the_skip_status_without_fetching(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize("var_key", PRECIP_ANOM_VARS)
+def test_global_precip_build_skips_when_accumulation_baselines_are_absent(
+    var_key: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """End to end: no exception, no failed frame, no network."""
+    """Was ``no_baseline_declared_for_build_region`` before the Wave 2 flip;
+    now the override resolves and the *asset* pre-check produces the skip."""
+    climatology.configure_data_root(tmp_path)
+    with caplog.at_level(logging.WARNING, logger=pipeline_module.logger.name):
+        spec, hints, skip = _bind(var_key, GLOBAL, fh=PRECIP_ANOM_TARGET_FH[var_key])
+    assert skip == "missing_baseline_assets"
+    assert hints["baseline_region"] == GLOBAL
+    assert spec.selectors.hints["baseline_region"] == GLOBAL
+    assert GFS_MODEL.get_var(var_key).selectors.hints["baseline_region"] == CANONICAL
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("climatology_baseline_missing" in message for message in messages)
+    assert any(
+        f"baseline_field={PRECIP_ANOM_BASELINE_FIELD[var_key]}" in message
+        for message in messages
+    )
+
+
+@pytest.mark.parametrize("var_key", PRECIP_ANOM_VARS)
+def test_global_precip_build_binds_when_the_accumulation_baseline_is_installed(
+    var_key: str, tmp_path: Path
+) -> None:
+    climatology.configure_data_root(tmp_path)
+    # At the earliest buildable fh the window opens at the run itself, so the
+    # frame needs exactly the run-date day-of-year asset.
+    _install_global_accumulation_baseline(
+        tmp_path,
+        field=PRECIP_ANOM_BASELINE_FIELD[var_key],
+        reference_date=RUN_DATE,
+    )
+    spec, hints, skip = _bind(var_key, GLOBAL, fh=PRECIP_ANOM_TARGET_FH[var_key])
+    assert skip is None
+    assert hints["baseline_region"] == GLOBAL
+    assert spec.selectors.hints["baseline_region"] == GLOBAL
+
+
+def test_rolling_precip_window_checks_the_window_start_date(tmp_path: Path) -> None:
+    """The pre-check must follow the *window start*, not the run date.
+
+    ``precip_5d_anom`` at fh240 accumulates fh120→fh240, so it subtracts the
+    baseline for run+5 d. Installing only the run-date asset must still skip.
+    """
+    climatology.configure_data_root(tmp_path)
+    _install_global_accumulation_baseline(
+        tmp_path, field="precip_5d", reference_date=RUN_DATE
+    )
+    assert _bind("precip_5d_anom", GLOBAL, fh=240)[2] == "missing_baseline_assets"
+
+    _install_global_accumulation_baseline(
+        tmp_path,
+        field="precip_5d",
+        reference_date=RUN_DATE + timedelta(hours=120),
+    )
+    assert _bind("precip_5d_anom", GLOBAL, fh=240)[2] is None
+
+
+def test_partial_baseline_install_skips_only_the_missing_window(
+    tmp_path: Path,
+) -> None:
+    """One window directory missing ⇒ exactly one variable skips.
+
+    This is the realistic half-installed prod state, and the property that
+    makes deploy ordering survivable.
+    """
+    climatology.configure_data_root(tmp_path)
+    for var_key in PRECIP_ANOM_VARS:
+        if var_key == "precip_10d_anom":
+            continue
+        _install_global_accumulation_baseline(
+            tmp_path,
+            field=PRECIP_ANOM_BASELINE_FIELD[var_key],
+            reference_date=RUN_DATE,
+        )
+
+    skips = {
+        var_key: _bind(var_key, GLOBAL, fh=PRECIP_ANOM_TARGET_FH[var_key])[2]
+        for var_key in PRECIP_ANOM_VARS
+    }
+    assert skips == {
+        "precip_5d_anom": None,
+        "precip_7d_anom": None,
+        "precip_10d_anom": "missing_baseline_assets",
+        "precip_16d_anom": None,
+    }
+
+
+def test_impossible_window_is_not_laundered_into_a_skip(tmp_path: Path) -> None:
+    """fh below the accumulation window is a declaration bug, not a missing
+    asset — the binding must stay out of the way and let the derive raise."""
+    climatology.configure_data_root(tmp_path)
+    assert _bind("precip_5d_anom", GLOBAL, fh=12)[2] is None
+    with pytest.raises(ValueError, match="shorter than accumulation window"):
+        climatology.resolve_accumulation_baseline_window(
+            hints=_hints("precip_5d_anom"),
+            var_key="precip_5d_anom",
+            fh=12,
+            run_date=RUN_DATE,
+        )
+
+
+#: Wave 2 covers every deterministic model with a global domain.
+WAVE2_FLIPPED_MODELS = ("gfs", "aigfs", "aifs", "ecmwf")
+#: …and no others. The ensembles have no global domain at all, so their precip
+#: anomalies must carry no global routing hint.
+WAVE2_EXCLUDED_MODELS = ("gefs", "eps")
+#: Each model's TRUE window set, from its own catalog. GFS/AIGFS are the 16 d
+#: family; AIFS/ECMWF are 15 d (ECMWF's 16 d entry was removed as dead in
+#: 9a76a1c3 and must not come back).
+WAVE2_WINDOWS_BY_MODEL = {
+    "gfs": ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_16d_anom"),
+    "aigfs": ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_16d_anom"),
+    "aifs": ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_15d_anom"),
+    "ecmwf": ("precip_5d_anom", "precip_7d_anom", "precip_10d_anom", "precip_15d_anom"),
+}
+
+
+def _precip_anom_keys(plugin) -> set[str]:
+    return {
+        var_key
+        for var_key in plugin.capabilities.variable_catalog
+        if var_key.startswith("precip_") and var_key.endswith("_anom")
+    }
+
+
+@pytest.mark.parametrize("model_id", WAVE2_FLIPPED_MODELS)
+def test_wave2_flip_covers_each_models_true_window_set(model_id: str) -> None:
+    """Per-model windows must match what that model's catalog actually derives.
+
+    The shared helper takes the window from the spec, so 15 vs 16 needs no
+    special-casing in the code — but a model declaring a window it does not
+    derive (or missing one it does) would resolve a baseline field with no
+    asset behind it, which the pre-check would then silently skip forever.
+    """
+    from app.models.registry import MODEL_REGISTRY
+
+    plugin = MODEL_REGISTRY[model_id]
+    assert _precip_anom_keys(plugin) == set(WAVE2_WINDOWS_BY_MODEL[model_id])
+
+    catalog = plugin.capabilities.variable_catalog
+    for var_key in WAVE2_WINDOWS_BY_MODEL[model_id]:
+        spec = plugin.get_var(var_key)
+        hints = dict(getattr(getattr(spec, "selectors", None), "hints", {}) or {})
+        assert hints[climatology.BASELINE_REGION_BY_BUILD_REGION_HINT] == f"{GLOBAL}={GLOBAL}"
+        assert hints["baseline_region"] == CANONICAL
+        # The declared window must round-trip to the field name whose global
+        # baseline directory the operator installed (5/7/10/15/16 d on prod).
+        days = int(var_key.split("_", 2)[1].removesuffix("d"))
+        assert hints["baseline_field"] == f"precip_{days}d"
+        assert hints["accumulation_window_hours"] == str(days * 24)
+        assert catalog[var_key].supported_build_regions == [CANONICAL, GLOBAL]
+
+
+def test_ecmwf_family_is_15_day_and_gfs_family_is_16_day() -> None:
+    """The one asymmetry that a copy-paste flip would get wrong."""
+    assert "precip_16d_anom" in WAVE2_WINDOWS_BY_MODEL["gfs"]
+    assert "precip_16d_anom" in WAVE2_WINDOWS_BY_MODEL["aigfs"]
+    assert "precip_15d_anom" in WAVE2_WINDOWS_BY_MODEL["aifs"]
+    assert "precip_15d_anom" in WAVE2_WINDOWS_BY_MODEL["ecmwf"]
+    for model_id in ("aifs", "ecmwf"):
+        assert "precip_16d_anom" not in WAVE2_WINDOWS_BY_MODEL[model_id]
+    for model_id in ("gfs", "aigfs"):
+        assert "precip_15d_anom" not in WAVE2_WINDOWS_BY_MODEL[model_id]
+
+
+@pytest.mark.parametrize("model_id", WAVE2_EXCLUDED_MODELS)
+def test_wave2_flip_did_not_leak_into_the_ensembles(model_id: str) -> None:
+    """``_precip_anomaly_var_spec`` is shared by every model with precip
+    anomalies, including the ensembles — which have NO global domain.
+
+    The Wave 2 override is a per-caller keyword argument precisely so this set
+    stays out of it. If it were baked into the factory (or given a truthy
+    default), gefs and eps would start carrying a global routing hint for a
+    domain they never build — this is the assertion that kills that mutation.
+    """
+    from app.models.registry import MODEL_REGISTRY
+
+    plugin = MODEL_REGISTRY[model_id]
+    hint = climatology.BASELINE_REGION_BY_BUILD_REGION_HINT
+    catalog = plugin.capabilities.variable_catalog
+
+    precip_keys = _precip_anom_keys(plugin)
+    assert precip_keys, model_id
+    for var_key in precip_keys:
+        spec = plugin.get_var(var_key)
+        hints = dict(getattr(getattr(spec, "selectors", None), "hints", {}) or {})
+        assert hint not in hints, f"{model_id}/{var_key}"
+        assert catalog[var_key].supported_build_regions == [], f"{model_id}/{var_key}"
+
+
+def test_the_factory_default_is_no_global_routing() -> None:
+    """Belt and braces on the same mutation, at the source."""
+    import inspect
+
+    from app.models.gfs import _precip_anomaly_var_spec
+
+    default = inspect.signature(_precip_anomaly_var_spec).parameters[
+        "baseline_region_by_build_region"
+    ].default
+    assert default is None
+    assert climatology.BASELINE_REGION_BY_BUILD_REGION_HINT not in (
+        _precip_anomaly_var_spec("precip_5d_anom", 5).selectors.hints or {}
+    )
+
+
+@pytest.mark.parametrize("var_key", PRECIP_ANOM_VARS)
+def test_window_helper_matches_the_catalog_declaration(var_key: str) -> None:
+    """The shared arithmetic, pinned against the real hints — this is the
+    function both ``derive.py`` and the pipeline pre-check call, so a drift
+    here would silently desynchronise the check from the load."""
+    target_fh = PRECIP_ANOM_TARGET_FH[var_key]
+    window = climatology.resolve_accumulation_baseline_window(
+        hints=_hints(var_key), var_key=var_key, fh=target_fh, run_date=RUN_DATE
+    )
+    assert window.target_fh == target_fh
+    assert window.accumulation_window_hours == target_fh
+    assert window.window_start_fh == 0
+    assert window.reference_date == RUN_DATE
+
+
+@pytest.mark.parametrize(
+    ("var_key", "fh", "expected_alignment_key"),
+    (
+        # Instantaneous: the frame is aligned to its own valid time.
+        ("hgt500_anom", 12, "valid_time"),
+        # Accumulation: aligned to the date the window OPENS, which is a
+        # different quantity and is logged under a different key.
+        ("precip_5d_anom", 120, "reference_date"),
+        ("precip_16d_anom", 384, "reference_date"),
+    ),
+)
+def test_build_frame_returns_the_skip_status_without_fetching(
+    var_key: str,
+    fh: int,
+    expected_alignment_key: str,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """End to end: no exception, no failed frame, no network — for BOTH
+    baseline kinds. The precip arms are what prove the Wave 2 pre-check is
+    wired into ``build_frame``, not just into the binding helper."""
     climatology.configure_data_root(tmp_path)
     with caplog.at_level(logging.WARNING, logger=pipeline_module.logger.name):
         result = pipeline_module.build_frame(
             model=MODEL,
             region=GLOBAL,
-            var_id="hgt500_anom",
-            fh=12,
+            var_id=var_key,
+            fh=fh,
             run_date=RUN_DATE,
             data_root=tmp_path / "data",
             return_status=True,
         )
     assert result == (None, pipeline_module.BASELINE_SKIP_STATUS)
     assert pipeline_module.BASELINE_SKIP_STATUS == "skipped_missing_baseline"
-    assert any(
-        "climatology_baseline_missing" in record.getMessage()
-        for record in caplog.records
-    )
+
+    messages = [record.getMessage() for record in caplog.records]
+    missing = [m for m in messages if "climatology_baseline_missing" in m]
+    assert missing
+    # The runbook greps this exact line; the alignment key must name the
+    # quantity honestly rather than calling a window-start date a valid time.
+    assert any(f"{expected_alignment_key}=" in m for m in missing)
+    if expected_alignment_key == "reference_date":
+        assert not any("valid_time=" in m for m in missing)
+
     # Nothing was staged.
     assert not (tmp_path / "data" / "staging").exists()
 
@@ -817,6 +1143,178 @@ def test_hgt500_anomaly_derives_against_the_global_baseline(
     sidecar = ctx.derive_quality[("hgt500_anom", 0)]["sidecar_metadata"]
     assert sidecar["baseline_region"] == GLOBAL
     assert sidecar["reference_period"] == "1991-2020"
+
+
+def _derive_global_precip_anomaly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    baseline_inches: float,
+    run_date: datetime,
+    fh: int,
+    var_key: str = "precip_5d_anom",
+):
+    """Drive the full Wave-2 chain for one precip anomaly frame.
+
+    Returns ``(anomaly, crs, transform, sidecar)``.
+
+    The BASE component (``precip_total``, a 100+ step cumulative at these
+    forecast hours) is stubbed to a constant rate rather than driven for real:
+    at contract-grid size the real walk costs minutes per call and it is not
+    what this test is about. Everything the Wave 2 flip touches — the binding,
+    the target-grid resolution, the window arithmetic, the baseline load, the
+    subtraction and the sidecar — runs unmodified. Note ``derive_variable`` is
+    bound locally BEFORE the patch, so the top-level anomaly call is the real
+    function and only the nested base lookup is stubbed.
+    """
+    from app.services.builder import derive as derive_module
+    from app.services.builder.derive import FetchContext
+
+    # NOT `derive_module.derive_variable`: a caller may invoke this helper
+    # twice inside one test, and monkeypatch is only undone at teardown — the
+    # second call would otherwise re-import the stub as its top-level entry
+    # point and test nothing at all.
+    derive_variable = REAL_DERIVE_VARIABLE
+
+    climatology.configure_data_root(tmp_path)
+    window = climatology.resolve_accumulation_baseline_window(
+        hints=_hints(var_key), var_key=var_key, fh=fh, run_date=run_date
+    )
+    _install_global_accumulation_baseline(
+        tmp_path,
+        field=PRECIP_ANOM_BASELINE_FIELD[var_key],
+        reference_date=window.reference_date,
+        values=np.full(
+            (CONTRACT_HEIGHT, CONTRACT_WIDTH), baseline_inches, dtype=np.float32
+        ),
+    )
+
+    # Cumulative inches at forecast hour N, at a constant 0.01 in/h.
+    seen_grids: list[tuple[str, str]] = []
+
+    def _fake_base_derive(**kwargs):
+        assert kwargs["var_key"] == "precip_total", kwargs["var_key"]
+        grid_in = kwargs.get("derive_component_target_grid") or {}
+        seen_grids.append((grid_in.get("region", ""), grid_in.get("id", "")))
+        cumulative = np.full(
+            (CONTRACT_HEIGHT, CONTRACT_WIDTH),
+            int(kwargs["fh"]) * 0.01,
+            dtype=np.float32,
+        )
+        return cumulative, rasterio.crs.CRS.from_epsg(4326), CONTRACT_TRANSFORM
+
+    monkeypatch.setattr(derive_module, "derive_variable", _fake_base_derive)
+
+    spec, hints_out, skip = _bind(var_key, GLOBAL, fh=fh)
+    assert skip is None
+    grid, _matches = pipeline_module._resolve_derive_target_grid(
+        model=MODEL,
+        region=GLOBAL,
+        hints=hints_out,
+        derive_component_warp_cache=True,
+    )
+
+    ctx = FetchContext(coverage=GLOBAL)
+    anomaly, crs, transform = derive_variable(
+        model_id=MODEL,
+        var_key=var_key,
+        product="pgrb2.0p25",
+        run_date=run_date,
+        fh=fh,
+        var_spec_model=spec,
+        var_capability=GFS_MODEL.get_var_capability(var_key),
+        model_plugin=GFS_MODEL,
+        fetch_ctx=ctx,
+        derive_component_target_grid=grid,
+        derive_component_resampling="bilinear",
+    )
+    # Every base warp must be aimed at the global baseline grid — if the
+    # binding had leaked the NA grid, this is where it would show.
+    assert seen_grids
+    assert set(seen_grids) == {(GLOBAL, "climatology:era5:global:0.25deg")}
+
+    sidecar = ctx.derive_quality[(var_key, fh)]["sidecar_metadata"]
+    return anomaly, crs, transform, sidecar
+
+
+def test_precip_anomaly_derives_against_the_global_accumulation_baseline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The whole Wave-2 chain: binding → global target grid → derive → frame.
+
+    Mirrors ``test_hgt500_anomaly_derives_against_the_global_baseline`` for the
+    accumulation path, at a ROLLING fh (240 for a 5 d window) so the
+    window-start arithmetic is exercised rather than the degenerate
+    ``window_start_fh == 0`` case.
+    """
+    run_date = datetime(2026, 4, 21, 0, tzinfo=timezone.utc)
+    anomaly, crs, transform, sidecar = _derive_global_precip_anomaly(
+        tmp_path, monkeypatch, baseline_inches=0.0, run_date=run_date, fh=240
+    )
+
+    assert anomaly.shape == (CONTRACT_HEIGHT, CONTRACT_WIDTH)
+    assert crs.to_epsg() == 4326
+    assert transform == CONTRACT_TRANSFORM
+    assert np.all(np.isfinite(anomaly))
+    # Baseline is zero, so the anomaly IS the window accumulation. At the
+    # stubbed 0.01 in/h that is fh240 − fh120 = 2.40 − 1.20 = 1.20 in — i.e.
+    # the rolling difference was taken, not the run-to-fh240 total.
+    assert np.allclose(anomaly, 1.20, atol=1.0e-5)
+
+    assert sidecar["baseline_region"] == GLOBAL
+    assert sidecar["baseline_kind"] == "climatology"
+    assert sidecar["reference_period"] == "1991-2020"
+    assert sidecar["anomaly_kind"] == "accumulated_precip_departure"
+    assert sidecar["baseline_temporal_resolution"] == "daily_accumulation_window"
+    # fh240 with a 120 h window ⇒ the window opens at fh120, five days in.
+    assert sidecar["target_fh"] == 240
+    assert sidecar["window_start_fh"] == 120
+    assert sidecar["window_end_fh"] == 240
+    assert sidecar["accumulation_window_hours"] == 120
+    assert sidecar["baseline_reference_fh"] == 120
+    assert sidecar["baseline_alignment"] == "window_start_date"
+    assert sidecar["baseline_reference_doy"] == (
+        run_date + timedelta(hours=120)
+    ).timetuple().tm_yday
+
+
+def test_precip_anomaly_subtracts_exactly_the_global_baseline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two runs differing only in the baseline must differ by exactly that.
+
+    This is what proves the global baseline is actually subtracted — the test
+    above would still pass if the baseline were ignored entirely.
+    """
+    run_date = datetime(2026, 4, 21, 0, tzinfo=timezone.utc)
+    zero, _c0, _t0, _s0 = _derive_global_precip_anomaly(
+        tmp_path / "a", monkeypatch, baseline_inches=0.0, run_date=run_date, fh=240
+    )
+    one, _c1, _t1, _s1 = _derive_global_precip_anomaly(
+        tmp_path / "b", monkeypatch, baseline_inches=1.25, run_date=run_date, fh=240
+    )
+    assert np.allclose(zero - one, 1.25, atol=1.0e-5)
+
+
+def test_static_window_precip_anomaly_aligns_to_the_run_date(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``precip_16d_anom`` is fh384-only with a 384 h window, so its window
+    opens at the run itself — the ``init_date`` alignment arm."""
+    run_date = datetime(2026, 4, 21, 0, tzinfo=timezone.utc)
+    anomaly, _crs, _transform, sidecar = _derive_global_precip_anomaly(
+        tmp_path,
+        monkeypatch,
+        baseline_inches=0.0,
+        run_date=run_date,
+        fh=384,
+        var_key="precip_16d_anom",
+    )
+    # Window opens at the run, so the whole run-to-fh384 total is the window.
+    assert np.allclose(anomaly, 3.84, atol=1.0e-5)
+    assert sidecar["window_start_fh"] == 0
+    assert sidecar["baseline_alignment"] == "init_date"
+    assert sidecar["baseline_reference_doy"] == run_date.timetuple().tm_yday
 
 
 # ── 8. accumulation baseline serving path (Wave 2) ─────────────────────────

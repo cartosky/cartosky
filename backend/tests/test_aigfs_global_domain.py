@@ -58,15 +58,20 @@ FLAG = "CARTOSKY_GLOBAL_DOMAIN_MODELS"
 #: deliberate rather than silently absorbed by the tests.
 DECLARING_VAR = "tmp2m"
 
-#: Phase 3A Wave 1: instantaneous anomaly fields with global ERA5 baselines.
-GLOBAL_ANOMALY_VARS = ("tmp2m_anom", "tmp850_anom", "hgt500_anom")
-#: Precip-window anomalies — NA-only baselines until Wave 2.
-CANONICAL_ONLY_ANOMALY_VARS = (
+#: Phase 3A Wave 1 (instantaneous) + Wave 2 (precip windows): every anomaly
+#: field now has a global ERA5 baseline. AIGFS is GFS-family, so its precip
+#: windows are 5/7/10/16 d.
+WAVE1_ANOMALY_VARS = ("tmp2m_anom", "tmp850_anom", "hgt500_anom")
+WAVE2_PRECIP_ANOMALY_VARS = (
     "precip_5d_anom",
     "precip_7d_anom",
     "precip_10d_anom",
     "precip_16d_anom",
 )
+GLOBAL_ANOMALY_VARS = WAVE1_ANOMALY_VARS + WAVE2_PRECIP_ANOMALY_VARS
+#: Empty since Wave 2. Kept as a named set so the exhaustion assertion still
+#: forces an explicit decision for any anomaly variable added later.
+CANONICAL_ONLY_ANOMALY_VARS: tuple[str, ...] = ()
 
 #: Every buildable non-anomaly AIGFS variable, spelled out rather than derived
 #: from the catalog so that dropping one is a test failure.

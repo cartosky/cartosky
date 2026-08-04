@@ -63,17 +63,20 @@ FLAG = "CARTOSKY_GLOBAL_DOMAIN_MODELS"
 #: deliberate rather than silently absorbed by the tests.
 DECLARING_VAR = "tmp2m"
 
-#: Phase 3A Wave 1: instantaneous anomaly fields with global ERA5 baselines.
-GLOBAL_ANOMALY_VARS = ("tmp2m_anom", "tmp850_anom", "hgt500_anom")
-#: Precip-window anomalies — NA-only baselines until Wave 2. AIFS's precip
-#: windows come off the 360 h schedule, so the long window is 15 d, not GFS's
-#: 16 d.
-CANONICAL_ONLY_ANOMALY_VARS = (
+#: Phase 3A Wave 1 (instantaneous) + Wave 2 (precip windows): every anomaly
+#: field now has a global ERA5 baseline. AIFS's precip windows come off the
+#: 360 h schedule, so the long window is 15 d, not GFS's 16 d.
+WAVE1_ANOMALY_VARS = ("tmp2m_anom", "tmp850_anom", "hgt500_anom")
+WAVE2_PRECIP_ANOMALY_VARS = (
     "precip_5d_anom",
     "precip_7d_anom",
     "precip_10d_anom",
     "precip_15d_anom",
 )
+GLOBAL_ANOMALY_VARS = WAVE1_ANOMALY_VARS + WAVE2_PRECIP_ANOMALY_VARS
+#: Empty since Wave 2. Kept as a named set so the exhaustion assertion still
+#: forces an explicit decision for any anomaly variable added later.
+CANONICAL_ONLY_ANOMALY_VARS: tuple[str, ...] = ()
 
 #: Every buildable non-anomaly AIFS variable, spelled out rather than derived
 #: from the catalog so that dropping one is a test failure.
@@ -390,4 +393,13 @@ def test_global_frames_follow_the_aifs_schedule_not_gfs() -> None:
         for var_key, capability in catalog.items()
         if GLOBAL in (capability.supported_build_regions or [])
     )
-    assert total_global_frames == 852
+    # Wave 2 (2026-08-03) added the four precip-window anomalies to the global
+    # domain: 41 + 33 + 21 + 1 = 96 more frames per run (852 → 948).
+    assert total_global_frames == 948
+    assert (
+        sum(
+            len(AIFS_MODEL.scheduled_fhs_for_var(var_key, 0))
+            for var_key in WAVE2_PRECIP_ANOMALY_VARS
+        )
+        == 96
+    )

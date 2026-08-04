@@ -12,26 +12,51 @@ in the same style as `docs/WAVE1_VM_EXECUTION_2026-07-31.md`.
 
 ## ⛔⛔ STOP — this doc covers DOWNLOAD + STAGE ONLY
 
-**LIFTED 2026-08-02:** the streaming rewrite is committed, verified
-(streaming build ~1.5 GiB peak at global scale; NA byte-identity pinned),
-and the VM repo is refreshed. The build step is now §3.3, with its own ⛔
-gates. What remains blocked is the CAPABILITY FLIP (§3.4) — a code step,
-never an operator action. Historical blockers, for the record:
+**FULLY LIFTED 2026-08-03.** The streaming rewrite shipped 2026-08-02
+(streaming build ~1.5 GiB peak at global scale; NA byte-identity pinned) and
+the CAPABILITY FLIP is now implemented for **all four** deterministic global
+models — gfs, aigfs, aifs, ecmwf. Deploy steps: §3.4. Historical blockers and
+the original checklist, for the record:
 
 > [!IMPORTANT]
-> **Capability-flip checklist (the step AFTER baselines are installed on
-> prod — none of it is an operator action now):** (1) add
-> `baseline_region_by_build_region: "global=global"` to the precip anomaly
-> VarSpec hints (gfs.py — without it a global build resolves no baseline
-> and skips, by Wave-1 design); (2) invert the precip entries in the
-> anomaly allowlist + tests; (3) decide the accumulation missing-baseline
-> pre-check (instantaneous has one; accumulation deferred deliberately).
+> **Capability-flip checklist — DONE 2026-08-03.** (1)
+> `baseline_region_by_build_region: "global=global"` on the precip anomaly
+> VarSpec hints, per model, opt-in via a keyword argument on the shared
+> `_precip_anomaly_var_spec` so the ensembles (gefs, eps — no global domain)
+> do not inherit it; (2) precip entries moved into each model's
+> `*_GLOBAL_ANOMALY_VAR_KEYS` allowlist + both-direction test pins; (3) the
+> accumulation missing-baseline pre-check was IMPLEMENTED, not deferred —
+> `accumulation_baseline_assets_present`, applied in pipeline.py
+> `_resolve_build_region_baseline`, so a missing precip baseline skips the
+> frame (`skipped_missing_baseline`) instead of hard-failing it.
+
+> [!NOTE]
+> **Journal grep key.** The skip line
+> (`climatology_baseline_missing … — frame skipped (status=skipped_missing_baseline)`)
+> now names its alignment field honestly: instantaneous anomalies still log
+> `valid_time=<frame valid time>`, but accumulation (precip-window) anomalies
+> log `reference_date=<accumulation WINDOW-START date>`, which is a different
+> quantity. The Wave-1 runbook greps
+> (`docs/GLOBAL_ANOMALY_WAVE1_RUNBOOK.md`, `docs/WAVE1_VM_EXECUTION_2026-07-31.md`)
+> match on `climatology_baseline_missing` and target the instantaneous vars,
+> so they are unaffected.
 
 > [!IMPORTANT]
 > **The build command MUST pass `--windows 5 7 10 15 16`.** The script's
-> default (`5 7 10 15`) omits the 16-day window that GFS's `precip_16d_anom`
-> requires (`gfs.py` catalog) — the default would produce a silently
-> incomplete GFS baseline set discovered only at the capability flip.
+> default (`5 7 10 15`) omits the 16-day window — the default would produce a
+> silently incomplete baseline set discovered only at the capability flip.
+> All five windows are load-bearing because the four models split into two
+> families (verified against the catalogs 2026-08-03):
+>
+> | Model | Windows | Long window |
+> |---|---|---|
+> | gfs   | 5 / 7 / 10 / 16 | 16 d |
+> | aigfs | 5 / 7 / 10 / 16 | 16 d |
+> | aifs  | 5 / 7 / 10 / 15 | 15 d |
+> | ecmwf | 5 / 7 / 10 / 15 | 15 d |
+>
+> ECMWF has **no** `precip_16d_anom` — it was removed as a dead
+> packed-but-uncataloged entry in 9a76a1c3 and must not be resurrected.
 
 1. **R2 (memory).** `_daily_normals_by_doy` appends every warped daily raster to
    `buckets` before averaging — 10 958 × 3.961 MiB ≈ **42 GiB resident** at global.
@@ -306,19 +331,99 @@ rsync -a --info=progress2 root@<VM_IP>:/data/cartosky-global-baselines/climatolo
 Prod install mirrors Wave 1 (Mac → prod, `.incoming` → atomic rename, per
 field; destinations `/opt/cartosky/data/climatology/v1/era5/baseline/precip_{5,7,10,15,16}d/global/`).
 
-**Installing the assets changes nothing by itself** — the precip anomaly
-specs deliberately carry no global baseline hint, so global builds skip.
-Going live is the **capability-flip code step** (see the ⛔ STOP block's
-checklist: `global=global` hint, allowlist inversion, accumulation
-pre-check decision), which runs through the normal implement→verify→deploy
-pipeline, NOT an operator action. Install the assets first, then request
-the flip.
+The capability-flip code shipped 2026-08-03 for **all four** deterministic
+global models. Install the baselines first; **wrong order is survivable** —
+the accumulation pre-check skips affected frames (`skipped_missing_baseline`)
+and the run continues, so nothing crashes and the next run picks them up.
+
+**Step 0 — precondition. Five window dirs × 366 files each:**
+
+```bash
+for W in 5 7 10 15 16; do
+  printf 'precip_%-3sd: ' "$W"
+  ls /opt/cartosky/data/climatology/v1/era5/baseline/precip_${W}d/global/1991-2020/doy_*.tif 2>/dev/null | wc -l
+done
+```
+
+⛔ Expect `366` on **every** line (365 + leap day). 5/7/10 are shared by all
+four models; 16 serves gfs + aigfs; 15 serves aifs + ecmwf.
+
+**Step 1 — pull and restart. This is a descriptor change, so ALL FOUR model
+schedulers AND the API must restart.** The scheduler decides what to build,
+the API decides what to advertise — restarting only one gives a split brain
+where the viewer offers a variable no scheduler is producing.
+
+```bash
+cd /opt/cartosky && sudo -u cartosky git pull
+sudo systemctl restart \
+  csky-gfs-scheduler csky-aigfs-scheduler csky-aifs-scheduler csky-ecmwf-scheduler \
+  csky-api
+systemctl is-active csky-gfs-scheduler csky-aigfs-scheduler csky-aifs-scheduler csky-ecmwf-scheduler csky-api
+```
+
+**Step 2 — capabilities advertise the flip.** Each model must list its own
+window set; note gfs/aigfs are 16 d and aifs/ecmwf are 15 d.
+
+```bash
+for M in gfs aigfs aifs ecmwf; do
+  echo "== $M"
+  curl -s https://api.cartosky.com/api/v4/capabilities \
+    | jq --arg m "$M" '
+        .model_catalog[$m].variables
+        | with_entries(select(.key | test("^precip_[0-9]+d_anom$")))
+        | map_values(.supported_build_regions)'
+done
+```
+
+⛔ Expect `["na","global"]` for every listed key, and exactly these keys:
+`gfs`/`aigfs` → 5d, 7d, 10d, **16d**; `aifs`/`ecmwf` → 5d, 7d, 10d, **15d**.
+A `precip_16d_anom` appearing under ecmwf is a regression (9a76a1c3).
+
+**Step 3 — frames actually published on the global domain.**
+
+```bash
+for M in gfs aigfs aifs ecmwf; do
+  RUN=$(curl -s "https://api.cartosky.com/api/v4/$M/runs?domain=global" | jq -r '.runs[-1].run // .runs[-1]')
+  echo "== $M run=$RUN"
+  curl -s "https://api.cartosky.com/api/v4/$M/$RUN/manifest?domain=global" \
+    | jq '.variables | keys | map(select(test("^precip_[0-9]+d_anom$")))'
+  for V in precip_5d_anom precip_7d_anom precip_10d_anom; do
+    printf '   %s frames: ' "$V"
+    curl -s "https://api.cartosky.com/api/v4/$M/$RUN/$V/frames?domain=global" | jq '.frames | length'
+  done
+done
+```
+
+Expected first fh is the window length (120 / 168 / 240). The long-window
+variable is **static**: `precip_16d_anom` (gfs, aigfs) is one frame at fh384,
+`precip_15d_anom` (aifs, ecmwf) is one frame at fh360.
+
+> ECMWF cycle asymmetry: on the **short** 06/18z cycles (144 h horizon) only
+> `precip_5d_anom` clears its `min_fh`. Zero frames for 7d/10d/15d on those
+> runs is CORRECT, not a failure. Verify ECMWF against a 00z or 12z run.
+
+**Step 4 — journal. The skip line must be absent.**
+
+```bash
+for U in csky-gfs-scheduler csky-aigfs-scheduler csky-aifs-scheduler csky-ecmwf-scheduler; do
+  echo "== $U"
+  sudo journalctl -u "$U" --since '6 hours ago' \
+    | grep -E 'climatology_baseline_missing|skipped_missing_baseline' \
+    | grep -E 'precip_[0-9]+d_anom'
+done
+```
+
+⛔ Expect **empty**. Any hit names the exact missing asset in
+`baseline_field=` / `baseline_region=`, and carries `reference_date=` — the
+accumulation **window-start** date, not the frame's valid time (instantaneous
+anomalies log `valid_time=` instead). A hit means the baseline install is
+incomplete for that field: nothing is broken, those frames simply did not
+publish. Fix the install and the next run picks them up.
 
 ### 3.5 Park / decom
 
 Leave the staged set on the VM if the VM is staying up for the build; otherwise the
-Mac copy is authoritative and the VM can be decommissioned and rebuilt later. **Do
-not proceed to the build** — see the STOP block at the top.
+Mac copy is authoritative and the VM can be decommissioned and rebuilt later.
 
 ---
 

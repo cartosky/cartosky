@@ -1054,36 +1054,26 @@ def _precip_anomaly_var_spec(
     target_fh: int | None = None,
     *,
     base_component: str = "precip_total",
+    baseline_region_by_build_region: str | None = None,
 ) -> VarSpec:
+    """Build one precip-accumulation anomaly spec.
+
+    Shared by every model with precip anomalies (gefs, aifs, ecmwf, aigfs,
+    eps), so ``baseline_region_by_build_region`` is opt-in per caller rather
+    than baked in: GFS took the Phase 3A Wave 2 global flip on 2026-08-03, and
+    the other models must declare it on their own schedule. Passing it here is
+    only half a flip — the model's per-variable global allowlist has to agree.
+    """
     hints = {
         "base_component": base_component,
         "baseline_field": f"precip_{days}d",
         "baseline_source": "era5",
         "baseline_region": "na",
-        # Phase 3A Wave 2 — NA-only ON PURPOSE, and this is the flip site.
-        #
-        # Unlike the three instantaneous anomaly specs above, there is no
-        # "baseline_region_by_build_region": "global=global" here. Per
-        # `resolve_baseline_region`, a native-geographic build region with no
-        # explicit declaration resolves to None, so a global build *skips*
-        # these variables rather than subtracting the NA climatology. That is
-        # the intended state until the global precip baselines exist on disk.
-        #
-        # The Wave 2 capability flip must, together:
-        #   1. add "baseline_region_by_build_region": "global=global" here;
-        #   2. invert the per-variable allowlist that currently asserts no
-        #      precip anomaly declares global (GFS_GLOBAL_ANOMALY_VAR_KEYS and
-        #      the global-domain test pins);
-        #   3. decide the accumulation missing-baseline pre-check — the
-        #      instantaneous path skips a frame when its baseline asset is
-        #      absent (`instantaneous_baseline_assets_present`, applied in
-        #      pipeline.py `_resolve_build_region_baseline`), but there is no
-        #      accumulation counterpart, so a missing precip baseline would
-        #      hard-fail the frame instead of skipping it.
-        #
-        # The build side is ready: build_precip_accumulation_climatology_assets.py
-        # supports --region global, and load_accumulation_climatology_baseline
-        # validates against the EPSG:4326 contract grid.
+        **(
+            {"baseline_region_by_build_region": baseline_region_by_build_region}
+            if baseline_region_by_build_region
+            else {}
+        ),
         "baseline_version": "v1",
         "reference_period": "1991-2020",
         "accumulation_window_hours": str(days * 24),
@@ -1108,6 +1098,16 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.it
         _precip_anom_key,
         _precip_anom_days,
         PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
+        # Phase 3A Wave 2 (FLIPPED 2026-08-03): the global accumulation ERA5
+        # baselines exist for the GFS windows (5/7/10/16 d), so a global build
+        # departs from the global EPSG:4326 baseline rather than skipping.
+        # The accumulation missing-baseline pre-check landed with this flip
+        # (`accumulation_baseline_assets_present`, applied in pipeline.py
+        # `_resolve_build_region_baseline`), so a box where the assets are not
+        # installed yet still skips the frame instead of failing it — deploy
+        # ordering is not load-bearing. GFS only: the other models sharing
+        # `_precip_anomaly_var_spec` keep their pre-Wave-2 hints.
+        baseline_region_by_build_region="global=global",
     )
 
 GFS_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
@@ -1236,18 +1236,31 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.it
 # ERA5 baselines were North-America-only, so a global anomaly had no
 # climatology to depart from.
 #
-# Phase 3A Wave 1 (D2) narrows that exclusion to a per-variable allowlist: the
-# three *instantaneous* anomaly fields now have global EPSG:4326 ERA5
-# baselines and declare ``global``; the four precip-window anomalies still do
-# not (their baselines need the Wave 2 streaming-memory fix first). The
-# exclusion remains by omission below (never a runtime check) and both
-# directions are pinned by tests over the real catalog.
+# Phase 3A Wave 1 (D2) narrowed that exclusion to a per-variable allowlist, and
+# Wave 2 (2026-08-03) emptied the excluded side: the three *instantaneous*
+# anomaly fields got global EPSG:4326 ERA5 baselines in Wave 1, the four
+# precip-window anomalies got their global accumulation baselines in Wave 2, so
+# every GFS anomaly variable now declares ``global``. The allowlist mechanism
+# stays — a *new* anomaly variable must still be added deliberately rather than
+# inherit the declaration — and both directions are pinned by tests over the
+# real catalog.
 GFS_GLOBAL_BUILD_REGIONS: tuple[str, ...] = ("na", "global")
 
-#: Anomaly variables that have global ERA5 baselines (Wave 1 — instantaneous
-#: fields only). Everything else ending in ``_anom`` stays canonical-only.
+#: Anomaly variables that have global ERA5 baselines. Everything else ending in
+#: ``_anom`` stays canonical-only.
 GFS_GLOBAL_ANOMALY_VAR_KEYS: frozenset[str] = frozenset(
-    {"tmp2m_anom", "tmp850_anom", "hgt500_anom"}
+    {
+        # Wave 1 — instantaneous fields.
+        "tmp2m_anom",
+        "tmp850_anom",
+        "hgt500_anom",
+        # Wave 2 — precip accumulation windows (5/7/10/16 d; 15 d is the
+        # AIFS/ECMWF window, not a GFS one).
+        "precip_5d_anom",
+        "precip_7d_anom",
+        "precip_10d_anom",
+        "precip_16d_anom",
+    }
 )
 
 

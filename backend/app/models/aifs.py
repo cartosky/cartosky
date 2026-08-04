@@ -176,13 +176,20 @@ AIFS_VARS = {
     "hgt500": ECMWF_VARS["hgt500"],
     "hgt500_anom": _with_global_baseline_hint(ECMWF_VARS["hgt500_anom"]),
     "precip_total": ECMWF_VARS["precip_total"],
-    "precip_5d_anom": ECMWF_VARS["precip_5d_anom"],
-    "precip_7d_anom": ECMWF_VARS["precip_7d_anom"],
-    "precip_10d_anom": ECMWF_VARS["precip_10d_anom"],
+    # Phase 3A Wave 2 (FLIPPED 2026-08-03). ECMWF took the same flip in the
+    # same change, so these three would carry the hint by object sharing
+    # anyway — re-declaring it on AIFS copies keeps the declaration explicit
+    # and keeps AIFS from silently un-flipping if ECMWF ever reverses.
+    "precip_5d_anom": _with_global_baseline_hint(ECMWF_VARS["precip_5d_anom"]),
+    "precip_7d_anom": _with_global_baseline_hint(ECMWF_VARS["precip_7d_anom"]),
+    "precip_10d_anom": _with_global_baseline_hint(ECMWF_VARS["precip_10d_anom"]),
     "precip_15d_anom": _precip_anomaly_var_spec(
         "precip_15d_anom",
         15,
         PRECIP_ANOM_360_STATIC_TARGET_FH_BY_VAR_KEY.get("precip_15d_anom"),
+        # AIFS is 15-day like ECMWF, not 16 — the prod global baselines cover
+        # 5/7/10/15/16 d, so this window is backed.
+        baseline_region_by_build_region="global=global",
     ),
     "pwat": ECMWF_VARS["pwat"],
     "snowfall_total": ECMWF_VARS["snowfall_total"],
@@ -212,10 +219,22 @@ AIFS_OPER_FHS = list(range(0, 361, 6))
 # tests over the real catalog.
 AIFS_GLOBAL_BUILD_REGIONS: tuple[str, ...] = ("na", "global")
 
-#: Anomaly variables that have global ERA5 baselines (Wave 1 — instantaneous
-#: fields only). Everything else ending in ``_anom`` stays canonical-only.
+#: Anomaly variables that have global ERA5 baselines. Wave 2 (2026-08-03)
+#: emptied the excluded side — every AIFS anomaly now declares ``global``.
+#: The allowlist mechanism stays so a *new* anomaly variable must still be
+#: added deliberately rather than inherit the declaration.
 AIFS_GLOBAL_ANOMALY_VAR_KEYS: frozenset[str] = frozenset(
-    {"tmp2m_anom", "tmp850_anom", "hgt500_anom"}
+    {
+        # Wave 1 — instantaneous fields.
+        "tmp2m_anom",
+        "tmp850_anom",
+        "hgt500_anom",
+        # Wave 2 — precip accumulation windows. ECMWF family: 5/7/10/15 d.
+        "precip_5d_anom",
+        "precip_7d_anom",
+        "precip_10d_anom",
+        "precip_15d_anom",
+    }
 )
 
 

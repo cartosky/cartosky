@@ -62,10 +62,12 @@ from app.services.colormaps import get_color_map_spec
 from app.services.domains import canonical_domain, domain_scoped_model_root, is_reserved_domain_id
 from app.services.climatology import (
     DEFAULT_BASELINE_SOURCE,
+    accumulation_baseline_assets_present,
     get_baseline_grid,
     get_baseline_grid_params,
     instantaneous_baseline_assets_present,
     normalize_baseline_source,
+    resolve_accumulation_baseline_window,
     resolve_baseline_region,
 )
 from app.services.grid import (
@@ -1553,31 +1555,72 @@ def _resolve_build_region_baseline(
         except TypeError:
             resolved_spec = var_spec_model
 
-    if str(getattr(var_spec_model, "derive", "") or "").strip() != "anomaly_departure":
+    derive_id = str(getattr(var_spec_model, "derive", "") or "").strip()
+    if derive_id not in ("anomaly_departure", "precip_accum_anomaly_departure"):
         return resolved_spec, resolved_hints, None
 
     baseline_source = normalize_baseline_source(
         str(hints.get("baseline_source") or DEFAULT_BASELINE_SOURCE).strip()
         or DEFAULT_BASELINE_SOURCE
     )
-    baseline_field = str(hints.get("baseline_field") or "").strip().lower() or str(
-        hints.get("base_component") or var_key
-    ).split("__", 1)[0]
     baseline_version = str(hints.get("baseline_version") or "v1").strip() or "v1"
     reference_period = str(hints.get("reference_period") or "1991-2020").strip() or "1991-2020"
-    valid_time = (run_date + timedelta(hours=int(fh))).astimezone(timezone.utc)
-    if not instantaneous_baseline_assets_present(
-        version=baseline_version,
-        baseline_source=baseline_source,
-        field=baseline_field,
-        region=resolved,
-        reference_period=reference_period,
-        valid_time=valid_time,
-    ):
+
+    if derive_id == "anomaly_departure":
+        baseline_field = str(hints.get("baseline_field") or "").strip().lower() or str(
+            hints.get("base_component") or var_key
+        ).split("__", 1)[0]
+        valid_time = (run_date + timedelta(hours=int(fh))).astimezone(timezone.utc)
+        present = instantaneous_baseline_assets_present(
+            version=baseline_version,
+            baseline_source=baseline_source,
+            field=baseline_field,
+            region=resolved,
+            reference_period=reference_period,
+            valid_time=valid_time,
+        )
+        alignment_key = "valid_time"
+        alignment_time = valid_time
+    else:
+        # Phase 3A Wave 2: accumulation counterpart of the check above. One
+        # accumulation frame subtracts exactly one day-of-year baseline asset,
+        # and the reference date comes from the *same* helper `derive.py` uses
+        # — so this is an exact pre-check, not an approximation of one.
+        baseline_field = (
+            str(hints.get("baseline_field") or "").strip().lower()
+            or str(var_key).removesuffix("_anom").strip().lower()
+        )
+        try:
+            accumulation_window = resolve_accumulation_baseline_window(
+                hints=hints,
+                var_key=var_key,
+                fh=fh,
+                run_date=run_date,
+                baseline_field=baseline_field,
+            )
+        except ValueError:
+            # Misdeclared window: not a missing-asset condition. Let the derive
+            # raise it as before rather than laundering a bug into a skip.
+            return resolved_spec, resolved_hints, None
+        present = accumulation_baseline_assets_present(
+            version=baseline_version,
+            baseline_source=baseline_source,
+            field=baseline_field,
+            region=resolved,
+            reference_period=reference_period,
+            reference_date=accumulation_window.reference_date,
+        )
+        # NOT the frame's valid time: an accumulation frame is aligned to the
+        # date its window *opens*. Logged under its own key so the runbook
+        # grep never reads a window-start date as a valid time.
+        alignment_key = "reference_date"
+        alignment_time = accumulation_window.reference_date
+
+    if not present:
         logger.warning(
             "climatology_baseline_missing model=%s region=%s var=%s fh=%03d "
             "baseline_source=%s baseline_field=%s baseline_region=%s "
-            "reference_period=%s valid_time=%s — frame skipped (status=%s)",
+            "reference_period=%s %s=%s — frame skipped (status=%s)",
             model,
             region,
             var_key,
@@ -1586,7 +1629,8 @@ def _resolve_build_region_baseline(
             baseline_field,
             resolved,
             reference_period,
-            valid_time.isoformat(),
+            alignment_key,
+            alignment_time.isoformat(),
             BASELINE_SKIP_STATUS,
         )
         return resolved_spec, resolved_hints, "missing_baseline_assets"

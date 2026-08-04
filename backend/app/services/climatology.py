@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import rasterio
@@ -402,6 +404,118 @@ def climatology_accumulation_baseline_path(
         reference_period=reference_period,
     )
     return root / f"doy_{doy:03d}.tif"
+
+
+class AccumulationBaselineWindow(NamedTuple):
+    """The window arithmetic behind one accumulation-anomaly frame.
+
+    ``window_start_fh`` is the forecast hour the accumulation window opens at
+    (``0`` for a run-anchored window), and ``reference_date`` is the single
+    date whose ``doy_NNN.tif`` baseline asset that frame subtracts.
+    """
+
+    target_fh: int
+    accumulation_window_hours: int
+    window_start_fh: int
+    reference_date: datetime
+
+
+def resolve_accumulation_baseline_window(
+    *,
+    hints: Mapping[str, Any],
+    var_key: str,
+    fh: int,
+    run_date: datetime,
+    baseline_field: str = "",
+) -> AccumulationBaselineWindow:
+    """Resolve which baseline reference date one accumulation frame needs.
+
+    Single source of truth for this arithmetic. ``derive.py`` uses it to pick
+    the cumulative forecast hours and to load the baseline; the build pipeline
+    uses it to pre-check that the baseline asset for the *same* reference date
+    is installed before the frame is attempted. Duplicating the arithmetic
+    would let the pre-check silently drift from what the derive actually
+    loads, which is exactly the failure mode the pre-check exists to prevent.
+
+    Raises ``ValueError`` when the declared window is longer than the target
+    forecast hour — the same condition, and message, the derive raises on.
+    """
+    # NOTE: this `field` is used only by the `precip_(\d+)d` regex fallback
+    # below, and that fallback is unreachable for every shipping catalog —
+    # all of them set `accumulation_window_hours` explicitly. So the fact that
+    # the fallback chain here differs slightly from pre-extraction HEAD (which
+    # regexed the caller's already-resolved `baseline_field` and had no
+    # var_key fallback) cannot change any resolved window. Documented, not
+    # fixed: normalising it would be churn on a dead path.
+    field = str(baseline_field or hints.get("baseline_field") or "").strip().lower()
+    if not field:
+        field = str(var_key).removesuffix("_anom").strip().lower()
+
+    target_fh_raw = str(hints.get("target_fh") or "").strip()
+    try:
+        target_fh = int(target_fh_raw) if target_fh_raw else int(fh)
+    except ValueError:
+        target_fh = int(fh)
+
+    window_hours_raw = str(hints.get("accumulation_window_hours") or "").strip()
+    try:
+        accumulation_window_hours = int(window_hours_raw) if window_hours_raw else 0
+    except ValueError:
+        accumulation_window_hours = 0
+    if accumulation_window_hours <= 0:
+        match = re.match(r"^precip_(\d+)d$", field)
+        if match:
+            accumulation_window_hours = int(match.group(1)) * 24
+    if accumulation_window_hours <= 0:
+        accumulation_window_hours = target_fh
+
+    window_start_fh = target_fh - accumulation_window_hours
+    if window_start_fh < 0:
+        raise ValueError(
+            f"Precip anomaly target fh{target_fh:03d} is shorter than accumulation window "
+            f"{accumulation_window_hours}h for {var_key}"
+        )
+
+    init_date = (
+        run_date.astimezone(timezone.utc)
+        if run_date.tzinfo
+        else run_date.replace(tzinfo=timezone.utc)
+    )
+    return AccumulationBaselineWindow(
+        target_fh=target_fh,
+        accumulation_window_hours=accumulation_window_hours,
+        window_start_fh=window_start_fh,
+        reference_date=init_date + timedelta(hours=window_start_fh),
+    )
+
+
+def accumulation_baseline_assets_present(
+    *,
+    data_root: Path | None = None,
+    version: str,
+    baseline_source: str,
+    field: str,
+    region: str,
+    reference_period: str,
+    reference_date,
+) -> bool:
+    """Whether the accumulation baseline asset backing one frame is on disk.
+
+    Accumulation baselines are day-of-year only (no hour bucket) and one frame
+    subtracts exactly one of them, so this is an exact-path check against the
+    same path :func:`load_accumulation_climatology_baseline` opens — not an
+    approximation. The pipeline uses it to skip a frame instead of failing it
+    when a baseline set has not been installed yet.
+    """
+    return climatology_accumulation_baseline_path(
+        data_root=data_root,
+        version=version,
+        baseline_source=baseline_source,
+        field=field,
+        region=region,
+        reference_period=reference_period,
+        reference_date=reference_date,
+    ).is_file()
 
 
 def _synoptic_bucket_valid_time(valid_time):

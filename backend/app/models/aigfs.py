@@ -239,6 +239,10 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.it
         _precip_anom_key,
         _days,
         PRECIP_ANOM_384_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
+        # Phase 3A Wave 2 (FLIPPED 2026-08-03). AIGFS is a GFS-family catalog:
+        # windows 5/7/10/16 d, so it rides the same global accumulation ERA5
+        # baselines GFS does — the baseline path has no model segment.
+        baseline_region_by_build_region="global=global",
     )
 
 
@@ -248,19 +252,31 @@ for _precip_anom_key, _precip_anom_fh in PRECIP_ANOM_384_TARGET_FH_BY_VAR_KEY.it
 # variables were the one blanket exclusion — their ERA5 baselines were
 # North-America-only, so a global anomaly had no climatology to depart from.
 #
-# Phase 3A Wave 1 (D2) narrows that exclusion to a per-variable allowlist: the
-# three *instantaneous* anomaly fields now have global EPSG:4326 ERA5
-# baselines (shared with GFS — the baseline path has no model segment) and
-# declare ``global``; the four precip-window anomalies still do not (their
-# baselines need the Wave 2 streaming-memory fix first). The exclusion remains
-# by omission below (never a runtime check) and both directions are pinned by
-# tests over the real catalog.
+# Phase 3A Wave 1 (D2) narrowed that exclusion to a per-variable allowlist, and
+# Wave 2 (2026-08-03) emptied the excluded side: the three *instantaneous*
+# anomaly fields got global EPSG:4326 ERA5 baselines in Wave 1, the four
+# precip-window anomalies got their global accumulation baselines in Wave 2
+# (both shared with GFS — the baseline path has no model segment), so every
+# AIGFS anomaly now declares ``global``. The allowlist mechanism stays — a
+# *new* anomaly variable must still be added deliberately rather than inherit
+# the declaration — and both directions are pinned by tests over the real
+# catalog.
 AIGFS_GLOBAL_BUILD_REGIONS: tuple[str, ...] = ("na", "global")
 
-#: Anomaly variables that have global ERA5 baselines (Wave 1 — instantaneous
-#: fields only). Everything else ending in ``_anom`` stays canonical-only.
+#: Anomaly variables that have global ERA5 baselines. Everything else ending in
+#: ``_anom`` stays canonical-only.
 AIGFS_GLOBAL_ANOMALY_VAR_KEYS: frozenset[str] = frozenset(
-    {"tmp2m_anom", "tmp850_anom", "hgt500_anom"}
+    {
+        # Wave 1 — instantaneous fields.
+        "tmp2m_anom",
+        "tmp850_anom",
+        "hgt500_anom",
+        # Wave 2 — precip accumulation windows. GFS family: 5/7/10/16 d.
+        "precip_5d_anom",
+        "precip_7d_anom",
+        "precip_10d_anom",
+        "precip_16d_anom",
+    }
 )
 
 

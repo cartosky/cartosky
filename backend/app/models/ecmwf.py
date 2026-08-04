@@ -1050,6 +1050,13 @@ for _precip_anom_key, _precip_anom_fh in ECMWF_PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.
         _precip_anom_key,
         _days,
         ECMWF_PRECIP_ANOM_STATIC_TARGET_FH_BY_VAR_KEY.get(_precip_anom_key),
+        # Phase 3A Wave 2 (FLIPPED 2026-08-03). ECMWF's long-range window is
+        # 15 d, not 16 (see 9a76a1c3 — precip_16d_anom is an input alias and
+        # is deliberately absent from this catalog; do not resurrect it). The
+        # prod global baselines cover 5/7/10/15/16 d, so 5/7/10/15 are all
+        # backed. AIFS re-declares this hint on its own copies rather than
+        # relying on these objects — see ``aifs.py``.
+        baseline_region_by_build_region="global=global",
     )
 
 
@@ -1200,10 +1207,23 @@ for _precip_anom_key, _precip_anom_fh in ECMWF_PRECIP_ANOM_TARGET_FH_BY_VAR_KEY.
 # tests over the real catalog.
 ECMWF_GLOBAL_BUILD_REGIONS: tuple[str, ...] = ("na", "global")
 
-#: Anomaly variables that have global ERA5 baselines (Wave 1 — instantaneous
-#: fields only). Everything else ending in ``_anom`` stays canonical-only.
+#: Anomaly variables that have global ERA5 baselines. Wave 2 (2026-08-03)
+#: emptied the excluded side — every ECMWF anomaly now declares ``global``.
+#: The allowlist mechanism stays so a *new* anomaly variable must still be
+#: added deliberately rather than inherit the declaration.
 ECMWF_GLOBAL_ANOMALY_VAR_KEYS: frozenset[str] = frozenset(
-    {"tmp2m_anom", "tmp850_anom", "hgt500_anom"}
+    {
+        # Wave 1 — instantaneous fields.
+        "tmp2m_anom",
+        "tmp850_anom",
+        "hgt500_anom",
+        # Wave 2 — precip accumulation windows. ECMWF family: 5/7/10/15 d.
+        # There is no precip_16d_anom in this catalog (9a76a1c3).
+        "precip_5d_anom",
+        "precip_7d_anom",
+        "precip_10d_anom",
+        "precip_15d_anom",
+    }
 )
 
 

@@ -38,6 +38,7 @@ from app.services.climatology import (
     load_accumulation_climatology_baseline,
     load_climatology_baseline,
     normalize_baseline_source,
+    resolve_accumulation_baseline_window,
 )
 from app.services.colormaps import (
     RADAR_PTYPE_BREAKS,
@@ -1249,28 +1250,18 @@ def _derive_precip_accum_anomaly_departure(
     baseline_region = str(hints.get("baseline_region") or "").strip().lower()
     baseline_version = str(hints.get("baseline_version") or "v1").strip() or "v1"
     reference_period = str(hints.get("reference_period") or "1991-2020").strip() or "1991-2020"
-    target_fh_raw = str(hints.get("target_fh") or "").strip()
-    try:
-        target_fh = int(target_fh_raw) if target_fh_raw else int(fh)
-    except ValueError:
-        target_fh = int(fh)
-    window_hours_raw = str(hints.get("accumulation_window_hours") or "").strip()
-    try:
-        accumulation_window_hours = int(window_hours_raw) if window_hours_raw else 0
-    except ValueError:
-        accumulation_window_hours = 0
-    if accumulation_window_hours <= 0:
-        match = re.match(r"^precip_(\d+)d$", baseline_field)
-        if match:
-            accumulation_window_hours = int(match.group(1)) * 24
-    if accumulation_window_hours <= 0:
-        accumulation_window_hours = target_fh
-    window_start_fh = target_fh - accumulation_window_hours
-    if window_start_fh < 0:
-        raise ValueError(
-            f"Precip anomaly target fh{target_fh:03d} is shorter than accumulation window "
-            f"{accumulation_window_hours}h for {var_key}"
-        )
+    # Shared with the pipeline's missing-baseline pre-check — see
+    # `resolve_accumulation_baseline_window`. Do not inline this arithmetic.
+    accumulation_window = resolve_accumulation_baseline_window(
+        hints=hints,
+        var_key=var_key,
+        fh=fh,
+        run_date=run_date,
+        baseline_field=baseline_field,
+    )
+    target_fh = accumulation_window.target_fh
+    accumulation_window_hours = accumulation_window.accumulation_window_hours
+    window_start_fh = accumulation_window.window_start_fh
 
     if not baseline_region:
         baseline_region = str((derive_component_target_grid or {}).get("region", "")).strip().lower()
@@ -1366,8 +1357,7 @@ def _derive_precip_accum_anomaly_departure(
     else:
         forecast_values = target_values.astype(np.float32, copy=False)
 
-    init_date = run_date.astimezone(timezone.utc) if run_date.tzinfo else run_date.replace(tzinfo=timezone.utc)
-    baseline_reference_date = init_date + timedelta(hours=window_start_fh)
+    baseline_reference_date = accumulation_window.reference_date
     baseline_values, baseline_crs, baseline_transform, baseline_meta = load_accumulation_climatology_baseline(
         version=baseline_version,
         baseline_source=baseline_source,
