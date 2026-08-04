@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the Open-Meteo bucket monitor hourly
+
+[Timer]
+# S3 LastModified is ground truth for arrival times, so hourly is plenty —
+# we only need to look within the bucket's ~7 day retention.
+OnCalendar=*-*-* *:20:00
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target

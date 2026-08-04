@@ -1,0 +1,20 @@
+[Unit]
+Description=CartoSky Open-Meteo bucket timing monitor + profile archive (oneshot)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=cartosky
+Group=cartosky
+UMask=0027
+WorkingDirectory=/opt/cartosky/scripts/openmeteo_monitor
+EnvironmentFile=-/etc/cartosky/openmeteo-monitor.env
+Environment=OM_MONITOR_DATA_DIR=/var/lib/cartosky/openmeteo-monitor
+# Dedicated venv: keeps the GPLv2 omfiles reader out of the main app venv.
+ExecStart=/opt/cartosky/.venv-ommonitor/bin/python monitor.py
+Nice=15
+CPUWeight=25
+IOWeight=25
+StandardOutput=journal
+StandardError=journal
