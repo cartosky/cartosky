@@ -63,6 +63,17 @@ function spcVariableLabel(option: { value: string; label: string }): string {
   }
 }
 
+function compactDesktopRunLabel(label: string | null | undefined): string | undefined {
+  if (!label || !/^Issued\s+/i.test(label)) {
+    return label ?? undefined;
+  }
+
+  return label
+    .replace(/^Issued\s+/i, "")
+    .replace(/\s+at\s+/i, " ")
+    .replace(/,\s+/g, " ");
+}
+
 function useMinuteTick(active: boolean): number {
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -335,7 +346,7 @@ export function ViewerRail() {
                           options={runMenuOptions}
                           disabled={disabled || runSelectionLocked}
                           placeholder="Run"
-                          selectedLabelOverride={runDisplayLabel}
+                          selectedLabelOverride={compactDesktopRunLabel(runDisplayLabel)}
                           highlightState={!runSelectionLocked && hasNewerRunAvailable}
                           menuActionLabel={!runSelectionLocked && hasNewerRunAvailable ? "View latest run" : null}
                           menuActionDescription={
