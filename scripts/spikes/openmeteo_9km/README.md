@@ -40,6 +40,20 @@ Gaussian latitudes via Legendre roots) serves both build families:
   Bilinear beats box-mean (MAE 0.098, plus 63,648 empty polar cells): ifs025 is
   itself interpolated, not conservatively averaged. Full-globe read ≈ 4.8 MB/var.
 
+## Phase 3 verdict: PASSED (2026-08-04, `phase3_semantics.py`)
+
+The per-step convention holds for **all** accumulation vars and across both
+cadence transitions:
+
+- `precipitation` and `snowfall_water_equivalent`: hourly-regime fh12 single
+  file is ~1/3 of ifs025's 3 h step (bias = −ref/1.5 exactly); summing hourly
+  steps collapses to the 0.02/0.006 grid-noise floor. fh93 (first 3 h step) and
+  fh150 (6 h regime) match ifs025 directly — bias ≤ 0.0012 mm.
+- `showers` has no ifs025 counterpart; proven per-step by the cp ≤ tp
+  constraint (max excess 0.1 mm = rounding; a run-cumulative field would dwarf
+  per-step precip at fh150) and by mean scaling exactly with step length
+  (0.06 → 0.22 → 0.44 mm across 1 h/3 h/6 h steps).
+
 ## Phase 3 headline finding (confirmed early, `phase3_accum_check.py`)
 
 `.om` accumulation fields are **per-step de-accumulated**, NOT run-start
