@@ -3369,7 +3369,7 @@ def _warp_component_to_target_grid(
         dst_crs = rasterio.crs.CRS.from_epsg(3857)
         dst_data = np.full((dst_h, dst_w), float("nan"), dtype=np.float32)
         reproject(
-            source=raw_data.astype(np.float64),
+            source=raw_data.astype(np.float32),
             destination=dst_data,
             src_transform=raw_transform,
             src_crs=raw_crs,
