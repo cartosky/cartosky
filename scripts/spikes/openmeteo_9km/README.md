@@ -40,6 +40,28 @@ Gaussian latitudes via Legendre roots) serves both build families:
   Bilinear beats box-mean (MAE 0.098, plus 63,648 empty polar cells): ifs025 is
   itself interpolated, not conservatively averaged. Full-globe read ≈ 4.8 MB/var.
 
+## Phase 4 verdict: PASSED (2026-08-04, `phase4_reconcile.py`)
+
+Fast path (O1280 native) vs legacy (ifs025 0.25° bilinear-upsampled), both on
+the exact production NA 1825×1893 grid, same run/valid times:
+
+| case | MAE | bias | corr | synoptic (1°) MAE |
+|---|---|---|---|---|
+| MSLP fh12 (alignment guard, hPa) | 0.050 | −0.0001 | 0.99986 | 0.020 |
+| t2m fh12 | 0.176 °C | −0.004 | 0.9993 | 0.079 |
+| gusts fh12 | 0.24 m/s | +0.000 | 0.9912 | 0.100 |
+| precip 3 h fh93 | 0.046 mm | −0.000 | 0.9695 | 0.014 |
+
+Signature is exactly right: near-zero bias + tight synoptic agreement + real
+fine-scale differences (t2m p99 1.9 °C over terrain/coasts — that's the added
+9 km information, the point of the exercise). Side-by-side PNGs:
+`phase4_temperature_2m.png`, `phase4_precipitation.png` (early Phase 5
+preview; formal gate still renders through the real builder).
+
+**Units gotcha:** the SAME variable name carries different units per product —
+9 km `pressure_msl` is Pa, ifs025 is hPa. A per-product units audit is
+mandatory before wiring any variable into the builder.
+
 ## Phase 3 verdict: PASSED (2026-08-04, `phase3_semantics.py`)
 
 The per-step convention holds for **all** accumulation vars and across both
