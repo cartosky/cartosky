@@ -10,6 +10,7 @@ import {
   defaultDataDomainForSelection,
   domainRunProbeStatusForManifest,
   filterRegionOptionsForDataDomain,
+  makeVariableOptions,
   normalizeCapabilityVarRows,
   normalizeRequestedDomain,
   normalizeRequestedDomainAgainstDefault,
@@ -59,6 +60,15 @@ const CANONICAL_ONLY_MODEL = {
   variables: {
     tmp2m: { display_name: "Surface Temp" },
     refc: { display_name: "Reflectivity", supported_build_regions: ["conus"] },
+  },
+} as unknown as CapabilityModel;
+
+const SPC_MODEL = {
+  variables: {
+    tornado_prob: { display_name: "SPC Tornado Probability" },
+    wind_prob: { display_name: "SPC Wind Probability" },
+    hail_prob: { display_name: "SPC Hail Probability" },
+    convective: { display_name: "SPC Convective Outlook" },
   },
 } as unknown as CapabilityModel;
 
@@ -562,6 +572,18 @@ describe("variableIdsMissingDomain / coverageBadgeLabel (design §3)", () => {
     // a model that shows no Coverage control to explain them. App.tsx gates
     // both on `coverageSegmentsForModel(...).length > 1`, false here.
     expect(coverageSegmentsForModel(CANONICAL_ONLY_MODEL, REGION_PRESETS).length > 1).toBe(false);
+  });
+});
+
+describe("SPC variable option ordering", () => {
+  it("lists categorical ahead of tornado, wind, and hail", () => {
+    const options = makeVariableOptions(normalizeCapabilityVarRows(SPC_MODEL), "spc");
+    expect(options.map((option) => option.value)).toEqual([
+      "convective",
+      "tornado_prob",
+      "wind_prob",
+      "hail_prob",
+    ]);
   });
 });
 
