@@ -330,6 +330,7 @@ def _build_contour_metadata_for_variable(
             resampling="bilinear",
             src_nodata=None,
             dst_nodata=float("nan"),
+            working_dtype=np.float32,
         )
     if contour_conversion:
         contour_capability = type("_ContourCapability", (), {"conversion": contour_conversion})()
@@ -597,6 +598,7 @@ def _build_pressure_center_metadata_for_variable(
             resampling="bilinear",
             src_nodata=None,
             dst_nodata=float("nan"),
+            working_dtype=np.float32,
         )
     if center_conversion:
         center_capability = type("_CenterCapability", (), {"conversion": center_conversion})()
@@ -1987,6 +1989,7 @@ def build_frame(
                 resampling=warp_resampling,
                 src_nodata=None,
                 dst_nodata=float("nan"),
+                working_dtype=np.float32,
             )
 
         # --- Step 4: Colorize ---
