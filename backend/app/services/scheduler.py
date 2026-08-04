@@ -2354,6 +2354,32 @@ def _perform_successful_run_memory_cleanup(*, run_id: str, model_id: str) -> Non
     )
 
 
+def _trim_heap_between_rounds(*, run_id: str, model_id: str, round_index: int) -> None:
+    rss_before_bytes = current_rss_bytes()
+    try:
+        gc_collected = gc.collect()
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except Exception:
+        logger.debug(
+            "Between-round heap trim unavailable: run=%s model=%s round=%d",
+            run_id,
+            model_id,
+            round_index,
+            exc_info=True,
+        )
+        return
+    logger.info(
+        "scheduler rss checkpoint: stage=round_end_trim run=%s model=%s round=%d rss_before_mib=%.1f rss_after_mib=%.1f gc_collected=%d",
+        run_id,
+        model_id,
+        round_index,
+        _bytes_to_mib(rss_before_bytes),
+        _bytes_to_mib(current_rss_bytes()),
+        gc_collected,
+    )
+
+
 def _should_restart_scheduler_after_successful_run(*, model: str, once: bool, run_arg: str | None) -> bool:
     return model in RESTART_ON_SUCCESS_MODELS and not once and run_arg is None
 
@@ -3174,6 +3200,12 @@ def _process_run(
                         outstanding_fetch_ctx_jobs[fetch_ctx_key] = remaining
 
         _log_parallel_shared_fetch_cache(regions=round_fetch_ctx_regions)
+
+        # All round futures have completed; any context still held was leaked
+        # by a failure path that skipped its release.
+        for leftover_region, leftover_var_id in sorted(shared_parallel_fetch_ctx_by_target.keys()):
+            _release_shared_fetch_ctx(leftover_region, leftover_var_id, reason="round_end_sweep")
+        _trim_heap_between_rounds(run_id=run_id, model_id=model_id, round_index=rounds)
 
         if round_successes == 0 and not rebuild_round:
             if round_transient_failures > 0:
