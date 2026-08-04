@@ -24,6 +24,33 @@ Context: `ecmwf_aifs025_single` (full pressure-level temps) lands at/before the
 IFS 9 km surface stream, while `ecmwf_ifs025` is a batch relay 1–5 min *behind*
 ECMWF's own delayed portal — so AIFS is the only free real-time profile source.
 
+## Phase 2 verdict: PASSED (2026-08-04)
+
+`phase2_regrid.py` — one precomputed reduced-Gaussian bilinear sampler (exact
+Gaussian latitudes via Legendre roots) serves both build families:
+
+- **NA 9 km EPSG:3857** (TAP-snapped, 1825×1893): sampler build 0.5 s once,
+  apply 0.06 s/field. Flat-site oracle vs Open-Meteo point API within 0.4 °C
+  (terrain sites differ more — the API does elevation downscaling; not a gate).
+  The fetch band must be **4.5–82.5°N** (edge cell centers sit at 4.967/82.006°N,
+  outside the naive 5–82 band).
+- **Global 0.25° EPSG:4326** (point-registered, row 0 north): bilinear matches
+  ECMWF's own `ifs025` product to **MAE 0.020 °C** (p95 0.05) — decode,
+  latitudes, orientation, and antimeridian wrap all validated by one number.
+  Bilinear beats box-mean (MAE 0.098, plus 63,648 empty polar cells): ifs025 is
+  itself interpolated, not conservatively averaged. Full-globe read ≈ 4.8 MB/var.
+
+## Phase 3 headline finding (confirmed early, `phase3_accum_check.py`)
+
+`.om` accumulation fields are **per-step de-accumulated**, NOT run-start
+cumulative like raw ECMWF GRIB `tp` — and the step length is the product's
+cadence at that forecast hour (9 km: hourly→FH90, 3 h→144, 6 h→360; ifs025:
+3-hourly). Proof: single 9 km fh12 `precipitation` vs ifs025 fh12 shows a
+uniform −0.23 mm bias; summing the 9 km fh10+11+12 hourly steps collapses it
+to MAE 0.020 mm. The builder's cumulative derives (which difference GRIB
+run-totals at fixed 3 h steps) must be adapted: accumulate per-step `.om`
+values, with a per-source step ladder.
+
 ## Gotchas (hard-won, do not rediscover)
 
 - **Grid orientation differs per product in the same bucket.** 9 km O1280
