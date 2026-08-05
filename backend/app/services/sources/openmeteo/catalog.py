@@ -317,6 +317,16 @@ class OmModelCatalog:
     source_resolution_label: str
     #: Points on the source grid — the reader's shape-dispatch expectation.
     source_points: int | None = None
+    #: Artifact domains the fast path may own for this model (design §3: the
+    #: ownership key is ``(variable, domain)``, and Decision 1 makes ECMWF's
+    #: surface set fast in *both* ``na`` and ``global``). WP3's ownership
+    #: resolver reads this rather than hard-coding domain names.
+    fast_domains: tuple[str, ...] = ()
+    #: CartoSky variables the fast path publishes by *deriving* them from
+    #: ``component_only`` fetches rather than reading them from the bucket
+    #: (``wspd10m`` = ``hypot(10u, 10v)`` → ``ms_to_mph``, mirroring
+    #: ``derive._derive_wspd10m``). Named here so the launch set stays data.
+    derived_variables: tuple[str, ...] = ()
     _by_om_name: dict[str, OmVariable] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -487,6 +497,8 @@ ECMWF_IFS_CATALOG = OmModelCatalog(
     target_cadence=_ECMWF_TARGET_CADENCE,
     attribution=ATTRIBUTION_ECMWF_IFS,
     source_resolution_label="9 km native",
+    fast_domains=("na", "global"),
+    derived_variables=("wspd10m",),
     variables=(
         OmVariable(
             om_name="temperature_2m",

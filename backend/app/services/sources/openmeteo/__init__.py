@@ -21,6 +21,18 @@ Nothing in this package writes artifacts or touches the scheduler; WP2/WP3
 consume it.
 """
 
+from .accumulation import (
+    CHECKPOINT_SCHEMA_VERSION,
+    SOURCE_ID,
+    AccumulationError,
+    AccumulationLedger,
+    CheckpointError,
+    CheckpointMismatch,
+    MissingStepsError,
+    OutOfOrderStepError,
+    RetentionError,
+    cadence_version,
+)
 from .catalog import (
     ATTRIBUTION_ECMWF_IFS,
     ECMWF_IFS_CATALOG,
@@ -38,6 +50,16 @@ from .catalog import (
 
 __all__ = [
     "ATTRIBUTION_ECMWF_IFS",
+    "CHECKPOINT_SCHEMA_VERSION",
+    "SOURCE_ID",
+    "AccumulationError",
+    "AccumulationLedger",
+    "CheckpointError",
+    "CheckpointMismatch",
+    "MissingStepsError",
+    "OutOfOrderStepError",
+    "RetentionError",
+    "cadence_version",
     "ECMWF_IFS_CATALOG",
     "OM_CATALOGS",
     "AggregationWindow",

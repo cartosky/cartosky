@@ -30,7 +30,10 @@ from app.config import (
 )
 from app.services import climatology
 from app.services.builder import fetch as builder_fetch
+from app.services.fastpath.ownership import fastpath_enabled, is_fast_owned
+from app.services.fastpath.state import FastpathRunState
 from app.services.domains import (
+    DOMAINS_NAMESPACE,
     canonical_domain,
     declared_domains_for_var,
     model_root_for_domain,
@@ -579,6 +582,89 @@ def _runtime_var_id(plugin: Any, var_id: str, ensemble_view: str | None = None) 
     if hasattr(plugin, "resolve_runtime_var_id"):
         return str(plugin.resolve_runtime_var_id(normalized_var, ensemble_view)).strip() or normalized_var
     return normalized_var
+
+
+def _delayed_owned(
+    plugin: Any,
+    var_id: str,
+    region: str,
+    *,
+    revoked_pairs: frozenset[tuple[str, str]] | None,
+) -> bool:
+    """Whether the DELAYED path should build this ``(variable, domain)`` pair.
+
+    Design §3 rule 2: a pair is built exactly once, by its owner, and the
+    delayed path skips fast-owned pairs **by config** — not "skip if already
+    present". Skip-by-config is what stops a fast-path outage from silently
+    handing the delayed build window a surprise double memory load; recovery is
+    the explicit failover transition (§6), which revokes ownership first. A
+    revoked pair is delayed-owned again, which is why the run's failover state
+    overlays the static config here.
+
+    With ``CARTOSKY_FASTPATH_MODELS`` unset this is unconditionally True and
+    nothing below the first check ever runs.
+    """
+    model_id = str(getattr(plugin, "id", "") or "")
+    if not fastpath_enabled(model_id):
+        return True
+    if not is_fast_owned(model_id, var_id, region):
+        return True
+    if revoked_pairs and (str(var_id), str(region)) in revoked_pairs:
+        return True
+    return False
+
+
+def _fastpath_revoked_pairs(
+    plugin: Any, data_root: Path | None, run_id: str | None
+) -> frozenset[tuple[str, str]]:
+    """Revoked pairs the DELAYED path may now build (empty if the flag is off).
+
+    Deliberately ``reclaimable_pairs()`` and not ``revoked_pairs()``: a pair
+    whose fast accumulation frames could not be verifiably cleared is revoked
+    *and blocked*, and handing it to the delayed builder would produce the
+    mixed-source series design §6 forbids. A blocked pair is built by nobody
+    until an operator clears the staging tree — a visible gap in preference to
+    silent corruption, logged as ``fastpath_blocked``.
+    """
+    model_id = str(getattr(plugin, "id", "") or "")
+    if not data_root or not run_id or not fastpath_enabled(model_id):
+        return frozenset()
+    try:
+        state = FastpathRunState.load_or_create(
+            data_root=data_root, model=model_id, run_id=run_id
+        )
+    except Exception:
+        logger.exception("fastpath: could not read failover state for %s %s", model_id, run_id)
+        return frozenset()
+    return state.reclaimable_pairs()
+
+
+def _delayed_targets_for_cycle(
+    plugin,
+    vars_to_build: list[str],
+    cycle_hour: int,
+    *,
+    data_root: Path | None = None,
+    run_id: str | None = None,
+) -> list[BuildTarget]:
+    """``_scheduled_targets_for_cycle`` minus the pairs the fast source owns.
+
+    A thin filter rather than a change to ``_scheduled_targets_for_cycle``
+    itself: the unfiltered function stays the model's "what does this cycle
+    schedule" answer (and the seam tests monkeypatch), while this is the
+    delayed *builder's* work list. With the fast path off the two are the same
+    list, object for object.
+    """
+    targets = _scheduled_targets_for_cycle(plugin, vars_to_build, cycle_hour)
+    model_id = str(getattr(plugin, "id", "") or "")
+    if not fastpath_enabled(model_id):
+        return targets
+    revoked_pairs = _fastpath_revoked_pairs(plugin, data_root, run_id)
+    return [
+        target
+        for target in targets
+        if _delayed_owned(plugin, target[1], target[0], revoked_pairs=revoked_pairs)
+    ]
 
 
 def _scheduled_targets_for_cycle(plugin, vars_to_build: list[str], cycle_hour: int) -> list[BuildTarget]:
@@ -1194,6 +1280,186 @@ def _should_promote(
     """
     ready = _promotion_ready_regions(data_root, model, run_id, primary_vars, promotion_fhs)
     return canonical_domain(model) in ready
+
+
+def _publish_domain_locked(
+    *,
+    data_root: Path,
+    model_id: str,
+    run_id: str,
+    domain: str,
+    reason: str,
+    ready_regions: list[str],
+    targets: list[BuildTarget],
+    plugin: Any,
+) -> None:
+    """Publish ONE domain: grid manifests → promote → run manifest → LATEST.
+
+    Extracted verbatim from the ``_process_run`` closure so the delayed
+    catch-up loop and the fast-source sub-loop share one promotion path
+    instead of forking it. The caller holds :data:`_PUBLISH_LOCK`.
+
+    The one behavioural addition is the ``_run_is_superseded_by_latest``
+    guard on the pointer write. It matters now that two sources publish into
+    the same namespace: the fast poller discovers a run ~2 h before the
+    delayed probe does (design §3 rule 1), so the delayed loop can be
+    promoting run *N* while LATEST already points at the fast-built run
+    *N+1* — and an unguarded write would walk users backwards a cycle. This
+    is the same guard ``_republish_after_sounding_batch`` already applies for
+    the same reason.
+
+    **The guard is deliberately model-global, not fast-path-scoped.** It
+    applies to every model and every publish reason, including a delayed-only
+    scheduler with the fast path switched off. The consequence is intended and
+    worth stating plainly: an operator who rebuilds an *older* run explicitly
+    (``--run 20260804_00z``) will see that run promoted normally, but LATEST
+    will stay on the newer run rather than walking backwards. Moving LATEST to
+    an older run is now an explicit act (rewrite the pointer), never a side
+    effect of a backfill. Within the normal polling loop this changes nothing:
+    that loop only ever processes the newest run it can see.
+    """
+    if grid_build_enabled():
+        try:
+            manifest_ok = build_grid_manifests_for_run_root(
+                run_root=_staging_run_root(data_root, model_id, run_id, domain),
+                model=model_id,
+                run=run_id,
+            )
+            logger.info(
+                "grid manifest build: run=%s model=%s reason=%s manifests=%d",
+                run_id,
+                model_id,
+                reason,
+                manifest_ok,
+            )
+        except Exception:
+            logger.exception("grid manifest build failed: run=%s model=%s reason=%s", run_id, model_id, reason)
+    _promote_run(data_root, model_id, run_id, domain=domain)
+    _write_run_manifest(
+        data_root=data_root,
+        model=model_id,
+        run_id=run_id,
+        targets=targets,
+        plugin=plugin,
+        region=domain,
+    )
+    if domain in ready_regions:
+        if _run_is_superseded_by_latest(data_root, model_id, run_id, domain):
+            logger.info(
+                "LATEST pointer left alone: run=%s model=%s domain=%s is superseded",
+                run_id,
+                model_id,
+                domain,
+            )
+            return
+        _write_latest_pointer(data_root, model_id, run_id, region=domain)
+
+
+def _publish_domain(
+    *,
+    data_root: Path,
+    model_id: str,
+    run_id: str,
+    domain: str,
+    reason: str,
+    ready_regions: list[str],
+    targets: list[BuildTarget],
+    plugin: Any,
+) -> None:
+    # Held for the whole publish: the sounding worker thread republishes this
+    # same tree whenever a batch of stacks lands, and the fast-source sub-loop
+    # promotes per timestep into it.
+    with _PUBLISH_LOCK:
+        _publish_domain_locked(
+            data_root=data_root,
+            model_id=model_id,
+            run_id=run_id,
+            domain=domain,
+            reason=reason,
+            ready_regions=ready_regions,
+            targets=targets,
+            plugin=plugin,
+        )
+
+
+def _publish_run_snapshot_for(
+    *,
+    data_root: Path,
+    model_id: str,
+    run_id: str,
+    plugin: Any,
+    primary_vars: list[str],
+    promotion_fhs: Iterable[int],
+    targets: list[BuildTarget],
+    reason: str,
+    domains: Iterable[str],
+    canonical_region: str,
+    strict_canonical: bool,
+) -> list[str]:
+    """Publish a run across domains and return the promotion-ready regions.
+
+    ``strict_canonical=True`` is the delayed catch-up loop's policy, unchanged:
+    the canonical domain publishes FIRST and unwrapped (reaching this function
+    at all already required ``_should_promote``, which is canonical-specific),
+    and each non-canonical domain publishes only when it is itself ready and is
+    wrapped so an ENOSPC on a large global tree cannot abort canonical
+    publication or the retention tail (review blockers B1/B2).
+
+    ``strict_canonical=False`` is the fast sub-loop's policy: it promotes every
+    domain it actually wrote to, every timestep, whether or not that domain is
+    promotion-ready — a domain's frames must reach the published tree as they
+    land (design §5, "promotes per-frame exactly as the catch-up loop does").
+    Readiness still gates the LATEST *pointer* inside
+    :func:`_publish_domain_locked`, which is the only thing readiness was ever
+    about. The fast path may also have no canonical staging tree at all (a
+    global-only ownership config), so canonical is published only when it is
+    among the domains actually written.
+    """
+    ready_regions = _promotion_ready_regions(data_root, model_id, run_id, primary_vars, promotion_fhs)
+    ordered = [domain for domain in dict.fromkeys(domains)]
+
+    def _publish(domain: str) -> None:
+        _publish_domain(
+            data_root=data_root,
+            model_id=model_id,
+            run_id=run_id,
+            domain=domain,
+            reason=reason,
+            ready_regions=ready_regions,
+            targets=targets,
+            plugin=plugin,
+        )
+
+    if strict_canonical:
+        _publish(canonical_region)
+    elif canonical_region in ordered:
+        try:
+            _publish(canonical_region)
+        except Exception:
+            logger.exception(
+                "Domain publish failed: run=%s model=%s domain=%s reason=%s",
+                run_id,
+                model_id,
+                canonical_region,
+                reason,
+            )
+
+    for domain in ordered:
+        if domain == canonical_region:
+            continue
+        if strict_canonical and domain not in ready_regions:
+            continue
+        try:
+            _publish(domain)
+        except Exception:
+            logger.exception(
+                "Domain publish failed: run=%s model=%s domain=%s reason=%s",
+                run_id,
+                model_id,
+                domain,
+                reason,
+            )
+    return ready_regions
 
 
 def _resolve_promotion_fhs(plugin: Any, primary_vars: list[str], cycle_hour: int) -> tuple[int, ...]:
@@ -1936,6 +2202,46 @@ def _run_is_superseded_by_latest(data_root: Path, model: str, run_id: str, regio
     return latest_dt > run_dt
 
 
+def _summarize_source_ranges(
+    provenance_by_fh: dict[int, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse per-frame provenance into homogeneous fh ranges (design §8).
+
+    Consecutive published fhs sharing the same ``(source_id,
+    source_resolution, generation)`` become one entry; a failover seam shows up
+    as a second entry with a different ``source_id`` and a bumped
+    ``generation``. Frames with no recorded source contribute nothing, so a run
+    built entirely by the delayed path summarises to ``[]`` and the key is
+    omitted upstream.
+    """
+    if not provenance_by_fh:
+        return []
+    ranges: list[dict[str, Any]] = []
+    for fh in sorted(provenance_by_fh):
+        entry = provenance_by_fh[fh]
+        signature = (
+            entry.get("source_id"),
+            entry.get("source_resolution"),
+            entry.get("generation"),
+        )
+        if ranges and ranges[-1]["_signature"] == signature:
+            ranges[-1]["to_fh"] = fh
+            continue
+        ranges.append(
+            {
+                "_signature": signature,
+                "from_fh": fh,
+                "to_fh": fh,
+                "source_id": entry.get("source_id"),
+                "source_resolution": entry.get("source_resolution"),
+                "generation": entry.get("generation"),
+            }
+        )
+    for entry in ranges:
+        entry.pop("_signature", None)
+    return ranges
+
+
 def _write_run_manifest(
     *,
     data_root: Path,
@@ -2009,6 +2315,8 @@ def _write_run_manifest(
             if isinstance(raw_frontend, dict) and bool(raw_frontend.get("internal_only")):
                 continue
 
+        provenance_by_fh: dict[int, dict[str, Any]] = {}
+
         for fh in expected_fhs:
             sidecar_path = _frame_sidecar_path(data_root, model, run_id, var_id, fh, region=manifest_region)
             if not sidecar_path.exists():
@@ -2028,6 +2336,14 @@ def _write_run_manifest(
             if isinstance(valid_time, str) and valid_time:
                 frame_entry["valid_time"] = valid_time
             frames.append(frame_entry)
+
+            source_id = meta.get("source_id")
+            if isinstance(source_id, str) and source_id:
+                provenance_by_fh[fh] = {
+                    "source_id": source_id,
+                    "source_resolution": str(meta.get("source_resolution") or ""),
+                    "generation": meta.get("generation"),
+                }
 
         # Timeline boundary scalars (forecast variables only — observed/valid
         # models contribute no expected fhs and never reach this loop). The
@@ -2052,6 +2368,16 @@ def _write_run_manifest(
             "expected_max_fh": expected_fhs[-1],
             "frames": sorted(frames, key=lambda item: item["fh"]),
         }
+        # Per-(var, domain) source provenance summary (fast-path design §8):
+        # homogeneous fh ranges, so a post-failover run is auditable ("where is
+        # the seam?") and the UI resolution label is driven by recorded truth
+        # rather than static config. Purely ADDITIVE and only present when at
+        # least one frame recorded a source — a delayed-only run's manifest is
+        # byte-identical to before.
+        source_ranges = _summarize_source_ranges(provenance_by_fh)
+        if source_ranges:
+            variables[var_id]["source_ranges"] = source_ranges
+
         ensemble_view = _var_default_ensemble_view(plugin, var_id) if plugin is not None else None
         if ensemble_view:
             variables[var_id]["ensemble_view"] = ensemble_view
@@ -2407,7 +2733,9 @@ def _process_run(
 ) -> tuple[str, int, int]:
     run_id = _run_id_from_dt(run_dt)
     cycle_hour = run_dt.hour
-    targets = _scheduled_targets_for_cycle(plugin, vars_to_build, cycle_hour)
+    targets = _delayed_targets_for_cycle(
+        plugin, vars_to_build, cycle_hour, data_root=data_root, run_id=run_id
+    )
     target_regions = sorted({region for region, _var_id, _fh in targets})
     regions_label = ",".join(target_regions) if target_regions else CANONICAL_COVERAGE
     promotion_fhs = _resolve_promotion_fhs(plugin, primary_vars, cycle_hour)
@@ -2599,43 +2927,19 @@ def _process_run(
     _log_process_cache_stats(stage="run_start")
 
     def _publish_one_domain(*, domain: str, reason: str, ready_regions: list[str]) -> None:
-        # Held for the whole publish: the sounding worker thread republishes
-        # this same tree whenever a batch of stacks lands.
-        with _PUBLISH_LOCK:
-            _publish_one_domain_locked(domain=domain, reason=reason, ready_regions=ready_regions)
-
-    def _publish_one_domain_locked(*, domain: str, reason: str, ready_regions: list[str]) -> None:
-        if grid_build_enabled():
-            try:
-                manifest_ok = build_grid_manifests_for_run_root(
-                    run_root=_staging_run_root(data_root, model_id, run_id, domain),
-                    model=model_id,
-                    run=run_id,
-                )
-                logger.info(
-                    "grid manifest build: run=%s model=%s reason=%s manifests=%d",
-                    run_id,
-                    model_id,
-                    reason,
-                    manifest_ok,
-                )
-            except Exception:
-                logger.exception("grid manifest build failed: run=%s model=%s reason=%s", run_id, model_id, reason)
-        _promote_run(data_root, model_id, run_id, domain=domain)
-        _write_run_manifest(
+        _publish_domain(
             data_root=data_root,
-            model=model_id,
+            model_id=model_id,
             run_id=run_id,
+            domain=domain,
+            reason=reason,
+            ready_regions=ready_regions,
             targets=targets,
             plugin=plugin,
-            region=domain,
         )
-        if domain in ready_regions:
-            _write_latest_pointer(data_root, model_id, run_id, region=domain)
 
     def _publish_run_snapshot(*, reason: str, pregenerate_loops: bool) -> None:
         del pregenerate_loops
-        ready_regions = _promotion_ready_regions(data_root, model_id, run_id, primary_vars, promotion_fhs)
         canonical_region = _default_build_region(plugin)
 
         # Canonical publishes FIRST, and its LATEST pointer is gated on
@@ -2644,22 +2948,20 @@ def _process_run(
         # which is itself canonical-specific. Each non-canonical domain is
         # independently wrapped so an ENOSPC on a large global tree cannot
         # abort canonical publication, the catch-up loop, or the retention
-        # tail (B2).
-        _publish_one_domain(domain=canonical_region, reason=reason, ready_regions=ready_regions)
-
-        for domain in _target_domains(targets, canonical_region):
-            if domain == canonical_region or domain not in ready_regions:
-                continue
-            try:
-                _publish_one_domain(domain=domain, reason=reason, ready_regions=ready_regions)
-            except Exception:
-                logger.exception(
-                    "Domain publish failed: run=%s model=%s domain=%s reason=%s",
-                    run_id,
-                    model_id,
-                    domain,
-                    reason,
-                )
+        # tail (B2). That policy is `strict_canonical=True`.
+        ready_regions = _publish_run_snapshot_for(
+            data_root=data_root,
+            model_id=model_id,
+            run_id=run_id,
+            plugin=plugin,
+            primary_vars=primary_vars,
+            promotion_fhs=promotion_fhs,
+            targets=targets,
+            reason=reason,
+            domains=_target_domains(targets, canonical_region),
+            canonical_region=canonical_region,
+            strict_canonical=True,
+        )
 
         logger.info(
             "Published run snapshot: run=%s model=%s reason=%s built=%d/%d ready_regions=%s canonical_region=%s",
@@ -3367,6 +3669,200 @@ def _process_run(
 MEMBER_PASS_PROBE_INTERVAL_SECONDS = 60.0
 
 
+#: How many ``.om`` timestep objects one fast-path pass may consume before
+#: returning to the main loop. Bounded so the fast sub-loop can never starve
+#: the delayed build it shares a process with (design §4: it multiplexes into
+#: the existing loop, it does not own it).
+FASTPATH_MAX_STEPS_PER_PASS = 24
+
+
+def _fastpath_retention_cutoff(
+    *, data_root: Path, model_id: str, plugin: Any, keep_runs: int
+) -> datetime | None:
+    """The instant before which run retention has already dropped a run.
+
+    Mirrors ``_enforce_run_retention``: sort the run directories newest-first
+    and take the ``keep_runs``-th one as the boundary. Returns ``None`` — "do
+    not prune anything" — whenever the boundary cannot be established, which
+    includes the case where fewer runs exist than retention keeps.
+
+    Deliberately *age*-based rather than presence-based. Keying on "is there a
+    run directory for this run id" deletes exactly the state that matters most
+    during a total fast-path outage, where no fast frames (and so no run
+    directory) exist but the failover deadline has just recorded revocations
+    against that run.
+    """
+    resolved_keep = _resolved_keep_runs_for_scheduler_plugin(plugin, keep_runs)
+    if resolved_keep < 1:
+        return None
+
+    roots = [
+        Path(data_root) / "staging" / str(model_id),
+        _published_model_root(Path(data_root), str(model_id)),
+    ]
+    # Non-canonical domains live under ``{model}/domains/{d}/`` (Phase 2A
+    # layout), and a global-only fast run has no canonical run dir at all — so
+    # the sweep has to look one level deeper.
+    bases: list[Path] = []
+    for root in roots:
+        bases.append(root)
+        domains_root = root / DOMAINS_NAMESPACE
+        if domains_root.is_dir():
+            bases.extend(entry for entry in domains_root.iterdir() if entry.is_dir())
+
+    run_dts: set[datetime] = set()
+    for base in bases:
+        if not base.is_dir():
+            continue
+        for entry in base.iterdir():
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            run_dt = _parse_run_id_datetime(entry.name)
+            if run_dt is not None:
+                run_dts.add(run_dt)
+
+    if len(run_dts) <= resolved_keep:
+        return None
+    return sorted(run_dts, reverse=True)[resolved_keep - 1]
+
+
+def _prune_fastpath_namespace(
+    *, data_root: Path, model_id: str, plugin: Any, keep_runs: int
+) -> None:
+    """Age out fast-path state files and accumulation checkpoints.
+
+    ``staging/{model}/_fastpath`` is invisible to ``_enforce_run_retention``
+    (its name cannot match ``RUN_ID_RE``, which is exactly why it is safe to
+    put bookkeeping there) so it needs its own sweep — on retention's terms.
+    """
+    from app.services.fastpath.state import prune_orphan_state
+
+    cutoff = _fastpath_retention_cutoff(
+        data_root=data_root, model_id=model_id, plugin=plugin, keep_runs=keep_runs
+    )
+    prune_orphan_state(data_root, model_id, older_than=cutoff)
+
+
+def _delayed_run_verified_available(
+    *, plugin: Any, run_dt: datetime, probe_var: str | None
+) -> bool:
+    """Whether the DELAYED source demonstrably has ``run_dt`` right now.
+
+    The failover deadline revokes fast ownership and hands a pair to the
+    delayed builder, so it must fire on *verified* availability, never on a
+    resolution heuristic. ``_resolve_latest_run_dt`` returns a datetime either
+    way: on a probe hit, or — during a Herbie outage — from the
+    ``fallback_lag_hours`` guess, which says nothing about whether the delayed
+    source can actually build that run. Revoking on the guess would black out
+    the fast-owned pairs for as long as the outage lasts: the fast path stops
+    by generation, and the delayed path cannot fetch. That is strictly worse
+    than letting the fast path keep trying.
+
+    So this re-probes the exact run instead of trusting how it was resolved.
+    One idx/HEAD check per poll is negligible next to a build, and it answers
+    the precise question ("is run X fetchable?") rather than the approximate
+    one ("was some run probed successfully?").
+
+    Fails closed: a model with probing disabled, no probe var, or a probe that
+    raises is treated as NOT verified, so no revocation happens.
+    """
+    if not probe_var:
+        logger.info(
+            "fastpath: no probe var for model=%s — failover deadline cannot verify "
+            "delayed availability and will not fire",
+            getattr(plugin, "id", "unknown"),
+        )
+        return False
+    try:
+        run_discovery = plugin.run_discovery_config()
+    except Exception:
+        run_discovery = {}
+    if not bool(run_discovery.get("probe_enabled", False)):
+        logger.info(
+            "fastpath: run probing is disabled for model=%s — failover deadline "
+            "cannot verify delayed availability and will not fire",
+            getattr(plugin, "id", "unknown"),
+        )
+        return False
+    try:
+        return bool(_probe_run_exists(plugin=plugin, run_dt=run_dt, probe_var=probe_var))
+    except Exception:
+        logger.exception(
+            "fastpath: delayed availability probe failed for model=%s run=%s; "
+            "treating as unavailable (no revocation this pass)",
+            getattr(plugin, "id", "unknown"),
+            _run_id_from_dt(run_dt),
+        )
+        return False
+
+
+def _maybe_run_fastpath_pass(
+    *,
+    plugin: Any,
+    model_id: str,
+    data_root: Path,
+    delayed_run_dt: datetime,
+    primary_vars: list[str] | None = None,
+    keep_runs: int = DEFAULT_KEEP_RUNS,
+    probe_var: str | None = None,
+) -> None:
+    """Fast-source sub-loop step, interleaved into the scheduler's main loop.
+
+    Design §4 places the fast source *inside* the existing per-model process:
+    ``run_scheduler`` already holds the model ``flock``, and publication and
+    promotion are serialised only by process-local state, so a second unit on
+    the same run root would either refuse to start or corrupt promotion. This
+    is that interleave point — called once per poll, before the delayed
+    ``_process_run``, so fast frames for a run land while the delayed source is
+    still ~2 h from having it.
+
+    Two things happen, in this order:
+
+    1. **Failover deadline** for the run the *delayed* probe just resolved. Its
+       existence is precisely the "delayed source is now available" signal
+       (design §6): any fast-owned pair for that run whose ``ready_through_fh``
+       trails its horizon is revoked, inside the publish lock, before
+       ``_process_run`` can start building anything.
+    2. **A bounded fast pass** on the run the *bucket* is publishing, which the
+       fast poller discovers independently — it is normally newer than the
+       delayed one, which is the whole point (design §3 rule 1).
+
+    Never raises: the fast path is an accelerator, and any failure in it must
+    degrade to "the delayed path builds everything", not to a dead scheduler.
+    With ``CARTOSKY_FASTPATH_MODELS`` unset this returns before importing
+    anything.
+    """
+    if not fastpath_enabled(model_id):
+        return
+    try:
+        from app.services.fastpath import subloop as fastpath_subloop
+
+        fastpath_subloop.enforce_failover_deadline(
+            plugin=plugin,
+            model_id=model_id,
+            run_dt=delayed_run_dt,
+            data_root=data_root,
+            delayed_available=_delayed_run_verified_available(
+                plugin=plugin, run_dt=delayed_run_dt, probe_var=probe_var
+            ),
+            publish_lock=_PUBLISH_LOCK,
+        )
+        fastpath_subloop.run_fastpath_pass(
+            plugin=plugin,
+            model_id=model_id,
+            data_root=data_root,
+            max_steps=FASTPATH_MAX_STEPS_PER_PASS,
+            primary_vars=list(primary_vars or ()),
+        )
+        _prune_fastpath_namespace(
+            data_root=data_root, model_id=model_id, plugin=plugin, keep_runs=keep_runs
+        )
+    except Exception:
+        logger.exception(
+            "fastpath: sub-loop pass failed for model=%s; delayed path continues", model_id
+        )
+
+
 def _make_newer_run_probe(plugin: Any, probe_var: str | None, current_run_id: str) -> Any:
     """Throttled should_stop callback: True once a newer run is discovered."""
     state: dict[str, Any] = {"last_checked": 0.0, "newer": False}
@@ -3798,7 +4294,20 @@ def run_scheduler(
         while True:
             run_dt = _resolve_run_dt(run_arg, plugin=plugin, probe_var=resolved_probe_var)
             run_id = _run_id_from_dt(run_dt)
-            current_targets = _scheduled_targets_for_cycle(plugin, normalized_vars, run_dt.hour)
+            # Fast-source sub-loop (design §4): interleaved here, before the
+            # delayed pass, and inside this process's model flock.
+            _maybe_run_fastpath_pass(
+                plugin=plugin,
+                model_id=model,
+                data_root=data_root,
+                delayed_run_dt=run_dt,
+                primary_vars=resolved_primary,
+                keep_runs=keep_runs,
+                probe_var=resolved_probe_var,
+            )
+            current_targets = _delayed_targets_for_cycle(
+                plugin, normalized_vars, run_dt.hour, data_root=data_root, run_id=run_id
+            )
             current_total = len(current_targets)
             current_available = _available_target_count(data_root, model, run_id, current_targets)
             run_was_complete_before_processing = current_total > 0 and current_available >= current_total

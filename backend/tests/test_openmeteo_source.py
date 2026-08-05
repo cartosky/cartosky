@@ -104,7 +104,7 @@ def test_list_run_objects_paginates_and_returns_fh_ordered_tuples() -> None:
     assert len(objects) == 2
     assert [obj.fh for obj in objects] == [0, 1]
 
-    valid_dt, fh, url, last_modified = objects[0]
+    valid_dt, fh, url, last_modified, _etag = objects[0]
     assert valid_dt == datetime(2026, 8, 4, 18, 0, tzinfo=timezone.utc)
     assert fh == 0
     assert url.endswith("/2026/08/04/1800Z/2026-08-04T1800.om")

@@ -79,13 +79,19 @@ __all__ = [
 class RunObject(NamedTuple):
     """One published timestep object.
 
-    Unpacks as ``(valid_dt, fh, url, last_modified)``.
+    Unpacks as ``(valid_dt, fh, url, last_modified, etag)``.
+
+    ``etag`` is the listing's ``<ETag>`` with its quoting stripped, empty when
+    the listing omits it. WP3 records it (with :attr:`key`) as per-frame
+    provenance so a published frame can be traced back to the exact upstream
+    object it was decoded from (design §8).
     """
 
     valid_dt: datetime
     fh: int
     url: str
     last_modified: datetime
+    etag: str = ""
 
     @property
     def key(self) -> str:
@@ -146,6 +152,7 @@ def list_run_objects(
                     fh=fh,
                     url=object_url(key, base_url=base_url),
                     last_modified=last_modified,
+                    etag=(entry.findtext(f"{_S3_NS}ETag") or "").strip().strip('"'),
                 )
             )
         if root.findtext(f"{_S3_NS}IsTruncated") != "true":
