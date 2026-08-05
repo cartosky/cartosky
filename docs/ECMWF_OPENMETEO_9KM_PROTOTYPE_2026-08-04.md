@@ -120,21 +120,28 @@ transition cases specifically, 6→3 h interpolation cost measured separately
 against IFS 3-hourly truth, final snowfall deltas at 1"/3"/6" thresholds on
 run totals, and AIFS-arrival reliability distribution.
 
+### Phase 5 — visual gate: APPROVED (Brian, 2026-08-04)
+
+tmp2m fh12 from the fast path was rendered end-to-end through the real
+pipeline (real writers via `phase5_inject.py`, real packing verified to
+half-quantum, real legend/viewer) and judged side-by-side against the prod
+0.25°-upscaled product and Pivotal's licensed render of the same run/hour.
+Same synoptic pattern; visibly more terrain detail at 9 km. **Brian approved.**
+All six prototype validation phases that gate correctness (1–5) are now
+closed; the handoff's acceptance gates 1–3 are met.
+
 ## 7. Remaining work
 
-1. **Phase 5 — visual gate (Brian):** one field rendered through the *real*
-   builder from the fast source, side-by-side vs current product + external
-   reference. Nothing ships publicly before this.
-2. **Phase 6 — dev-flagged incremental loop:** poller (manifest hint,
+1. **Phase 6 — dev-flagged incremental loop:** poller (manifest hint,
    object-HEAD truth) → per-frame build → existing manifest/readiness;
    fallback drill (bucket stall → delayed path picks up, silent to users,
    loud to ops).
-3. **Integration risks to design around:** memory headroom (prod already
+2. **Integration risks to design around:** memory headroom (prod already
    swaps during ECMWF builds — fast path must *replace* the delayed build
    for surface vars, not duplicate it), run-identity reconciliation between
    the two sources, per-source step ladder in the cumulative derives.
-4. **Launch gates:** attribution line ("ECMWF IFS data © ECMWF, via
+3. **Launch gates:** attribution line ("ECMWF IFS data © ECMWF, via
    Open-Meteo (CC-BY-4.0)"), per-variable source-resolution labels, ops
    metrics (ingestion lag vs dissemination, per-run object counts, alerts).
-5. **Fall:** AIFS-vs-IFS Kuchera shadow analysis from the archive; paid-feed
+4. **Fall:** AIFS-vs-IFS Kuchera shadow analysis from the archive; paid-feed
    pricing exercise in parallel; Kuchera go/no-go before winter.
