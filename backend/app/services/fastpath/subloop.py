@@ -173,6 +173,8 @@ class FastpathPassResult:
     promotion_retries_pending: int = 0
     #: Previously-failed timesteps this pass successfully promoted.
     promotion_retries_succeeded: int = 0
+    #: The fast source has consumed the whole cycle for every active pair.
+    completed: bool = False
 
     def note_stall(self, reason: str) -> None:
         self.stalled = True
@@ -990,6 +992,33 @@ def run_fastpath_pass(
 
         steps_this_pass += 1
 
+    # Completion: every active pair is at its own cycle-aware horizon. Recorded
+    # on the run state so the failover deadline can skip a finished run outright
+    # instead of judging it against a stall clock that will only ever grow
+    # (design §4 "Complete"). Derived from the pair frontiers rather than the
+    # object count because that is the same evidence the deadline acts on.
+    completed = all(
+        (state.pair(var_id, domain, create=False).ready_through_fh or -1)
+        >= (published_fhs_by_var.get(var_id) or (0,))[-1]
+        for var_id, domain in active
+        if domain in TARGET_BY_DOMAIN and published_fhs_by_var.get(var_id)
+    )
+    if completed and not state.completed:
+        from ..sources.openmeteo.catalog import expected_file_count  # noqa: PLC0415
+
+        expected_objects = expected_file_count(catalog, cycle_hour)
+        logger.info(
+            "fastpath: run complete model=%s run=%s objects=%d/%d — the deadline "
+            "will stop evaluating it (completed is not stalled)",
+            model_id,
+            run_id,
+            result.objects_seen,
+            expected_objects,
+        )
+        state.mark_completed()
+        state.save()
+    result.completed = bool(state.completed)
+
     if result.stalled:
         logger.warning(
             "fastpath_stalled model=%s run=%s objects=%d steps=%d frames=%d reasons=%s",
@@ -1321,6 +1350,56 @@ def enforce_failover_deadline(
             data_root=data_root, model=model_id, run_id=run_id
         )
         idle_seconds = state.seconds_since_progress(now)
+
+        # A finished run has nothing left to make progress ON. Evaluating the
+        # stall clock against it warns every poll forever after the cycle ends
+        # (WP5 saw "no fast progress for 2235s" repeating once 06z completed)
+        # and would inflate stall_count into a false alarm at every cycle end.
+        # COMPLETED IS NOT STALLED.
+        if state.completed:
+            logger.debug(
+                "fastpath: deadline skipped for %s %s — the fast source completed "
+                "this run (idle %.0fs is expected)",
+                model_id,
+                run_id,
+                idle_seconds,
+            )
+            return frozenset()
+
+        # Which pairs could this deadline actually act on? Anything already
+        # revoked, blocked, or finished is not a candidate. Computing this
+        # BEFORE looking at the clock is what keeps the warning honest: the old
+        # order announced "deadline firing" and then revoked nothing, which is
+        # a confusing ops signal and the noisiest possible way to say "fine".
+        revocable: list[tuple[str, str, bool]] = []
+        for var_id, domain in sorted(configured):
+            entry = state.pair(var_id, domain, create=False)
+            if entry.revoked or entry.blocked:
+                continue
+            # Per-variable horizon from the model's own cycle-aware ladder, so
+            # a short 06z/18z cycle is judged against FH144, never FH360.
+            expected = _scheduled_fhs(plugin, var_id, cycle_hour)
+            if not expected:
+                continue
+            if entry.ready_through_fh is not None and entry.ready_through_fh >= expected[-1]:
+                continue  # complete — the fast source finished this pair
+            revocable.append((var_id, domain, var_id in accumulation_vars))
+
+        if not revocable:
+            # Nothing trails: the run is done (or already handed over). Persist
+            # the clock anchor if this is the first sighting, say nothing above
+            # DEBUG, and leave stall_count alone.
+            if not state.path.exists():
+                state.save()
+            logger.debug(
+                "fastpath: deadline quiet for %s %s — no trailing pairs to revoke "
+                "(idle %.0fs)",
+                model_id,
+                run_id,
+                idle_seconds,
+            )
+            return frozenset()
+
         if not state.is_stalled(grace_seconds=grace, now=now):
             # Start (or keep) the clock. A run observed for the first time here
             # MUST have its created_at persisted, or the grace window restarts
@@ -1339,22 +1418,14 @@ def enforce_failover_deadline(
 
         logger.warning(
             "fastpath: failover deadline firing for %s %s — no fast progress for "
-            "%.0fs (grace %.0fs) and the delayed source has the run",
+            "%.0fs (grace %.0fs), the delayed source has the run, and %d pair(s) trail",
             model_id,
             run_id,
             idle_seconds,
             grace,
+            len(revocable),
         )
-        for var_id, domain in sorted(configured):
-            entry = state.pair(var_id, domain, create=False)
-            if entry.revoked:
-                continue
-            expected = _scheduled_fhs(plugin, var_id, cycle_hour)
-            if not expected:
-                continue
-            if entry.ready_through_fh is not None and entry.ready_through_fh >= expected[-1]:
-                continue  # complete — the fast source finished before the deadline
-            rebuild_required = var_id in accumulation_vars
+        for var_id, domain, rebuild_required in revocable:
             entry = state.revoke(
                 var_id,
                 domain,

@@ -941,6 +941,143 @@ def test_the_fast_pass_runs_before_the_deadline_within_one_poll(
     assert state.pair("tmp2m", "global").ready_through_fh == 9
 
 
+# ---------------------------------------------------------------------------
+# Completed is not stalled (WP5 live observation)
+# ---------------------------------------------------------------------------
+
+
+def _complete_the_run(data_root: Path, *, mark: bool = True) -> None:
+    """Mark every active pair as having reached its cycle horizon."""
+    state = _state(data_root)
+    for var_id, domain in sorted(ownership.fast_owned_pairs("ecmwf")):
+        expected = _plugin().scheduled_fhs_for_var(var_id, RUN_DT.hour)
+        for fh in expected:
+            state.record_published(var_id, domain, fh, expected_fhs=expected)
+    if mark:
+        state.mark_completed()
+    state.save()
+
+
+def _patch_state_json(data_root: Path, **fields) -> None:
+    """Rewrite state fields straight on disk.
+
+    ``save()`` deliberately merges completion forward (it is monotonic), so
+    clearing the flag has to bypass it — otherwise a test that means to
+    exercise the pair-level path silently exercises the flag shortcut instead.
+    """
+    path = _state(data_root).path
+    payload = json.loads(path.read_text())
+    payload.update(fields)
+    path.write_text(json.dumps(payload))
+
+
+def test_a_completed_run_is_never_judged_against_the_stall_clock(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """WP5: once 06z finished, progress stopped *because the run was done*, and
+    the deadline warned "no fast progress for 2235s" on every single poll —
+    revoking nothing, but inflating stall_count into a false alarm at the end
+    of every cycle. A finished run has nothing left to progress on."""
+    _complete_the_run(tmp_path)
+    # Leave ONE pair looking short of its horizon, so this test exercises the
+    # completion flag itself rather than incidentally hitting the
+    # "nothing trails" path. The flag is the authoritative done signal and must
+    # short-circuit even when per-pair bookkeeping disagrees.
+    state = _state(tmp_path)
+    state.pair("tmp2m", "global").ready_through_fh = 6
+    state.save()
+    assert _state(tmp_path).completed is True
+    before = _state(tmp_path).stall_count
+
+    with caplog.at_level("INFO", logger="app.services.fastpath.subloop"):
+        # Idle far beyond the grace window, delayed available — the exact
+        # conditions that used to warn every poll.
+        revoked = _failover(tmp_path, now=datetime.now(timezone.utc) + timedelta(hours=5))
+
+    assert revoked == frozenset()
+    state = _state(tmp_path)
+    assert state.stall_count == before, "a finished run must not accrue stalls"
+    assert state.revoked_pairs() == frozenset()
+    assert not [
+        record for record in caplog.records if record.levelname in ("WARNING", "ERROR")
+    ], "a completed run must be silent"
+
+
+def test_completion_is_recorded_by_the_pass(tmp_path: Path) -> None:
+    _run_pass(tmp_path, FakeSource(max_fh=6))
+    assert _state(tmp_path).completed is False, "still mid-run"
+
+    _complete_the_run(tmp_path)
+    assert _state(tmp_path).completed is True
+    assert json.loads(_state(tmp_path).path.read_text())["completed"] is True
+
+
+def test_a_short_cycle_run_is_complete_at_its_own_horizon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """06z/18z run to FH144, not FH360. A short cycle judged against the long
+    horizon would look permanently incomplete — and so permanently stalled."""
+    short_run_dt = RUN_DT.replace(hour=6)
+    short_run_id = scheduler_module._run_id_from_dt(short_run_dt)
+    plugin = _plugin()
+
+    assert plugin.scheduled_fhs_for_var("tmp2m", 6)[-1] == 144
+    assert plugin.scheduled_fhs_for_var("tmp2m", 0)[-1] == 360
+
+    state = FastpathRunState.load_or_create(
+        data_root=tmp_path, model="ecmwf", run_id=short_run_id
+    )
+    for var_id, domain in sorted(ownership.fast_owned_pairs("ecmwf")):
+        expected = plugin.scheduled_fhs_for_var(var_id, 6)
+        for fh in expected:
+            state.record_published(var_id, domain, fh, expected_fhs=expected)
+    state.save()
+    assert state.pair("tmp2m", "global").ready_through_fh == 144
+
+    revoked = subloop_module.enforce_failover_deadline(
+        plugin=plugin,
+        model_id="ecmwf",
+        run_dt=short_run_dt,
+        data_root=tmp_path,
+        delayed_available=True,
+        now=datetime.now(timezone.utc) + timedelta(hours=5),
+    )
+    assert revoked == frozenset(), "FH144 IS the 06z horizon — nothing trails"
+
+
+def test_an_idle_run_with_nothing_trailing_stays_below_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Even without the completed flag, a deadline that would revoke nothing
+    must not announce itself. Warning loudly and then doing nothing is the
+    noisiest possible way to say 'fine'."""
+    _complete_the_run(tmp_path, mark=False)
+    _patch_state_json(tmp_path, completed=False)
+    assert _state(tmp_path).completed is False, "the flag shortcut must be OFF here"
+
+    with caplog.at_level("INFO", logger="app.services.fastpath.subloop"):
+        revoked = _failover(tmp_path, now=datetime.now(timezone.utc) + timedelta(hours=5))
+
+    assert revoked == frozenset()
+    assert _state(tmp_path).stall_count == 0
+    assert not [
+        record for record in caplog.records if record.levelname in ("WARNING", "ERROR")
+    ]
+
+
+def test_stall_count_only_increments_on_a_genuine_stall(tmp_path: Path) -> None:
+    _run_pass(tmp_path, FakeSource(max_fh=6, fail_after_fh=6))
+    baseline = _state(tmp_path).stall_count
+
+    # Idle but inside the grace window: no stall recorded.
+    _failover(tmp_path, stalled=False)
+    assert _state(tmp_path).stall_count == baseline
+
+    # Past the window with pairs genuinely trailing: one stall recorded.
+    assert _failover(tmp_path) == ownership.fast_owned_pairs("ecmwf")
+    assert _state(tmp_path).stall_count == baseline + 1
+
+
 def test_the_grace_window_is_env_tunable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(subloop_module.ENV_FAILOVER_GRACE_SECONDS, raising=False)
     assert subloop_module.failover_grace_seconds() == (

@@ -266,6 +266,11 @@ class FastpathRunState:
         #: *stalled*: every run trails the moment it is created, but only a run
         #: with no progress for the grace window has actually stopped.
         self.last_progress_at = self.created_at
+        #: Set once the fast source has consumed the whole cycle — every
+        #: fast-owned pair is at its horizon. A completed run stops making
+        #: progress *by definition*, so the failover deadline must not judge it
+        #: against the stall clock (WP5: 06z finished, then warned every poll).
+        self.completed = False
         self.stall_count = 0
         self.pairs: dict[str, PairState] = {}
         #: WP4 canary record for this run — written at most once (design §6:
@@ -321,6 +326,9 @@ class FastpathRunState:
         state.last_progress_at = str(
             payload.get("last_progress_at") or state.updated_at or state.created_at
         )
+        # Absent in pre-completion-flag files; False is the safe default (the
+        # run is simply re-evaluated against the pair horizons as before).
+        state.completed = bool(payload.get("completed"))
         try:
             state.stall_count = int(payload.get("stall_count") or 0)
         except (TypeError, ValueError):
@@ -343,6 +351,7 @@ class FastpathRunState:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "last_progress_at": self.last_progress_at,
+            "completed": bool(self.completed),
             "stall_count": int(self.stall_count),
             "canary": dict(self.canary),
             "pairs": {key: value.to_json() for key, value in sorted(self.pairs.items())},
@@ -376,6 +385,8 @@ class FastpathRunState:
         # Progress is monotonic: whichever writer saw motion most recently wins,
         # so a concurrent save can never rewind the stall clock and manufacture
         # a spurious failover.
+        if payload.get("completed"):
+            self.completed = True
         disk_progress = _parse_iso(payload.get("last_progress_at"))
         memory_progress = _parse_iso(self.last_progress_at)
         if disk_progress is not None and (
@@ -600,6 +611,10 @@ class FastpathRunState:
             entry.delayed_rebuild_required,
         )
         return entry
+
+    def mark_completed(self, value: bool = True) -> None:
+        """Record that the fast source has finished this run."""
+        self.completed = bool(value)
 
     def note_stall(self, count: int = 1) -> int:
         self.stall_count = int(self.stall_count) + int(count)
