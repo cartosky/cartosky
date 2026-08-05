@@ -3151,6 +3151,17 @@ def _refresh_prometheus_gauges() -> None:
     prometheus_metrics.replace_herbie_runtime_metrics(
         admin_telemetry.load_fetch_runtime_snapshots(data_root=DATA_ROOT)
     )
+    # Fast-path ingestion metrics (design §8). Same JSON-snapshot handoff as the
+    # Herbie runtime gauges above; the loader finds no files, and so registers no
+    # series, when no scheduler has CARTOSKY_FASTPATH_MODELS set.
+    try:
+        from app.services.fastpath.metrics import load_fastpath_snapshots
+
+        prometheus_metrics.replace_fastpath_metrics(
+            load_fastpath_snapshots(data_root=DATA_ROOT)
+        )
+    except Exception as _exc:
+        logger.warning("Failed to emit fast-path metrics: %s", _exc)
     try:
         for _row in get_latest_build_durations():
             prometheus_metrics.observe_build_duration(

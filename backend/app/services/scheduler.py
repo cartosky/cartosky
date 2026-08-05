@@ -3816,7 +3816,7 @@ def _maybe_run_fastpath_pass(
     ``_process_run``, so fast frames for a run land while the delayed source is
     still ~2 h from having it.
 
-    Two things happen, in this order:
+    Four things happen, in this order:
 
     1. **Failover deadline** for the run the *delayed* probe just resolved. Its
        existence is precisely the "delayed source is now available" signal
@@ -3826,6 +3826,9 @@ def _maybe_run_fastpath_pass(
     2. **A bounded fast pass** on the run the *bucket* is publishing, which the
        fast poller discovers independently — it is normally newer than the
        delayed one, which is the whole point (design §3 rule 1).
+    3. **The cross-source canary** (design §6) for the delayed run, at most once
+       per run and only once both sources have finished it.
+    4. **A metrics snapshot** for the Prometheus exporter (design §8).
 
     Never raises: the fast path is an accelerator, and any failure in it must
     degrade to "the delayed path builds everything", not to a dead scheduler.
@@ -3847,12 +3850,33 @@ def _maybe_run_fastpath_pass(
             ),
             publish_lock=_PUBLISH_LOCK,
         )
-        fastpath_subloop.run_fastpath_pass(
+        pass_result = fastpath_subloop.run_fastpath_pass(
             plugin=plugin,
             model_id=model_id,
             data_root=data_root,
             max_steps=FASTPATH_MAX_STEPS_PER_PASS,
             primary_vars=list(primary_vars or ()),
+        )
+        # 3. The once-per-run cross-source canary (design §6), on the run the
+        #    DELAYED probe resolved: the fast source finished that cycle ~2 h
+        #    ago, so "the delayed path has it" is precisely the both-complete
+        #    moment. Self-latching and self-gating — it decides internally
+        #    whether this run is ready and whether it already ran.
+        from app.services.fastpath import canary as fastpath_canary
+        from app.services.fastpath import metrics as fastpath_metrics
+
+        canary_run = fastpath_canary.maybe_run_canary(
+            plugin=plugin,
+            model_id=model_id,
+            data_root=data_root,
+            run_dt=delayed_run_dt,
+        )
+        # 4. Publish ops metrics for the exporter (design §8).
+        fastpath_metrics.write_pass_snapshot(
+            data_root=data_root,
+            model_id=model_id,
+            pass_result=pass_result,
+            canary=canary_run,
         )
         _prune_fastpath_namespace(
             data_root=data_root, model_id=model_id, plugin=plugin, keep_runs=keep_runs

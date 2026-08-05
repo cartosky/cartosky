@@ -131,6 +131,90 @@ HERBIE_RUNTIME_SNAPSHOT_TIMESTAMP_SECONDS = Gauge(
     registry=_REGISTRY,
 )
 
+# --- Fast-path ingestion (ECMWF Open-Meteo source, design §8) ---------------
+# Sourced from the scheduler's JSON snapshots, the same handoff the Herbie
+# runtime gauges above use. Absent when no scheduler has the fast path on.
+
+FASTPATH_READY_THROUGH_FH = Gauge(
+    "cartosky_fastpath_ready_through_fh",
+    "Contiguous published forecast-hour frontier per fast-owned (variable, domain).",
+    labelnames=("model_id", "var", "domain"),
+    registry=_REGISTRY,
+)
+
+FASTPATH_STALL_COUNT = Gauge(
+    "cartosky_fastpath_stall_count",
+    "Fast-path stall events recorded for a run (fetch failures, bad steps, failovers).",
+    labelnames=("model_id", "run"),
+    registry=_REGISTRY,
+)
+
+FASTPATH_BLOCKED_PAIRS = Gauge(
+    "cartosky_fastpath_blocked_pairs",
+    "(variable, domain) pairs no source will build until an operator intervenes. "
+    "Any value above zero is an outage for those variables — alert on it.",
+    labelnames=("model_id",),
+    registry=_REGISTRY,
+)
+
+FASTPATH_PROMOTION_RETRIES_PENDING = Gauge(
+    "cartosky_fastpath_promotion_retries_pending",
+    "Timesteps staged by the fast path but not yet promoted to the published tree.",
+    labelnames=("model_id",),
+    registry=_REGISTRY,
+)
+
+FASTPATH_CANARY_BIAS = Gauge(
+    "cartosky_fastpath_canary_bias",
+    "Fast-vs-delayed mean difference on the canary frame, in the variable's units.",
+    labelnames=("model_id", "var", "domain"),
+    registry=_REGISTRY,
+)
+
+FASTPATH_CANARY_MAE = Gauge(
+    "cartosky_fastpath_canary_mae",
+    "Fast-vs-delayed mean absolute difference on the canary frame.",
+    labelnames=("model_id", "var", "domain"),
+    registry=_REGISTRY,
+)
+
+FASTPATH_CANARY_SYNOPTIC_MAE = Gauge(
+    "cartosky_fastpath_canary_synoptic_mae",
+    "Fast-vs-delayed mean absolute difference after ~1 degree mean-pooling.",
+    labelnames=("model_id", "var", "domain"),
+    registry=_REGISTRY,
+)
+
+FASTPATH_CANARY_CORR = Gauge(
+    "cartosky_fastpath_canary_corr",
+    "Fast-vs-delayed correlation on the canary frame.",
+    labelnames=("model_id", "var", "domain"),
+    registry=_REGISTRY,
+)
+
+FASTPATH_CANARY_FAILED = Gauge(
+    "cartosky_fastpath_canary_failed",
+    "1 when the latest canary comparison for this (variable, domain) tripped a threshold.",
+    labelnames=("model_id", "var", "domain"),
+    registry=_REGISTRY,
+)
+
+FASTPATH_CANARY_SEAM_FAILURES = Gauge(
+    "cartosky_fastpath_canary_seam_failures",
+    "1 when the latest failover-seam continuity check for this (variable, domain) "
+    "failed — the run-cumulative series steps backwards, meaning two sources were "
+    "spliced into one accumulation series. Alert on it.",
+    labelnames=("model_id", "var", "domain"),
+    registry=_REGISTRY,
+)
+
+FASTPATH_SNAPSHOT_TIMESTAMP_SECONDS = Gauge(
+    "cartosky_fastpath_snapshot_timestamp_seconds",
+    "Unix timestamp of the scheduler's latest fast-path metrics snapshot.",
+    labelnames=("model_id",),
+    registry=_REGISTRY,
+)
+
 
 def prometheus_enabled() -> bool:
     raw = os.getenv("CARTOSKY_PROMETHEUS_ENABLED", "").strip().lower()
@@ -223,6 +307,100 @@ def replace_herbie_runtime_metrics(rows: list[dict[str, Any]]) -> None:
                 HERBIE_RUNTIME_TIMER_MAX_MILLISECONDS.labels(**labels).set(
                     max(0.0, float(aggregate.get("max_ms", 0.0)))
                 )
+
+
+def replace_fastpath_metrics(rows: list[dict[str, Any]]) -> None:
+    """Republish the fast-path gauges from the scheduler's JSON snapshots.
+
+    Clear-then-set, like :func:`replace_herbie_runtime_metrics`: a pair that
+    stops appearing (ownership flipped back to delayed, a run aged out) must
+    lose its series rather than freeze at its last value — a stale
+    ``fastpath_blocked_pairs`` reading would page for an outage that is over.
+    """
+    FASTPATH_READY_THROUGH_FH.clear()
+    FASTPATH_STALL_COUNT.clear()
+    FASTPATH_BLOCKED_PAIRS.clear()
+    FASTPATH_PROMOTION_RETRIES_PENDING.clear()
+    FASTPATH_CANARY_BIAS.clear()
+    FASTPATH_CANARY_MAE.clear()
+    FASTPATH_CANARY_SYNOPTIC_MAE.clear()
+    FASTPATH_CANARY_CORR.clear()
+    FASTPATH_CANARY_FAILED.clear()
+    FASTPATH_CANARY_SEAM_FAILURES.clear()
+    FASTPATH_SNAPSHOT_TIMESTAMP_SECONDS.clear()
+
+    for row in rows:
+        model_id = str(row.get("model_id") or "").strip().lower()
+        if not model_id:
+            continue
+        FASTPATH_SNAPSHOT_TIMESTAMP_SECONDS.labels(model_id=model_id).set(
+            max(0.0, float(row.get("recorded_at") or 0.0))
+        )
+        FASTPATH_BLOCKED_PAIRS.labels(model_id=model_id).set(
+            max(0, int(row.get("blocked_pair_count") or 0))
+        )
+        FASTPATH_PROMOTION_RETRIES_PENDING.labels(model_id=model_id).set(
+            max(0, int(row.get("promotion_retries_pending") or 0))
+        )
+        for entry in row.get("ready_through_fh") or ():
+            if not isinstance(entry, dict):
+                continue
+            frontier = entry.get("ready_through_fh")
+            if frontier is None:
+                continue
+            FASTPATH_READY_THROUGH_FH.labels(
+                model_id=model_id,
+                var=str(entry.get("var") or ""),
+                domain=str(entry.get("domain") or ""),
+            ).set(max(0, int(frontier)))
+        stalls = row.get("stall_count_by_run")
+        if isinstance(stalls, dict):
+            for run_id, count in stalls.items():
+                try:
+                    FASTPATH_STALL_COUNT.labels(
+                        model_id=model_id, run=str(run_id)
+                    ).set(max(0, int(count)))
+                except (TypeError, ValueError):
+                    continue
+        for result in row.get("canary_results") or ():
+            if not isinstance(result, dict):
+                continue
+            labels = {
+                "model_id": model_id,
+                "var": str(result.get("var") or ""),
+                "domain": str(result.get("domain") or ""),
+            }
+            # A metric recorded as null is undefined, not zero (a constant
+            # field has no correlation) — leave the series absent.
+            for gauge, key in (
+                (FASTPATH_CANARY_BIAS, "bias"),
+                (FASTPATH_CANARY_MAE, "mae"),
+                (FASTPATH_CANARY_SYNOPTIC_MAE, "synoptic_mae"),
+                (FASTPATH_CANARY_CORR, "corr"),
+            ):
+                value = result.get(key)
+                if value is None:
+                    continue
+                try:
+                    gauge.labels(**labels).set(float(value))
+                except (TypeError, ValueError):
+                    continue
+            FASTPATH_CANARY_FAILED.labels(**labels).set(
+                1 if result.get("failed") else 0
+            )
+        for seam in row.get("canary_seams") or ():
+            if not isinstance(seam, dict):
+                continue
+            # Only a seam that was actually continuity-checked can pass or
+            # fail. An instantaneous 9 km→0.25° seam is recorded but expected,
+            # so publishing a 0 for it would imply a check that never ran.
+            if not seam.get("continuity_checked"):
+                continue
+            FASTPATH_CANARY_SEAM_FAILURES.labels(
+                model_id=model_id,
+                var=str(seam.get("var") or ""),
+                domain=str(seam.get("domain") or ""),
+            ).set(0 if seam.get("ok") else 1)
 
 
 def set_sample_cache_entries(*, endpoint: str, entries: int) -> None:

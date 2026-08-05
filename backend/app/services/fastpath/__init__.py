@@ -17,8 +17,19 @@ Three concerns, three modules:
     module that imports ``sources.openmeteo``, and it is only ever reached
     from inside a flag-guarded branch.
 
+``canary``
+    The once-per-run cross-source comparison (design §6) — Phase 4's reconcile
+    metrics, recomputed automatically against the 0.25° reference product, plus
+    the failover-seam audit (design §8).
+``metrics``
+    The ops-metrics handoff (design §8): a JSON snapshot under
+    ``{data_root}/status/fastpath/`` that the API turns into Prometheus gauges,
+    mirroring how the scheduler already publishes its Herbie runtime metrics.
+
 The scheduler imports ``ownership`` and ``state`` eagerly (both are pure-stdlib
-leaves) and ``subloop`` lazily.
+leaves) and ``subloop``, ``canary`` and ``metrics`` lazily, from inside the
+flag-guarded branch — so nothing below ``ownership`` is imported at all in a
+process whose fast path is off. That is why none of them are re-exported here.
 """
 
 from __future__ import annotations

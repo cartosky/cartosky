@@ -37,6 +37,11 @@ checkpoints (WP2) live in the same directory for the same reason.
       "created_at": "2026-08-04T17:20:03Z",
       "updated_at": "2026-08-04T18:41:55Z",
       "stall_count": 0,
+      "canary": {                  # WP4: written once per run, or {} until then
+        "status": "ok",            # ok | failed | skipped
+        "completed_at": "2026-08-04T19:02:11Z",
+        "results": [...]           # see canary.CanaryResult.to_json
+      },
       "pairs": {
         "tmp2m|na": {
           "owner": "fast",           # fast | delayed  (delayed == revoked)
@@ -70,7 +75,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +102,7 @@ __all__ = [
     "PairState",
     "fastpath_namespace_dir",
     "fastpath_state_path",
+    "iter_run_states",
     "prune_orphan_state",
 ]
 
@@ -238,6 +244,11 @@ class FastpathRunState:
         self.updated_at = self.created_at
         self.stall_count = 0
         self.pairs: dict[str, PairState] = {}
+        #: WP4 canary record for this run — written at most once (design §6:
+        #: "once per run, after both sources are complete"). Empty until the
+        #: canary has run; its presence is the once-per-run latch, which is why
+        #: it lives here rather than in a separate marker file.
+        self.canary: dict[str, Any] = {}
 
     # -- persistence --------------------------------------------------------
 
@@ -282,6 +293,9 @@ class FastpathRunState:
             state.stall_count = int(payload.get("stall_count") or 0)
         except (TypeError, ValueError):
             state.stall_count = 0
+        raw_canary = payload.get("canary")
+        if isinstance(raw_canary, dict):
+            state.canary = dict(raw_canary)
         raw_pairs = payload.get("pairs")
         if isinstance(raw_pairs, dict):
             for key, entry in raw_pairs.items():
@@ -297,6 +311,7 @@ class FastpathRunState:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "stall_count": int(self.stall_count),
+            "canary": dict(self.canary),
             "pairs": {key: value.to_json() for key, value in sorted(self.pairs.items())},
         }
 
@@ -325,6 +340,13 @@ class FastpathRunState:
             self.stall_count = max(int(self.stall_count), int(payload.get("stall_count") or 0))
         except (TypeError, ValueError):
             pass
+        # The canary record is write-once per run, so "somebody already wrote
+        # one" always wins over an in-memory blank — otherwise a sub-loop that
+        # loaded the state before the canary ran would clear the latch and the
+        # canary would repeat (and re-fetch) on the next pass.
+        disk_canary = payload.get("canary")
+        if isinstance(disk_canary, dict) and disk_canary and not self.canary:
+            self.canary = dict(disk_canary)
         raw_pairs = payload.get("pairs")
         if not isinstance(raw_pairs, dict):
             return
@@ -532,6 +554,47 @@ class FastpathRunState:
     def note_stall(self, count: int = 1) -> int:
         self.stall_count = int(self.stall_count) + int(count)
         return self.stall_count
+
+    # -- canary latch (WP4) -------------------------------------------------
+
+    @property
+    def canary_done(self) -> bool:
+        """Whether the once-per-run canary has already been recorded.
+
+        A *skipped* canary counts as done: the skip reasons are all terminal
+        for the run (nothing fast-owned survived, the reference frame is gone),
+        so retrying every poll would only re-do the work that produced the skip.
+        """
+        return bool(self.canary)
+
+    def mark_canary(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Record the canary result. First writer wins (see :attr:`canary_done`)."""
+        self.canary = dict(payload)
+        return self.canary
+
+
+def iter_run_states(data_root: Path | str, model: str) -> Iterator["FastpathRunState"]:
+    """Every retained run's state file for one model, newest run id first.
+
+    The ops sweep (WP4 metrics) needs this because the alert-worthy conditions
+    are *not* all on the run the current pass is working: a blocked pair is
+    recorded against the run that failed over, which by then is one or two
+    cycles behind the run the bucket is publishing. Retention keeps the
+    namespace to a handful of files, so scanning it per pass is free.
+    """
+    directory = fastpath_namespace_dir(data_root, model)
+    if not directory.is_dir():
+        return
+    for path in sorted(_iter_namespace_files(directory), reverse=True):
+        if not path.name.endswith(".state.json"):
+            continue
+        run_id = path.name[: -len(".state.json")]
+        try:
+            yield FastpathRunState.load_or_create(
+                data_root=data_root, model=model, run_id=run_id
+            )
+        except Exception:  # a single unreadable file must not kill the sweep
+            logger.warning("fastpath: could not read state file %s", path)
 
 
 def prune_orphan_state(
