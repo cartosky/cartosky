@@ -1,6 +1,6 @@
 # Fast-Path Ingestion Integration Design (Open-Meteo `.om` source)
 
-**Status:** v2 — 2026-08-05. v1 was adversarially reviewed by Codex
+**Status:** v2 APPROVED — 2026-08-05, all six §9 decisions resolved by Brian; cleared for Phase 6 implementation. v1 was adversarially reviewed by Codex
 (verdict: DISAGREE, five findings); this revision accepts all five and
 restructures accordingly. The material changes: **one scheduler process per
 model** (the fast source multiplexes into the existing loop rather than a
@@ -73,11 +73,13 @@ scheduler expands every selected variable across all declared build domains
 ownership could not express "NA fast, global delayed" [Codex finding 2]:
 
 ```
-source_by_var_domain:
-    (tmp2m, na): fast        (tmp2m, global): delayed
-    (dp2m, na): fast         (dp2m, global): delayed
-    (precip_total, na): fast (precip_total, global): delayed
-    ... surface set ...
+source_by_var_domain:            # per resolved Decision 1: surface set is
+    (tmp2m, na): fast        (tmp2m, global): fast     # fast in BOTH domains
+    (dp2m, na): fast         (dp2m, global): fast
+    (precip_total, na): fast (precip_total, global): fast
+    ... surface set ...      # (na, global) can still diverge per var — the
+                             #  key exists so failover/rollback can flip one
+                             #  domain independently
     (tmp850, *): delayed     # all pressure-level vars
     (snowfall_kuchera_total, *): delayed
     (ptype_intensity, *): delayed   # uses tmp925/tmp850 signals
@@ -126,11 +128,12 @@ construction; no cross-process transaction protocol needed.
   expected dissemination window (cycle + ~5h20m to cycle + ~6h30m, per the
   monitor's measured distribution), slow interval otherwise. Object existence
   (LIST/HEAD) is truth; manifest flags are never trusted for liveness.
-- **Build:** for each new timestep object, fetch the NA band (4.5–82.5°N)
-  once per file (all fast-owned primary vars in one block-cached pass,
-  ~17 MB), regrid via the cached sampler (0.06 s/field), convert units per
-  catalog, run the normal derive/write path, publish the frame, update the
-  manifest. Sequential dissemination means frames build in fh order
+- **Build:** for each new timestep object, one block-cached full-globe pass
+  for all fast-owned vars (~38 MB/file; the NA band alone would be ~17 MB,
+  but per resolved Decision 1 the same read feeds both the NA 9 km and
+  global 0.25° targets), regrid via the two cached samplers (0.06 s/field
+  each), convert units per catalog, run the normal derive/write path,
+  publish both domains' frames, update the manifest. Sequential dissemination means frames build in fh order
   naturally.
 - **Complete:** when all expected objects for the cycle's horizon are built
   (per-cycle: 145 files for 00z/12z, 109 for 06z/18z), mark fast-owned vars
@@ -246,7 +249,20 @@ a continuous guarantee. Alert, don't auto-disable, at launch.
 - Ops metrics: ingestion lag vs dissemination per cycle, per-run object
   counts, canary results, stall alerts — join the existing :9105 exporter.
 
-## 9. Decisions required (Brian)
+## 9. Decisions — RESOLVED (Brian, 2026-08-05)
+
+| # | Decision | Resolution |
+|---|---|---|
+| 1 | Global fast path | **At flip** — both NA 9 km and global 0.25° build from the fast source at launch. One full-globe read per file serves both targets (~19 GB/day). Ownership table: the surface set is `fast` for **both** domains. |
+| 2 | Sub-FH90 cadence | **Match today's 3 h ladder.** Hourly steps are summed into 3 h frames below FH90; hourly frames revisit later. |
+| 3 | Interim snow product | **Two-tier:** 10:1 `snowfall_total` ships early on the fast path; Kuchera follows ~2 h later from the delayed path. Labeling per §8. Revisit at the fall Kuchera decision. |
+| 4 | Launch variable set | **The validated 10** winter vars; batch-add later with per-var units audits. |
+| 5 | Dark-prod duration | **1–2 hours, if needed** — i.e., observe one live cycle dark with the canary green, then flip. Consequence: the automated canary + failover deadline are the primary safety net rather than soak time; rollback stays two config lines. |
+| 6 | GPLv2 posture | **In-process** `omfiles` behind the `reader.py` module boundary — lowest resource cost (no IPC, no extra process), no build-time impact. |
+
+Original decision framing preserved below for context.
+
+### (superseded) Decisions required
 
 1. **Global fast path now or later?** One full-globe read serves both NA and
    global targets (the NA band is 44% of the bytes), so adding global
