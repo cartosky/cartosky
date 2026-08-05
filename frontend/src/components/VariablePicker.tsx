@@ -39,12 +39,13 @@ type VariablePickerProps = {
   coverageBadgeLabel?: string | null;
 };
 
-type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "SEVERE" | "UPPER AIR" | "OUTLOOKS" | "FORECASTS" | "ENSEMBLE" | "RADAR" | "SATELLITE";
+type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "SEVERE" | "AIR QUALITY" | "UPPER AIR" | "OUTLOOKS" | "FORECASTS" | "ENSEMBLE" | "RADAR" | "SATELLITE";
 
 const BASE_CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string }> = [
   { id: "SURFACE", label: "Surface" },
   { id: "PRECIPITATION", label: "Precip" },
   { id: "SEVERE", label: "Severe" },
+  { id: "AIR QUALITY", label: "Air quality" },
   { id: "UPPER AIR", label: "Upper air" },
   { id: "OUTLOOKS", label: "Outlooks" },
   { id: "FORECASTS", label: "Forecasts" },
@@ -75,6 +76,7 @@ function normalizeGroup(group: string | null): CategoryId | null {
   if (normalized === "SURFACE") return "SURFACE";
   if (normalized === "PRECIPITATION" || normalized === "PRECIP ANOMALIES") return "PRECIPITATION";
   if (normalized === "SEVERE") return "SEVERE";
+  if (normalized === "AIR QUALITY") return "AIR QUALITY";
   if (normalized === "UPPER AIR") return "UPPER AIR";
   if (normalized === "OUTLOOKS") return "OUTLOOKS";
   if (normalized === "FORECASTS" || normalized === "FORECAST") return "FORECASTS";

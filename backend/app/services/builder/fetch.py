@@ -5288,6 +5288,11 @@ def _kgm2_to_inches(data: np.ndarray) -> np.ndarray:
     return data * 0.03937007874015748
 
 
+def _kgm2_to_mgm2(data: np.ndarray) -> np.ndarray:
+    """Convert kg/m^2 → mg/m^2, preserving NaN."""
+    return data * 1.0e6
+
+
 def _meters_swe_to_10to1_snow_inches(data: np.ndarray) -> np.ndarray:
     """Convert meters of snow water equivalent to 10:1 snowfall inches."""
     return data * 39.37007874015748 * 10.0
@@ -5349,6 +5354,7 @@ UNIT_CONVERTERS: dict[tuple[str, str] | str, Any] = {
     "m_to_in": _meters_to_inches,
     "m_swe_to_in_10to1": _meters_swe_to_10to1_snow_inches,
     "kgm2_to_in": _kgm2_to_inches,
+    "kgm2_to_mgm2": _kgm2_to_mgm2,
     "kgm2_swe_to_in_10to1": _kgm2_swe_to_10to1_snow_inches,
     "s-1_to_1e5s-1": _per_second_to_1e5_per_second,
     "pressure_pa_to_hpa": _pa_to_hpa,

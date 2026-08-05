@@ -976,6 +976,44 @@ LTNG_LEGEND_COLORS = [
 LTNG_COLOR_ANCHORS = list(zip(LTNG_LEGEND_LEVELS, LTNG_LEGEND_COLORS))
 LTNG_RANGE = (0.0, 8.0)
 
+# HRRR vertically integrated smoke (mg/m^2, converted from kg/m^2). Background
+# haze sits near 5, moderate plumes 50–150, and dense fire plumes run into the
+# hundreds; the ladder is packed low and the top bin absorbs everything above
+# 1000. Gray → tan → orange → red → purple keeps the low end readable on a
+# light basemap.
+VI_SMOKE_LEGEND_LEVELS = [
+    1.0,
+    2.0,
+    5.0,
+    10.0,
+    20.0,
+    35.0,
+    50.0,
+    75.0,
+    100.0,
+    150.0,
+    250.0,
+    500.0,
+    1000.0,
+]
+VI_SMOKE_LEGEND_COLORS = [
+    "#cfcfcf",
+    "#b8b2a8",
+    "#c7a97a",
+    "#d99a4e",
+    "#e8853a",
+    "#f26b2a",
+    "#ef5f3c",
+    "#e53935",
+    "#d32f2f",
+    "#b71c1c",
+    "#8e24aa",
+    "#6a1b9a",
+    "#4a148c",
+]
+VI_SMOKE_COLOR_ANCHORS = list(zip(VI_SMOKE_LEGEND_LEVELS, VI_SMOKE_LEGEND_COLORS))
+VI_SMOKE_RANGE = (0.0, 1000.0)
+
 # 850mb temperature (°C) continuous palette anchors and range
 TMP850_COLOR_ANCHORS = [
     (-40.0, "#90d8cb"), (-39.0, "#96cec9"), (-38.0, "#95c5c6"), (-37.0, "#9bc3cb"), (-36.0, "#9ec0cf"),
@@ -1454,6 +1492,19 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "legend_stops": list(zip(LTNG_LEGEND_LEVELS, LTNG_LEGEND_COLORS)),
         "allow_dry_frame": True,
         "transparent_below_min": 0.1,
+    },
+    "vi_smoke": {
+        "type": "continuous",
+        "display_palette_kind": "discrete",
+        "units": "mg/m^2",
+        "range": VI_SMOKE_RANGE,
+        "anchors": VI_SMOKE_COLOR_ANCHORS,
+        "colors": VI_SMOKE_LEGEND_COLORS,
+        "display_name": "Vertically Integrated Smoke",
+        "legend_title": "Vertically Integrated Smoke (mg/m²)",
+        "legend_stops": list(zip(VI_SMOKE_LEGEND_LEVELS, VI_SMOKE_LEGEND_COLORS)),
+        "allow_dry_frame": True,
+        "transparent_below_min": 1.0,
     },
     "wspd10m": {
         "type": "continuous",

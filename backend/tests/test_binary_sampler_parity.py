@@ -323,7 +323,7 @@ EXPECTED_GROUP_PARTITION = {
         **{
             var: 2
             for var in (
-                "ltng", "radar_ptype_rain", "radar_ptype_snow",
+                "ltng", "vi_smoke", "radar_ptype_rain", "radar_ptype_snow",
                 "radar_ptype_sleet", "radar_ptype_frzr",
             )
         },

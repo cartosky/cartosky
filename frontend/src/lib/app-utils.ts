@@ -593,6 +593,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   mlcape: { label: "Mixed-Layer CAPE", group: "SEVERE", order: 21 },
   sbcape: { label: "Surface-Based CAPE", group: "SEVERE", order: 22 },
   ltng: { label: "Lightning Flash Density", group: "SEVERE", order: 23 },
+  vi_smoke: { label: "Vertically Integrated Smoke", group: "AIR QUALITY", order: 26 },
   vort500: { label: "500mb Heights + Vorticity", group: "UPPER AIR", order: 33 },
   hgt500_anom: { label: "500mb Height Anomaly", group: "UPPER AIR", order: 33.5 },
   ir13: { label: "Clean IR", group: "SATELLITE", order: 0 },
@@ -705,6 +706,8 @@ function canonicalVariableGroup(id: string, group?: string | null): string | nul
     case "severe":
     case "instability":
       return "SEVERE";
+    case "air quality":
+      return "AIR QUALITY";
     case "upper air":
     case "dynamics":
       return "UPPER AIR";

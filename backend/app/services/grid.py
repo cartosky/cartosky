@@ -184,6 +184,12 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "flashes/km^2/5min",
     },
+    ("hrrr", "vi_smoke"): {
+        "scale": 0.1,
+        "offset": 0.0,
+        "nodata": 65535,
+        "units": "mg/m^2",
+    },
     ("hrrr", "pwat"): {
         "scale": 0.01,
         "offset": 0.0,

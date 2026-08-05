@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { PrefetchLink } from "@/components/PrefetchLink";
-import { ArrowRight, Droplets, Flame, Layers3, Snowflake, Wind } from "lucide-react";
+import { ArrowRight, CloudFog, Droplets, Flame, Layers3, Snowflake, Wind } from "lucide-react";
 
 import { fetchCapabilities, type CapabilityVariable, type CapabilitiesResponse } from "@/lib/api";
 import { variableCatalogOrder, viewerVariableGroup } from "@/lib/app-utils";
@@ -626,6 +626,7 @@ const GROUP_ORDER = [
   "SURFACE",
   "PRECIPITATION",
   "SEVERE",
+  "AIR QUALITY",
   "UPPER AIR",
   "OUTLOOKS",
   "FORECASTS",
@@ -641,6 +642,7 @@ function groupSortKey(group: string): number {
 
 function groupIcon(group: string) {
   if (group === "SURFACE" || group === "SEVERE") return <Flame className="h-5 w-5" />;
+  if (group === "AIR QUALITY") return <CloudFog className="h-5 w-5" />;
   if (group === "UPPER AIR") return <Wind className="h-5 w-5" />;
   if (group === "PRECIPITATION") return <Droplets className="h-5 w-5" />;
   if (group === "OUTLOOKS" || group === "FORECASTS") return <Layers3 className="h-5 w-5" />;

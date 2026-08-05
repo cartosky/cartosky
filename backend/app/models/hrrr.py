@@ -41,6 +41,8 @@ class HRRRPlugin(BaseModelPlugin):
             return "pwat"
         if normalized in {"ltng", "lightning", "flash_density"}:
             return "ltng"
+        if normalized in {"vi_smoke", "smoke", "colmd", "vismoke", "vertically_integrated_smoke"}:
+            return "vi_smoke"
         if normalized in {"snowfall_total", "asnow", "snow10", "snow_10to1", "total_snow", "totalsnow"}:
             return "snowfall_total"
         if normalized == "snowfall_kuchera_total":
@@ -467,6 +469,22 @@ HRRR_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="flashes/km^2/5min",
     ),
+    "vi_smoke": VarSpec(
+        id="vi_smoke",
+        name="Vertically Integrated Smoke",
+        selectors=VarSelectors(
+            search=[":COLMD:entire atmosphere"],
+            filter_by_keys={
+                "typeOfLevel": "atmosphereSingleLayer",
+            },
+            hints={
+                "upstream_var": "vi_smoke",
+            },
+        ),
+        primary=True,
+        kind="continuous",
+        units="mg/m^2",
+    ),
     "pwat": VarSpec(
         id="pwat",
         name="Precipitable Water",
@@ -823,6 +841,7 @@ HRRR_COLOR_MAP_BY_VAR_KEY: dict[str, str] = {
     "mlcape": "mlcape",
     "mucape": "mlcape",
     "ltng": "ltng",
+    "vi_smoke": "vi_smoke",
     "pwat": "pwat",
     "snowfall_total": "snowfall_total",
     "snowfall_kuchera_total": "snowfall_total",
@@ -860,6 +879,7 @@ HRRR_GROUP_BY_VAR_KEY: dict[str, str] = {
     "mlcape": "Instability",
     "mucape": "Instability",
     "ltng": "Instability",
+    "vi_smoke": "Air Quality",
     "pwat": "Moisture",
     "precip_total": "Precipitation",
     "snowfall_total": "Precipitation",
@@ -875,6 +895,7 @@ HRRR_CONVERSION_BY_VAR_KEY: dict[str, str] = {
     "wspd850": "ms_to_kt",
     "wspd300": "ms_to_kt",
     "pwat": "kgm2_to_in",
+    "vi_smoke": "kgm2_to_mgm2",
     "wspd10m": "ms_to_mph",
     "wgst10m": "ms_to_mph",
     "snowfall_total": "m_to_in",

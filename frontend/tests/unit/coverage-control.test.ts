@@ -82,6 +82,13 @@ const HRRR_SEVERE_MODEL = {
   },
 } as unknown as CapabilityModel;
 
+const HRRR_AIR_QUALITY_MODEL = {
+  variables: {
+    vi_smoke: { display_name: "Vertically Integrated Smoke" },
+    ltng: { display_name: "Lightning Flash Density" },
+  },
+} as unknown as CapabilityModel;
+
 // ───────────────────────── §7 flip readiness ─────────────────────────────────
 
 /**
@@ -609,6 +616,17 @@ describe("HRRR severe variable option ordering", () => {
     expect(viewerVariableGroup("ltng", "Instability")).toBe("SEVERE");
     expect(options.find((option) => option.value === "ltng")?.label).toBe(
       "Lightning Flash Density",
+    );
+  });
+});
+
+describe("HRRR air quality variable grouping", () => {
+  it("puts vertically integrated smoke in its own AIR QUALITY group", () => {
+    const options = makeVariableOptions(normalizeCapabilityVarRows(HRRR_AIR_QUALITY_MODEL), "hrrr");
+    expect(options.map((option) => option.value)).toEqual(["ltng", "vi_smoke"]);
+    expect(viewerVariableGroup("vi_smoke", "Air Quality")).toBe("AIR QUALITY");
+    expect(options.find((option) => option.value === "vi_smoke")?.label).toBe(
+      "Vertically Integrated Smoke",
     );
   });
 });

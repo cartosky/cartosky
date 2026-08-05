@@ -55,6 +55,7 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
         "mlcape",
         "mucape",
         "ltng",
+        "vi_smoke",
         "pwat",
         "snowfall_total",
         "snowfall_kuchera_total",
@@ -353,6 +354,38 @@ def test_hrrr_ltng_selector_and_alias_invariants() -> None:
     assert ltng_spec.selectors.search == [":LTNG:entire atmosphere:"]
     assert ltng_spec.selectors.filter_by_keys == {"shortName": "ltng"}
     assert ltng_spec.selectors.hints["upstream_var"] == "ltng"
+
+
+def test_hrrr_vi_smoke_capability_invariants() -> None:
+    capabilities = HRRR_MODEL.capabilities
+    assert capabilities is not None
+    payload = _serialize_model_capability("hrrr", capabilities)
+
+    vi_smoke = payload["variables"]["vi_smoke"]
+    assert vi_smoke["var_key"] == "vi_smoke"
+    assert vi_smoke["buildable"] is True
+    assert vi_smoke["derived"] is False
+    assert vi_smoke["kind"] == "continuous"
+    assert vi_smoke["units"] == "mg/m^2"
+    assert vi_smoke["display_name"] == "Vertically Integrated Smoke"
+    assert vi_smoke["group"] == "Air Quality"
+    assert vi_smoke["color_map_id"] == "vi_smoke"
+    assert vi_smoke["display_resampling_override"] is None
+
+
+def test_hrrr_vi_smoke_selector_and_alias_invariants() -> None:
+    for alias in ("vi_smoke", "smoke", "colmd", "vismoke", "vertically_integrated_smoke"):
+        assert HRRR_MODEL.normalize_var_id(alias) == "vi_smoke"
+
+    vi_smoke_spec = HRRR_MODEL.get_var("vi_smoke")
+    assert vi_smoke_spec is not None
+    assert vi_smoke_spec.primary is True
+    assert vi_smoke_spec.derived is False
+    assert vi_smoke_spec.kind == "continuous"
+    assert vi_smoke_spec.units == "mg/m^2"
+    assert vi_smoke_spec.selectors.search == [":COLMD:entire atmosphere"]
+    assert vi_smoke_spec.selectors.filter_by_keys == {"typeOfLevel": "atmosphereSingleLayer"}
+    assert vi_smoke_spec.selectors.hints["upstream_var"] == "vi_smoke"
 
 
 def test_hrrr_pwat_selector_and_alias_invariants() -> None:

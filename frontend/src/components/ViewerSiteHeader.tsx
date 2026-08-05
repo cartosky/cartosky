@@ -195,7 +195,7 @@ function useViewerLocationFavorites() {
 }
 
 
-const GROUP_ORDER = ["MODELS", "ENSEMBLES", "FORECASTS", "OBSERVATIONS", "SURFACE", "PRECIPITATION", "PRECIP ANOMALIES", "SEVERE", "UPPER AIR", "OUTLOOKS", "ENSEMBLE"];
+const GROUP_ORDER = ["MODELS", "ENSEMBLES", "FORECASTS", "OBSERVATIONS", "SURFACE", "PRECIPITATION", "PRECIP ANOMALIES", "SEVERE", "AIR QUALITY", "UPPER AIR", "OUTLOOKS", "ENSEMBLE"];
 
 function spcVariableLabel(option: VariableOption): string {
   switch (option.value) {

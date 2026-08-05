@@ -143,6 +143,13 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         support_min_value=0.1,
         support_coverage_threshold=0.15,
     ),
+    ("hrrr", "vi_smoke"): GridDisplayPrepConfig(
+        id="hrrr_vi_smoke_display_v1",
+        upscale_factor=3,
+        preserve_zero_support=True,
+        support_min_value=1.0,
+        support_coverage_threshold=0.15,
+    ),
     ("nam", "radar_ptype"): GridDisplayPrepConfig(
         id="nam_radar_ptype_display_v3",
         upscale_factor=1,
