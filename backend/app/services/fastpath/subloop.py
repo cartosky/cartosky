@@ -115,6 +115,15 @@ DISSEMINATION_WINDOW = (timedelta(hours=5, minutes=20), timedelta(hours=6, minut
 FAST_POLL_SECONDS = 60
 SLOW_POLL_SECONDS = 600
 
+#: How long the fast source may make ZERO progress on a run before the
+#: failover deadline is allowed to revoke its pairs. Dissemination gaps between
+#: consecutive ``.om`` objects are seconds to a couple of minutes, and the
+#: scheduler polls every 60 s inside the window, so 20 minutes of nothing —
+#: while the delayed source demonstrably has the run — is a true stall rather
+#: than ordinary lumpiness. Env-tunable for ops.
+ENV_FAILOVER_GRACE_SECONDS = "CARTOSKY_FASTPATH_FAILOVER_GRACE_SECONDS"
+DEFAULT_FAILOVER_GRACE_SECONDS = 1200.0
+
 #: Integrity gates (design §6). Deliberately loose enough that real weather
 #: never trips them and tight enough that a truncated/garbage decode does.
 MAX_NAN_FRACTION = 0.05
@@ -177,6 +186,24 @@ class FastpathPassResult:
 
 def _as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def failover_grace_seconds() -> float:
+    """Grace window before a trailing run may be judged stalled."""
+    raw = str(os.environ.get(ENV_FAILOVER_GRACE_SECONDS, "")).strip()
+    if not raw:
+        return DEFAULT_FAILOVER_GRACE_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "fastpath: invalid %s=%r; using %.0fs",
+            ENV_FAILOVER_GRACE_SECONDS,
+            raw,
+            DEFAULT_FAILOVER_GRACE_SECONDS,
+        )
+        return DEFAULT_FAILOVER_GRACE_SECONDS
+    return max(0.0, value)
 
 
 def in_dissemination_window(run_dt: datetime, now: datetime | None = None) -> bool:
@@ -854,6 +881,7 @@ def run_fastpath_pass(
                 state.save()
                 break
             result.steps_ingested += 1
+            state.note_progress()
             next_step = ledger.next_expected_fh()
 
         for name, reason in failed.items():
@@ -921,6 +949,7 @@ def run_fastpath_pass(
                     result.frames_skipped += 1
                     continue
                 state.record_staged(var_id, domain, fh)
+                state.note_progress()
                 written_by_domain.setdefault(domain, []).append(var_id)
                 result.frames_written += 1
 
@@ -1045,6 +1074,7 @@ def _promote_staged_timestep(
             state.record_published(var_id, domain, fh, expected_fhs=expected)
     result.promotion_ready_regions = tuple(ready_regions)
     result.timesteps_promoted += 1
+    state.note_progress()
     state.save()
     return True
 
@@ -1231,13 +1261,30 @@ def enforce_failover_deadline(
     data_root: Path,
     delayed_available: bool,
     publish_lock: threading.Lock | None = None,
+    now: datetime | None = None,
+    grace_seconds: float | None = None,
 ) -> frozenset[tuple[str, str]]:
-    """Revoke fast ownership for pairs that trail the now-available delayed source.
+    """Revoke fast ownership for pairs whose fast source has STALLED.
 
-    The deadline (design §6): when the delayed source has the run AND a
-    fast-owned pair's ``ready_through_fh`` trails its expected horizon, revoke
-    the pair — atomically, inside the publish lock, **before** any delayed
-    build of it can start — then let the delayed path build it.
+    Three conditions, all required (design §6):
+
+    1. the delayed source verifiably has this run (the caller's re-probe);
+    2. the pair's ``ready_through_fh`` trails its expected horizon;
+    3. **the fast source has made no progress on the run for the grace
+       window.**
+
+    Condition 3 is not optional garnish — without it, condition 2 is trivially
+    true for every run the instant it is discovered, and a scheduler that cold
+    starts mid-cycle revokes every pair before the fast pass has run once. That
+    happened on the first live WP5 run: a restart at 12:47Z resolved back to
+    the 06z run with a genuine probe hit and immediately handed all 12 pairs to
+    a full Herbie build, while the bucket held every 06z object and the fast
+    path could have built the run in seconds. *Trailing is not stalled.*
+
+    The clock lives on the run state (``created_at`` / ``last_progress_at``) so
+    it survives restarts, and this function persists a freshly created state
+    even when it revokes nothing — otherwise every poll would mint a new
+    ``created_at`` and no run could ever age into a stall.
 
     Accumulation pairs additionally get ``delayed_rebuild_required`` and have
     their fast frames removed from staging, so the delayed path rebuilds the
@@ -1266,11 +1313,37 @@ def enforce_failover_deadline(
         if variable.cartosky_var
     }
 
+    grace = failover_grace_seconds() if grace_seconds is None else float(grace_seconds)
     lock = publish_lock if publish_lock is not None else scheduler_module._PUBLISH_LOCK
     revoked: set[tuple[str, str]] = set()
     with lock:
         state = FastpathRunState.load_or_create(
             data_root=data_root, model=model_id, run_id=run_id
+        )
+        idle_seconds = state.seconds_since_progress(now)
+        if not state.is_stalled(grace_seconds=grace, now=now):
+            # Start (or keep) the clock. A run observed for the first time here
+            # MUST have its created_at persisted, or the grace window restarts
+            # every poll and the deadline can never fire.
+            if not state.path.exists():
+                state.save()
+            logger.info(
+                "fastpath: deadline held for %s %s — fast source active %.0fs ago "
+                "(grace %.0fs); trailing is not stalled",
+                model_id,
+                run_id,
+                idle_seconds,
+                grace,
+            )
+            return frozenset()
+
+        logger.warning(
+            "fastpath: failover deadline firing for %s %s — no fast progress for "
+            "%.0fs (grace %.0fs) and the delayed source has the run",
+            model_id,
+            run_id,
+            idle_seconds,
+            grace,
         )
         for var_id, domain in sorted(configured):
             entry = state.pair(var_id, domain, create=False)

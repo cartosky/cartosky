@@ -3818,14 +3818,21 @@ def _maybe_run_fastpath_pass(
 
     Four things happen, in this order:
 
-    1. **Failover deadline** for the run the *delayed* probe just resolved. Its
-       existence is precisely the "delayed source is now available" signal
-       (design §6): any fast-owned pair for that run whose ``ready_through_fh``
-       trails its horizon is revoked, inside the publish lock, before
-       ``_process_run`` can start building anything.
-    2. **A bounded fast pass** on the run the *bucket* is publishing, which the
+    1. **A bounded fast pass** on the run the *bucket* is publishing, which the
        fast poller discovers independently — it is normally newer than the
        delayed one, which is the whole point (design §3 rule 1).
+    2. **Failover deadline** for the run the *delayed* probe just resolved,
+       inside the publish lock, before ``_process_run`` can start building
+       anything.
+
+       The fast pass runs **first, deliberately**: the fast source gets first
+       move on every poll, and the deadline then judges progress *including*
+       that pass. With the old order a scheduler that cold started mid-cycle
+       revoked every pair before the fast path had run once — the deadline
+       looked at a brand-new state, saw ``ready_through_fh`` trailing, and
+       handed a run the bucket held in full to a Herbie rebuild. Fast-first
+       plus the stall clock (see :func:`~.subloop.enforce_failover_deadline`)
+       are the two halves of that fix; either alone is insufficient.
     3. **The cross-source canary** (design §6) for the delayed run, at most once
        per run and only once both sources have finished it.
     4. **A metrics snapshot** for the Prometheus exporter (design §8).
@@ -3840,6 +3847,15 @@ def _maybe_run_fastpath_pass(
     try:
         from app.services.fastpath import subloop as fastpath_subloop
 
+        # 1. The fast source moves first, every poll.
+        pass_result = fastpath_subloop.run_fastpath_pass(
+            plugin=plugin,
+            model_id=model_id,
+            data_root=data_root,
+            max_steps=FASTPATH_MAX_STEPS_PER_PASS,
+            primary_vars=list(primary_vars or ()),
+        )
+        # 2. Only then judge whether it has stalled on the delayed run.
         fastpath_subloop.enforce_failover_deadline(
             plugin=plugin,
             model_id=model_id,
@@ -3849,13 +3865,6 @@ def _maybe_run_fastpath_pass(
                 plugin=plugin, run_dt=delayed_run_dt, probe_var=probe_var
             ),
             publish_lock=_PUBLISH_LOCK,
-        )
-        pass_result = fastpath_subloop.run_fastpath_pass(
-            plugin=plugin,
-            model_id=model_id,
-            data_root=data_root,
-            max_steps=FASTPATH_MAX_STEPS_PER_PASS,
-            primary_vars=list(primary_vars or ()),
         )
         # 3. The once-per-run cross-source canary (design §6), on the run the
         #    DELAYED probe resolved: the fast source finished that cycle ~2 h

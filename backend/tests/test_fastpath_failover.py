@@ -63,14 +63,47 @@ def _run_pass(data_root: Path, source: FakeSource, **kwargs):
     )
 
 
-def _failover(data_root: Path, *, delayed_available: bool = True):
+def _failover(
+    data_root: Path,
+    *,
+    delayed_available: bool = True,
+    stalled: bool = True,
+    now: datetime | None = None,
+    grace_seconds: float | None = None,
+):
+    """Run the deadline.
+
+    ``stalled=True`` (the default) evaluates it an hour in the future, past the
+    default grace window, so tests about revocation *mechanics* still see a
+    revocation. The stall gate itself is covered by its own tests below —
+    trailing alone must never be enough.
+    """
+    if now is None and stalled:
+        now = datetime.now(timezone.utc) + timedelta(hours=1)
     return subloop_module.enforce_failover_deadline(
         plugin=_plugin(),
         model_id="ecmwf",
         run_dt=RUN_DT,
         data_root=data_root,
         delayed_available=delayed_available,
+        now=now,
+        grace_seconds=grace_seconds,
     )
+
+
+def _age_state(data_root: Path, *, seconds: float) -> None:
+    """Backdate the run's progress clock, simulating an outage already underway."""
+    state = _state(data_root)
+    stale = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+    stamp = stale.strftime("%Y-%m-%dT%H:%M:%SZ")
+    state.created_at = stamp
+    state.last_progress_at = stamp
+    state.save()
+    # save() merges disk progress forward, so re-assert the backdate on disk.
+    payload = json.loads(state.path.read_text())
+    payload["created_at"] = stamp
+    payload["last_progress_at"] = stamp
+    state.path.write_text(json.dumps(payload))
 
 
 def _state(data_root: Path) -> FastpathRunState:
@@ -534,8 +567,12 @@ def test_total_outage_failover_survives_the_whole_scheduler_hook(
 
     monkeypatch.setattr(subloop_module, "_default_source", lambda: _DeadSource())
     # The delayed source demonstrably HAS this run (a verified probe hit), which
-    # is what licenses the deadline to fire at all.
+    # is what licenses the deadline to fire at all...
     monkeypatch.setattr(scheduler_module, "_probe_run_exists", lambda **_kw: True)
+    # ...and the outage has been running well past the grace window, so this is
+    # a stall rather than a run that merely trails.
+    _state(tmp_path).save()
+    _age_state(tmp_path, seconds=3600.0)
 
     scheduler_module._maybe_run_fastpath_pass(
         plugin=_plugin(),
@@ -777,6 +814,183 @@ def test_purge_verification_catches_a_partial_delete(
 
 
 # ---------------------------------------------------------------------------
+# Trailing is not stalled (WP5 live-run regression)
+# ---------------------------------------------------------------------------
+
+
+def test_cold_start_does_not_revoke_a_run_the_fast_source_can_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The WP5 12:47Z regression, end to end through the scheduler hook.
+
+    A restart mid-cycle resolves back to an older run that the delayed source
+    genuinely has (probe HIT). The bucket holds every object for it. Nothing
+    may be revoked: the fast path must get first move and build the run in
+    seconds, instead of the deadline handing 12 pairs to a full Herbie build
+    because a brand-new state trivially "trails".
+    """
+    monkeypatch.setattr(scheduler_module, "_probe_run_exists", lambda **_kw: True)
+    monkeypatch.setattr(subloop_module, "_default_source", lambda: FakeSource(max_fh=6))
+
+    scheduler_module._maybe_run_fastpath_pass(
+        plugin=_plugin(),
+        model_id="ecmwf",
+        data_root=tmp_path,
+        delayed_run_dt=RUN_DT,
+        primary_vars=["tmp2m"],
+        keep_runs=4,
+        probe_var="tmp2m",
+    )
+
+    state = _state(tmp_path)
+    assert state.revoked_pairs() == frozenset(), "cold start must not revoke"
+    # The fast pass built the run in the SAME poll — that is the whole point.
+    assert _frame_exists(tmp_path, "tmp2m", 0)
+    assert _frame_exists(tmp_path, "precip_total", 6)
+    assert state.pair("tmp2m", "global").ready_through_fh == 6
+    # And the delayed loop still skips the pairs, because they are still fast-owned.
+    targets = scheduler_module._delayed_targets_for_cycle(
+        _plugin(), ["tmp2m"], RUN_DT.hour, data_root=tmp_path, run_id=RUN_ID
+    )
+    assert not [target for target in targets if target[0] == "global"]
+
+
+def test_a_trailing_run_with_recent_progress_is_never_revoked(
+    tmp_path: Path,
+) -> None:
+    """Mid-catchup: the fast source is steadily working an old run and trails
+    the delayed horizon the entire time. Trailing is the normal state of a
+    run being built; it must never on its own trigger failover."""
+    for max_fh in (3, 6, 9, 12):
+        _run_pass(tmp_path, FakeSource(max_fh=max_fh))
+        entry = _state(tmp_path).pair("tmp2m", "global")
+        expected_last = _plugin().scheduled_fhs_for_var("tmp2m", RUN_DT.hour)[-1]
+        assert entry.ready_through_fh is not None
+        assert entry.ready_through_fh < expected_last, "trailing throughout"
+        assert _failover(tmp_path, stalled=False) == frozenset()
+
+    assert _state(tmp_path).revoked_pairs() == frozenset()
+    assert _frame_exists(tmp_path, "tmp2m", 12)
+
+
+def test_the_deadline_fires_once_the_grace_window_elapses(tmp_path: Path) -> None:
+    _run_pass(tmp_path, FakeSource(max_fh=6, fail_after_fh=6))
+    grace = subloop_module.failover_grace_seconds()
+
+    # Just inside the window: still considered alive.
+    just_inside = datetime.now(timezone.utc) + timedelta(seconds=grace - 60)
+    assert _failover(tmp_path, now=just_inside, stalled=False) == frozenset()
+
+    # Past it: a real stall.
+    past = datetime.now(timezone.utc) + timedelta(seconds=grace + 60)
+    revoked = _failover(tmp_path, now=past, stalled=False)
+    assert revoked == ownership.fast_owned_pairs("ecmwf")
+
+
+def test_progress_resets_the_stall_clock(tmp_path: Path) -> None:
+    """A bucket that goes quiet and then resumes must not be revoked for the
+    earlier gap."""
+    _run_pass(tmp_path, FakeSource(max_fh=3))
+    _age_state(tmp_path, seconds=3600.0)
+    assert _state(tmp_path).seconds_since_progress() > 3000
+
+    _run_pass(tmp_path, FakeSource(max_fh=6))
+
+    assert _state(tmp_path).seconds_since_progress() < 60
+    assert _failover(tmp_path, stalled=False) == frozenset()
+
+
+def test_the_fast_pass_runs_before_the_deadline_within_one_poll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ordering inside ``_maybe_run_fastpath_pass`` is load-bearing, not
+    cosmetic.
+
+    The setup is a bucket that goes quiet just past the grace window and then
+    resumes on this very poll. Fast-first: the pass makes progress, the
+    deadline judges *including* it, nothing is revoked. Deadline-first: the
+    pairs are revoked a moment before the evidence that the source is alive
+    arrives — the run gets handed to Herbie for nothing.
+    """
+    _run_pass(tmp_path, FakeSource(max_fh=3))
+    _age_state(tmp_path, seconds=subloop_module.failover_grace_seconds() + 120)
+    assert _state(tmp_path).is_stalled(
+        grace_seconds=subloop_module.failover_grace_seconds()
+    ), "precondition: the run looks stalled going into this poll"
+
+    # The bucket is back, with new objects beyond what we already have.
+    monkeypatch.setattr(scheduler_module, "_probe_run_exists", lambda **_kw: True)
+    monkeypatch.setattr(subloop_module, "_default_source", lambda: FakeSource(max_fh=9))
+
+    scheduler_module._maybe_run_fastpath_pass(
+        plugin=_plugin(),
+        model_id="ecmwf",
+        data_root=tmp_path,
+        delayed_run_dt=RUN_DT,
+        primary_vars=["tmp2m"],
+        keep_runs=4,
+        probe_var="tmp2m",
+    )
+
+    state = _state(tmp_path)
+    assert state.revoked_pairs() == frozenset(), (
+        "the fast source proved it is alive during this poll — the deadline "
+        "must see that progress, which only happens if the pass runs first"
+    )
+    assert _frame_exists(tmp_path, "tmp2m", 9)
+    assert state.pair("tmp2m", "global").ready_through_fh == 9
+
+
+def test_the_grace_window_is_env_tunable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(subloop_module.ENV_FAILOVER_GRACE_SECONDS, raising=False)
+    assert subloop_module.failover_grace_seconds() == (
+        subloop_module.DEFAULT_FAILOVER_GRACE_SECONDS
+    )
+    monkeypatch.setenv(subloop_module.ENV_FAILOVER_GRACE_SECONDS, "300")
+    assert subloop_module.failover_grace_seconds() == 300.0
+    # A malformed value must not take the scheduler down.
+    monkeypatch.setenv(subloop_module.ENV_FAILOVER_GRACE_SECONDS, "soon")
+    assert subloop_module.failover_grace_seconds() == (
+        subloop_module.DEFAULT_FAILOVER_GRACE_SECONDS
+    )
+
+
+def test_the_deadline_persists_a_new_run_state_so_the_clock_can_start(
+    tmp_path: Path,
+) -> None:
+    """Without persisting ``created_at`` on first observation, every poll would
+    mint a fresh clock and the deadline could never fire at all."""
+    state_path = _state(tmp_path).path
+    assert not state_path.exists()
+
+    assert _failover(tmp_path, stalled=False) == frozenset()
+
+    assert state_path.exists(), "the grace clock must be anchored on disk"
+    payload = json.loads(state_path.read_text())
+    assert payload["created_at"]
+    assert payload["last_progress_at"]
+
+
+def test_state_without_last_progress_at_migrates_without_instant_revoke(
+    tmp_path: Path,
+) -> None:
+    """Upgrade path: a file written before the stall clock existed must load,
+    and must not be treated as instantly stalled."""
+    _run_pass(tmp_path, FakeSource(max_fh=3))
+    state_path = _state(tmp_path).path
+    payload = json.loads(state_path.read_text())
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    payload["updated_at"] = stamp
+    payload.pop("last_progress_at", None)
+    state_path.write_text(json.dumps(payload))
+
+    migrated = _state(tmp_path)
+    assert migrated.last_progress_at == stamp
+    assert migrated.seconds_since_progress() < 60
+    assert _failover(tmp_path, stalled=False) == frozenset()
+
+
+# ---------------------------------------------------------------------------
 # The deadline requires VERIFIED delayed availability
 # ---------------------------------------------------------------------------
 
@@ -795,11 +1009,21 @@ def _stalled_hook(
     *,
     probe_hit: bool,
     probe_var: str | None = "tmp2m",
+    stalled_for_seconds: float | None = 3600.0,
 ) -> None:
+    """Drive the real scheduler hook with a dead bucket.
+
+    ``stalled_for_seconds`` backdates the run's progress clock so the outage
+    looks like it has been going on that long — the deadline needs a stall, not
+    merely a trailing run.
+    """
     monkeypatch.setattr(subloop_module, "_default_source", lambda: _DeadSource())
     monkeypatch.setattr(
         scheduler_module, "_probe_run_exists", lambda **_kw: bool(probe_hit)
     )
+    if stalled_for_seconds is not None:
+        _state(tmp_path).save()
+        _age_state(tmp_path, seconds=stalled_for_seconds)
     scheduler_module._maybe_run_fastpath_pass(
         plugin=_plugin(),
         model_id="ecmwf",

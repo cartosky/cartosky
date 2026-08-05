@@ -224,6 +224,9 @@ def test_a_fully_revoked_run_still_promotes_via_the_delayed_path(
         run_dt=RUN_DT,
         data_root=tmp_path,
         delayed_available=True,
+        # Evaluated past the grace window: this test is about what happens
+        # AFTER a genuine stall, not about the stall gate itself.
+        now=datetime.now(timezone.utc) + timedelta(hours=1),
     )
     assert ("tmp2m", "na") in revoked
 

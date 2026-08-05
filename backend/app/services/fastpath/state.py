@@ -111,6 +111,23 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _iso(value: datetime) -> str:
+    return _as_utc_dt(value).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_iso(text: object) -> datetime | None:
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _as_utc(value: datetime) -> datetime:
+    return _as_utc_dt(value)
+
+
 def _token(value: Any) -> str:
     return str(value or "").strip().lower()
 
@@ -242,6 +259,13 @@ class FastpathRunState:
         self.path = fastpath_state_path(self.data_root, self.model, self.run_id)
         self.created_at = _utc_now()
         self.updated_at = self.created_at
+        #: When the fast source last made real progress on this run — a step
+        #: ingested, a frame staged, or a timestep promoted. Seeded to
+        #: ``created_at`` so a run the fast path has never touched still has a
+        #: well-defined clock. This is what separates *trailing* from
+        #: *stalled*: every run trails the moment it is created, but only a run
+        #: with no progress for the grace window has actually stopped.
+        self.last_progress_at = self.created_at
         self.stall_count = 0
         self.pairs: dict[str, PairState] = {}
         #: WP4 canary record for this run — written at most once (design §6:
@@ -289,6 +313,14 @@ class FastpathRunState:
             return state
         state.created_at = str(payload.get("created_at") or state.created_at)
         state.updated_at = str(payload.get("updated_at") or state.updated_at)
+        # Migration: files written before the stall clock existed carry no
+        # last_progress_at. Seeding from updated_at (the last time anything
+        # touched the run) and falling back to created_at means an upgrade can
+        # never produce an instant revoke — the worst case is one extra grace
+        # window, which is exactly the safe direction.
+        state.last_progress_at = str(
+            payload.get("last_progress_at") or state.updated_at or state.created_at
+        )
         try:
             state.stall_count = int(payload.get("stall_count") or 0)
         except (TypeError, ValueError):
@@ -310,6 +342,7 @@ class FastpathRunState:
             "run": self.run_id,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "last_progress_at": self.last_progress_at,
             "stall_count": int(self.stall_count),
             "canary": dict(self.canary),
             "pairs": {key: value.to_json() for key, value in sorted(self.pairs.items())},
@@ -340,6 +373,23 @@ class FastpathRunState:
             self.stall_count = max(int(self.stall_count), int(payload.get("stall_count") or 0))
         except (TypeError, ValueError):
             pass
+        # Progress is monotonic: whichever writer saw motion most recently wins,
+        # so a concurrent save can never rewind the stall clock and manufacture
+        # a spurious failover.
+        disk_progress = _parse_iso(payload.get("last_progress_at"))
+        memory_progress = _parse_iso(self.last_progress_at)
+        if disk_progress is not None and (
+            memory_progress is None or disk_progress > memory_progress
+        ):
+            self.last_progress_at = _iso(disk_progress)
+        # created_at is the run's first observation — the older value is the
+        # true one, and it anchors the grace window.
+        disk_created = _parse_iso(payload.get("created_at"))
+        memory_created = _parse_iso(self.created_at)
+        if disk_created is not None and (
+            memory_created is None or disk_created < memory_created
+        ):
+            self.created_at = _iso(disk_created)
         # The canary record is write-once per run, so "somebody already wrote
         # one" always wins over an in-memory blank — otherwise a sub-loop that
         # loaded the state before the canary ran would clear the latch and the
@@ -554,6 +604,41 @@ class FastpathRunState:
     def note_stall(self, count: int = 1) -> int:
         self.stall_count = int(self.stall_count) + int(count)
         return self.stall_count
+
+    # -- progress clock -----------------------------------------------------
+
+    def note_progress(self, now: datetime | None = None) -> str:
+        """Mark real forward motion by the fast source on this run.
+
+        Called when a step is ingested, a frame is staged, or a timestep is
+        promoted — anything that means the bucket is still feeding us. Polls
+        that find nothing new deliberately do **not** count: a run mid-catchup
+        that keeps advancing must never look stalled, and a run whose objects
+        stopped appearing must.
+        """
+        self.last_progress_at = _utc_now() if now is None else _iso(now)
+        return self.last_progress_at
+
+    def seconds_since_progress(self, now: datetime | None = None) -> float:
+        """Seconds since the fast source last moved, measured from the later of
+        ``created_at`` and ``last_progress_at``.
+
+        Using the later of the two is what fixes the cold-start revoke: a run
+        state created this instant has a zero-age clock even though its
+        ``ready_through_fh`` trails everything, so *trailing* alone can no
+        longer trigger failover.
+        """
+        reference = datetime.now(timezone.utc) if now is None else _as_utc(now)
+        created = _parse_iso(self.created_at)
+        progressed = _parse_iso(self.last_progress_at)
+        candidates = [value for value in (created, progressed) if value is not None]
+        if not candidates:
+            return 0.0
+        return max(0.0, (reference - max(candidates)).total_seconds())
+
+    def is_stalled(self, *, grace_seconds: float, now: datetime | None = None) -> bool:
+        """Whether the fast source has made no progress for the grace window."""
+        return self.seconds_since_progress(now) > float(grace_seconds)
 
     # -- canary latch (WP4) -------------------------------------------------
 
