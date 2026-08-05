@@ -1,6 +1,16 @@
 # Fast-Path Ingestion Integration Design (Open-Meteo `.om` source)
 
-**Status:** DRAFT for review — 2026-08-05. Follows the validated prototype
+**Status:** v2 — 2026-08-05. v1 was adversarially reviewed by Codex
+(verdict: DISAGREE, five findings); this revision accepts all five and
+restructures accordingly. The material changes: **one scheduler process per
+model** (the fast source multiplexes into the existing loop rather than a
+second systemd unit — the per-model `flock` at `scheduler.py:1399` makes two
+loops impossible and unsafe to bypass); **ownership is keyed
+(variable, domain)** not variable; **the source provider returns
+run-cumulative values for primary accumulation vars** (ECMWF `precip_total`
+and `snowfall_total` are `primary=True` GRIB-cumulative fetches, not derives);
+**failover is an in-process state machine with per-frame provenance**.
+Follows the validated prototype
 (`docs/ECMWF_OPENMETEO_9KM_PROTOTYPE_2026-08-04.md`, Phases 1–5 all passed,
 visual gate approved). This document settles the architecture for Phase 6 and
 production integration. Open decisions are marked **[DECISION]** and collected
@@ -57,24 +67,32 @@ The single most load-bearing choice. Prod already swaps during ECMWF builds,
 so the fast path must **replace** the delayed build for the variables it
 owns — never duplicate it.
 
-Each ECMWF variable declares an owning source in the model plugin:
+Ownership is keyed **(variable, domain)** — not variable alone. The
+scheduler expands every selected variable across all declared build domains
+(ECMWF declares both `na` and `global` for most vars), so variable-only
+ownership could not express "NA fast, global delayed" [Codex finding 2]:
 
 ```
-source_by_var:  tmp2m: fast, dp2m: fast, wgst10m: fast, precip_total: fast,
-                snowfall_total: fast, snow_depth: fast, mslp: fast,
-                wspd10m: fast, ...            # surface set, 9 km native
-                tmp850/wspd850/vort500/...: delayed   # pressure-level
-                snowfall_kuchera_total: delayed        # profile-dependent
-                ptype_intensity: delayed               # uses tmp925/tmp850 signals
+source_by_var_domain:
+    (tmp2m, na): fast        (tmp2m, global): delayed
+    (dp2m, na): fast         (dp2m, global): delayed
+    (precip_total, na): fast (precip_total, global): delayed
+    ... surface set ...
+    (tmp850, *): delayed     # all pressure-level vars
+    (snowfall_kuchera_total, *): delayed
+    (ptype_intensity, *): delayed   # uses tmp925/tmp850 signals
 ```
+
+A contract test must prove a var can be fast-owned in `na` while
+delayed-owned in `global` (independent readiness, manifests, canary).
 
 Rules:
 
 1. **One run identity.** Both sources build into the same `20260804_12z` run
    root. The run is discovered by whichever source sees it first (in practice
    the fast poller, ~2 h earlier).
-2. **A variable is built exactly once, by its owner.** The delayed-path
-   scheduler skips fast-owned vars entirely (not "skip if present" — skip by
+2. **A (variable, domain) is built exactly once, by its owner.** The delayed
+   source skips fast-owned pairs entirely (not "skip if present" — skip by
    config, so a fast-path outage doesn't trigger surprise double memory load
    at the delayed build window; failover is explicit, §6).
 3. **Mixed-derive vars are owned by the source of their coarsest input** and
@@ -93,8 +111,16 @@ explanation.
 
 ## 4. Scheduler integration
 
-A second scheduler loop per fast-enabled model (systemd unit
-`csky-ecmwf-fast-scheduler`, mirroring the existing per-model unit pattern):
+**One scheduler process per model — the fast source multiplexes into the
+existing per-model loop.** [Codex finding 1] `run_scheduler` holds a
+nonblocking per-model `flock` for its whole lifetime (`scheduler.py:1399`),
+and publication/promotion/retention are serialized only by process-local
+state (`scheduler.py:1332`, shared `.tmp`/`.trash` paths) — a second unit on
+the same run root would either refuse to start or corrupt promotion. So the
+existing `csky-ecmwf-scheduler` unit gains a fast-source sub-loop: an async
+task (or interleaved poll step) inside the same process, sharing the model
+lock, publish lock, and retention machinery. Single lifecycle writer by
+construction; no cross-process transaction protocol needed.
 
 - **Poll:** `in-progress.json` as a hint on a short interval inside the
   expected dissemination window (cycle + ~5h20m to cycle + ~6h30m, per the
@@ -114,20 +140,32 @@ A second scheduler loop per fast-enabled model (systemd unit
   set GDAL_CACHEMAX-equivalent caps anyway and `Nice=10` like siblings. It
   must run on the prod box (artifacts are local-disk); dev first (Phase 6).
 
-### Accumulation adapter (per-source step ladder)
+### Accumulation provider (per-source step ladder)
 
 `.om` accumulation fields are per-step with cadence-dependent length
-(hourly→FH90, 3 h→144, 6 h→360 for 00z/12z; the existing ECMWF hints assume
-a fixed 3 h→144→6 h ladder from GRIB). Design:
+(hourly→FH90, 3 h→144, 6 h→360 for 00z/12z). Critically, ECMWF
+`precip_total` and `snowfall_total` are **primary, non-derived** variables
+(`primary=True`, no `derive=` — `ecmwf.py:329`, `:451`): production feeds
+them the GRIB's native *run-cumulative* value directly; the cumulative-derive
+machinery is not on their path [Codex finding 4]. Design:
 
-- The catalog carries the per-cycle cadence ladder. The fast source exposes
-  accumulation series as **canonical step series** (list of (fh, step_len,
-  value-array)) and, where a derive expects "cumulative at fh", the adapter
-  sums steps — the inverse of the delayed path's differencing, converging on
-  the same intermediate representation the derives already consume.
-- Existing cumulative caches key on `cumulative_cache_version`; fast-built
-  artifacts get a distinct version string (e.g. `ecmwf_sf_om_v1`) so a
-  failover never mixes cache lineages between sources.
+- **The source provider contract is: return the run-cumulative field at any
+  published fh** for primary accumulation vars — computed by summing all
+  `.om` steps from run start, maintained incrementally as files land
+  (dissemination is sequential, so each new file adds one step to a running
+  sum).
+- **Running sums are checkpointed to disk** per (run, source, var, domain,
+  cadence-version): a scheduler restart resumes from the checkpoint instead
+  of refetching the whole step history. Checkpoints are keyed so a source
+  switch or cadence-ladder change invalidates them rather than silently
+  mixing lineages.
+- FH90 and FH144 cadence transitions are just step-length changes in the
+  running sum; both boundaries get explicit tests against summed hourly
+  truth (the Phase 3 methodology, now as a regression test).
+- For genuinely derived accumulation products on other models/paths, the
+  same provider exposes the per-step series; distinct
+  `cumulative_cache_version` strings keep fast/delayed derive caches
+  separate.
 - The hourly cadence below FH90 raises a product question: **[DECISION 2]**
   publish hourly frames (more frames than today's 3 h ECMWF cadence — better
   product, ~3× more artifacts below FH90) or aggregate to the current 3 h
@@ -147,9 +185,20 @@ a fixed 3 h→144→6 h ladder from GRIB). Design:
 
 ## 6. Failure modes and failover
 
+Because both sources now live in one process (§4), failover is an
+**in-process state machine, not a cross-process race** [Codex finding 3]:
+each (run, var, domain) carries a source-generation token; the failover
+transition atomically revokes fast ownership (in the same publish-lock
+critical section the catch-up loop already uses) before any delayed build of
+that pair starts, and a fast source that resumes after revocation finds its
+generation stale and stops. Crash-restart replays ownership state from the
+per-frame provenance records (§8), which carry the generation. Interleavings
+to test explicitly: stall→failover, resume-during-failover, crash mid-frame,
+retry-after-partial-write.
+
 | Failure | Behavior |
 |---|---|
-| Bucket stalls mid-run / objects never appear | Fast-owned vars simply stop advancing. At the delayed source's availability (T+~7.6h), a **failover deadline** fires: delayed scheduler builds any fast-owned var whose `ready_through_fh` trails the delayed source's horizon. Users see frames arrive late (as today); ops get `fastpath_stalled` alert. |
+| Bucket stalls mid-run / objects never appear | Fast-owned pairs simply stop advancing. At the delayed source's availability (T+~7.6h), a **failover deadline** fires: revoke-then-build as above for any pair whose `ready_through_fh` trails the delayed source's horizon. Users see frames arrive late (as today); ops get `fastpath_stalled` alert. Cumulative vars rebuild from the delayed source's own GRIB values for **all** frames beyond the checkpointed seam — never by mixing sources within one accumulation series. |
 | Bucket serves corrupt/truncated object | Per-file integrity: decoded array shape + NaN/land-fraction sanity + (for temps) physical-range check before write; failures skip the frame, log, and count toward a stall metric. Never publish a failed decode. |
 | Upstream layout/orientation change | Orientation is detected per run (±45° variance check) with the tropics-vs-arctic self-check on output (monitor already does this); a mismatch aborts the run's fast build loudly → failover path covers users. |
 | Units drift upstream | Catalog pins expected units per var; a per-run spot-check against the delayed source (see canary) catches drift within one cycle. |
@@ -164,9 +213,10 @@ a continuous guarantee. Alert, don't auto-disable, at launch.
 
 ## 7. Rollout plan
 
-1. **Phase 6 (dev):** fast scheduler dev-flagged (`CARTOSKY_FASTPATH_MODELS=ecmwf`
+1. **Phase 6 (dev):** fast source dev-flagged (`CARTOSKY_FASTPATH_MODELS=ecmwf`
    empty-default env allowlist, mirroring the binary-sampling allowlist
-   pattern), building into the dev data root. Observe ≥3 live cycles: frames
+   pattern) inside the existing scheduler process, building into the dev
+   data root. Observe ≥3 live cycles: frames
    appear per-frame in the dev viewer; horizon per-cycle correct; simulated
    stall (block the bucket host) exercises failover.
 2. **Dark on prod:** fast scheduler builds into prod under a run-root suffix
@@ -182,9 +232,17 @@ a continuous guarantee. Alert, don't auto-disable, at launch.
 
 - Attribution: `ECMWF IFS data © ECMWF, via Open-Meteo (CC-BY-4.0)` in the
   attribution dialog + export footers. Required before any public frame.
+- **Per-frame provenance** [Codex finding 5]: frame meta/sidecar gains
+  `source_id`, `source_resolution`, upstream object key + ETag,
+  adapter/cadence version, and the failover generation. The run manifest
+  summarizes homogeneous fh ranges per (var, domain). This is what makes a
+  post-failover run auditable (where is the seam?) and drives the UI label
+  from recorded truth rather than static config.
 - Per-variable source-resolution label in the info card ("9 km native" vs
-  "0.25° source") — honest labeling for mixed-resolution products; ECMWF NA
-  becomes mixed the moment the flip happens.
+  "0.25° source"), driven by the provenance above — honest labeling for
+  mixed-resolution products, including the failover case where one variable's
+  early frames are 9 km and later frames are 0.25°. The canary explicitly
+  checks value continuity across any recorded failover seam.
 - Ops metrics: ingestion lag vs dissemination per cycle, per-run object
   counts, canary results, stall alerts — join the existing :9105 exporter.
 
