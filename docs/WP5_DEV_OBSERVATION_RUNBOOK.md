@@ -31,12 +31,20 @@ cd /opt/cartosky-dev && sudo -u cartosky git pull   # needs the Mac's `git push`
 sudo -u cartosky /opt/cartosky-dev/.venv/bin/pip install omfiles
 
 # 1. data root + seed newest complete prod ECMWF run (hardlinks, ~free on same fs)
-sudo mkdir -p /opt/cartosky-dev/data-fastpath/{published/ecmwf,staging/ecmwf,manifests/ecmwf,status}
-LATEST=$(ls -1 /opt/cartosky/data/published/ecmwf | sort | tail -1)
-sudo cp -al "/opt/cartosky/data/published/ecmwf/$LATEST" "/opt/cartosky-dev/data-fastpath/published/ecmwf/$LATEST"
-sudo cp -a  "/opt/cartosky/data/manifests/ecmwf/$LATEST.json" "/opt/cartosky-dev/data-fastpath/manifests/ecmwf/" 2>/dev/null || true
-# also copy whatever LATEST-pointer file the manifests dir carries for ecmwf (ls it and copy)
-sudo chown -R cartosky:cartosky /opt/cartosky-dev/data-fastpath
+PROD=/opt/cartosky/data
+DEV=/opt/cartosky-dev/data-fastpath
+sudo mkdir -p $DEV/{published/ecmwf/domains/global,staging/ecmwf,manifests/ecmwf/domains/global,status}
+RUN=$(grep -o '"run_id"[^,]*' $PROD/published/ecmwf/LATEST.json | grep -oE '[0-9]{8}_[0-9]+z')
+echo "seeding run $RUN"
+# NA/canonical tree + pointer + manifest
+sudo cp -al "$PROD/published/ecmwf/$RUN" "$DEV/published/ecmwf/$RUN"
+sudo cp -a  "$PROD/published/ecmwf/LATEST.json" "$DEV/published/ecmwf/LATEST.json"
+sudo cp -a  "$PROD/manifests/ecmwf/$RUN.json" "$DEV/manifests/ecmwf/" 2>/dev/null || true
+# global-domain tree + pointer + manifest (scheduler.py:1160-1170 — domains/global is a separate root)
+sudo cp -al "$PROD/published/ecmwf/domains/global/$RUN" "$DEV/published/ecmwf/domains/global/$RUN" 2>/dev/null || true
+sudo cp -a  "$PROD/published/ecmwf/domains/global/LATEST.json" "$DEV/published/ecmwf/domains/global/LATEST.json" 2>/dev/null || true
+sudo cp -a  "$PROD/manifests/ecmwf/domains/global/$RUN.json" "$DEV/manifests/ecmwf/domains/global/" 2>/dev/null || true
+sudo chown -R cartosky:cartosky $DEV
 ```
 
 ## The scheduler script — `/opt/cartosky-dev/fastpath-dev.sh`
