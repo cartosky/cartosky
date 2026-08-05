@@ -57,6 +57,7 @@ from app.services.builder.fetch import (
     fetch_variable,
     new_bundle_fetch_cache,
     product_hour_has_any_idx,
+    record_runtime_timer_ms,
 )
 from app.services.colormaps import get_color_map_spec
 from app.services.domains import canonical_domain, domain_scoped_model_root, is_reserved_domain_id
@@ -1642,6 +1643,71 @@ def _resolve_build_region_baseline(
     return resolved_spec, resolved_hints, None
 
 
+#: Frame-build steps timed by :func:`build_frame`, in pipeline order. Every
+#: step is always present in the log line and in the metrics; a step a frame
+#: never entered (e.g. a variable with no contours) records 0.0 rather than
+#: being omitted, so the per-step frame counts stay directly comparable.
+FRAME_STEPS: tuple[str, ...] = ("fetch", "warp", "colorize", "contour", "write")
+
+
+def _emit_frame_step_timings(
+    *,
+    model: str,
+    region: str,
+    var_key: str,
+    fh: int,
+    step_ms: dict[str, float],
+    total_ms: float,
+) -> None:
+    """Log and export per-step timings for one completed frame.
+
+    Instrumentation must never break a build that already succeeded, so every
+    export is best-effort. The Prometheus counters only reach an exported
+    endpoint when build_frame runs inside the API process; scheduler builds
+    reach /metrics through the fetch-runtime snapshot timers instead (see
+    :func:`app.services.builder.fetch.record_runtime_timer_ms`).
+    """
+    logger.info(
+        "Frame steps: model=%s region=%s var=%s fh%03d "
+        "fetch_ms=%d warp_ms=%d colorize_ms=%d contour_ms=%d write_ms=%d total_ms=%d",
+        model,
+        region,
+        var_key,
+        int(fh),
+        int(step_ms.get("fetch", 0.0)),
+        int(step_ms.get("warp", 0.0)),
+        int(step_ms.get("colorize", 0.0)),
+        int(step_ms.get("contour", 0.0)),
+        int(step_ms.get("write", 0.0)),
+        int(total_ms),
+    )
+    try:
+        from app.services import prometheus_metrics
+
+        prometheus_metrics.observe_frame_steps(
+            model_id=model,
+            region=region,
+            step_ms=step_ms,
+        )
+    except Exception:
+        logger.debug("Frame step metrics not recorded", exc_info=True)
+    try:
+        region_token = _frame_step_metric_token(region)
+        for step in FRAME_STEPS:
+            record_runtime_timer_ms(
+                f"frame_step_{step}_{region_token}_ms",
+                step_ms.get(step, 0.0),
+            )
+    except Exception:
+        logger.debug("Frame step runtime timers not recorded", exc_info=True)
+
+
+def _frame_step_metric_token(value: str) -> str:
+    """Coerce a region id into the ``[a-z0-9_]+`` token the snapshot exporter keeps."""
+    token = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in str(value).strip().lower())
+    return token or "unknown"
+
+
 def build_frame(
     *,
     model: str,
@@ -1691,6 +1757,9 @@ def build_frame(
     """
     run_id = _run_id_from_date(run_date)
     fh_str = f"fh{fh:03d}"
+    # Steps a frame never enters keep their 0.0 seed (see FRAME_STEPS).
+    step_ms: dict[str, float] = {step: 0.0 for step in FRAME_STEPS}
+    frame_started = time.perf_counter()
     _log_frame_memory_checkpoint(
         "before_build", model=model, region=region, var=var_id, fh=fh,
     )
@@ -1850,6 +1919,7 @@ def build_frame(
             ensemble_view=ensemble_view,
             readiness_cache=readiness_cache,
         )
+        fetch_started = time.perf_counter()
         if getattr(var_spec_model, "derived", False):
             # --- Step 1/2: Derive from component GRIB fields ---
             logger.info("Step 1/6: Deriving variable components")
@@ -1960,7 +2030,10 @@ def build_frame(
                 array_mib=round(_array_mib(converted_data), 2), shape=tuple(converted_data.shape), dtype=str(converted_data.dtype),
             )
 
+        step_ms["fetch"] = (time.perf_counter() - fetch_started) * 1000.0
+
         # --- Step 3: Warp to target grid ---
+        warp_started = time.perf_counter()
         derive_output_matches_target_grid = False
         if getattr(var_spec_model, "derived", False):
             derive_output_matches_target_grid = _derived_output_matches_target_grid(
@@ -1994,7 +2067,10 @@ def build_frame(
                 working_dtype=np.float32,
             )
 
+        step_ms["warp"] = (time.perf_counter() - warp_started) * 1000.0
+
         # --- Step 4: Colorize ---
+        colorize_started = time.perf_counter()
         logger.info("Step 4/6: Colorizing")
         display_data = _prepare_display_data_for_colorize(
             warped_data,
@@ -2012,6 +2088,8 @@ def build_frame(
             warped_mib=round(_array_mib(warped_data), 2), shape=tuple(getattr(warped_data, "shape", ())),
             dtype=str(getattr(warped_data, "dtype", "")),
         )
+        step_ms["colorize"] = (time.perf_counter() - colorize_started) * 1000.0
+
         # The pre-encode sanity gate is ENFORCED: a failure rejects the frame.
         # No try/except: an unexpected gate error propagates to the outer
         # handler (cleanup + "failed").
@@ -2030,6 +2108,7 @@ def build_frame(
         # --- Step 5: Write artifacts ---
         logger.info("Step 5/6: Writing artifacts")
 
+        contour_started = time.perf_counter()
         contours_meta, contour_geojson_path = _build_contour_metadata_for_variable(
             model=model,
             run_date=run_date,
@@ -2070,7 +2149,10 @@ def build_frame(
                 int(fh),
             )
 
+        step_ms["contour"] = (time.perf_counter() - contour_started) * 1000.0
+
         # --- Write sidecar JSON ---
+        write_started = time.perf_counter()
         sidecar = build_sidecar_json(
             model=model,
             run_id=run_id,
@@ -2125,12 +2207,22 @@ def build_frame(
                     int(fh),
                 )
 
+        step_ms["write"] = (time.perf_counter() - write_started) * 1000.0
+
         logger.info(
             "Frame complete: %s/%s/%s/%s/%s "
             "(JSON: %s%s)",
             model, region, run_id, var_key, fh_str,
             _file_size_str(sidecar_path),
             f", Grid: {_file_size_str(grid_frame_path)}" if grid_frame_path is not None else "",
+        )
+        _emit_frame_step_timings(
+            model=model,
+            region=region,
+            var_key=var_key,
+            fh=fh,
+            step_ms=step_ms,
+            total_ms=(time.perf_counter() - frame_started) * 1000.0,
         )
         return _result(staging_dir, "ok")
 

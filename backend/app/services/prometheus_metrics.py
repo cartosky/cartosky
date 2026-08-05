@@ -74,6 +74,20 @@ BUILD_DURATION_AVG_MINUTES = Gauge(
     registry=_REGISTRY,
 )
 
+FRAME_STEP_SECONDS_TOTAL = Counter(
+    "cartosky_frame_step_seconds_total",
+    "Cumulative wall-clock seconds spent in each frame-build pipeline step.",
+    labelnames=("model_id", "region", "step"),
+    registry=_REGISTRY,
+)
+
+FRAME_STEP_FRAMES_TOTAL = Counter(
+    "cartosky_frame_step_frames_total",
+    "Frames that completed each frame-build pipeline step (denominator for the step average).",
+    labelnames=("model_id", "region", "step"),
+    registry=_REGISTRY,
+)
+
 SCREENSHOT_PHASE_DURATION_SECONDS = Histogram(
     "cartosky_screenshot_phase_duration_seconds",
     "Per-phase latency of server-side screenshot rendering.",
@@ -444,6 +458,30 @@ def observe_build_duration(*, model_id: str, duration_seconds: float, cycle_hour
     BUILD_DURATION_SECONDS.labels(model_id=model_id, cycle_hour=safe_cycle_hour).observe(safe_duration)
 
 
+def observe_frame_steps(*, model_id: str, region: str, step_ms: dict[str, float]) -> None:
+    """Record per-step frame-build timings as sum + count counters.
+
+    Sum/count rather than a histogram: the diagnostic is "which step owns the
+    frame", i.e. an average, not a quantile. Every step the frame reached is
+    observed, including steps that were skipped and recorded 0.0, so the
+    denominators stay comparable across steps.
+    """
+    model_label = str(model_id).strip().lower() or "unknown"
+    region_label = str(region).strip().lower() or "unknown"
+    for step, elapsed_ms in step_ms.items():
+        step_label = str(step).strip() or "unknown"
+        FRAME_STEP_SECONDS_TOTAL.labels(
+            model_id=model_label,
+            region=region_label,
+            step=step_label,
+        ).inc(max(0.0, float(elapsed_ms)) / 1000.0)
+        FRAME_STEP_FRAMES_TOTAL.labels(
+            model_id=model_label,
+            region=region_label,
+            step=step_label,
+        ).inc()
+
+
 def set_build_duration_avg(*, model_id: str, cycle_hour: str, avg_minutes: float) -> None:
     BUILD_DURATION_AVG_MINUTES.labels(
         model_id=model_id,
@@ -558,6 +596,8 @@ def reset_metrics_for_tests() -> None:
     PUBLISHED_RUN_AGE_HOURS.clear()
     PUBLISHED_RUN_COMPLETION_RATIO.clear()
     BUILD_DURATION_SECONDS.clear()
+    FRAME_STEP_SECONDS_TOTAL.clear()
+    FRAME_STEP_FRAMES_TOTAL.clear()
     SCREENSHOT_PHASE_DURATION_SECONDS.clear()
     SCREENSHOT_REQUESTS_TOTAL.clear()
     HERBIE_RUNTIME_COUNTER.clear()

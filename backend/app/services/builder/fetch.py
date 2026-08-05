@@ -782,6 +782,19 @@ def _metric_observe_ms(name: str, elapsed_ms: float) -> None:
         aggregate.max_ms = max(aggregate.max_ms, elapsed)
 
 
+def record_runtime_timer_ms(name: str, elapsed_ms: float) -> None:
+    """Record a scheduler-process timer observation into the runtime snapshot.
+
+    Public entry point for callers outside this module (currently the frame
+    pipeline's per-step timings). These aggregates are the only path by which a
+    scheduler process — which registers no Prometheus collectors of its own —
+    reaches the API's /metrics endpoint: the scheduler writes them to
+    ``{data_root}/status/fetch_runtime/{model}.json`` and the API turns them
+    into gauges on the next scrape.
+    """
+    _metric_observe_ms(name, elapsed_ms)
+
+
 def get_herbie_runtime_metrics() -> dict[str, Any]:
     """Return a thread-safe snapshot of process-local Herbie fetch metrics."""
     with _FETCH_RUNTIME_METRICS_LOCK:
