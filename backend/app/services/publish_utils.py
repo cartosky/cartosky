@@ -54,20 +54,35 @@ def promote_run(*, data_root: Path, model: str, run_id: str) -> None:
 
     published_run = published_model / run_id
     tmp_run = published_model / f".{run_id}.tmp"
+    trash_run = published_model / f".{run_id}.trash"
 
     if tmp_run.exists():
         shutil.rmtree(tmp_run, ignore_errors=True)
     if tmp_run.exists():
         raise ValueError(f"Cannot clear temporary promotion dir: {tmp_run}")
 
+    # Recover from an interrupted prior swap where trash still holds the live run.
+    if trash_run.exists() and not published_run.exists():
+        os.rename(trash_run, published_run)
+    elif trash_run.exists():
+        shutil.rmtree(trash_run, ignore_errors=True)
+    if trash_run.exists():
+        raise ValueError(f"Cannot clear stale promotion trash dir: {trash_run}")
+
     shutil.copytree(stage_run, tmp_run, copy_function=os.link)
 
+    # Swap via two renames instead of rmtree-then-move: deleting the live run
+    # first opens a 404 window and permanently loses the previous publish if the
+    # replacement move fails or the process dies mid-promotion.
     if published_run.exists():
-        shutil.rmtree(published_run, ignore_errors=True)
-    if published_run.exists():
-        raise ValueError(f"Cannot clear existing published run dir: {published_run}")
-
-    shutil.move(str(tmp_run), str(published_run))
+        os.rename(published_run, trash_run)
+    try:
+        os.rename(tmp_run, published_run)
+    except OSError:
+        if trash_run.exists() and not published_run.exists():
+            os.rename(trash_run, published_run)
+        raise
+    shutil.rmtree(trash_run, ignore_errors=True)
 
 
 def write_run_manifest(
