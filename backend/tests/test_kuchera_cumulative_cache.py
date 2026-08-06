@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from rasterio.crs import CRS
@@ -31,13 +32,16 @@ def test_kuchera_store_writes_six_value_transform(tmp_path: Path) -> None:
         grid_cache_key="warped:hrrr:conus:3000.0m:bilinear",
     )
 
+    digest = derive_module._kuchera_cumulative_cache_grid_digest(
+        "warped:hrrr:conus:3000.0m:bilinear"
+    )
     cache_path = (
         tmp_path
         / "staging"
         / "hrrr"
         / "20260325_12z"
         / "snowfall_kuchera_total"
-        / "fh034.cumulative-cache.npz"
+        / f"fh034.{digest}.cumulative-cache.npz"
     )
     with np.load(cache_path, allow_pickle=False) as cached:
         transform_values = np.asarray(cached["transform"], dtype=np.float64).reshape(-1)
@@ -138,3 +142,153 @@ def test_cumulative_cache_round_trips_quality_flags(tmp_path: Path) -> None:
     assert metadata["quality_flags"] == ["accum_step_gap"]
     assert metadata["quality_flag_details"] == details
     np.testing.assert_array_equal(metadata["accum_step_gap_mask"], gap_mask)
+
+
+NATIVE_GRID_KEY = "native:ecmwf:precip_total_cumulative"
+WARPED_GRID_KEY = "warped:ecmwf:na:25000.0m:bilinear:precip_total_cumulative"
+
+
+def _cache_path(tmp_path: Path, *, file_name: str, root_name: str = "staging") -> Path:
+    return (
+        tmp_path
+        / root_name
+        / "ecmwf"
+        / "20260325_12z"
+        / "snowfall_kuchera_total"
+        / file_name
+    )
+
+
+def _write_legacy_checkpoint(
+    path: Path,
+    *,
+    grid_cache_key: str,
+    value: float,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        path,
+        data=np.full((2, 2), value, dtype=np.float32),
+        crs_wkt=CRS.from_epsg(4326).to_wkt(),
+        transform=np.asarray((1.0, 0.0, 3.0, 0.0, -1.0, 4.0), dtype=np.float64),
+        grid_cache_key=str(grid_cache_key),
+        coverage_start_fh=np.int32(0),
+        quality_flags_json="[]",
+        quality_flag_details_json="{}",
+        accum_step_gap_mask=np.zeros((2, 2), dtype=bool),
+    )
+
+
+def _reader_ctx(tmp_path: Path) -> Any:
+    ctx = derive_module.FetchContext()
+    setattr(ctx, "data_root", str(tmp_path))
+    setattr(ctx, "kuchera_cumulative_cache", {})
+    return ctx
+
+
+def _load(tmp_path: Path, grid_cache_key: str, *, fh: int = 12) -> Any:
+    return derive_module._kuchera_load_prior_cumulative(
+        model_id="ecmwf",
+        run_date=datetime(2026, 3, 25, 12, 0),
+        var_key="snowfall_kuchera_total",
+        fh=fh,
+        ctx=_reader_ctx(tmp_path),
+        grid_cache_key=grid_cache_key,
+    )
+
+
+def _store(tmp_path: Path, grid_cache_key: str, value: float, *, fh: int = 12) -> None:
+    ctx = derive_module.FetchContext()
+    setattr(ctx, "data_root", str(tmp_path))
+    derive_module._kuchera_store_cumulative_cache(
+        model_id="ecmwf",
+        run_date=datetime(2026, 3, 25, 12, 0),
+        var_key="snowfall_kuchera_total",
+        fh=fh,
+        data=np.full((2, 2), value, dtype=np.float32),
+        crs=CRS.from_epsg(4326),
+        transform=Affine(1.0, 0.0, 3.0, 0.0, -1.0, 4.0),
+        ctx=ctx,
+        grid_cache_key=grid_cache_key,
+    )
+
+
+def test_cumulative_cache_path_is_grid_specific(tmp_path: Path) -> None:
+    kwargs = dict(
+        data_root=tmp_path,
+        model_id="ecmwf",
+        run_id="20260325_12z",
+        var_key="snowfall_kuchera_total",
+        fh=12,
+        root_name="staging",
+    )
+    native_path = derive_module._kuchera_cumulative_cache_file_path(
+        grid_cache_key=NATIVE_GRID_KEY, **kwargs
+    )
+    warped_path = derive_module._kuchera_cumulative_cache_file_path(
+        grid_cache_key=WARPED_GRID_KEY, **kwargs
+    )
+    legacy_path = derive_module._kuchera_cumulative_cache_file_path(**kwargs)
+
+    assert native_path != warped_path
+    assert native_path.parent == warped_path.parent == legacy_path.parent
+    assert legacy_path.name == "fh012.cumulative-cache.npz"
+    assert native_path.name.startswith("fh012.")
+    assert native_path.name.endswith(".cumulative-cache.npz")
+    assert native_path == derive_module._kuchera_cumulative_cache_file_path(
+        grid_cache_key=NATIVE_GRID_KEY, **kwargs
+    )
+
+
+def test_cumulative_cache_two_grids_do_not_clobber(tmp_path: Path) -> None:
+    _store(tmp_path, NATIVE_GRID_KEY, 1.0)
+    _store(tmp_path, WARPED_GRID_KEY, 2.0)
+
+    native_loaded = _load(tmp_path, NATIVE_GRID_KEY)
+    warped_loaded = _load(tmp_path, WARPED_GRID_KEY)
+
+    assert native_loaded is not None
+    assert warped_loaded is not None
+    np.testing.assert_allclose(native_loaded[0], np.full((2, 2), 1.0, dtype=np.float32))
+    np.testing.assert_allclose(warped_loaded[0], np.full((2, 2), 2.0, dtype=np.float32))
+
+
+def test_cumulative_cache_loads_legacy_path_when_key_matches(tmp_path: Path) -> None:
+    _write_legacy_checkpoint(
+        _cache_path(tmp_path, file_name="fh012.cumulative-cache.npz"),
+        grid_cache_key=NATIVE_GRID_KEY,
+        value=5.0,
+    )
+
+    loaded = _load(tmp_path, NATIVE_GRID_KEY)
+    assert loaded is not None
+    np.testing.assert_allclose(loaded[0], np.full((2, 2), 5.0, dtype=np.float32))
+
+    assert _load(tmp_path, WARPED_GRID_KEY) is None
+
+
+def test_cumulative_cache_loads_legacy_published_path(tmp_path: Path) -> None:
+    _write_legacy_checkpoint(
+        _cache_path(
+            tmp_path, file_name="fh012.cumulative-cache.npz", root_name="published"
+        ),
+        grid_cache_key=NATIVE_GRID_KEY,
+        value=9.0,
+    )
+
+    loaded = _load(tmp_path, NATIVE_GRID_KEY)
+    assert loaded is not None
+    np.testing.assert_allclose(loaded[0], np.full((2, 2), 9.0, dtype=np.float32))
+
+
+def test_cumulative_cache_prefers_grid_specific_over_legacy(tmp_path: Path) -> None:
+    _write_legacy_checkpoint(
+        _cache_path(tmp_path, file_name="fh012.cumulative-cache.npz"),
+        grid_cache_key=NATIVE_GRID_KEY,
+        value=5.0,
+    )
+    _store(tmp_path, NATIVE_GRID_KEY, 1.0)
+
+    loaded = _load(tmp_path, NATIVE_GRID_KEY)
+    assert loaded is not None
+    np.testing.assert_allclose(loaded[0], np.full((2, 2), 1.0, dtype=np.float32))

@@ -664,6 +664,10 @@ def _precip_seed_cache_key(
     )
 
 
+def _kuchera_cumulative_cache_grid_digest(grid_cache_key: str) -> str:
+    return hashlib.sha1(str(grid_cache_key).encode("utf-8")).hexdigest()[:12]
+
+
 def _kuchera_cumulative_cache_file_path(
     *,
     data_root: Path,
@@ -672,14 +676,20 @@ def _kuchera_cumulative_cache_file_path(
     var_key: str,
     fh: int,
     root_name: str,
+    grid_cache_key: str | None = None,
 ) -> Path:
+    file_name = (
+        f"fh{int(fh):03d}.cumulative-cache.npz"
+        if grid_cache_key is None
+        else f"fh{int(fh):03d}.{_kuchera_cumulative_cache_grid_digest(grid_cache_key)}.cumulative-cache.npz"
+    )
     return (
         data_root
         / root_name
         / str(model_id)
         / str(run_id)
         / str(var_key)
-        / f"fh{int(fh):03d}.cumulative-cache.npz"
+        / file_name
     )
 
 
@@ -793,16 +803,11 @@ def _kuchera_load_prior_cumulative(
             run_id=run_id,
             var_key=var_key,
             fh=fh,
-            root_name="staging",
-        ),
-        _kuchera_cumulative_cache_file_path(
-            data_root=data_root,
-            model_id=model_id,
-            run_id=run_id,
-            var_key=var_key,
-            fh=fh,
-            root_name="published",
-        ),
+            root_name=root_name,
+            grid_cache_key=candidate_grid_cache_key,
+        )
+        for candidate_grid_cache_key in (grid_cache_key, None)
+        for root_name in ("staging", "published")
     ]
     for candidate in candidate_paths:
         try:
@@ -933,6 +938,7 @@ def _kuchera_store_cumulative_cache(
         var_key=var_key,
         fh=fh,
         root_name="staging",
+        grid_cache_key=grid_cache_key,
     )
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
