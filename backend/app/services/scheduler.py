@@ -1414,6 +1414,15 @@ def _publish_run_snapshot_for(
     about. The fast path may also have no canonical staging tree at all (a
     global-only ownership config), so canonical is published only when it is
     among the domains actually written.
+
+    **Error policy:** under ``strict_canonical=True``, non-canonical domain
+    failures are swallowed (B1/B2) so an ENOSPC on a large secondary tree cannot
+    abort canonical publication. Under ``strict_canonical=False`` (fast path),
+    ANY domain publish failure MUST propagate: the caller
+    (``fastpath.subloop._promote_staged_timestep``) only advances
+    ``published_fhs`` / ``ready_through_fh`` when this returns cleanly, and a
+    swallowed failure would permanently mark frames published while leaving them
+    only in staging — with no retry and no failover reclaim.
     """
     ready_regions = _promotion_ready_regions(data_root, model_id, run_id, primary_vars, promotion_fhs)
     ordered = [domain for domain in dict.fromkeys(domains)]
@@ -1433,32 +1442,28 @@ def _publish_run_snapshot_for(
     if strict_canonical:
         _publish(canonical_region)
     elif canonical_region in ordered:
-        try:
-            _publish(canonical_region)
-        except Exception:
-            logger.exception(
-                "Domain publish failed: run=%s model=%s domain=%s reason=%s",
-                run_id,
-                model_id,
-                canonical_region,
-                reason,
-            )
+        # Fast path: do not swallow — see error-policy note above.
+        _publish(canonical_region)
 
     for domain in ordered:
         if domain == canonical_region:
             continue
         if strict_canonical and domain not in ready_regions:
             continue
-        try:
+        if strict_canonical:
+            try:
+                _publish(domain)
+            except Exception:
+                logger.exception(
+                    "Domain publish failed: run=%s model=%s domain=%s reason=%s",
+                    run_id,
+                    model_id,
+                    domain,
+                    reason,
+                )
+        else:
+            # Fast path: propagate so the sub-loop can leave the timestep pending.
             _publish(domain)
-        except Exception:
-            logger.exception(
-                "Domain publish failed: run=%s model=%s domain=%s reason=%s",
-                run_id,
-                model_id,
-                domain,
-                reason,
-            )
     return ready_regions
 
 
