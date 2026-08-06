@@ -12,9 +12,8 @@ publisher writes rolling observed bundles instead). Two differences from MRMS:
   ``services/domains.non_canonical_domains_enabled``).
 
 Units are **°C only** everywhere in the SST path — packing, sidecar, legend and
-sampling. There is deliberately no °F conversion hook. Phase 2 adds
-``sst_anom`` as a second VarSpec here; nothing in this module needs to change
-shape to accommodate it.
+sampling. There is deliberately no °F conversion hook, and that applies to the
+anomaly too: ``sst_anom`` carries °C *deltas* and is never Kelvin-converted.
 """
 
 from __future__ import annotations
@@ -32,7 +31,9 @@ from .base import (
 
 SST_MODEL_ID = "sst"
 SST_VARIABLE_ID = "sst"
+SST_ANOM_VARIABLE_ID = "sst_anom"
 SST_COLOR_MAP_ID = "sst"
+SST_ANOM_COLOR_MAP_ID = "sst_anom"
 SST_CANONICAL_REGION_ID = "na"
 SST_GLOBAL_REGION_ID = "global"
 
@@ -54,6 +55,10 @@ class SSTPlugin(BaseModelPlugin):
             "sea_surface_temp": "sst",
             "sea_surface_temperature": "sst",
             "analysed_sst": "sst",
+            "sst_anom": "sst_anom",
+            "sst_anomaly": "sst_anom",
+            "sea_surface_temperature_anomaly": "sst_anom",
+            "ssta": "sst_anom",
         }
         return aliases.get(normalized, normalized)
 
@@ -100,19 +105,44 @@ SST_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="C",
     ),
+    # NOAA Coral Reef Watch 5 km daily anomaly — NOAA's own matched-climatology
+    # product on the Geo-Polar family, so no home-built climatology and no
+    # cross-dataset bias artifact (spike §1). Two accepted caveats: CRW masks ice
+    # zones, so anomaly coverage is lower than absolute SST (NA ~44% vs ~64%), and
+    # the anomaly is night-lineage against our day+night absolute field (measured
+    # pairing mean |Δ| 0.071 °C, p99 0.64 °C).
+    SST_ANOM_VARIABLE_ID: VarSpec(
+        id=SST_ANOM_VARIABLE_ID,
+        name="Sea Surface Temperature Anomaly",
+        selectors=VarSelectors(
+            hints={
+                "upstream_product": "NOAA Coral Reef Watch 5km daily SST anomaly v3.1",
+                "upstream_transport": "noaa_star_archive_netcdf",
+                "upstream_fallback": "coastwatch_erddap_griddap_netcdf",
+                "display_units": "C",
+                "anomaly_baseline": "NOAA CRW matched climatology (upstream-supplied)",
+            }
+        ),
+        primary=True,
+        kind="continuous",
+        units="C",
+    ),
 }
 
 
 _SST_VAR_COLOR_MAPS: dict[str, str] = {
     SST_VARIABLE_ID: SST_COLOR_MAP_ID,
+    SST_ANOM_VARIABLE_ID: SST_ANOM_COLOR_MAP_ID,
 }
 
 _SST_VAR_GROUPS: dict[str, str] = {
     SST_VARIABLE_ID: "Ocean",
+    SST_ANOM_VARIABLE_ID: "Ocean",
 }
 
 _SST_VAR_BUILD_REGIONS: dict[str, tuple[str, ...]] = {
     SST_VARIABLE_ID: SST_BUILD_REGIONS,
+    SST_ANOM_VARIABLE_ID: SST_BUILD_REGIONS,
 }
 
 

@@ -41,7 +41,10 @@ from pathlib import Path
 from app.services import sst_fetch
 from app.services.publish_utils import enforce_run_artifact_retention
 from app.services.sst_publish import (
+    SST_ANOM_VARIABLE_ID,
     SST_BUNDLE_FRAME_COUNT,
+    SST_CANONICAL_REGION_ID,
+    SST_VARIABLE_ID,
     SSTBundleFrame,
     latest_pointer_path,
     manifest_path,
@@ -98,7 +101,19 @@ def run_once(config: SSTPollerConfig) -> SSTPollerCycleResult:
         latest_available=latest_available,
         bundle_frame_count=config.bundle_frame_count,
     )
-    if not domains_needing_day:
+    # A caught-up SST is NOT on its own a noop: the anomaly may still be pending
+    # for days whose SST already shipped, which is the normal state for the
+    # newest day or two. This is only a probe for "is there any work"; the
+    # authoritative catch-up list is recomputed after pass 1, against fresh state.
+    anomaly_work_pending = bool(
+        _anomaly_catch_up_days(
+            data_root=config.data_root,
+            latest_available=latest_available,
+            bundle_frame_count=config.bundle_frame_count,
+            exclude={},
+        )
+    )
+    if not domains_needing_day and not anomaly_work_pending:
         return SSTPollerCycleResult(
             action="noop",
             published_run_ids=(),
@@ -111,14 +126,33 @@ def run_once(config: SSTPollerConfig) -> SSTPollerCycleResult:
 
     published_run_ids: list[str] = []
     skipped: list[str] = []
+    anomaly_skipped: list[str] = []
     download_dir = Path(tempfile.mkdtemp(prefix="cartosky-sst-"))
     try:
-        # Oldest first: publish_sst_bundle derives each run id from its newest
-        # frame and grows the window off the previous run.
+        # ── Pass 1: advance the absolute SST, oldest first. This is the layer's
+        # reason to exist and is never gated on the anomaly. Each day also picks
+        # up its anomaly opportunistically when upstream already has it, so the
+        # common case costs one publish per day.
+        # Per DOMAIN, not a flat set of days: pass 1 publishes a day to only the
+        # domains that needed its SST, so "na already got this day's anomaly" says
+        # nothing about global. A flat set excluded the day from every domain's
+        # catch-up and cost a lagging domain an extra cycle of latency.
+        anomaly_days_done: dict[str, set[datetime]] = {}
+        # Domain-INDEPENDENT, because it records an upstream fact ("CRW has not
+        # published this day"), not a per-domain publish state. Lets pass 2 skip
+        # re-probing a day pass 1 already found missing, so each pending day costs
+        # at most one HEAD per cycle.
+        anomaly_probe_missed: set[datetime] = set()
         for day in sorted(domains_needing_day):
             day_domains = domains_needing_day[day]
             try:
-                frame = _build_frame_for_day(day, download_dir=download_dir, timeout=timeout)
+                frame = _build_frame_for_day(
+                    day,
+                    download_dir=download_dir,
+                    timeout=timeout,
+                    probe_timeout=probe_timeout,
+                    with_anomaly=True,
+                )
             except sst_fetch.SSTFetchError as exc:
                 logger.warning("SST day %s unavailable; skipping: %s", day.date(), exc)
                 skipped.append(day.strftime("%Y%m%d"))
@@ -127,41 +161,100 @@ def run_once(config: SSTPollerConfig) -> SSTPollerCycleResult:
                 logger.exception("SST day %s failed to read; skipping", day.date())
                 skipped.append(day.strftime("%Y%m%d"))
                 continue
-            result = publish_sst_bundle(
-                data_root=config.data_root,
-                frames=[frame],
-                target_frame_count=config.bundle_frame_count,
-                domains=day_domains,
+            if frame.anomaly_values is not None:
+                for domain in day_domains:
+                    anomaly_days_done.setdefault(domain, set()).add(day)
+            else:
+                anomaly_probe_missed.add(day)
+                anomaly_skipped.append(day.strftime("%Y%m%d"))
+            run_id = _publish_day(
+                config=config, frame=frame, day_domains=day_domains, run_valid_time=None
             )
-            # Only a run that actually landed in at least one domain counts as
-            # published. publish_sst_bundle now raises on total failure, so this
-            # is belt-and-braces — but reporting a run id with no artifacts
-            # behind it is exactly how a green-but-broken cycle looked.
-            if not result.frame_counts:
-                logger.error(
-                    "SST publish reported no domains for run=%s (requested %s) — not counting it",
-                    result.run_id,
-                    ",".join(day_domains),
-                )
+            if run_id is not None:
+                published_run_ids.append(run_id)
+
+        # ── Pass 2: anomaly catch-up for days whose SST is already published but
+        # whose anomaly was missing at the time (CRW runs on its own schedule).
+        # These frames carry ONLY the anomaly, so the day's absolute SST is
+        # neither re-downloaded nor re-encoded — it is carried forward by
+        # hardlink. They amend the newest published run rather than minting a run
+        # id that trails the window.
+        catch_up = _anomaly_catch_up_days(
+            data_root=config.data_root,
+            latest_available=latest_available,
+            bundle_frame_count=config.bundle_frame_count,
+            exclude=anomaly_days_done,
+        )
+        for run_valid_time, days_by_domain in sorted(catch_up.items()):
+            anomaly_frames: list[SSTBundleFrame] = []
+            catch_up_domains: tuple[str, ...] = ()
+            for day, day_domains in sorted(days_by_domain.items()):
+                if day in anomaly_probe_missed:
+                    # Already HEAD-probed this cycle and upstream did not have it.
+                    # Re-probing cannot change the answer within one cycle.
+                    continue
+                try:
+                    anomaly_frame = _build_anomaly_frame_for_day(
+                        day,
+                        download_dir=download_dir,
+                        timeout=timeout,
+                        probe_timeout=probe_timeout,
+                    )
+                except sst_fetch.SSTFetchError as exc:
+                    logger.info(
+                        "SST anomaly for %s not available yet; retrying next cycle: %s",
+                        day.date(),
+                        exc,
+                    )
+                    anomaly_skipped.append(day.strftime("%Y%m%d"))
+                    continue
+                except Exception:
+                    logger.exception("SST anomaly %s failed to read; skipping", day.date())
+                    anomaly_skipped.append(day.strftime("%Y%m%d"))
+                    continue
+                if anomaly_frame is None:
+                    anomaly_skipped.append(day.strftime("%Y%m%d"))
+                    continue
+                anomaly_frames.append(anomaly_frame)
+                catch_up_domains = tuple(dict.fromkeys(catch_up_domains + day_domains))
+            if not anomaly_frames:
                 continue
-            published_run_ids.append(result.run_id)
-            logger.info(
-                "SST published run=%s domains=%s frames=%s",
-                result.run_id,
-                ",".join(day_domains),
-                result.frame_counts,
+            run_id = _publish_day(
+                config=config,
+                frame=anomaly_frames,
+                day_domains=catch_up_domains,
+                run_valid_time=run_valid_time,
             )
+            if run_id is not None and run_id not in published_run_ids:
+                published_run_ids.append(run_id)
     finally:
         shutil.rmtree(download_dir, ignore_errors=True)
 
+    anomaly_note = (
+        f" (anomaly pending {','.join(sorted(set(anomaly_skipped)))})" if anomaly_skipped else ""
+    )
     if not published_run_ids:
+        if skipped:
+            return SSTPollerCycleResult(
+                action="fetch_miss",
+                published_run_ids=(),
+                latest_available_day=latest_available.strftime(_TIME_FORMAT),
+                message=(
+                    f"No SST day could be fetched this cycle (skipped {','.join(skipped)}); "
+                    f"keeping last known good bundle.{anomaly_note}"
+                ),
+            )
+        # SST is fully caught up and only the anomaly is outstanding. That is the
+        # normal steady state for the newest day or two, so it reads as a noop
+        # rather than a fetch failure — the pending days are named in the message.
         return SSTPollerCycleResult(
-            action="fetch_miss",
+            action="noop",
             published_run_ids=(),
             latest_available_day=latest_available.strftime(_TIME_FORMAT),
             message=(
-                f"No SST day could be fetched this cycle (skipped {','.join(skipped) or '-'}); "
-                f"keeping last known good bundle."
+                f"SST upstream newest day {latest_available.date()} is already published "
+                f"in every enabled domain ({_published_state_summary(config.data_root)})."
+                + anomaly_note
             ),
         )
 
@@ -173,8 +266,45 @@ def run_once(config: SSTPollerConfig) -> SSTPollerCycleResult:
         message=(
             f"Published {len(published_run_ids)} SST run(s): {','.join(published_run_ids)}"
             + (f" (skipped {','.join(skipped)})" if skipped else "")
+            + anomaly_note
         ),
     )
+
+
+def _publish_day(
+    *,
+    config: SSTPollerConfig,
+    frame: SSTBundleFrame | list[SSTBundleFrame],
+    day_domains: tuple[str, ...],
+    run_valid_time: datetime | None,
+) -> str | None:
+    """Publish one run; return its id, or None when nothing landed on disk."""
+    frames = frame if isinstance(frame, list) else [frame]
+    result = publish_sst_bundle(
+        data_root=config.data_root,
+        frames=frames,
+        target_frame_count=config.bundle_frame_count,
+        domains=day_domains,
+        run_valid_time=run_valid_time,
+    )
+    # Only a run that actually landed in at least one domain counts as published.
+    # publish_sst_bundle raises on total failure, so this is belt-and-braces — but
+    # reporting a run id with no artifacts behind it is exactly how a
+    # green-but-broken cycle looked.
+    if not result.frame_counts:
+        logger.error(
+            "SST publish reported no domains for run=%s (requested %s) — not counting it",
+            result.run_id,
+            ",".join(day_domains),
+        )
+        return None
+    logger.info(
+        "SST published run=%s domains=%s frames=%s",
+        result.run_id,
+        ",".join(day_domains),
+        result.variable_frame_counts,
+    )
+    return result.run_id
 
 
 def run_poller(config: SSTPollerConfig, *, once: bool) -> int:
@@ -208,8 +338,20 @@ def run_poller(config: SSTPollerConfig, *, once: bool) -> int:
 # ---------------------------------------------------------------------------
 
 def _build_frame_for_day(
-    day: datetime, *, download_dir: Path, timeout: tuple[float, float]
+    day: datetime,
+    *,
+    download_dir: Path,
+    timeout: tuple[float, float],
+    probe_timeout: tuple[float, float],
+    with_anomaly: bool,
 ) -> SSTBundleFrame:
+    """Fetch a day's absolute SST, and its anomaly too when upstream has it.
+
+    An anomaly miss degrades the frame to SST-only and is never allowed to fail
+    the day: CRW publishes on its own schedule, so "not out yet" is the normal
+    case for the newest day, and the anomaly is picked up by the catch-up pass on
+    a later cycle.
+    """
     source = sst_fetch.fetch_sst_day(day, download_dir=download_dir, timeout=timeout)
     try:
         native = sst_fetch.read_native_sst(source.path, source.variable)
@@ -220,6 +362,20 @@ def _build_frame_for_day(
             pass
     metadata = dict(native.metadata)
     metadata["upstream_path_label"] = source.label
+
+    anomaly: SSTBundleFrame | None = None
+    if with_anomaly:
+        try:
+            anomaly = _build_anomaly_frame_for_day(
+                day, download_dir=download_dir, timeout=timeout, probe_timeout=probe_timeout
+            )
+        except sst_fetch.SSTFetchError as exc:
+            logger.info(
+                "SST anomaly for %s not available with the SST; will retry: %s", day.date(), exc
+            )
+        except Exception:
+            logger.exception("SST anomaly %s failed to read; publishing SST only", day.date())
+
     return SSTBundleFrame(
         valid_time=source.valid_time,
         values=native.values,
@@ -228,6 +384,46 @@ def _build_frame_for_day(
         source_url=source.url,
         source_filename=source.path.name,
         metadata=metadata,
+        anomaly_values=None if anomaly is None else anomaly.anomaly_values,
+        anomaly_source_url=None if anomaly is None else anomaly.anomaly_source_url,
+        anomaly_source_filename=None if anomaly is None else anomaly.anomaly_source_filename,
+        anomaly_metadata={} if anomaly is None else dict(anomaly.anomaly_metadata),
+    )
+
+
+def _build_anomaly_frame_for_day(
+    day: datetime,
+    *,
+    download_dir: Path,
+    timeout: tuple[float, float],
+    probe_timeout: tuple[float, float],
+) -> SSTBundleFrame | None:
+    """Fetch one day's CRW anomaly as an anomaly-only frame, or None if not out.
+
+    HEAD-probed first, which is the payoff for making the STAR archive primary:
+    asking "is the anomaly published for this day?" costs one header instead of
+    a multi-hundred-megabyte download.
+    """
+    if not sst_fetch.probe_anomaly_available(day, timeout=probe_timeout):
+        return None
+    source = sst_fetch.fetch_sst_anomaly_day(day, download_dir=download_dir, timeout=timeout)
+    try:
+        native = sst_fetch.read_native_sst_anomaly(source.path, source.variable)
+    finally:
+        try:
+            source.path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    metadata = dict(native.metadata)
+    metadata["upstream_path_label"] = source.label
+    return SSTBundleFrame(
+        valid_time=source.valid_time,
+        source_transform=native.transform,
+        source_crs=native.crs,
+        anomaly_values=native.values,
+        anomaly_source_url=source.url,
+        anomaly_source_filename=source.path.name,
+        anomaly_metadata=metadata,
     )
 
 
@@ -296,8 +492,82 @@ def _published_state_summary(data_root: Path) -> str:
     )
 
 
-def newest_published_valid_time(data_root: Path, domain: str) -> datetime | None:
-    """Newest frame ``valid_time`` in the domain's currently published manifest."""
+def _anomaly_catch_up_days(
+    *,
+    data_root: Path,
+    latest_available: datetime,
+    bundle_frame_count: int,
+    exclude: dict[str, set[datetime]],
+) -> dict[datetime, dict[datetime, tuple[str, ...]]]:
+    """Days whose SST is published but whose anomaly is not, per domain.
+
+    Returns ``{run_valid_time: {day: domains}}``. ``run_valid_time`` is the newest
+    published SST day, i.e. the run these anomaly frames should *amend* — passing
+    it explicitly is what keeps an older catch-up day from minting a run id that
+    trails the window's own newest frame.
+
+    ``exclude`` is ``{domain: days}`` — days this cycle already published an
+    anomaly for, **per domain**. It must stay per-domain: pass 1 publishes a day
+    only to the domains that needed its SST, so excluding a day globally because
+    one domain picked it up leaves the others a cycle behind.
+
+    Bounded to the bundle window, so a cycle never re-fetches the same anomaly
+    twice and never queues unbounded work.
+    """
+    canonical_newest = newest_published_valid_time(data_root, SST_CANONICAL_REGION_ID)
+    if canonical_newest is None:
+        return {}
+
+    window_floor = sst_fetch.normalize_day(canonical_newest) - timedelta(
+        days=max(1, int(bundle_frame_count)) - 1
+    )
+    newest_upstream = sst_fetch.normalize_day(latest_available)
+    needed: dict[datetime, list[str]] = {}
+    for domain in publish_domains():
+        already_done = exclude.get(domain, frozenset())
+        sst_days = published_valid_times(data_root, domain, SST_VARIABLE_ID)
+        anomaly_days = published_valid_times(data_root, domain, SST_ANOM_VARIABLE_ID)
+        for day in sorted(sst_days - anomaly_days):
+            if day in already_done or day < window_floor or day > newest_upstream:
+                continue
+            needed.setdefault(day, []).append(domain)
+    if not needed:
+        return {}
+    return {
+        sst_fetch.normalize_day(canonical_newest): {
+            day: tuple(domains) for day, domains in needed.items()
+        }
+    }
+
+
+def published_valid_times(data_root: Path, domain: str, var_id: str) -> set[datetime]:
+    """Frame ``valid_time`` values published for one variable in the LATEST run."""
+    manifest = _latest_manifest(data_root, domain)
+    if manifest is None:
+        return set()
+    var_entry = manifest.get("variables", {}).get(var_id)
+    frames = var_entry.get("frames") if isinstance(var_entry, dict) else None
+    if not isinstance(frames, list):
+        return set()
+    out: set[datetime] = set()
+    for frame in frames:
+        raw = frame.get("valid_time") if isinstance(frame, dict) else None
+        parsed = _parse_manifest_time(raw)
+        if parsed is not None:
+            out.add(parsed)
+    return out
+
+
+def _parse_manifest_time(raw: object) -> datetime | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return datetime.strptime(raw.strip(), _TIME_FORMAT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _latest_manifest(data_root: Path, domain: str) -> dict | None:
     latest_path = latest_pointer_path(data_root, domain)
     if not latest_path.is_file():
         return None
@@ -308,31 +578,26 @@ def newest_published_valid_time(data_root: Path, domain: str) -> datetime | None
     run_id = str(payload.get("run_id") or "").strip()
     if not run_id:
         return None
-
     path = manifest_path(data_root, run_id, domain)
     if not path.is_file():
         return None
     try:
-        manifest = json.loads(path.read_text())
+        loaded = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
-    var_entry = manifest.get("variables", {}).get("sst")
-    frames = var_entry.get("frames") if isinstance(var_entry, dict) else None
-    if not isinstance(frames, list):
-        return None
+    return loaded if isinstance(loaded, dict) else None
 
-    newest: datetime | None = None
-    for frame in frames:
-        raw = frame.get("valid_time") if isinstance(frame, dict) else None
-        if not isinstance(raw, str) or not raw.strip():
-            continue
-        try:
-            parsed = datetime.strptime(raw.strip(), _TIME_FORMAT).replace(tzinfo=timezone.utc)
-        except ValueError:
-            continue
-        if newest is None or parsed > newest:
-            newest = parsed
-    return newest
+
+def newest_published_valid_time(
+    data_root: Path, domain: str, var_id: str = SST_VARIABLE_ID
+) -> datetime | None:
+    """Newest frame ``valid_time`` published for a variable in the LATEST run.
+
+    Defaults to the absolute SST: the cycle decision is driven by that variable,
+    never by the anomaly, so a lagging anomaly can never hold SST back.
+    """
+    valid_times = published_valid_times(data_root, domain, var_id)
+    return max(valid_times) if valid_times else None
 
 
 def _enforce_retention(config: SSTPollerConfig) -> None:

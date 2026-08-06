@@ -2,16 +2,20 @@ import { useEffect, useState } from "react";
 import type { BasemapMode } from "@/components/map-canvas";
 import { OVERLAY_DEFAULT_OPACITY } from "@/lib/config";
 import {
+  defaultPointLabelsEnabledForSelection,
   readBasemapModePreference,
+  readHrrrSmokePointLabelsPreference,
   readLegendVisibilityPreference,
   readNwsWarningsPreference,
   readPointLabelsPreference,
   readZoomControlsPreference,
   writeBasemapModePreference,
+  writeHrrrSmokePointLabelsPreference,
   writeLegendVisibilityPreference,
   writeNwsWarningsPreference,
   writePointLabelsPreference,
   writeZoomControlsPreference,
+  isHrrrSmokePointLabelsSelection,
 } from "@/lib/app-utils";
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 
@@ -50,9 +54,14 @@ export interface UseDisplaySettingsReturn {
 export function useDisplaySettings(
   viewerLayoutMode: ViewerLayoutMode,
   isDesktopViewerLayout: boolean,
+  model: string,
+  variable: string,
 ): UseDisplaySettingsReturn {
   const [basemapMode, setBasemapMode] = useState<BasemapMode>(() => readBasemapModePreference());
-  const [pointLabelsEnabled, setPointLabelsEnabled] = useState(() => readPointLabelsPreference());
+  const [pointLabelsPreference, setPointLabelsPreference] = useState(() => readPointLabelsPreference());
+  const [hrrrSmokePointLabelsPreference, setHrrrSmokePointLabelsPreference] = useState<boolean | null>(
+    () => readHrrrSmokePointLabelsPreference(),
+  );
   const [nwsWarningsEnabled, setNwsWarningsEnabled] = useState(() => readNwsWarningsPreference());
 
   // null = never explicitly set; resolve to layout-appropriate default below.
@@ -68,9 +77,25 @@ export function useDisplaySettings(
 
   // Resolve null → layout default. Explicit true/false is always honoured.
   const isMobileLayout = viewerLayoutMode === "mobile";
+  const smokeSelectionActive = isHrrrSmokePointLabelsSelection(model, variable);
+  const pointLabelsDefault = defaultPointLabelsEnabledForSelection(model, variable);
+  const pointLabelsEnabled = smokeSelectionActive
+    ? (hrrrSmokePointLabelsPreference ?? pointLabelsDefault)
+    : pointLabelsPreference;
   const zoomControlsVisible = zoomPreference ?? (isDesktopViewerLayout ? true : false);
   const legendDefault = isDesktopViewerLayout || isMobileLayout;
   const legendVisible = legendPreference ?? legendDefault;
+
+  const setPointLabelsEnabled: React.Dispatch<React.SetStateAction<boolean>> = (value) => {
+    if (smokeSelectionActive) {
+      setHrrrSmokePointLabelsPreference((current) => {
+        const effective = current ?? pointLabelsDefault;
+        return typeof value === "function" ? value(effective) : value;
+      });
+      return;
+    }
+    setPointLabelsPreference((current) => (typeof value === "function" ? value(current) : value));
+  };
 
   const setZoomControlsVisible: React.Dispatch<React.SetStateAction<boolean>> = (value) => {
     setZoomPreference((current) => {
@@ -87,7 +112,12 @@ export function useDisplaySettings(
   };
 
   useEffect(() => { writeBasemapModePreference(basemapMode); }, [basemapMode]);
-  useEffect(() => { writePointLabelsPreference(pointLabelsEnabled); }, [pointLabelsEnabled]);
+  useEffect(() => { writePointLabelsPreference(pointLabelsPreference); }, [pointLabelsPreference]);
+  useEffect(() => {
+    if (hrrrSmokePointLabelsPreference !== null) {
+      writeHrrrSmokePointLabelsPreference(hrrrSmokePointLabelsPreference);
+    }
+  }, [hrrrSmokePointLabelsPreference]);
   useEffect(() => { writeNwsWarningsPreference(nwsWarningsEnabled); }, [nwsWarningsEnabled]);
 
   useEffect(() => {

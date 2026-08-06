@@ -51,6 +51,8 @@ from rasterio.transform import Affine
 
 from ..config import grid_build_enabled
 from ..models.sst import (
+    SST_ANOM_COLOR_MAP_ID,
+    SST_ANOM_VARIABLE_ID,
     SST_CANONICAL_REGION_ID,
     SST_COLOR_MAP_ID,
     SST_GLOBAL_REGION_ID,
@@ -82,28 +84,81 @@ SST_BUNDLE_FRAME_COUNT = 14
 _TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
+#: Variables a run can carry, primary first. ``sst`` is the layer's reason to
+#: exist; ``sst_anom`` is optional per day because CRW publishes it on its own
+#: schedule and may lag the absolute field.
+SST_PUBLISH_VARIABLES: tuple[str, ...] = (SST_VARIABLE_ID, SST_ANOM_VARIABLE_ID)
+
+_COLOR_MAP_BY_VARIABLE: dict[str, str] = {
+    SST_VARIABLE_ID: SST_COLOR_MAP_ID,
+    SST_ANOM_VARIABLE_ID: SST_ANOM_COLOR_MAP_ID,
+}
+
+_DISPLAY_NAME_BY_VARIABLE: dict[str, str] = {
+    SST_VARIABLE_ID: "Sea Surface Temperature",
+    SST_ANOM_VARIABLE_ID: "Sea Surface Temperature Anomaly",
+}
+
+
 @dataclass(frozen=True)
 class SSTBundleFrame:
-    """One freshly fetched day, on its native EPSG:4326 grid in °C."""
+    """One freshly fetched day, on its native EPSG:4326 grid in °C.
+
+    A frame carries whichever variables were newly fetched for that day, so it is
+    legal (and normal) for a frame to carry only the anomaly: that is the
+    "anomaly arrived late" case, where the day's absolute SST is already published
+    and gets carried forward by hardlink instead of being re-fetched.
+    """
 
     valid_time: datetime
-    values: np.ndarray
     source_transform: Affine
+    values: np.ndarray | None = None
+    anomaly_values: np.ndarray | None = None
     source_crs: Any = "EPSG:4326"
     source_url: str | None = None
     source_filename: str | None = None
+    anomaly_source_url: str | None = None
+    anomaly_source_filename: str | None = None
     quality: str = "full"
     quality_flags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    anomaly_metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.values is None and self.anomaly_values is None:
+            raise ValueError(
+                "SSTBundleFrame carries no field: supply values, anomaly_values, or both"
+            )
+
+    def field_for(self, var_id: str) -> np.ndarray | None:
+        return self.values if var_id == SST_VARIABLE_ID else self.anomaly_values
+
+    def source_url_for(self, var_id: str) -> str | None:
+        return self.source_url if var_id == SST_VARIABLE_ID else self.anomaly_source_url
+
+    def source_filename_for(self, var_id: str) -> str | None:
+        return (
+            self.source_filename if var_id == SST_VARIABLE_ID else self.anomaly_source_filename
+        )
+
+    def metadata_for(self, var_id: str) -> dict[str, Any]:
+        return dict(self.metadata if var_id == SST_VARIABLE_ID else self.anomaly_metadata)
 
 
 @dataclass(frozen=True)
 class SSTPublishedFrame:
-    """A day already published in a previous run, reusable by hardlink."""
+    """A day already published in a previous run, reusable by hardlink.
+
+    Per-variable, because a day can legitimately have `sst` published and
+    `sst_anom` still missing.
+    """
 
     valid_time: datetime
-    sidecar: dict[str, Any]
-    sidecar_path: Path
+    sidecars: dict[str, dict[str, Any]] = field(default_factory=dict)
+    sidecar_paths: dict[str, Path] = field(default_factory=dict)
+
+    def has(self, var_id: str) -> bool:
+        return var_id in self.sidecar_paths
 
 
 @dataclass(frozen=True)
@@ -112,6 +167,9 @@ class SSTPublishResult:
     frame_counts: dict[str, int]
     manifest_paths: dict[str, Path]
     published_run_dirs: dict[str, Path]
+    #: domain -> {var_id: frames published}. ``frame_counts`` stays the primary
+    #: variable's count so the total-failure (D5) check keeps its meaning.
+    variable_frame_counts: dict[str, dict[str, int]] = field(default_factory=dict)
 
     @property
     def frame_count(self) -> int:
@@ -189,39 +247,50 @@ def load_latest_published_sst_frames(
     except (OSError, json.JSONDecodeError):
         return run_id, []
 
-    var_entry = manifest.get("variables", {}).get(SST_VARIABLE_ID)
-    manifest_frames = var_entry.get("frames") if isinstance(var_entry, dict) else None
-    if not isinstance(manifest_frames, list):
+    run_root = published_run_root(data_root, run_id, domain)
+    manifest_variables = manifest.get("variables")
+    if not isinstance(manifest_variables, dict):
         return run_id, []
 
-    run_root = published_run_root(data_root, run_id, domain)
-    var_dir = run_root / SST_VARIABLE_ID
-    frames: list[SSTPublishedFrame] = []
-    for entry in manifest_frames:
-        if not isinstance(entry, dict):
+    # Collect per (valid_time, variable): a day is admitted for a variable only
+    # when both its sidecar and its level-0 grid meta exist, so a half-written
+    # variable is never carried forward as if it were complete.
+    by_valid_time: dict[datetime, dict[str, tuple[dict[str, Any], Path]]] = {}
+    for var_id in SST_PUBLISH_VARIABLES:
+        var_entry = manifest_variables.get(var_id)
+        manifest_frames = var_entry.get("frames") if isinstance(var_entry, dict) else None
+        if not isinstance(manifest_frames, list):
             continue
-        try:
-            fh = int(entry["fh"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        sidecar_path = var_dir / f"fh{fh:03d}.json"
-        if not sidecar_path.is_file():
-            continue
-        if not _published_grid_meta_exists(run_root, SST_VARIABLE_ID, fh):
-            continue
-        try:
-            sidecar = json.loads(sidecar_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
-        raw_valid_time = sidecar.get("valid_time") or entry.get("valid_time")
-        valid_time = _parse_time(raw_valid_time)
-        if valid_time is None:
-            continue
-        frames.append(
-            SSTPublishedFrame(valid_time=valid_time, sidecar=sidecar, sidecar_path=sidecar_path)
-        )
+        var_dir = run_root / var_id
+        for entry in manifest_frames:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                fh = int(entry["fh"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            sidecar_path = var_dir / f"fh{fh:03d}.json"
+            if not sidecar_path.is_file():
+                continue
+            if not _published_grid_meta_exists(run_root, var_id, fh):
+                continue
+            try:
+                sidecar = json.loads(sidecar_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            valid_time = _parse_time(sidecar.get("valid_time") or entry.get("valid_time"))
+            if valid_time is None:
+                continue
+            by_valid_time.setdefault(valid_time, {})[var_id] = (sidecar, sidecar_path)
 
-    frames.sort(key=lambda item: item.valid_time)
+    frames = [
+        SSTPublishedFrame(
+            valid_time=valid_time,
+            sidecars={var_id: pair[0] for var_id, pair in per_var.items()},
+            sidecar_paths={var_id: pair[1] for var_id, pair in per_var.items()},
+        )
+        for valid_time, per_var in sorted(by_valid_time.items())
+    ]
     return run_id, frames
 
 
@@ -236,6 +305,7 @@ def publish_sst_bundle(
     publish_time: datetime | None = None,
     target_frame_count: int = SST_BUNDLE_FRAME_COUNT,
     domains: tuple[str, ...] | None = None,
+    run_valid_time: datetime | None = None,
 ) -> SSTPublishResult:
     """Publish one run bundling the newest ``target_frame_count`` daily frames.
 
@@ -250,13 +320,19 @@ def publish_sst_bundle(
     canonical domain raises when it was asked for, and every non-canonical domain
     is logged-and-skipped, so a global-grid problem can never take SST offline.
 
-    The run id is the **newest fetched day's valid time** (e.g. ``20260804_12z``),
-    not the wall clock: SST is a daily product, so that makes a republish of the
-    same day idempotent and lets the poller walk a first-ever backfill day by
-    day without minting colliding run ids.
+    The run id defaults to the **newest fetched day's valid time**
+    (e.g. ``20260804_12z``), not the wall clock: SST is a daily product, so that
+    makes a republish of the same day idempotent and lets the poller walk a
+    first-ever backfill day by day without minting colliding run ids.
+
+    ``run_valid_time`` overrides that when the caller is *amending* an existing
+    run rather than advancing to a new day — specifically the anomaly catch-up
+    path, where the fresh frames are older days whose absolute SST is already
+    published. Without the override those frames would mint a run id that trails
+    the window's own newest frame.
 
     Days must be published **oldest first**: a run's window is the previous
-    run's window merged with the fresh frame, so publishing an older day after a
+    run's window merged with the fresh frames, so publishing an older day after a
     newer one would mint a run whose id trails its own newest frame.
     """
     if not frames:
@@ -267,7 +343,11 @@ def publish_sst_bundle(
         raise ValueError("SST publish requires at least one target domain")
 
     publish_dt = (publish_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    newest_valid_time = max(frame.valid_time.astimezone(timezone.utc) for frame in frames)
+    newest_valid_time = (
+        run_valid_time.astimezone(timezone.utc)
+        if run_valid_time is not None
+        else max(frame.valid_time.astimezone(timezone.utc) for frame in frames)
+    )
     run_id = format_run_id(newest_valid_time)
     started_at = time.monotonic()
     logger.info(
@@ -278,13 +358,14 @@ def publish_sst_bundle(
     )
 
     frame_counts: dict[str, int] = {}
+    variable_frame_counts: dict[str, dict[str, int]] = {}
     manifest_paths: dict[str, Path] = {}
     published_run_dirs: dict[str, Path] = {}
     failed_domains: list[str] = []
 
     for domain in resolved_domains:
         try:
-            count = _publish_domain(
+            counts_by_var = _publish_domain(
                 data_root=Path(data_root),
                 run_id=run_id,
                 domain=domain,
@@ -302,7 +383,8 @@ def publish_sst_bundle(
             )
             failed_domains.append(domain)
             continue
-        frame_counts[domain] = count
+        frame_counts[domain] = int(counts_by_var.get(SST_VARIABLE_ID, 0))
+        variable_frame_counts[domain] = counts_by_var
         manifest_paths[domain] = manifest_path(data_root, run_id, domain)
         published_run_dirs[domain] = published_run_root(data_root, run_id, domain)
 
@@ -322,13 +404,14 @@ def publish_sst_bundle(
         "SST publish phase=complete run=%s elapsed=%.1fs frames=%s",
         run_id,
         time.monotonic() - started_at,
-        frame_counts,
+        variable_frame_counts,
     )
     return SSTPublishResult(
         run_id=run_id,
         frame_counts=frame_counts,
         manifest_paths=manifest_paths,
         published_run_dirs=published_run_dirs,
+        variable_frame_counts=variable_frame_counts,
     )
 
 
@@ -340,19 +423,20 @@ def _publish_domain(
     frames: list[SSTBundleFrame],
     publish_dt: datetime,
     target_frame_count: int,
-) -> int:
+) -> dict[str, int]:
     previous_run_id, previous_frames = load_latest_published_sst_frames(data_root, domain)
 
-    merged: dict[datetime, SSTPublishedFrame | SSTBundleFrame] = {}
-    for frame in previous_frames:
-        merged[frame.valid_time] = frame
-    for frame in frames:
-        merged[frame.valid_time.astimezone(timezone.utc)] = frame
+    previous_by_valid_time = {frame.valid_time: frame for frame in previous_frames}
+    fresh_by_valid_time = {
+        frame.valid_time.astimezone(timezone.utc): frame for frame in frames
+    }
 
-    ordered = [merged[key] for key in sorted(merged)]
+    # The window is the union of days from either side. A day contributes as long
+    # as SOME variable can be written or reused for it.
+    ordered_valid_times = sorted(set(previous_by_valid_time) | set(fresh_by_valid_time))
     if target_frame_count > 0:
-        ordered = ordered[-int(target_frame_count):]
-    if not ordered:
+        ordered_valid_times = ordered_valid_times[-int(target_frame_count):]
+    if not ordered_valid_times:
         raise ValueError("SST bundle publish resolved to an empty rolling window")
 
     stage_run = staging_run_root(data_root, run_id, domain)
@@ -361,49 +445,66 @@ def _publish_domain(
     stage_run.mkdir(parents=True, exist_ok=True)
 
     build_artifacts = bool(grid_build_enabled())
-    published_fhs: list[int] = []
+    published_fhs_by_var: dict[str, list[int]] = {var_id: [] for var_id in SST_PUBLISH_VARIABLES}
     valid_times_by_fh: dict[int, datetime] = {}
-    for fh, item in enumerate(ordered):
-        if isinstance(item, SSTPublishedFrame):
-            wrote = _reuse_frame(
-                data_root=data_root,
-                run_id=run_id,
-                domain=domain,
-                forecast_hour=fh,
-                frame=item,
-                build_grid_artifacts=build_artifacts,
-            )
-            valid_time = item.valid_time
-        else:
-            wrote = _write_frame(
-                data_root=data_root,
-                run_id=run_id,
-                domain=domain,
-                forecast_hour=fh,
-                frame=item,
-                build_grid_artifacts=build_artifacts,
-            )
-            valid_time = item.valid_time.astimezone(timezone.utc)
-        if not wrote:
-            continue
-        published_fhs.append(fh)
+
+    # Per (day, variable): write it fresh when this publish supplies it, else
+    # carry it forward from the previous run, else it is simply absent for that
+    # day. This is what lets the anomaly arrive late without re-fetching (or
+    # re-encoding) the day's absolute SST.
+    for fh, valid_time in enumerate(ordered_valid_times):
         valid_times_by_fh[fh] = valid_time
+        fresh = fresh_by_valid_time.get(valid_time)
+        previous = previous_by_valid_time.get(valid_time)
+        for var_id in SST_PUBLISH_VARIABLES:
+            fresh_values = fresh.field_for(var_id) if fresh is not None else None
+            if fresh_values is not None:
+                wrote = _write_variable_frame(
+                    data_root=data_root,
+                    run_id=run_id,
+                    domain=domain,
+                    var_id=var_id,
+                    forecast_hour=fh,
+                    frame=fresh,
+                    values=fresh_values,
+                    build_grid_artifacts=build_artifacts,
+                )
+            elif previous is not None and previous.has(var_id):
+                wrote = _reuse_variable_frame(
+                    data_root=data_root,
+                    run_id=run_id,
+                    domain=domain,
+                    var_id=var_id,
+                    forecast_hour=fh,
+                    frame=previous,
+                    build_grid_artifacts=build_artifacts,
+                )
+            else:
+                continue
+            if wrote:
+                published_fhs_by_var[var_id].append(fh)
 
-    if not published_fhs:
-        raise ValueError(f"SST bundle publish wrote no frames for domain={domain}")
+    if not published_fhs_by_var[SST_VARIABLE_ID]:
+        raise ValueError(
+            f"SST bundle publish wrote no {SST_VARIABLE_ID} frames for domain={domain}"
+        )
 
+    grid_variables = tuple(
+        var_id for var_id in SST_PUBLISH_VARIABLES if published_fhs_by_var[var_id]
+    )
     if build_artifacts:
         try:
             manifests_built = build_grid_manifests_for_run_root(
                 run_root=stage_run,
                 model=SST_MODEL_ID,
                 run=run_id,
-                variables=(SST_VARIABLE_ID,),
+                variables=grid_variables,
             )
             logger.info(
-                "SST grid manifest build run=%s domain=%s manifests=%d",
+                "SST grid manifest build run=%s domain=%s variables=%s manifests=%d",
                 run_id,
                 domain,
+                ",".join(grid_variables),
                 manifests_built,
             )
         except Exception:
@@ -411,27 +512,29 @@ def _publish_domain(
 
     _promote_run(data_root=data_root, run_id=run_id, domain=domain)
 
-    # Units/kind come from a published sidecar so the manifest carries the same
-    # display units the frontend reads there ("°C", via pipeline._format_units)
-    # instead of a second hardcoded spelling.
-    sidecar_units, sidecar_kind = _units_and_kind_from_published_sidecar(
-        data_root=data_root, run_id=run_id, domain=domain, fh=published_fhs[0]
-    )
-    manifest_variables = {
-        SST_VARIABLE_ID: {
-            "display_name": "Sea Surface Temperature",
+    manifest_variables: dict[str, Any] = {}
+    for var_id in grid_variables:
+        fhs = published_fhs_by_var[var_id]
+        # Units/kind come from a published sidecar so the manifest carries the
+        # same display units the frontend reads there ("°C", via
+        # pipeline._format_units) instead of a second hardcoded spelling.
+        sidecar_units, sidecar_kind = _units_and_kind_from_published_sidecar(
+            data_root=data_root, run_id=run_id, domain=domain, var_id=var_id, fh=fhs[0]
+        )
+        manifest_variables[var_id] = {
+            "display_name": _DISPLAY_NAME_BY_VARIABLE[var_id],
             "kind": sidecar_kind,
             "units": sidecar_units,
-            # The window's real size, so a frame the pre-encode gate rejected
-            # shows up as available < expected instead of being papered over.
-            "expected_frames": len(ordered),
-            "available_frames": len(published_fhs),
+            # The window's real size for BOTH variables, so a day whose anomaly
+            # upstream has not published yet reads as available < expected rather
+            # than being quietly hidden.
+            "expected_frames": len(ordered_valid_times),
+            "available_frames": len(fhs),
             "frames": [
                 {"fh": fh, "valid_time": valid_times_by_fh[fh].strftime(_TIME_FORMAT)}
-                for fh in published_fhs
+                for fh in fhs
             ],
         }
-    }
     last_updated = publish_dt.strftime(_TIME_FORMAT)
     payload = {
         "contract_version": "3.0",
@@ -459,14 +562,15 @@ def _publish_domain(
             "region": domain,
         },
     )
+    counts = {var_id: len(fhs) for var_id, fhs in published_fhs_by_var.items() if fhs}
     logger.info(
-        "SST publish phase=domain_complete run=%s domain=%s frames=%d reused_from=%s",
+        "SST publish phase=domain_complete run=%s domain=%s frames=%s reused_from=%s",
         run_id,
         domain,
-        len(published_fhs),
+        counts,
         previous_run_id or "-",
     )
-    return len(published_fhs)
+    return counts
 
 
 # ---------------------------------------------------------------------------
@@ -502,27 +606,32 @@ def coastal_fringe_cells_for_domain(domain: str) -> int:
     )
 
 
-def _write_frame(
+def _write_variable_frame(
     *,
     data_root: Path,
     run_id: str,
     domain: str,
+    var_id: str,
     forecast_hour: int,
     frame: SSTBundleFrame,
+    values: np.ndarray,
     build_grid_artifacts: bool,
 ) -> bool:
     grid = get_target_grid(SST_MODEL_ID, domain)
+    color_map_id = _COLOR_MAP_BY_VARIABLE[var_id]
 
     # Dilate the ocean edge into the land NaN fringe BEFORE the warp, sized for
     # this domain's target cell. Done per domain (not once at read time) because
-    # the two grids need different reaches.
-    source_values = np.asarray(frame.values, dtype=np.float32)
+    # the two grids need different reaches. Applies to the anomaly identically —
+    # it has the same water-only footprint (a slightly smaller one, since CRW
+    # masks ice zones) and the same texel-staircase problem.
+    source_values = np.asarray(values, dtype=np.float32)
     source_valid_fraction = float(np.isfinite(source_values).mean())
     fringe_cells = coastal_fringe_cells_for_domain(domain)
     source_values = fill_coastal_fringe(source_values, radius_cells=fringe_cells)
     filled_valid_fraction = float(np.isfinite(source_values).mean())
 
-    values, _ = warp_to_target_grid(
+    warped, _ = warp_to_target_grid(
         source_values,
         frame.source_crs,
         frame.source_transform,
@@ -532,48 +641,52 @@ def _write_frame(
         src_nodata=float("nan"),
         working_dtype=np.float32,
     )
-    values = np.asarray(values, dtype=np.float32)
-    if values.shape != (grid.height, grid.width):
+    warped = np.asarray(warped, dtype=np.float32)
+    if warped.shape != (grid.height, grid.width):
         raise ValueError(
-            f"SST warp produced {values.shape}, expected {(grid.height, grid.width)} "
-            f"for domain={domain}"
+            f"SST warp produced {warped.shape}, expected {(grid.height, grid.width)} "
+            f"for domain={domain} var={var_id}"
         )
 
-    if not _pre_encode_gate_allows(values, forecast_hour=forecast_hour, domain=domain):
+    if not _pre_encode_gate_allows(
+        warped, var_id=var_id, forecast_hour=forecast_hour, domain=domain
+    ):
         return False
 
-    stage_var_dir = staging_run_root(data_root, run_id, domain) / SST_VARIABLE_ID
+    stage_var_dir = staging_run_root(data_root, run_id, domain) / var_id
     stage_var_dir.mkdir(parents=True, exist_ok=True)
 
-    colorize_meta = colorize_metadata(values, SST_COLOR_MAP_ID, meta_var_key=SST_VARIABLE_ID)
+    colorize_meta = colorize_metadata(warped, color_map_id, meta_var_key=var_id)
     valid_time = frame.valid_time.astimezone(timezone.utc)
     sidecar = build_sidecar_json(
         model=SST_MODEL_ID,
         region=domain,
         run_id=run_id,
-        var_id=SST_VARIABLE_ID,
+        var_id=var_id,
         fh=int(forecast_hour),
         run_date=datetime.now(timezone.utc),
         colorize_meta=colorize_meta,
         var_spec={"type": "continuous", "units": "C"},
-        var_spec_model=SST_MODEL.get_var(SST_VARIABLE_ID),
+        var_spec_model=SST_MODEL.get_var(var_id),
         value_downsample_factor=1,
         quality=frame.quality,
         quality_flags=list(frame.quality_flags),
         valid_time_override=valid_time,
     )
-    if frame.source_url:
-        sidecar["source_url"] = frame.source_url
-    if frame.source_filename:
-        sidecar["source_filename"] = frame.source_filename
-    source_metadata = dict(frame.metadata) if frame.metadata else {}
+    source_url = frame.source_url_for(var_id)
+    source_filename = frame.source_filename_for(var_id)
+    if source_url:
+        sidecar["source_url"] = source_url
+    if source_filename:
+        sidecar["source_filename"] = source_filename
+    source_metadata = frame.metadata_for(var_id)
     source_metadata["actual_valid_time"] = valid_time.strftime(_TIME_FORMAT)
     # Per-domain coastal dilation, recorded so it is auditable from a published
     # sidecar rather than inferred from the ramp.
     source_metadata["coastal_fringe_source_cells"] = fringe_cells
     source_metadata["source_valid_fraction"] = round(source_valid_fraction, 6)
     source_metadata["fringe_filled_valid_fraction"] = round(filled_valid_fraction, 6)
-    source_metadata["warped_valid_fraction"] = round(float(np.isfinite(values).mean()), 6)
+    source_metadata["warped_valid_fraction"] = round(float(np.isfinite(warped).mean()), 6)
     sidecar["source_metadata"] = source_metadata
     write_json_atomic(stage_var_dir / f"fh{int(forecast_hour):03d}.json", sidecar)
 
@@ -581,44 +694,48 @@ def _write_frame(
         write_grid_frames_for_run_root(
             run_root=staging_run_root(data_root, run_id, domain),
             model=SST_MODEL_ID,
-            var=SST_VARIABLE_ID,
+            var=var_id,
             fh=int(forecast_hour),
-            values=values,
+            values=warped,
             transform=grid.transform,
             projection=grid.crs,
         )
     return True
 
 
-def _reuse_frame(
+def _reuse_variable_frame(
     *,
     data_root: Path,
     run_id: str,
     domain: str,
+    var_id: str,
     forecast_hour: int,
     frame: SSTPublishedFrame,
     build_grid_artifacts: bool,
 ) -> bool:
-    """Carry a previously published day forward by hardlinking its artifacts."""
+    """Carry one previously published (day, variable) forward by hardlink."""
+    source_value_path = frame.sidecar_paths[var_id]
     if build_grid_artifacts and not _reuse_grid_artifacts(
         data_root=data_root,
         run_id=run_id,
         domain=domain,
+        var_id=var_id,
         forecast_hour=int(forecast_hour),
-        source_value_path=frame.sidecar_path,
+        source_value_path=source_value_path,
     ):
         logger.warning(
-            "Skipping SST reuse: no grid artifacts domain=%s fh%03d source=%s",
+            "Skipping SST reuse: no grid artifacts domain=%s var=%s fh%03d source=%s",
             domain,
+            var_id,
             int(forecast_hour),
-            frame.sidecar_path,
+            source_value_path,
         )
         return False
 
-    stage_var_dir = staging_run_root(data_root, run_id, domain) / SST_VARIABLE_ID
+    stage_var_dir = staging_run_root(data_root, run_id, domain) / var_id
     stage_var_dir.mkdir(parents=True, exist_ok=True)
 
-    sidecar = dict(frame.sidecar)
+    sidecar = dict(frame.sidecars[var_id])
     sidecar["run"] = run_id
     sidecar["fh"] = int(forecast_hour)
     sidecar["valid_time"] = frame.valid_time.strftime(_TIME_FORMAT)
@@ -634,6 +751,7 @@ def _reuse_grid_artifacts(
     data_root: Path,
     run_id: str,
     domain: str,
+    var_id: str,
     forecast_hour: int,
     source_value_path: Path,
 ) -> bool:
@@ -642,12 +760,12 @@ def _reuse_grid_artifacts(
         return False
 
     source_run_root = source_value_path.parent.parent
-    source_grid_dir = resolved_grid_dir_for_run_root(source_run_root, SST_VARIABLE_ID)
+    source_grid_dir = resolved_grid_dir_for_run_root(source_run_root, var_id)
     if not source_grid_dir.is_dir():
         return False
 
     target_grid_dir = grid_dir_for_run_root(
-        staging_run_root(data_root, run_id, domain), SST_VARIABLE_ID
+        staging_run_root(data_root, run_id, domain), var_id
     )
     target_grid_dir.mkdir(parents=True, exist_ok=True)
 
@@ -689,14 +807,16 @@ def _reuse_grid_artifacts(
 # Small shared helpers
 # ---------------------------------------------------------------------------
 
-def _pre_encode_gate_allows(values: np.ndarray, *, forecast_hour: int, domain: str) -> bool:
-    label = f"{SST_MODEL_ID}/{SST_VARIABLE_ID}/{domain}/fh{int(forecast_hour):03d}"
+def _pre_encode_gate_allows(
+    values: np.ndarray, *, var_id: str, forecast_hour: int, domain: str
+) -> bool:
+    label = f"{SST_MODEL_ID}/{var_id}/{domain}/fh{int(forecast_hour):03d}"
     try:
         gate_ok = check_pre_encode_value_sanity(
             values,
-            get_color_map_spec(SST_COLOR_MAP_ID),
-            var_spec_model=SST_MODEL.get_var(SST_VARIABLE_ID),
-            var_capability=SST_MODEL.get_var_capability(SST_VARIABLE_ID),
+            get_color_map_spec(_COLOR_MAP_BY_VARIABLE[var_id]),
+            var_spec_model=SST_MODEL.get_var(var_id),
+            var_capability=SST_MODEL.get_var_capability(var_id),
             label=label,
         )
     except Exception:
@@ -752,10 +872,10 @@ def _link_or_copy(src: Path, dst: Path) -> None:
 
 
 def _units_and_kind_from_published_sidecar(
-    *, data_root: Path, run_id: str, domain: str, fh: int
+    *, data_root: Path, run_id: str, domain: str, var_id: str, fh: int
 ) -> tuple[str, str]:
     sidecar_path = (
-        published_run_root(data_root, run_id, domain) / SST_VARIABLE_ID / f"fh{int(fh):03d}.json"
+        published_run_root(data_root, run_id, domain) / var_id / f"fh{int(fh):03d}.json"
     )
     try:
         sidecar = json.loads(sidecar_path.read_text())

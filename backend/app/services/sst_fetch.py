@@ -1,10 +1,23 @@
-"""SST upstream fetch — NOAA Geo-Polar Blended 5 km daily L4 (day+night).
+"""SST upstream fetch — absolute SST and SST anomaly, both daily 5 km.
 
-Two paths, both unauthenticated single-file netCDF:
+**Absolute SST** (``sst``) — NOAA Geo-Polar Blended 5 km daily L4 (day+night):
 
 * **primary** — CoastWatch ERDDAP griddap subset of ``noaacwBLENDEDsstDNDaily``
   (~100-200 MB per day, ~16-18 s from prod);
 * **fallback** — the NCEI GHRSST ``Geo_Polar_Blended`` archive granule.
+
+**SST anomaly** (``sst_anom``) — NOAA Coral Reef Watch 5 km daily v3.1, with the
+priority **inverted** relative to absolute SST and on purpose:
+
+* **primary** — the NOAA STAR archive granule, **11.2 MB** (int16, scale 0.01)
+  versus roughly **200 MB** for byte-identical data from ERDDAP griddap, which
+  serves float64. It is also HEAD-probeable, so :func:`probe_anomaly_available`
+  can ask "is today's anomaly out?" for the cost of one header.
+* **fallback** — ERDDAP ``noaacrwsstanomalyDaily``; different infrastructure, so
+  one being down does not imply the other.
+
+Anomaly values are °C **deltas** and are never Kelvin-converted — enforced by
+``field_kind="anom"`` in the reader, not by a caller-supplied flag.
 
 **ERDDAP is effectively the sole reliable path for recent days.** The NCEI
 archive is patchy near the present: HEAD probes on 2026-08-06 found 08-05,
@@ -74,6 +87,22 @@ _NCEI_GEOPOLAR_DN = (
     "https://www.ncei.noaa.gov/data/oceans/ghrsst/L4/GLOB/OSPO/"
     "Geo_Polar_Blended/{Y}/{DDD}/"
     "{ymd}000000-OSPO-L4_GHRSST-SSTfnd-Geo_Polar_Blended-GLOB-v02.0-fv01.0.nc"
+)
+
+# ── SST anomaly (Phase 2): NOAA Coral Reef Watch 5 km daily ──
+#
+# Primary is the NOAA STAR archive, NOT ERDDAP — the inverse of the absolute-SST
+# ordering, and deliberate. Verified live 2026-08-06: the STAR granule is
+# **11.2 MB** (int16 packed, scale 0.01) against roughly **200 MB** from ERDDAP
+# griddap for byte-identical data, because ERDDAP serves float64. It is also
+# HEAD-probeable, so availability costs nothing, and it answered 200 for each of
+# the three most recent days. ERDDAP stays as the fallback: different
+# infrastructure, so an outage on one is unlikely to take out the other.
+ANOM_VAR = "sea_surface_temperature_anomaly"
+ERDDAP_ANOM_DATASET = "noaacrwsstanomalyDaily"
+_STAR_CRW_SSTA = (
+    "https://www.star.nesdis.noaa.gov/pub/socd/mecb/crw/data/5km/v3.1_op/nc/"
+    "v1.0/daily/ssta/{Y}/ct5km_ssta_v3.1_{ymd}.nc"
 )
 
 #: Upstream stamps every daily frame at 12:00Z.
@@ -162,6 +191,33 @@ def source_paths_for_day(day: datetime) -> list[dict[str, str]]:
     return [
         {"label": f"erddap-{ERDDAP_DATASET}", "url": erddap_griddap_url(day), "variable": ERDDAP_VAR},
         {"label": "ncei-ghrsst-geopolar-dn", "url": ncei_archive_url(day), "variable": NCEI_VAR},
+    ]
+
+
+def star_anomaly_url(day: datetime) -> str:
+    normalized = normalize_day(day)
+    return _STAR_CRW_SSTA.format(
+        Y=normalized.strftime("%Y"), ymd=normalized.strftime("%Y%m%d")
+    )
+
+
+def erddap_anomaly_url(day: datetime) -> str:
+    stamp = normalize_day(day).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (
+        f"{_ERDDAP_GRIDDAP}/{ERDDAP_ANOM_DATASET}.nc?{ANOM_VAR}"
+        f"[({stamp})]{_ERDDAP_LAT_LON_SELECTOR}"
+    )
+
+
+def erddap_anomaly_time_probe_url() -> str:
+    return f"{_ERDDAP_GRIDDAP}/{ERDDAP_ANOM_DATASET}.json?time%5Blast%5D"
+
+
+def anomaly_paths_for_day(day: datetime) -> list[dict[str, str]]:
+    """Ordered anomaly fetch paths: STAR archive primary (18x smaller), then ERDDAP."""
+    return [
+        {"label": "star-nesdis-crw-ssta", "url": star_anomaly_url(day), "variable": ANOM_VAR},
+        {"label": f"erddap-{ERDDAP_ANOM_DATASET}", "url": erddap_anomaly_url(day), "variable": ANOM_VAR},
     ]
 
 
@@ -268,6 +324,43 @@ def _download(url: str, dest: Path, *, timeout: tuple[float, float]) -> tuple[bo
     return False, last_error
 
 
+def probe_anomaly_available(
+    day: datetime,
+    *,
+    timeout: tuple[float, float] = DEFAULT_PROBE_TIMEOUT,
+) -> bool:
+    """Whether the CRW anomaly exists upstream for ``day``. Never raises.
+
+    A plain HEAD on the STAR granule, which is why STAR being primary is such a
+    good fit for this variable: availability costs one header round trip, so the
+    poller can ask "is the anomaly out yet?" per day without touching a byte of
+    payload. ``False`` means "not yet" and is always a skip, never an error.
+    """
+    url = star_anomaly_url(day)
+    try:
+        response = requests.head(url, timeout=timeout, headers=HTTP_HEADERS, allow_redirects=True)
+    except requests.RequestException as exc:
+        logger.warning("SST anomaly probe failed (%s): %r", url, exc)
+        return False
+    return response.status_code == 200
+
+
+def fetch_sst_anomaly_day(
+    day: datetime,
+    *,
+    download_dir: Path,
+    timeout: tuple[float, float] = DEFAULT_TIMEOUT,
+) -> SSTSourceFile:
+    """Download one day of CRW anomaly: STAR archive first, then ERDDAP."""
+    return _fetch_day(
+        day,
+        paths=anomaly_paths_for_day(normalize_day(day)),
+        prefix="sst_anom",
+        download_dir=download_dir,
+        timeout=timeout,
+    )
+
+
 def fetch_sst_day(
     day: datetime,
     *,
@@ -279,11 +372,28 @@ def fetch_sst_day(
     Raises :class:`SSTFetchError` when no path produced a file — the caller
     treats a per-day miss as skippable, never fatal.
     """
+    return _fetch_day(
+        day,
+        paths=source_paths_for_day(normalize_day(day)),
+        prefix="sst",
+        download_dir=download_dir,
+        timeout=timeout,
+    )
+
+
+def _fetch_day(
+    day: datetime,
+    *,
+    paths: list[dict[str, str]],
+    prefix: str,
+    download_dir: Path,
+    timeout: tuple[float, float],
+) -> SSTSourceFile:
     normalized = normalize_day(day)
     ymd = normalized.strftime("%Y%m%d")
     errors: list[str] = []
-    for path_spec in source_paths_for_day(normalized):
-        dest = Path(download_dir) / f"sst_{ymd}_{path_spec['label']}.nc"
+    for path_spec in paths:
+        dest = Path(download_dir) / f"{prefix}_{ymd}_{path_spec['label']}.nc"
         started_at = time.monotonic()
         ok, error = _download(path_spec["url"], dest, timeout=timeout)
         if not ok:
@@ -291,7 +401,8 @@ def fetch_sst_day(
             continue
         size = dest.stat().st_size
         logger.info(
-            "SST fetch %s via %s -> %.1f MiB in %.1fs",
+            "SST fetch %s %s via %s -> %.1f MiB in %.1fs",
+            prefix,
             ymd,
             path_spec["label"],
             size / (1024.0 * 1024.0),
@@ -305,7 +416,9 @@ def fetch_sst_day(
             valid_time=normalized,
             bytes_downloaded=size,
         )
-    raise SSTFetchError(f"No SST upstream path produced a file for {ymd}: {'; '.join(errors)}")
+    raise SSTFetchError(
+        f"No upstream path produced a {prefix} file for {ymd}: {'; '.join(errors)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +426,20 @@ def fetch_sst_day(
 # ---------------------------------------------------------------------------
 
 _KELVIN_TOKENS = frozenset({"kelvin", "k", "degrees k", "degree k", "degk"})
-_CELSIUS_TOKENS = frozenset({"degree c", "degrees c", "celsius", "degc", "c", "degree celsius"})
+_CELSIUS_TOKENS = frozenset(
+    {
+        "degree c",
+        "degrees c",
+        "celsius",
+        "degc",
+        "c",
+        "degree celsius",
+        # The CRW granules spell it this way; absolute-SST sources could too, and
+        # falling through to the magnitude test for a correctly-labelled file is a
+        # latent trap rather than a safety net.
+        "degrees celsius",
+    }
+)
 
 
 def detect_kelvin(units: str | None, values: np.ndarray) -> tuple[bool, str]:
@@ -402,18 +528,35 @@ def fill_coastal_fringe(
     return out
 
 
+def read_native_sst_anomaly(path: Path, variable: str = ANOM_VAR) -> SSTNativeField:
+    """Read one CRW anomaly granule to float32 °C deltas.
+
+    Identical geometry handling to :func:`read_native_sst`, with one hard
+    difference: an anomaly field is **never** Kelvin-converted. It is already a
+    °C delta, so subtracting 273.15 would turn a +0.4 °C anomaly into -272.75.
+    That is enforced structurally by ``field_kind="anom"`` rather than by a flag
+    the caller has to remember.
+    """
+    return _read_native_field(path, variable, field_kind="anom")
+
+
 def read_native_sst(path: Path, variable: str = ERDDAP_VAR) -> SSTNativeField:
-    """Read one SST granule to float32 °C on a north-up EPSG:4326 transform.
+    """Read one absolute-SST granule to float32 °C on a north-up EPSG:4326 transform."""
+    return _read_native_field(path, variable, field_kind="sst")
+
+
+def _read_native_field(path: Path, variable: str, *, field_kind: str) -> SSTNativeField:
+    """Shared native read for both SST and SST anomaly.
 
     GDAL's netCDF driver applies neither scale/offset nor the fill mask, so this
     applies ``raw * scale + offset``, masks the fill code to NaN, converts from
-    Kelvin when :func:`detect_kelvin` says so, flips a south-up array north-up,
-    and rolls a 0..360 longitude layout to -180..180.
+    Kelvin when :func:`detect_kelvin` says so **and the field is absolute**, flips
+    a south-up array north-up, and rolls a 0..360 longitude layout to -180..180.
 
-    The field returned here is the **raw masked** ocean field. Coastal fringe
-    dilation is applied later, per target grid, in ``sst_publish._write_frame``:
-    the reach depends on the target cell size, so a single shared fill would be
-    wrong for one of the two domains.
+    The field returned here is the **raw masked** field. Coastal fringe dilation
+    is applied later, per target grid, in ``sst_publish._write_frame``: the reach
+    depends on the target cell size, so a single shared fill would be wrong for
+    one of the two domains.
     """
     import rasterio  # local import: keeps module import cheap for probe-only use
     from rasterio.transform import from_origin
@@ -436,9 +579,15 @@ def read_native_sst(path: Path, variable: str = ERDDAP_VAR) -> SSTNativeField:
     if nodata is not None:
         values[raw == nodata] = np.nan
 
-    kelvin, units_reason = detect_kelvin(band_units, values)
-    if kelvin:
-        values = values - 273.15
+    if field_kind == "anom":
+        # Already a °C delta. No detection, no conversion, no magnitude fallback
+        # that could mistake a large positive anomaly field for Kelvin.
+        kelvin = False
+        units_reason = "anomaly field — °C deltas, never Kelvin-converted"
+    else:
+        kelvin, units_reason = detect_kelvin(band_units, values)
+        if kelvin:
+            values = values - 273.15
 
     flipped = False
     if transform.e > 0:
@@ -474,5 +623,6 @@ def read_native_sst(path: Path, variable: str = ERDDAP_VAR) -> SSTNativeField:
             "kelvin_converted": bool(kelvin),
             "units_decision": units_reason,
             "source_valid_fraction": round(valid_fraction, 6),
+            "field_kind": field_kind,
         },
     )

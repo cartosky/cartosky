@@ -1093,6 +1093,16 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "C",
     },
+    # SST anomaly — °C deltas, roughly half of them negative. offset -30 with
+    # scale 0.01 represents -30..+625 C, which covers the observed CRW envelope
+    # (about -8..+15 C) with wide margin in both directions.
+    ("sst", "sst_anom"): {
+        "dtype": GRID_DTYPE_UINT16,
+        "scale": 0.01,
+        "offset": -30.0,
+        "nodata": 65535,
+        "units": "C",
+    },
     ("goes-east", "ir13"): {
         "dtype": GRID_DTYPE_UINT16,
         "scale": 0.01,

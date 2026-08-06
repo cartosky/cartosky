@@ -20,6 +20,7 @@ the tests exercise the publish plumbing, not GDAL throughput (same technique as
 
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -429,6 +430,174 @@ def test_sub_zero_sst_survives_display_prep(tmp_path: Path, small_grids: None) -
     decoded = encoded.astype(np.float64) * meta["scale"] + meta["offset"]
     assert decoded[0] == pytest.approx(-1.8, abs=0.01)
     assert decoded[1] == pytest.approx(-0.5, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — sst_anom
+# ---------------------------------------------------------------------------
+
+def _anom_frame(day: datetime, base: float, *, with_sst: bool = False) -> sst_publish.SSTBundleFrame:
+    anomaly = np.array(
+        [[base - 2.0, base - 0.5, base + 0.5], [base + 2.0, np.nan, base + 3.0]],
+        dtype=np.float32,
+    )
+    return sst_publish.SSTBundleFrame(
+        valid_time=day,
+        source_transform=_STUB_TRANSFORM,
+        values=_frame(day, 12.0).values if with_sst else None,
+        anomaly_values=anomaly,
+        anomaly_source_url=f"https://example.invalid/anom/{day:%Y%m%d}.nc",
+        anomaly_source_filename=f"ssta_{day:%Y%m%d}.nc",
+    )
+
+
+def test_sst_anom_capability_and_packing() -> None:
+    capability = SST_MODEL.get_var_capability("sst_anom")
+    assert capability is not None
+    assert capability.units == "C"
+    assert capability.color_map_id == "sst_anom"
+    assert capability.group == "Ocean"
+    assert list(capability.supported_build_regions) == ["na", "global"]
+    assert grid_code_supported("sst", "sst_anom")
+
+    packing = _PACKING_BY_MODEL_VAR[("sst", "sst_anom")]
+    assert packing == {
+        "dtype": "uint16",
+        "scale": 0.01,
+        "offset": -30.0,
+        "nodata": 65535,
+        "units": "C",
+    }
+    # Signed round trip, including the negatives that are half the field.
+    scale, offset, nodata = packing["scale"], packing["offset"], packing["nodata"]
+    for celsius in (-8.0, -3.2, -0.05, 0.0, 0.05, 5.0, 15.0):
+        code = int(round((celsius - offset) / scale))
+        assert 0 <= code < nodata
+        assert abs((code * scale + offset) - celsius) <= scale / 2.0 + 1e-9
+
+
+def test_sst_anom_ramp_is_diverging_half_degree_celsius() -> None:
+    spec = get_color_map_spec("sst_anom")
+    assert spec["units"] == "C"
+    assert spec["range"] == (-5.0, 5.0)
+    assert spec["transparent_below_min"] is False
+    assert "°F" not in spec["legend_title"]
+    levels = spec["levels"]
+    assert levels[0] == -5.0 and levels[-1] == 5.0
+    assert len(levels) == 21
+    assert all(abs((b - a) - 0.5) < 1e-9 for a, b in zip(levels, levels[1:]))
+    # One colour per bin, and the ramp really diverges: cool end blue-dominant,
+    # warm end red-dominant, centre near-neutral.
+    colors = spec["colors"]
+    assert len(colors) == len(levels) - 1
+
+    def rgb(value: str) -> tuple[int, int, int]:
+        return tuple(int(value[i : i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]
+
+    cool_r, _, cool_b = rgb(colors[0])
+    warm_r, _, warm_b = rgb(colors[-1])
+    mid_r, mid_g, mid_b = rgb(colors[len(colors) // 2 - 1])
+    assert cool_b > cool_r
+    assert warm_r > warm_b
+    assert min(mid_r, mid_g, mid_b) > 0xC0
+
+
+def test_negative_anomalies_survive_display_prep(tmp_path: Path, small_grids: None) -> None:
+    """clamp_negative defaults True and would erase the entire cool half of the
+    anomaly ramp; the sst_anom entry must switch it off."""
+    from app.services.grid_display_prep import prepare_grid_display_values
+
+    values = np.array([[-3.2, -1.0, -0.05], [0.0, np.nan, 4.5]], dtype=np.float32)
+    prepared, prep_meta = prepare_grid_display_values(model="sst", var="sst_anom", values=values)
+    assert prep_meta is not None
+    assert prep_meta["clip_to_water"] is True
+    assert prep_meta["id"] == "sst_anom_clip_to_water_v1"
+    np.testing.assert_allclose(prepared[0], [-3.2, -1.0, -0.05], rtol=1e-6)
+
+    # And through the real pack/decode round trip, not just in memory.
+    result = sst_publish.publish_sst_bundle(
+        data_root=tmp_path,
+        frames=[
+            sst_publish.SSTBundleFrame(
+                valid_time=_day(2026, 8, 4),
+                source_transform=_STUB_TRANSFORM,
+                values=_frame(_day(2026, 8, 4), 12.0).values,
+                anomaly_values=values,
+            )
+        ],
+    )
+    grid_dir = tmp_path / "published" / "sst" / result.run_id / "sst_anom" / "grid"
+    meta = json.loads((grid_dir / "manifest.json").read_text())["grid"]
+    encoded = np.frombuffer((grid_dir / "fh000.l0.u16.bin").read_bytes(), dtype="<u2")
+    decoded = encoded.astype(np.float64) * meta["scale"] + meta["offset"]
+    assert decoded[0] == pytest.approx(-3.2, abs=0.01)
+    assert decoded[1] == pytest.approx(-1.0, abs=0.01)
+    assert decoded[2] == pytest.approx(-0.05, abs=0.01)
+
+
+def test_publish_writes_both_variables_side_by_side(
+    tmp_path: Path, small_grids: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(FLAG, raising=False)
+    day = _day(2026, 8, 4)
+    frame = _anom_frame(day, 1.0, with_sst=True)
+    result = sst_publish.publish_sst_bundle(data_root=tmp_path, frames=[frame])
+
+    assert result.variable_frame_counts == {"na": {"sst": 1, "sst_anom": 1}}
+    run_root = tmp_path / "published" / "sst" / result.run_id
+    for var_id in ("sst", "sst_anom"):
+        assert (run_root / var_id / "fh000.json").is_file()
+        assert (run_root / var_id / "grid" / "fh000.l0.u16.bin").is_file()
+        prep = json.loads((run_root / var_id / "grid" / "manifest.json").read_text())["display_prep"]
+        assert prep["clip_to_water"] is True
+
+    manifest = json.loads((tmp_path / "manifests" / "sst" / f"{result.run_id}.json").read_text())
+    assert sorted(manifest["variables"]) == ["sst", "sst_anom"]
+    assert manifest["variables"]["sst_anom"]["display_name"] == "Sea Surface Temperature Anomaly"
+    for entry in manifest["variables"].values():
+        assert entry["units"] == "°C"
+        assert entry["frames"] == [{"fh": 0, "valid_time": "2026-08-04T12:00:00Z"}]
+
+
+def test_anomaly_only_frame_reuses_the_published_sst_by_hardlink(
+    tmp_path: Path, small_grids: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The "anomaly arrived late" publish: SST carried forward, not re-encoded."""
+    monkeypatch.delenv(FLAG, raising=False)
+    day = _day(2026, 8, 4)
+
+    first = sst_publish.publish_sst_bundle(data_root=tmp_path, frames=[_frame(day, 12.0)])
+    assert first.variable_frame_counts == {"na": {"sst": 1}}
+    sst_origin = tmp_path / "published" / "sst" / first.run_id / "sst" / "grid" / "fh000.l0.u16.bin"
+    assert sst_origin.is_file()
+
+    # Amend the same run with the anomaly only.
+    second = sst_publish.publish_sst_bundle(
+        data_root=tmp_path, frames=[_anom_frame(day, 1.0)], run_valid_time=day
+    )
+    assert second.run_id == first.run_id
+    assert second.variable_frame_counts == {"na": {"sst": 1, "sst_anom": 1}}
+
+    run_root = tmp_path / "published" / "sst" / second.run_id
+    carried = run_root / "sst" / "grid" / "fh000.l0.u16.bin"
+    assert carried.samefile(sst_origin), "SST binary was re-encoded instead of hardlinked"
+    assert (run_root / "sst_anom" / "grid" / "fh000.l0.u16.bin").is_file()
+
+    manifest = json.loads((tmp_path / "manifests" / "sst" / f"{second.run_id}.json").read_text())
+    assert sorted(manifest["variables"]) == ["sst", "sst_anom"]
+
+
+def test_anomaly_only_frame_without_run_valid_time_would_trail_the_window() -> None:
+    """Why publish_sst_bundle takes run_valid_time: an older anomaly-only frame
+    must not mint a run id behind the window's newest frame."""
+    assert "run_valid_time" in inspect.signature(sst_publish.publish_sst_bundle).parameters
+
+
+def test_a_frame_must_carry_at_least_one_field() -> None:
+    with pytest.raises(ValueError, match="carries no field"):
+        sst_publish.SSTBundleFrame(
+            valid_time=_day(2026, 8, 4), source_transform=_STUB_TRANSFORM
+        )
 
 
 def test_publish_requires_a_fresh_frame(tmp_path: Path, small_grids: None) -> None:

@@ -163,6 +163,18 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         clamp_negative=False,
         clip_to_water=True,
     ),
+    # SST anomaly — same water-only clip as sst.
+    #
+    # clamp_negative MUST stay False and matters even more here than for sst:
+    # anomalies are signed by construction and roughly half of every field is
+    # negative, so the default True would erase the entire cool half of the ramp.
+    ("sst", "sst_anom"): GridDisplayPrepConfig(
+        id="sst_anom_clip_to_water_v1",
+        upscale_factor=1,
+        smooth_sigma=None,
+        clamp_negative=False,
+        clip_to_water=True,
+    ),
     ("hrrr", "vi_smoke"): GridDisplayPrepConfig(
         id="hrrr_vi_smoke_display_v1",
         upscale_factor=3,

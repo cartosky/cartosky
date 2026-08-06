@@ -12,9 +12,11 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from rasterio.transform import from_origin
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -196,6 +198,127 @@ def test_probe_returns_none_when_nothing_answers(monkeypatch: pytest.MonkeyPatch
         sst_fetch.requests, "head", lambda *a, **k: _FakeResponse(404)  # noqa: ARG005
     )
     assert sst_fetch.probe_latest_available_day() is None
+
+
+# ---------------------------------------------------------------------------
+# Anomaly (Phase 2): STAR primary, never Kelvin-converted
+# ---------------------------------------------------------------------------
+
+def test_anomaly_paths_put_the_star_archive_first() -> None:
+    paths = sst_fetch.anomaly_paths_for_day(datetime(2026, 8, 4, tzinfo=timezone.utc))
+    assert [entry["label"] for entry in paths] == [
+        "star-nesdis-crw-ssta",
+        "erddap-noaacrwsstanomalyDaily",
+    ]
+    # STAR is 11 MB vs ~200 MB from ERDDAP for identical data, so the ordering is
+    # inverted relative to absolute SST. Both expose the same variable name.
+    assert all(entry["variable"] == "sea_surface_temperature_anomaly" for entry in paths)
+    assert paths[0]["url"] == (
+        "https://www.star.nesdis.noaa.gov/pub/socd/mecb/crw/data/5km/v3.1_op/nc/"
+        "v1.0/daily/ssta/2026/ct5km_ssta_v3.1_20260804.nc"
+    )
+    assert paths[1]["url"] == (
+        "https://coastwatch.noaa.gov/erddap/griddap/noaacrwsstanomalyDaily.nc"
+        "?sea_surface_temperature_anomaly[(2026-08-04T12:00:00Z)]"
+        "[(-89.975):(89.975)][(-179.975):(179.975)]"
+    )
+
+
+def test_anomaly_availability_probe_is_a_head_on_star(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[str, dict]] = []
+
+    def fake_head(url: str, **kwargs: object) -> _FakeResponse:
+        seen.append((url, dict(kwargs)))
+        return _FakeResponse(200)
+
+    def fail_get(*args: object, **kwargs: object) -> _FakeResponse:
+        raise AssertionError("the anomaly probe must not download anything")
+
+    monkeypatch.setattr(sst_fetch.requests, "head", fake_head)
+    monkeypatch.setattr(sst_fetch.requests, "get", fail_get)
+
+    assert sst_fetch.probe_anomaly_available(datetime(2026, 8, 4, tzinfo=timezone.utc)) is True
+    url, kwargs = seen[0]
+    assert "ct5km_ssta_v3.1_20260804.nc" in url
+    assert kwargs["headers"]["User-Agent"] == "CartoSky-SST/1.0"
+
+
+@pytest.mark.parametrize("status", [404, 403, 500])
+def test_anomaly_probe_reports_not_yet_published(
+    status: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        sst_fetch.requests, "head", lambda *a, **k: _FakeResponse(status)  # noqa: ARG005
+    )
+    assert sst_fetch.probe_anomaly_available(datetime(2026, 8, 4, tzinfo=timezone.utc)) is False
+
+
+def test_anomaly_probe_survives_a_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*args: object, **kwargs: object) -> _FakeResponse:
+        raise sst_fetch.requests.RequestException("connection reset")
+
+    monkeypatch.setattr(sst_fetch.requests, "head", boom)
+    # "Not yet" rather than an exception: a probe failure is always a skip.
+    assert sst_fetch.probe_anomaly_available(datetime(2026, 8, 4, tzinfo=timezone.utc)) is False
+
+
+def test_anomaly_read_never_kelvin_converts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An anomaly is already a °C delta; subtracting 273.15 would be catastrophic.
+
+    The guard is structural (``field_kind="anom"``), so it must hold even when the
+    granule's units attribute is missing AND the magnitudes are large enough that
+    the absolute-SST magnitude fallback would have called it Kelvin.
+    """
+    captured: dict[str, object] = {}
+
+    class _FakeDataset:
+        width, height = 4, 2
+        scales = (1.0,)
+        offsets = (0.0,)
+        nodatavals = (None,)
+        transform = from_origin(-180.0, 90.0, 0.05, 0.05)
+        bounds = SimpleNamespace(left=-180.0, right=180.0, top=90.0, bottom=-90.0)
+
+        def read(self, _band: int) -> np.ndarray:
+            # Deliberately Kelvin-looking magnitudes for an anomaly field.
+            return np.array([[280.0, 290.0, 300.0, 310.0], [1.0, -1.0, 0.0, 2.0]])
+
+        def tags(self, _band: int | None = None) -> dict[str, str]:
+            return {}  # no units attribute at all
+
+        def __enter__(self) -> "_FakeDataset":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+    import rasterio
+
+    def fake_open(subdataset: str, *args: object, **kwargs: object) -> _FakeDataset:
+        captured["subdataset"] = subdataset
+        return _FakeDataset()
+
+    monkeypatch.setattr(rasterio, "open", fake_open)
+
+    field = sst_fetch.read_native_sst_anomaly(Path("/nonexistent.nc"))
+
+    assert field.kelvin_converted is False
+    assert "never Kelvin-converted" in field.units_decision
+    assert field.metadata["field_kind"] == "anom"
+    # Values pass through untouched — no 273.15 subtraction anywhere.
+    assert field.values.max() == pytest.approx(310.0)
+    assert field.values.min() == pytest.approx(-1.0)
+    assert 'sea_surface_temperature_anomaly' in str(captured["subdataset"])
+
+
+def test_degrees_celsius_spelling_is_recognised_without_the_magnitude_fallback() -> None:
+    """The CRW granules spell it "degrees_Celsius"; relying on the magnitude test
+    for a correctly-labelled file is a latent trap."""
+    is_kelvin, reason = sst_fetch.detect_kelvin(
+        "degrees_Celsius", np.array([10.0, 20.0], dtype=np.float32)
+    )
+    assert is_kelvin is False
+    assert "units attribute" in reason
 
 
 # ---------------------------------------------------------------------------

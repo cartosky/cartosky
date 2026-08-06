@@ -1075,6 +1075,25 @@ SST_COLOR_ANCHORS = [
 ]
 SST_RANGE = (-2.0, 35.0)
 
+# Diverging SST anomaly ramp, °C ONLY. Same shape as the other anomaly ladders
+# (discrete `levels` edges + one colour per bin + zipped legend stops): 0.5 °C
+# steps across +-5 °C, blue -> white -> red, with the two bins touching zero left
+# near-white so a neutral ocean reads as neutral. Values outside +-5 °C clamp to
+# the end colours for display; the packing envelope is far wider so nothing is
+# lost on disk.
+SST_ANOM_C_LEVELS = [
+    -5.0, -4.5, -4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5,
+    0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0,
+]
+SST_ANOM_C_COLORS = [
+    "#0b3773", "#114483", "#185294", "#1e5fa4", "#276eb0", "#327cb8",
+    "#3d8cbf", "#66a8ce", "#aed0e5", "#e4eef4", "#fae9df", "#f3bca8",
+    "#e07f6c", "#d05447", "#c43c3c", "#b82431", "#a9152a", "#960f26",
+    "#830924", "#700320",
+]
+SST_ANOM_C_LEGEND_STOPS = list(zip(SST_ANOM_C_LEVELS[:-1], SST_ANOM_C_COLORS))
+SST_ANOM_C_RANGE = (-5.0, 5.0)
+
 VORT500_LEGEND_STOPS = [
     (0.5, "#ffffff"),
     (1.0, "#dddddd"),
@@ -1501,6 +1520,19 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": SST_COLOR_ANCHORS,
         "display_name": "Sea Surface Temperature",
         "legend_title": "Sea Surface Temperature (°C)",
+    },
+    "sst_anom": {
+        "type": "discrete",
+        "units": "C",
+        "range": SST_ANOM_C_RANGE,
+        "levels": SST_ANOM_C_LEVELS,
+        "colors": SST_ANOM_C_COLORS,
+        "display_name": "Sea Surface Temp Anomaly",
+        "legend_title": "Sea Surface Temp Anomaly (°C)",
+        "legend_stops": SST_ANOM_C_LEGEND_STOPS,
+        # A zero anomaly is meaningful signal, not "nothing here" — never let the
+        # renderer treat the low end of the ramp as transparent.
+        "transparent_below_min": False,
     },
     "vort500": {
         "type": "continuous",

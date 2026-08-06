@@ -138,6 +138,7 @@ export const PERMALINK_SYNC_DEBOUNCE_MS = 200;
 export const BASEMAP_MODE_STORAGE_KEY = "twf.map.basemap_mode";
 export const LEGEND_VISIBILITY_STORAGE_KEY = "twf.map.legend_visible";
 export const POINT_LABELS_STORAGE_KEY = "twf.map.point_labels_enabled";
+export const HRRR_SMOKE_POINT_LABELS_STORAGE_KEY = "twf.map.hrrr_smoke_point_labels_enabled";
 export const NWS_WARNINGS_STORAGE_KEY = "twf.map.nws_warnings_enabled";
 export const ZOOM_CONTROLS_STORAGE_KEY = "twf.map.zoom_controls_visible";
 /**
@@ -352,6 +353,16 @@ export function defaultBasemapModeForSelection(model: string, variable: string):
   return "light";
 }
 
+const HRRR_SMOKE_POINT_LABELS_VARIABLES = new Set(["vi_smoke", "smoke_sfc"]);
+
+export function isHrrrSmokePointLabelsSelection(model: string, variable: string): boolean {
+  return model === "hrrr" && HRRR_SMOKE_POINT_LABELS_VARIABLES.has(variable);
+}
+
+export function defaultPointLabelsEnabledForSelection(model: string, variable: string): boolean {
+  return !isHrrrSmokePointLabelsSelection(model, variable);
+}
+
 // The NWS warnings overlay only applies to radar-derived MRMS variables, not the precip ones.
 const MRMS_RADAR_VARIABLES = new Set(["reflectivity", "mrms_radar_ptype"]);
 
@@ -417,12 +428,38 @@ function writeBooleanPreference(key: string, value: boolean): void {
   }
 }
 
+function readNullableBooleanPreference(key: string): boolean | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (stored === "true") {
+      return true;
+    }
+    if (stored === "false") {
+      return false;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function readPointLabelsPreference(): boolean {
   return readBooleanPreference(POINT_LABELS_STORAGE_KEY, true);
 }
 
 export function writePointLabelsPreference(enabled: boolean): void {
   writeBooleanPreference(POINT_LABELS_STORAGE_KEY, enabled);
+}
+
+export function readHrrrSmokePointLabelsPreference(): boolean | null {
+  return readNullableBooleanPreference(HRRR_SMOKE_POINT_LABELS_STORAGE_KEY);
+}
+
+export function writeHrrrSmokePointLabelsPreference(enabled: boolean): void {
+  writeBooleanPreference(HRRR_SMOKE_POINT_LABELS_STORAGE_KEY, enabled);
 }
 
 export function readNwsWarningsPreference(): boolean {
@@ -627,6 +664,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   mrms_radar_ptype: { label: "Reflectivity + Ptype", group: "RADAR", order: 1 },
   active: { label: "Active Hazards", group: "OBSERVATIONS", order: 0 },
   sst: { label: "Sea Surface Temp", group: "OCEAN", order: 0 },
+  sst_anom: { label: "Sea Surface Temp Anomaly", group: "OCEAN", order: 0.5 },
 };
 
 const FIXED_LEGEND_TITLE_IDS = new Set([

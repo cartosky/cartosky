@@ -497,7 +497,7 @@ export default function App() {
     legendVisible, setLegendVisible,
     displayPanelOpen, setDisplayPanelOpen,
     opacity, setOpacity,
-  } = useDisplaySettings(viewerLayoutMode, isDesktopViewerLayout);
+  } = useDisplaySettings(viewerLayoutMode, isDesktopViewerLayout, model, variable);
   // Globe v1 (Phase G2). A CAMERA setting: it changes how the same artifact is
   // drawn and never which artifact is fetched, which is why it lives in VIEW
   // and not in SOURCE next to Coverage. Seeded from `proj=globe` (absent =
