@@ -1058,6 +1058,23 @@ TMP850_COLOR_ANCHORS = [
 ]
 TMP850_RANGE = (-40.0, 40.0)
 
+# Sequential ocean ramp for absolute sea-surface temperature, °C ONLY — there
+# is no °F variant anywhere in the SST path. One anchor per whole degree from
+# the ramp floor to the ramp ceiling (same 1-unit ladder convention as
+# TMP850_COLOR_ANCHORS), running dark navy -> blue -> cyan -> green -> yellow
+# -> orange -> red so the 24-30 °C tropical band separates visibly.
+SST_COLOR_ANCHORS = [
+    (-2.0, "#08103f"), (-1.0, "#0a1b4d"), (0.0, "#0d265c"), (1.0, "#10316a"), (2.0, "#123c78"),
+    (3.0, "#134584"), (4.0, "#144e90"), (5.0, "#14579c"), (6.0, "#1560a8"), (7.0, "#166aaf"),
+    (8.0, "#1873b6"), (9.0, "#197cbd"), (10.0, "#1a86c4"), (11.0, "#1b92c5"), (12.0, "#1c9dc6"),
+    (13.0, "#1ea8c8"), (14.0, "#1fb4c9"), (15.0, "#23bbc7"), (16.0, "#27c2c4"), (17.0, "#2bc9c2"),
+    (18.0, "#2fd0c0"), (19.0, "#3cd2b3"), (20.0, "#4ad4a7"), (21.0, "#57d69a"), (22.0, "#6ed88c"),
+    (23.0, "#86da7e"), (24.0, "#9ddc70"), (25.0, "#bade65"), (26.0, "#d8e05a"), (27.0, "#e6de56"),
+    (28.0, "#f5dd53"), (29.0, "#f6c748"), (30.0, "#f7b13c"), (31.0, "#f39733"), (32.0, "#ef7d2a"),
+    (33.0, "#e45e27"), (34.0, "#d94024"), (35.0, "#b01818"),
+]
+SST_RANGE = (-2.0, 35.0)
+
 VORT500_LEGEND_STOPS = [
     (0.5, "#ffffff"),
     (1.0, "#dddddd"),
@@ -1476,6 +1493,14 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "anchors": TMP850_COLOR_ANCHORS,
         "display_name": "850mb Temperature",
         "legend_title": "850mb Temperature (°C)",
+    },
+    "sst": {
+        "type": "continuous",
+        "units": "C",
+        "range": SST_RANGE,
+        "anchors": SST_COLOR_ANCHORS,
+        "display_name": "Sea Surface Temperature",
+        "legend_title": "Sea Surface Temperature (°C)",
     },
     "vort500": {
         "type": "continuous",

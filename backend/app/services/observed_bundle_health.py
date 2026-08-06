@@ -18,6 +18,13 @@ OBSERVED_SOURCE_THRESHOLDS: dict[str, tuple[int, int]] = {
     # time. Keep the runtime health window aligned with the publish-time window
     # so a newly published bundle does not immediately read as delayed.
     "goes-east": (30, 45),
+    # SST is a once-daily L4 analysis whose upstream cadence puts the newest
+    # frame's valid time a long way behind wall clock: measured live 2026-08-06,
+    # the newest ERDDAP DN value was 2026-08-04T12:00Z at 18:11Z — 54.2 h — on a
+    # gapless daily axis, so that lag is normal cadence, not an outage. Observed
+    # steady state oscillates ~30-56 h. Minutes, matching this table's unit:
+    # delayed past 60 h, stale past 84 h (one missed upstream day beyond normal).
+    "sst": (60 * 60, 84 * 60),
 }
 
 

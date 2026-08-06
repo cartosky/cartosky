@@ -39,7 +39,7 @@ type VariablePickerProps = {
   coverageBadgeLabel?: string | null;
 };
 
-type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "SEVERE" | "AIR QUALITY" | "UPPER AIR" | "OUTLOOKS" | "FORECASTS" | "ENSEMBLE" | "RADAR" | "SATELLITE";
+type CategoryId = "FAVORITES" | "SURFACE" | "PRECIPITATION" | "SEVERE" | "AIR QUALITY" | "UPPER AIR" | "OUTLOOKS" | "FORECASTS" | "ENSEMBLE" | "RADAR" | "SATELLITE" | "OCEAN";
 
 const BASE_CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string }> = [
   { id: "SURFACE", label: "Surface" },
@@ -53,11 +53,13 @@ const BASE_CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: s
 
 const RADAR_CATEGORY_ROW: { id: Exclude<CategoryId, "FAVORITES">; label: string } = { id: "RADAR", label: "Radar" };
 const SATELLITE_CATEGORY_ROW: { id: Exclude<CategoryId, "FAVORITES">; label: string } = { id: "SATELLITE", label: "Satellite" };
+const OCEAN_CATEGORY_ROW: { id: Exclude<CategoryId, "FAVORITES">; label: string } = { id: "OCEAN", label: "Ocean" };
 
 const CATEGORY_ROWS: Array<{ id: Exclude<CategoryId, "FAVORITES">; label: string }> = [
   ...BASE_CATEGORY_ROWS,
   RADAR_CATEGORY_ROW,
   SATELLITE_CATEGORY_ROW,
+  OCEAN_CATEGORY_ROW,
 ];
 
 const CATEGORY_LABELS = new Map<CategoryId, string>([
@@ -83,6 +85,7 @@ function normalizeGroup(group: string | null): CategoryId | null {
   if (normalized === "ENSEMBLE" || normalized === "ENSEMBLES") return "ENSEMBLE";
   if (normalized === "RADAR") return "RADAR";
   if (normalized === "SATELLITE") return "SATELLITE";
+  if (normalized === "OCEAN") return "OCEAN";
   return null;
 }
 

@@ -626,6 +626,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   reflectivity: { label: "Base Reflectivity", group: "RADAR", order: 0 },
   mrms_radar_ptype: { label: "Reflectivity + Ptype", group: "RADAR", order: 1 },
   active: { label: "Active Hazards", group: "OBSERVATIONS", order: 0 },
+  sst: { label: "Sea Surface Temp", group: "OCEAN", order: 0 },
 };
 
 const FIXED_LEGEND_TITLE_IDS = new Set([
@@ -665,6 +666,10 @@ const MODEL_UI_OVERRIDES: Record<string, ModelUiOverride> = {
   gefs: { label: "GEFS", group: "ENSEMBLES", order: 7 },
   eps: { label: "EPS", group: "ENSEMBLES", order: 8 },
   mrms: { label: "MRMS", group: "OBSERVATIONS", order: 10 },
+  // Fractional order slots SST immediately after MRMS without renumbering the
+  // OBSERVATIONS/FORECASTS entries below (same convention as the fractional
+  // orders in VARIABLE_UI_OVERRIDES).
+  sst: { label: "SST", group: "OBSERVATIONS", order: 10.5 },
   "goes-east": { label: "Satellite", group: "OBSERVATIONS", order: 11 },
   current_analysis: { label: "Current Analysis", group: "OBSERVATIONS", order: 12 },
   nws_hazards: { label: "NWS Hazards", group: "OBSERVATIONS", order: 13 },

@@ -5,6 +5,11 @@ const OBSERVED_SOURCE_THRESHOLDS: Record<string, { delayed: number; stale: numbe
   mrms: { delayed: 8, stale: 15 },
   current_analysis: { delayed: 45, stale: 60 },
   "goes-east": { delayed: 30, stale: 45 },
+  // Daily L4 analysis. Upstream cadence leaves the newest frame far behind wall
+  // clock — measured live 2026-08-06 at 54.2h on a gapless daily axis, steady
+  // state oscillating ~30-56h — so a healthy bundle is routinely >2 days old.
+  // Delayed past 60h, stale past 84h (one missed upstream day beyond normal).
+  sst: { delayed: 60 * 60, stale: 84 * 60 },
 };
 
 export type ObservedSourceStatus = {

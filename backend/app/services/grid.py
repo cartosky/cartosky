@@ -1083,6 +1083,16 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "in",
     },
+    # Sea Surface Temperature — °C only (no °F anywhere in the SST path).
+    # offset -5 °C with scale 0.01 covers -5..650 °C, so the whole physical
+    # ocean range (~-2..36 °C) fits with room for the ramp's -2 floor.
+    ("sst", "sst"): {
+        "dtype": GRID_DTYPE_UINT16,
+        "scale": 0.01,
+        "offset": -5.0,
+        "nodata": 65535,
+        "units": "C",
+    },
     ("goes-east", "ir13"): {
         "dtype": GRID_DTYPE_UINT16,
         "scale": 0.01,

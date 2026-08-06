@@ -1,0 +1,32 @@
+[Unit]
+Description=CartoSky SST Poller (Geo-Polar Blended 5km daily)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=cartosky
+Group=cartosky
+UMask=0027
+LimitNOFILE=65536
+WorkingDirectory=/opt/cartosky/backend
+EnvironmentFile=-/etc/cartosky/scheduler-sst.env
+Environment=PATH=/opt/cartosky/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+# Bound the GDAL raster block cache (MB). Matches the cap operators set on the
+# live scheduler units 2026-07 (EPS memory audit); without it GDAL defaults to
+# 5% of RAM per process.
+Environment=GDAL_CACHEMAX=256
+ExecStart=/opt/cartosky/.venv/bin/python -m app.services.sst_poller
+# Deprioritised like the other observed pollers: a cycle pulls ~100 MB and
+# warps a 3600x7200 source array onto two target grids, so it must yield to
+# the forecast schedulers rather than compete with them.
+Nice=10
+CPUWeight=50
+IOWeight=50
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
