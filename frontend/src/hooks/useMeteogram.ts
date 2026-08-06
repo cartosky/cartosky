@@ -9,7 +9,7 @@ import {
   meteogramLocationMatches,
   subscribeMeteogramCache,
 } from "@/lib/meteogram-cache";
-import { meteogramAuthHeaders } from "@/lib/meteogram-auth";
+import { meteogramAuthHeaders, meteogramAuthScope } from "@/lib/meteogram-auth";
 
 export type {
   MeteogramPoint,
@@ -59,16 +59,29 @@ export function useMeteogram({
   includeMembers = false,
   enabled = true,
 }: UseMeteogramParams): UseMeteogramResult {
-  const { getToken, isSignedIn } = useAuth();
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   const [, bumpCacheVersion] = useReducer((version: number) => version + 1, 0);
   const [reloadKey, setReloadKey] = useState(0);
+
+  const authScope = meteogramAuthScope(isLoaded === true, isSignedIn === true);
 
   const modelsKey = models.join(",");
   const variablesKey = variables.join(",");
   const pinnedRunsKey = JSON.stringify(pinnedRuns ?? {});
   const cacheKey = useMemo(
-    () => buildMeteogramCacheKey(lat, lon, models, variables, pinnedRuns, includeMembers),
-    [lat, lon, modelsKey, variablesKey, pinnedRunsKey, includeMembers],
+    () =>
+      authScope
+        ? buildMeteogramCacheKey(
+            lat,
+            lon,
+            models,
+            variables,
+            authScope,
+            pinnedRuns,
+            includeMembers,
+          )
+        : "",
+    [authScope, lat, lon, modelsKey, variablesKey, pinnedRunsKey, includeMembers],
   );
 
   const getAuthHeaders = useCallback(
@@ -77,19 +90,19 @@ export function useMeteogram({
   );
 
   useEffect(() => {
-    if (!enabled || models.length === 0 || variables.length === 0) {
+    if (!enabled || !authScope || models.length === 0 || variables.length === 0) {
       return;
     }
 
     const unsubscribe = subscribeMeteogramCache(cacheKey, bumpCacheVersion);
 
-  void fetchMeteogramCached(
-    { lat, lon, models, variables, pinnedRuns, includeMembers, getAuthHeaders },
-    {
-      reason: reloadKey > 0 ? "useMeteogram:reload" : "useMeteogram",
-      force: reloadKey > 0,
-    },
-  ).catch(() => {
+    void fetchMeteogramCached(
+      { lat, lon, models, variables, authScope, pinnedRuns, includeMembers, getAuthHeaders },
+      {
+        reason: reloadKey > 0 ? "useMeteogram:reload" : "useMeteogram",
+        force: reloadKey > 0,
+      },
+    ).catch(() => {
       // Cache entry + subscribers carry the error state.
     });
 
@@ -102,6 +115,7 @@ export function useMeteogram({
     // actual identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    authScope,
     cacheKey,
     enabled,
     getAuthHeaders,
@@ -116,12 +130,12 @@ export function useMeteogram({
 
   const reload = useCallback(() => setReloadKey((key) => key + 1), []);
 
-  const entry = getMeteogramCacheEntry(cacheKey);
+  const entry = authScope ? getMeteogramCacheEntry(cacheKey) : undefined;
   const rawData = entry?.data ?? null;
   const data =
     rawData && meteogramLocationMatches(rawData, lat, lon) ? rawData : null;
   const error = entry?.error ?? null;
-  const inFlight = isMeteogramFetchInFlight(cacheKey);
+  const inFlight = Boolean(authScope) && isMeteogramFetchInFlight(cacheKey);
 
   // Stale-while-revalidate: an entry past its fresh TTL (or hard-evicted
   // entirely) no longer refetches through the mount effect above — its deps
@@ -132,20 +146,21 @@ export function useMeteogram({
   // tight-loop.
   const needsFetch =
     enabled &&
+    Boolean(authScope) &&
     models.length > 0 &&
     variables.length > 0 &&
     (!entry || entry.stale) &&
     !inFlight;
   useEffect(() => {
-    if (!needsFetch) return;
+    if (!needsFetch || !authScope) return;
     void fetchMeteogramCached(
-      { lat, lon, models, variables, pinnedRuns, includeMembers, getAuthHeaders },
+      { lat, lon, models, variables, authScope, pinnedRuns, includeMembers, getAuthHeaders },
       { reason: "useMeteogram:revalidate" },
     ).catch(() => {
       // Cache entry + subscribers carry the error state.
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsFetch, cacheKey]);
+  }, [needsFetch, cacheKey, authScope]);
 
   // Returning to a backgrounded tab is the classic way an entry goes stale
   // with no re-render to notice it — nudge one so the revalidate effect runs.
@@ -162,8 +177,12 @@ export function useMeteogram({
   // cache-key change (e.g. switching runs) and the effect that starts the fetch:
   // the fetch start does not re-render, so `inFlight` reads false for the whole
   // request and the empty state would flash until the fetch resolves.
+  // Also stay in loading while Clerk auth is still hydrating (authScope null).
   const loading =
-    enabled && models.length > 0 && variables.length > 0 && !data && !error;
+    enabled &&
+    models.length > 0 &&
+    variables.length > 0 &&
+    (!authScope || (!data && !error));
   const isUpdating = enabled && !!data && inFlight;
 
   return { data, loading, isUpdating, error, reload };

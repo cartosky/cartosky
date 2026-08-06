@@ -28,7 +28,7 @@ import { captureProductAnalyticsEvent } from "@/lib/analytics";
 import { MODELS_TAB_VARIABLES } from "@/lib/chart-constants";
 import { eligibleTemperatureModels } from "@/lib/eligible-temperature-models";
 import { useEntitlements } from "@/lib/entitlements";
-import { meteogramAuthHeaders } from "@/lib/meteogram-auth";
+import { meteogramAuthHeaders, meteogramAuthScope } from "@/lib/meteogram-auth";
 import { prefetchMeteogram } from "@/lib/meteogram-cache";
 import { useSiteLoading } from "@/lib/site-loading";
 
@@ -1902,7 +1902,7 @@ type PendingNwsEnrichmentRetry = {
 
 export default function Forecast() {
   const { user } = useUser();
-  const { getToken, isSignedIn } = useAuth();
+  const { getToken, isLoaded: authLoaded, isSignedIn } = useAuth();
   const { canAccessProduct, isLoaded: entitlementsLoaded } = useEntitlements();
   const { start: startSiteLoading } = useSiteLoading();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -2002,6 +2002,8 @@ export default function Forecast() {
   // Warm meteogram cache as soon as a Forecast location is ready — before Models tab open.
   useEffect(() => {
     if (!forecast || !entitlementsLoaded) return;
+    const authScope = meteogramAuthScope(authLoaded === true, isSignedIn === true);
+    if (!authScope) return;
     const { latitude: lat, longitude: lon } = forecast.location;
     const models = eligibleTemperatureModels(lat, lon, canAccessProduct);
     if (models.length === 0) return;
@@ -2012,6 +2014,7 @@ export default function Forecast() {
         lon,
         models,
         variables: [...MODELS_TAB_VARIABLES],
+        authScope,
         getAuthHeaders: () => meteogramAuthHeaders(getToken, isSignedIn === true),
       },
       "forecast-page-prefetch",
@@ -2021,8 +2024,10 @@ export default function Forecast() {
     forecast?.location.longitude,
     meteogramPrefetchModelsKey,
     entitlementsLoaded,
+    authLoaded,
     getToken,
     isSignedIn,
+    canAccessProduct,
   ]);
 
   // Deep-link / reload directly onto a coordinate URL: warm the meteogram from
@@ -2035,6 +2040,8 @@ export default function Forecast() {
   // geocode resolves and fall through to the forecast-page prefetch above.
   useEffect(() => {
     if (!entitlementsLoaded) return;
+    const authScope = meteogramAuthScope(authLoaded === true, isSignedIn === true);
+    if (!authScope) return;
     const lat = readFiniteSearchParam(searchParams, "lat");
     const lon = readFiniteSearchParam(searchParams, "lon");
     if (lat === null || lon === null) return;
@@ -2046,13 +2053,16 @@ export default function Forecast() {
         lon,
         models,
         variables: [...MODELS_TAB_VARIABLES],
+        authScope,
         getAuthHeaders: () => meteogramAuthHeaders(getToken, isSignedIn === true),
       },
       "forecast-url-prefetch",
     );
-    // Fire once when entitlements become available, using the initial URL coords.
+    // Warm from the current URL coords once auth + entitlements are ready.
+    // Tab/query churn is covered by forecast-page-prefetch after the core
+    // payload resolves; avoid re-firing on every searchParams identity change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entitlementsLoaded]);
+  }, [entitlementsLoaded, authLoaded, isSignedIn, getToken, canAccessProduct]);
 
   useEffect(() => {
     return () => {
