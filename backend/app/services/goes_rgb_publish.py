@@ -23,6 +23,7 @@ from app.services.goes_publish import (
 )
 from app.services.observed_bundle_health import build_observed_bundle_health
 from app.services.publish_utils import (
+    observed_model_publish_lock,
     promote_run,
     write_json_atomic,
     write_latest_pointer,
@@ -131,129 +132,134 @@ def publish_goes_rgb_bundle(
 
     publish_dt = (publish_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
     run_id = format_run_id(publish_dt, include_minutes=True)
-    preservation_source_run_id = _preservation_source_run_id(data_root, run_id)
-    preserved_manifest_variables = _preserved_manifest_variables(
-        data_root=data_root,
-        run_id=preservation_source_run_id,
-        exclude_var_id=TRUE_COLOR_VARIABLE_ID,
-    )
-    _prepare_stage_run_dir(
-        data_root=data_root,
-        run_id=run_id,
-        replace_var_id=TRUE_COLOR_VARIABLE_ID,
-        source_run_id=preservation_source_run_id,
-    )
 
-    merged_by_slot_time: dict[datetime, GOESRGBPublishedFrame | GOESRGBBundleFrame] = {}
-    for frame in sorted(previous_frames or [], key=lambda item: item.slot_time):
-        merged_by_slot_time[_as_utc_datetime(frame.slot_time)] = frame
-    for frame in sorted(frames, key=lambda item: item.slot_time):
-        merged_by_slot_time[_as_utc_datetime(frame.slot_time)] = frame
+    # Share the goes-east publish lock with band publishers: both full-replace
+    # the same published run tree. Re-read sibling state under the lock so the
+    # second publisher seeds from the first's just-published artifacts.
+    with observed_model_publish_lock(data_root, GOES_EAST_MODEL_ID):
+        preservation_source_run_id = _preservation_source_run_id(data_root, run_id)
+        preserved_manifest_variables = _preserved_manifest_variables(
+            data_root=data_root,
+            run_id=preservation_source_run_id,
+            exclude_var_id=TRUE_COLOR_VARIABLE_ID,
+        )
+        _prepare_stage_run_dir(
+            data_root=data_root,
+            run_id=run_id,
+            replace_var_id=TRUE_COLOR_VARIABLE_ID,
+            source_run_id=preservation_source_run_id,
+        )
 
-    ordered_frames = [merged_by_slot_time[key] for key in sorted(merged_by_slot_time)]
-    if target_frame_count is not None and target_frame_count > 0:
-        ordered_frames = ordered_frames[-int(target_frame_count):]
-    if not ordered_frames:
-        raise ValueError("GOES RGB bundle publish resolved to an empty rolling window")
+        merged_by_slot_time: dict[datetime, GOESRGBPublishedFrame | GOESRGBBundleFrame] = {}
+        for frame in sorted(previous_frames or [], key=lambda item: item.slot_time):
+            merged_by_slot_time[_as_utc_datetime(frame.slot_time)] = frame
+        for frame in sorted(frames, key=lambda item: item.slot_time):
+            merged_by_slot_time[_as_utc_datetime(frame.slot_time)] = frame
 
-    targets: list[tuple[str, int]] = []
-    for fh, frame in enumerate(ordered_frames):
-        if isinstance(frame, GOESRGBPublishedFrame):
-            _reuse_rgb_frame(
-                data_root=data_root,
-                run_id=run_id,
-                forecast_hour=fh,
-                frame=frame,
-            )
-        else:
-            write_rgb_frame(
-                data_root=data_root,
-                run_id=run_id,
-                forecast_hour=fh,
-                frame=frame,
-            )
-        targets.append((TRUE_COLOR_VARIABLE_ID, fh))
+        ordered_frames = [merged_by_slot_time[key] for key in sorted(merged_by_slot_time)]
+        if target_frame_count is not None and target_frame_count > 0:
+            ordered_frames = ordered_frames[-int(target_frame_count):]
+        if not ordered_frames:
+            raise ValueError("GOES RGB bundle publish resolved to an empty rolling window")
 
-    promote_run(data_root=data_root, model=GOES_EAST_MODEL_ID, run_id=run_id)
+        targets: list[tuple[str, int]] = []
+        for fh, frame in enumerate(ordered_frames):
+            if isinstance(frame, GOESRGBPublishedFrame):
+                _reuse_rgb_frame(
+                    data_root=data_root,
+                    run_id=run_id,
+                    forecast_hour=fh,
+                    frame=frame,
+                )
+            else:
+                write_rgb_frame(
+                    data_root=data_root,
+                    run_id=run_id,
+                    forecast_hour=fh,
+                    frame=frame,
+                )
+            targets.append((TRUE_COLOR_VARIABLE_ID, fh))
 
-    manifest_target_frame_count = (
-        max(1, int(expected_frame_count))
-        if expected_frame_count is not None
-        else len(ordered_frames)
-    )
-    manifest_variables = {
-        **preserved_manifest_variables,
-        TRUE_COLOR_VARIABLE_ID: _true_color_manifest_entry(
-            ordered_frames=ordered_frames,
-            expected_frames=manifest_target_frame_count,
-        ),
-    }
-    manifest_stub = {
-        "last_updated": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "variables": manifest_variables,
-    }
-    metadata = build_observed_bundle_health(
-        latest_run=run_id,
-        manifest=manifest_stub,
-        source=GOES_EAST_MODEL_ID,
-        now_utc=publish_dt,
-        delayed_threshold_minutes=30,
-        stale_threshold_minutes=45,
-    )
-    metadata["variable"] = TRUE_COLOR_VARIABLE_ID
-    write_run_manifest(
-        data_root=data_root,
-        model=GOES_EAST_MODEL_ID,
-        run_id=run_id,
-        targets=targets,
-        plugin=GOES_EAST_MODEL,
-        metadata=metadata,
-    )
-    _write_true_color_manifest_entry(
-        data_root=data_root,
-        run_id=run_id,
-        entry=manifest_variables[TRUE_COLOR_VARIABLE_ID],
-    )
-    _patch_run_manifest_frame_counts(
-        data_root=data_root,
-        run_id=run_id,
-        expected_frames=manifest_target_frame_count,
-        available_frames=len(ordered_frames),
-        var_id=TRUE_COLOR_VARIABLE_ID,
-    )
-    _merge_preserved_manifest_variables(
-        data_root=data_root,
-        run_id=run_id,
-        preserved_variables=preserved_manifest_variables,
-    )
-    if write_latest:
-        write_latest_pointer(
+        promote_run(data_root=data_root, model=GOES_EAST_MODEL_ID, run_id=run_id)
+
+        manifest_target_frame_count = (
+            max(1, int(expected_frame_count))
+            if expected_frame_count is not None
+            else len(ordered_frames)
+        )
+        manifest_variables = {
+            **preserved_manifest_variables,
+            TRUE_COLOR_VARIABLE_ID: _true_color_manifest_entry(
+                ordered_frames=ordered_frames,
+                expected_frames=manifest_target_frame_count,
+            ),
+        }
+        manifest_stub = {
+            "last_updated": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "variables": manifest_variables,
+        }
+        metadata = build_observed_bundle_health(
+            latest_run=run_id,
+            manifest=manifest_stub,
+            source=GOES_EAST_MODEL_ID,
+            now_utc=publish_dt,
+            delayed_threshold_minutes=30,
+            stale_threshold_minutes=45,
+        )
+        metadata["variable"] = TRUE_COLOR_VARIABLE_ID
+        write_run_manifest(
             data_root=data_root,
             model=GOES_EAST_MODEL_ID,
             run_id=run_id,
-            source="goes_rgb_publish_v1",
+            targets=targets,
+            plugin=GOES_EAST_MODEL,
+            metadata=metadata,
         )
-    rgb_latest_path = (
-        data_root / "published" / GOES_EAST_MODEL_ID / GOES_EAST_RGB_LATEST_FILENAME
-    )
-    write_json_atomic(
-        rgb_latest_path,
-        {
-            "run_id": run_id,
-            "cycle_utc": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "updated_utc": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "source": "goes_rgb_publish_v1",
-        },
-    )
+        _write_true_color_manifest_entry(
+            data_root=data_root,
+            run_id=run_id,
+            entry=manifest_variables[TRUE_COLOR_VARIABLE_ID],
+        )
+        _patch_run_manifest_frame_counts(
+            data_root=data_root,
+            run_id=run_id,
+            expected_frames=manifest_target_frame_count,
+            available_frames=len(ordered_frames),
+            var_id=TRUE_COLOR_VARIABLE_ID,
+        )
+        _merge_preserved_manifest_variables(
+            data_root=data_root,
+            run_id=run_id,
+            preserved_variables=preserved_manifest_variables,
+        )
+        if write_latest:
+            write_latest_pointer(
+                data_root=data_root,
+                model=GOES_EAST_MODEL_ID,
+                run_id=run_id,
+                source="goes_rgb_publish_v1",
+            )
+        rgb_latest_path = (
+            data_root / "published" / GOES_EAST_MODEL_ID / GOES_EAST_RGB_LATEST_FILENAME
+        )
+        write_json_atomic(
+            rgb_latest_path,
+            {
+                "run_id": run_id,
+                "cycle_utc": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "updated_utc": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "source": "goes_rgb_publish_v1",
+            },
+        )
 
-    manifest_path = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{run_id}.json"
-    published_run_dir = data_root / "published" / GOES_EAST_MODEL_ID / run_id
-    return GOESRGBPublishResult(
-        run_id=run_id,
-        published_run_dir=published_run_dir,
-        manifest_path=manifest_path,
-        frame_count=len(ordered_frames),
-    )
+        manifest_path = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{run_id}.json"
+        published_run_dir = data_root / "published" / GOES_EAST_MODEL_ID / run_id
+        return GOESRGBPublishResult(
+            run_id=run_id,
+            published_run_dir=published_run_dir,
+            manifest_path=manifest_path,
+            frame_count=len(ordered_frames),
+        )
 
 
 def write_rgb_frame(

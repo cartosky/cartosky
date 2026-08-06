@@ -80,3 +80,143 @@ def test_publish_goes_rgb_bundle_seeds_new_run_with_previous_latest_sibling_vari
 
     manifest = json.loads(second_result.manifest_path.read_text())
     assert set(manifest["variables"]) == {"ir13", "true_color"}
+
+
+def test_concurrent_band_and_rgb_same_run_id_preserve_both_variables(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Band and RGB full-replace the same goes-east run; overlapping publishes must not drop siblings."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    _configure_band_publish(monkeypatch)
+    monkeypatch.setattr(
+        goes_rgb_publish,
+        "encode_rgba_webp",
+        lambda rgba, **_kwargs: b"webp-new",
+    )
+
+    seed_slot = datetime(2026, 7, 28, 14, 0, tzinfo=timezone.utc)
+    seed_ir = goes_publish.GOESBundleFrame(
+        valid_time=seed_slot + timedelta(minutes=2),
+        slot_time=seed_slot,
+        values=np.ones((2, 2), dtype=np.float32) * 240.0,
+        transform=None,
+        source_metadata={"slot_time": "2026-07-28T14:00:00Z"},
+    )
+    seed_rgb = goes_rgb_publish.GOESRGBBundleFrame(
+        valid_time=seed_slot + timedelta(minutes=4),
+        slot_time=seed_slot,
+        rgba=np.zeros((2, 2, 4), dtype=np.uint8),
+        source_metadata={"slot_time": "2026-07-28T14:00:00Z"},
+    )
+    goes_publish.publish_goes_bundle(
+        data_root=tmp_path,
+        frames=[seed_ir],
+        publish_time=datetime(2026, 7, 28, 14, 15, tzinfo=timezone.utc),
+    )
+    goes_rgb_publish.publish_goes_rgb_bundle(
+        data_root=tmp_path,
+        frames=[seed_rgb],
+        publish_time=datetime(2026, 7, 28, 14, 15, tzinfo=timezone.utc),
+    )
+    # Mark seed artifacts so we can detect stale carry-forward vs fresh writes.
+    seed_run = tmp_path / "published" / "goes-east" / "20260728_1415z"
+    (seed_run / "ir13" / "fh000.val.cog.tif").write_bytes(b"seed-ir")
+    (seed_run / "true_color" / "fh000.webp").write_bytes(b"seed-rgb")
+
+    publish_time = datetime(2026, 7, 28, 14, 31, tzinfo=timezone.utc)
+    slot = datetime(2026, 7, 28, 14, 30, tzinfo=timezone.utc)
+    ir_frame = goes_publish.GOESBundleFrame(
+        valid_time=slot + timedelta(minutes=2),
+        slot_time=slot,
+        values=np.ones((2, 2), dtype=np.float32) * 255.0,
+        transform=None,
+        source_metadata={"slot_time": "2026-07-28T14:30:00Z"},
+    )
+    rgb_frame = goes_rgb_publish.GOESRGBBundleFrame(
+        valid_time=slot + timedelta(minutes=4),
+        slot_time=slot,
+        rgba=np.full((2, 2, 4), 7, dtype=np.uint8),
+        source_metadata={"slot_time": "2026-07-28T14:30:00Z"},
+    )
+
+    errors: list[BaseException] = []
+
+    def _publish_band() -> str:
+        try:
+            result = goes_publish.publish_goes_bundle(
+                data_root=tmp_path,
+                frames=[ir_frame],
+                publish_time=publish_time,
+            )
+            return result.run_id
+        except BaseException as exc:  # noqa: BLE001 - surface in parent thread
+            errors.append(exc)
+            raise
+
+    def _publish_rgb() -> str:
+        try:
+            result = goes_rgb_publish.publish_goes_rgb_bundle(
+                data_root=tmp_path,
+                frames=[rgb_frame],
+                publish_time=publish_time,
+            )
+            return result.run_id
+        except BaseException as exc:  # noqa: BLE001 - surface in parent thread
+            errors.append(exc)
+            raise
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        band_future = pool.submit(_publish_band)
+        rgb_future = pool.submit(_publish_rgb)
+        run_ids = {band_future.result(timeout=30), rgb_future.result(timeout=30)}
+
+    assert not errors
+    assert run_ids == {"20260728_1431z"}
+    published = tmp_path / "published" / "goes-east" / "20260728_1431z"
+    ir_bytes = (published / "ir13" / "fh000.val.cog.tif").read_bytes()
+    rgb_bytes = (published / "true_color" / "fh000.webp").read_bytes()
+    assert ir_bytes == b"cog"
+    assert rgb_bytes == b"webp-new"
+    assert ir_bytes != b"seed-ir"
+    assert rgb_bytes != b"seed-rgb"
+
+    manifest = json.loads((tmp_path / "manifests" / "goes-east" / "20260728_1431z.json").read_text())
+    assert set(manifest["variables"]) == {"ir13", "true_color"}
+    assert (tmp_path / ".locks" / "goes-east.publish.lock").is_file()
+
+
+def test_observed_model_publish_lock_serializes_cross_thread_holders(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    import time
+
+    from app.services.publish_utils import observed_model_publish_lock
+
+    hold = threading.Event()
+    second_started = threading.Event()
+    order: list[str] = []
+
+    def first() -> None:
+        with observed_model_publish_lock(tmp_path, "goes-east"):
+            order.append("first-enter")
+            hold.set()
+            time.sleep(0.15)
+            order.append("first-exit")
+
+    def second() -> None:
+        hold.wait(timeout=2)
+        second_started.set()
+        with observed_model_publish_lock(tmp_path, "goes-east"):
+            order.append("second-enter")
+            order.append("second-exit")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f1 = pool.submit(first)
+        f2 = pool.submit(second)
+        f1.result(timeout=5)
+        f2.result(timeout=5)
+
+    assert second_started.is_set()
+    assert order == ["first-enter", "first-exit", "second-enter", "second-exit"]

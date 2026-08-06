@@ -24,6 +24,7 @@ from app.services.grid import (
 )
 from app.services.observed_bundle_health import build_observed_bundle_health
 from app.services.publish_utils import (
+    observed_model_publish_lock,
     promote_run,
     write_json_atomic,
     write_latest_pointer,
@@ -253,38 +254,51 @@ def publish_goes_bundle(
     var_id = band_config.variable_id
     publish_dt = (publish_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
     run_id = format_run_id(publish_dt, include_minutes=True)
-    preservation_source_run_id = _preservation_source_run_id(data_root, run_id)
-    preserved_manifest_variables = _preserved_manifest_variables(
-        data_root=data_root,
-        run_id=preservation_source_run_id,
-        exclude_var_id=var_id,
-    )
-    _prepare_stage_run_dir(
-        data_root=data_root,
-        run_id=run_id,
-        replace_var_id=var_id,
-        source_run_id=preservation_source_run_id,
-    )
 
-    merged_by_slot_time: dict[datetime, GOESPublishedFrame | GOESBundleFrame] = {}
-    for frame in sorted(previous_frames or [], key=lambda item: item.slot_time):
-        merged_by_slot_time[frame.slot_time.astimezone(timezone.utc)] = frame
-    for frame in sorted(frames, key=lambda item: item.slot_time):
-        merged_by_slot_time[frame.slot_time.astimezone(timezone.utc)] = frame
+    # Band and RGB publishers share published/goes-east and full-replace promote.
+    # Hold the lock across sibling seed + promote + manifest/LATEST writes so a
+    # concurrent RGB publish cannot wipe this band (or vice versa).
+    with observed_model_publish_lock(data_root, GOES_EAST_MODEL_ID):
+        preservation_source_run_id = _preservation_source_run_id(data_root, run_id)
+        preserved_manifest_variables = _preserved_manifest_variables(
+            data_root=data_root,
+            run_id=preservation_source_run_id,
+            exclude_var_id=var_id,
+        )
+        _prepare_stage_run_dir(
+            data_root=data_root,
+            run_id=run_id,
+            replace_var_id=var_id,
+            source_run_id=preservation_source_run_id,
+        )
 
-    ordered_inputs = [merged_by_slot_time[key] for key in sorted(merged_by_slot_time)]
-    if target_frame_count is not None and target_frame_count > 0:
-        ordered_inputs = ordered_inputs[-int(target_frame_count):]
-    if not ordered_inputs:
-        raise ValueError("GOES bundle publish resolved to an empty rolling window")
+        merged_by_slot_time: dict[datetime, GOESPublishedFrame | GOESBundleFrame] = {}
+        for frame in sorted(previous_frames or [], key=lambda item: item.slot_time):
+            merged_by_slot_time[frame.slot_time.astimezone(timezone.utc)] = frame
+        for frame in sorted(frames, key=lambda item: item.slot_time):
+            merged_by_slot_time[frame.slot_time.astimezone(timezone.utc)] = frame
 
-    targets: list[tuple[str, int]] = []
-    written_fhs: list[int] = []
-    for fh, frame in enumerate(ordered_inputs):
-        if isinstance(frame, GOESPublishedFrame):
-            # Reuse is deliberately NOT gated: a reused frame is byte-identical
-            # to one that passed the pre-encode gate at its original write.
-            if not reuse_goes_frame(
+        ordered_inputs = [merged_by_slot_time[key] for key in sorted(merged_by_slot_time)]
+        if target_frame_count is not None and target_frame_count > 0:
+            ordered_inputs = ordered_inputs[-int(target_frame_count):]
+        if not ordered_inputs:
+            raise ValueError("GOES bundle publish resolved to an empty rolling window")
+
+        targets: list[tuple[str, int]] = []
+        written_fhs: list[int] = []
+        for fh, frame in enumerate(ordered_inputs):
+            if isinstance(frame, GOESPublishedFrame):
+                # Reuse is deliberately NOT gated: a reused frame is byte-identical
+                # to one that passed the pre-encode gate at its original write.
+                if not reuse_goes_frame(
+                    data_root=data_root,
+                    run_id=run_id,
+                    forecast_hour=fh,
+                    frame=frame,
+                    band_config=band_config,
+                ):
+                    continue
+            elif not write_goes_frame(
                 data_root=data_root,
                 run_id=run_id,
                 forecast_hour=fh,
@@ -292,100 +306,97 @@ def publish_goes_bundle(
                 band_config=band_config,
             ):
                 continue
-        elif not write_goes_frame(
+            targets.append((var_id, fh))
+            written_fhs.append(fh)
+
+        if not targets:
+            raise ValueError("GOES bundle publish requires at least one frame")
+
+        if grid_build_enabled():
+            manifest_count = build_grid_manifests_for_run_root(
+                run_root=data_root / "staging" / GOES_EAST_MODEL_ID / run_id,
+                model=GOES_EAST_MODEL_ID,
+                run=run_id,
+                variables=(var_id,),
+            )
+            logger.info("GOES grid manifest build: run=%s manifests=%d", run_id, manifest_count)
+
+        promote_run(data_root=data_root, model=GOES_EAST_MODEL_ID, run_id=run_id)
+
+        ordered_valid_times = [item.valid_time.astimezone(timezone.utc) for item in ordered_inputs]
+        manifest_target_frame_count = (
+            max(1, int(expected_frame_count))
+            if expected_frame_count is not None
+            else len(ordered_valid_times)
+        )
+        manifest_variables = {
+            **preserved_manifest_variables,
+            var_id: {
+                "expected_frames": manifest_target_frame_count,
+                "available_frames": len(written_fhs),
+                "frames": [
+                    {
+                        "fh": fh,
+                        "valid_time": ordered_valid_times[fh].strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    }
+                    for fh in written_fhs
+                ],
+            }
+        }
+        manifest_stub = {
+            "last_updated": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "variables": manifest_variables,
+        }
+        metadata = build_observed_bundle_health(
+            latest_run=run_id,
+            manifest=manifest_stub,
+            source=GOES_EAST_MODEL_ID,
+            now_utc=publish_dt,
+            delayed_threshold_minutes=30,
+            stale_threshold_minutes=45,
+        )
+        newest_input = ordered_inputs[-1] if ordered_inputs else None
+        newest_source_metadata = getattr(newest_input, "source_metadata", None)
+        if isinstance(newest_source_metadata, dict):
+            for key in ("satellite", "product", "sector", "band"):
+                if newest_source_metadata.get(key) is not None:
+                    metadata[key] = newest_source_metadata[key]
+        write_run_manifest(
+            data_root=data_root,
+            model=GOES_EAST_MODEL_ID,
+            run_id=run_id,
+            targets=targets,
+            plugin=GOES_EAST_MODEL,
+            metadata=metadata,
+        )
+        _patch_run_manifest_frame_counts(
             data_root=data_root,
             run_id=run_id,
-            forecast_hour=fh,
-            frame=frame,
-            band_config=band_config,
-        ):
-            continue
-        targets.append((var_id, fh))
-        written_fhs.append(fh)
-
-    if not targets:
-        raise ValueError("GOES bundle publish requires at least one frame")
-
-    if grid_build_enabled():
-        manifest_count = build_grid_manifests_for_run_root(
-            run_root=data_root / "staging" / GOES_EAST_MODEL_ID / run_id,
-            model=GOES_EAST_MODEL_ID,
-            run=run_id,
-            variables=(var_id,),
+            expected_frames=manifest_target_frame_count,
+            available_frames=len(written_fhs),
+            var_id=var_id,
         )
-        logger.info("GOES grid manifest build: run=%s manifests=%d", run_id, manifest_count)
+        _merge_preserved_manifest_variables(
+            data_root=data_root,
+            run_id=run_id,
+            preserved_variables=preserved_manifest_variables,
+        )
+        if write_latest:
+            write_latest_pointer(
+                data_root=data_root,
+                model=GOES_EAST_MODEL_ID,
+                run_id=run_id,
+                source="goes_publish_v1",
+            )
 
-    promote_run(data_root=data_root, model=GOES_EAST_MODEL_ID, run_id=run_id)
-
-    ordered_valid_times = [item.valid_time.astimezone(timezone.utc) for item in ordered_inputs]
-    manifest_target_frame_count = (
-        max(1, int(expected_frame_count))
-        if expected_frame_count is not None
-        else len(ordered_valid_times)
-    )
-    manifest_variables = {
-        **preserved_manifest_variables,
-        var_id: {
-            "expected_frames": manifest_target_frame_count,
-            "available_frames": len(written_fhs),
-            "frames": [
-                {
-                    "fh": fh,
-                    "valid_time": ordered_valid_times[fh].strftime("%Y-%m-%dT%H:%M:%SZ"),
-                }
-                for fh in written_fhs
-            ],
-        }
-    }
-    manifest_stub = {
-        "last_updated": publish_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "variables": manifest_variables,
-    }
-    metadata = build_observed_bundle_health(
-        latest_run=run_id,
-        manifest=manifest_stub,
-        source=GOES_EAST_MODEL_ID,
-        now_utc=publish_dt,
-        delayed_threshold_minutes=30,
-        stale_threshold_minutes=45,
-    )
-    newest_input = ordered_inputs[-1] if ordered_inputs else None
-    newest_source_metadata = getattr(newest_input, "source_metadata", None)
-    if isinstance(newest_source_metadata, dict):
-        for key in ("satellite", "product", "sector", "band"):
-            if newest_source_metadata.get(key) is not None:
-                metadata[key] = newest_source_metadata[key]
-    write_run_manifest(
-        data_root=data_root,
-        model=GOES_EAST_MODEL_ID,
-        run_id=run_id,
-        targets=targets,
-        plugin=GOES_EAST_MODEL,
-        metadata=metadata,
-    )
-    _patch_run_manifest_frame_counts(
-        data_root=data_root,
-        run_id=run_id,
-        expected_frames=manifest_target_frame_count,
-        available_frames=len(written_fhs),
-        var_id=var_id,
-    )
-    _merge_preserved_manifest_variables(
-        data_root=data_root,
-        run_id=run_id,
-        preserved_variables=preserved_manifest_variables,
-    )
-    if write_latest:
-        write_latest_pointer(data_root=data_root, model=GOES_EAST_MODEL_ID, run_id=run_id, source="goes_publish_v1")
-
-    manifest_path = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{run_id}.json"
-    published_run_dir = data_root / "published" / GOES_EAST_MODEL_ID / run_id
-    return GOESPublishResult(
-        run_id=run_id,
-        published_run_dir=published_run_dir,
-        manifest_path=manifest_path,
-        frame_count=len(written_fhs),
-    )
+        manifest_path = data_root / "manifests" / GOES_EAST_MODEL_ID / f"{run_id}.json"
+        published_run_dir = data_root / "published" / GOES_EAST_MODEL_ID / run_id
+        return GOESPublishResult(
+            run_id=run_id,
+            published_run_dir=published_run_dir,
+            manifest_path=manifest_path,
+            frame_count=len(written_fhs),
+        )
 
 
 def write_goes_frame(
