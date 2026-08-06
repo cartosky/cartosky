@@ -85,6 +85,7 @@ const HRRR_SEVERE_MODEL = {
 const HRRR_AIR_QUALITY_MODEL = {
   variables: {
     vi_smoke: { display_name: "Vertically Integrated Smoke" },
+    smoke_sfc: { display_name: "Near-Surface Smoke" },
     ltng: { display_name: "Lightning Flash Density" },
   },
 } as unknown as CapabilityModel;
@@ -623,10 +624,18 @@ describe("HRRR severe variable option ordering", () => {
 describe("HRRR air quality variable grouping", () => {
   it("puts vertically integrated smoke in its own AIR QUALITY group", () => {
     const options = makeVariableOptions(normalizeCapabilityVarRows(HRRR_AIR_QUALITY_MODEL), "hrrr");
-    expect(options.map((option) => option.value)).toEqual(["ltng", "vi_smoke"]);
+    expect(options.map((option) => option.value)).toEqual(["ltng", "vi_smoke", "smoke_sfc"]);
     expect(viewerVariableGroup("vi_smoke", "Air Quality")).toBe("AIR QUALITY");
     expect(options.find((option) => option.value === "vi_smoke")?.label).toBe(
       "Vertically Integrated Smoke",
+    );
+  });
+
+  it("puts near-surface smoke in the AIR QUALITY group after vi_smoke", () => {
+    const options = makeVariableOptions(normalizeCapabilityVarRows(HRRR_AIR_QUALITY_MODEL), "hrrr");
+    expect(viewerVariableGroup("smoke_sfc", "Air Quality")).toBe("AIR QUALITY");
+    expect(options.find((option) => option.value === "smoke_sfc")?.label).toBe(
+      "Near-Surface Smoke",
     );
   });
 });

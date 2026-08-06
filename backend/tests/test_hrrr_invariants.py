@@ -56,6 +56,7 @@ def test_hrrr_buildable_var_set_and_defaults_invariants() -> None:
         "mucape",
         "ltng",
         "vi_smoke",
+        "smoke_sfc",
         "pwat",
         "snowfall_total",
         "snowfall_kuchera_total",
@@ -386,6 +387,41 @@ def test_hrrr_vi_smoke_selector_and_alias_invariants() -> None:
     assert vi_smoke_spec.selectors.search == [":COLMD:entire atmosphere"]
     assert vi_smoke_spec.selectors.filter_by_keys == {"typeOfLevel": "atmosphereSingleLayer"}
     assert vi_smoke_spec.selectors.hints["upstream_var"] == "vi_smoke"
+
+
+def test_hrrr_smoke_sfc_capability_invariants() -> None:
+    capabilities = HRRR_MODEL.capabilities
+    assert capabilities is not None
+    payload = _serialize_model_capability("hrrr", capabilities)
+
+    smoke_sfc = payload["variables"]["smoke_sfc"]
+    assert smoke_sfc["var_key"] == "smoke_sfc"
+    assert smoke_sfc["buildable"] is True
+    assert smoke_sfc["derived"] is False
+    assert smoke_sfc["kind"] == "continuous"
+    assert smoke_sfc["units"] == "ug/m^3"
+    assert smoke_sfc["display_name"] == "Near-Surface Smoke"
+    assert smoke_sfc["group"] == "Air Quality"
+    assert smoke_sfc["color_map_id"] == "smoke_sfc"
+    assert smoke_sfc["display_resampling_override"] is None
+
+
+def test_hrrr_smoke_sfc_selector_and_alias_invariants() -> None:
+    for alias in ("smoke_sfc", "massden", "sfc_smoke", "near_surface_smoke", "surface_smoke"):
+        assert HRRR_MODEL.normalize_var_id(alias) == "smoke_sfc"
+
+    smoke_sfc_spec = HRRR_MODEL.get_var("smoke_sfc")
+    assert smoke_sfc_spec is not None
+    assert smoke_sfc_spec.primary is True
+    assert smoke_sfc_spec.derived is False
+    assert smoke_sfc_spec.kind == "continuous"
+    assert smoke_sfc_spec.units == "ug/m^3"
+    assert smoke_sfc_spec.selectors.search == [":MASSDEN:8 m above ground:"]
+    assert smoke_sfc_spec.selectors.filter_by_keys == {
+        "typeOfLevel": "heightAboveGround",
+        "level": "8",
+    }
+    assert smoke_sfc_spec.selectors.hints["upstream_var"] == "smoke_sfc"
 
 
 def test_hrrr_pwat_selector_and_alias_invariants() -> None:

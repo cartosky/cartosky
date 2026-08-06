@@ -1014,6 +1014,29 @@ VI_SMOKE_LEGEND_COLORS = [
 VI_SMOKE_COLOR_ANCHORS = list(zip(VI_SMOKE_LEGEND_LEVELS, VI_SMOKE_LEGEND_COLORS))
 VI_SMOKE_RANGE = (0.0, 1000.0)
 
+# HRRR near-surface smoke (µg/m^3, converted from kg/m^3). The ladder embeds the
+# PM2.5 AQI category edges (9 / 35 / 55 / 125 / 225) so the ramp reads as air
+# quality, and the top bin absorbs everything above 500. Colors are shared with
+# the vertically integrated smoke ramp so the two products read as one family.
+SMOKE_SFC_LEGEND_LEVELS = [
+    1.0,
+    2.0,
+    5.0,
+    9.0,
+    15.0,
+    25.0,
+    35.0,
+    55.0,
+    75.0,
+    125.0,
+    175.0,
+    225.0,
+    500.0,
+]
+SMOKE_SFC_LEGEND_COLORS = list(VI_SMOKE_LEGEND_COLORS)
+SMOKE_SFC_COLOR_ANCHORS = list(zip(SMOKE_SFC_LEGEND_LEVELS, SMOKE_SFC_LEGEND_COLORS))
+SMOKE_SFC_RANGE = (0.0, 500.0)
+
 # 850mb temperature (°C) continuous palette anchors and range
 TMP850_COLOR_ANCHORS = [
     (-40.0, "#90d8cb"), (-39.0, "#96cec9"), (-38.0, "#95c5c6"), (-37.0, "#9bc3cb"), (-36.0, "#9ec0cf"),
@@ -1503,6 +1526,19 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "Vertically Integrated Smoke",
         "legend_title": "Vertically Integrated Smoke (mg/m²)",
         "legend_stops": list(zip(VI_SMOKE_LEGEND_LEVELS, VI_SMOKE_LEGEND_COLORS)),
+        "allow_dry_frame": True,
+        "transparent_below_min": 1.0,
+    },
+    "smoke_sfc": {
+        "type": "continuous",
+        "display_palette_kind": "discrete",
+        "units": "ug/m^3",
+        "range": SMOKE_SFC_RANGE,
+        "anchors": SMOKE_SFC_COLOR_ANCHORS,
+        "colors": SMOKE_SFC_LEGEND_COLORS,
+        "display_name": "Near-Surface Smoke",
+        "legend_title": "Near-Surface Smoke (µg/m³)",
+        "legend_stops": list(zip(SMOKE_SFC_LEGEND_LEVELS, SMOKE_SFC_LEGEND_COLORS)),
         "allow_dry_frame": True,
         "transparent_below_min": 1.0,
     },

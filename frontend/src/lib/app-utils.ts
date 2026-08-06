@@ -594,6 +594,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   sbcape: { label: "Surface-Based CAPE", group: "SEVERE", order: 22 },
   ltng: { label: "Lightning Flash Density", group: "SEVERE", order: 23 },
   vi_smoke: { label: "Vertically Integrated Smoke", group: "AIR QUALITY", order: 26 },
+  smoke_sfc: { label: "Near-Surface Smoke", group: "AIR QUALITY", order: 27 },
   vort500: { label: "500mb Heights + Vorticity", group: "UPPER AIR", order: 33 },
   hgt500_anom: { label: "500mb Height Anomaly", group: "UPPER AIR", order: 33.5 },
   ir13: { label: "Clean IR", group: "SATELLITE", order: 0 },
