@@ -18,6 +18,13 @@ Unlike MRMS this publishes into **two domains** from one source read:
   (``domains.declared_domains_for_var`` is the single gate).
 
 Both domains share one run id, so the two trees stay in lockstep.
+
+Coastlines: the native field arrives with its ocean edge already dilated a few
+source cells inland (``sst_fetch.fill_coastal_fringe``), because a bilinear warp
+onto a coarser grid otherwise retreats from the coast by up to a full target cell
+and the viewer draws that hard NaN edge as stair-step blocks. Warped valid
+fractions are correspondingly a little higher than the raw source, and sampling
+just inshore returns a neighbour-weighted nearest-ocean value rather than nothing.
 """
 
 from __future__ import annotations

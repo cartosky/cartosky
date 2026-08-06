@@ -30,6 +30,11 @@ reference code rather than importing it — the script is a confined spike):
 Values leave this module as float32 **°C** with fill masked to NaN, on an
 EPSG:4326 north-up transform. There is no °F path.
 
+The ocean edge is dilated a few source cells inland by
+:func:`fill_coastal_fringe` before anything warps it, so the coarser target grids
+do not retreat from the coastline. Accepted consequence: hover/sampling just
+inshore returns a neighbour-weighted nearest-ocean value instead of "no data".
+
 Availability is probed through the ERDDAP time axis
 (``.json?time[last]`` — a few hundred bytes) so the poller never downloads
 ~104 MB just to learn whether a new day exists. The fallback probe is a HEAD on
@@ -328,13 +333,92 @@ def detect_kelvin(units: str | None, values: np.ndarray) -> tuple[bool, str]:
     return median > 100.0, f"magnitude fallback (median {median:.2f}, units={units!r})"
 
 
-def read_native_sst(path: Path, variable: str = ERDDAP_VAR) -> SSTNativeField:
+#: Coastal fringe reach in **source** cells at the native 0.05° grid (~5.5 km per
+#: cell), so 3 cells ≈ 16 km. Sized against the target cells the field is warped
+#: onto: the na grid is 9 km (~1.6 source cells), so 3 cells covers a full target
+#: cell with margin and the coastline can no longer retreat. Deliberately small —
+#: this is a coastline cosmetic, not an interpolation product, and every extra
+#: cell pushes synthetic ocean values further under land.
+SST_COASTAL_FRINGE_SOURCE_CELLS = 3
+
+
+def fill_coastal_fringe(
+    values: np.ndarray, *, radius_cells: int = SST_COASTAL_FRINGE_SOURCE_CELLS
+) -> np.ndarray:
+    """Dilate valid SST into the NaN fringe next to it by normalized convolution.
+
+    Why this exists: the L4 field is NaN over land, and GDAL's bilinear kernel
+    emits nodata whenever it touches NaN. Warping straight to a coarser target
+    grid therefore *retreats* coverage from the coast by up to a full target cell
+    (9 km na / 0.25° global) and the viewer renders that hard NaN edge as visible
+    stair-step blocks. ``mrms_publish._warp_frame_to_target_grid`` solves the
+    same problem for radar by warping ``[values, weights]`` together and
+    dividing; that recovers erosion *within* the kernel but cannot extend the
+    data footprint, which is what a coarsening warp needs. So the same
+    normalized-convolution idea is applied here **before** the reproject, on the
+    native grid, as an iterative one-cell-at-a-time dilation.
+
+    Each pass replaces NaN cells that have at least one finite 8-neighbour with
+    the mean of those neighbours (``sum(valid)/count(valid)`` via a pair of 3x3
+    box filters — the shared 1/9 factor cancels), then feeds the result into the
+    next pass. Consequences that matter:
+
+    * the fill is strictly a **fringe**: reach is bounded by ``radius_cells``, so
+      large interior NaN regions stay NaN — deep inland never acquires a value;
+    * filled values are **neighbour-weighted**, not a constant flood, so the
+      dilated band carries the local coastal gradient;
+    * enclosed water bodies the producer masks out (the Great Lakes) have no
+      valid source cell within reach to dilate from, so they stay empty as a
+      natural consequence rather than a special case.
+
+    Returns a new array; the input is not modified. A field that is entirely
+    finite or entirely NaN is returned unchanged.
+    """
+    from scipy.ndimage import uniform_filter  # type: ignore[import-untyped]
+
+    reach = max(0, int(radius_cells))
+    out = np.array(values, dtype=np.float32, copy=True)
+    if reach == 0:
+        return out
+
+    for _ in range(reach):
+        valid = np.isfinite(out)
+        if valid.all() or not valid.any():
+            break
+        filled = np.where(valid, out, np.float32(0.0))
+        weights = valid.astype(np.float32)
+        # mode="nearest" replicates the array edge. The lon axis is cyclic, but
+        # the antimeridian is open ocean on both sides, so no fill happens there
+        # and the difference is unobservable.
+        neighbour_sum = uniform_filter(filled, size=3, mode="nearest")
+        neighbour_count = uniform_filter(weights, size=3, mode="nearest")
+        newly_covered = (~valid) & (neighbour_count > 0)
+        if not newly_covered.any():
+            break
+        out[newly_covered] = (
+            neighbour_sum[newly_covered] / neighbour_count[newly_covered]
+        )
+    return out
+
+
+def read_native_sst(
+    path: Path,
+    variable: str = ERDDAP_VAR,
+    *,
+    fill_fringe: bool = True,
+) -> SSTNativeField:
     """Read one SST granule to float32 °C on a north-up EPSG:4326 transform.
 
     GDAL's netCDF driver applies neither scale/offset nor the fill mask, so this
     applies ``raw * scale + offset``, masks the fill code to NaN, converts from
     Kelvin when :func:`detect_kelvin` says so, flips a south-up array north-up,
     and rolls a 0..360 longitude layout to -180..180.
+
+    Finally :func:`fill_coastal_fringe` dilates the ocean edge by a few source
+    cells so the downstream bilinear warp does not retreat from the coastline.
+    That happens **once per fetched day**, here rather than in the publish path,
+    so both target grids share one fill. ``fill_fringe=False`` returns the raw
+    masked field (used by the coastline eyeball comparison).
     """
     import rasterio  # local import: keeps module import cheap for probe-only use
     from rasterio.transform import from_origin
@@ -378,14 +462,20 @@ def read_native_sst(path: Path, variable: str = ERDDAP_VAR) -> SSTNativeField:
         west = left
 
     values = np.ascontiguousarray(values, dtype=np.float32)
-    finite = np.isfinite(values)
+    source_valid_fraction = float(np.isfinite(values).mean())
+
+    fringe_cells = SST_COASTAL_FRINGE_SOURCE_CELLS if fill_fringe else 0
+    if fringe_cells:
+        values = fill_coastal_fringe(values, radius_cells=fringe_cells)
+    valid_fraction = float(np.isfinite(values).mean())
+
     return SSTNativeField(
         values=values,
         transform=from_origin(west, north, xres, yres),
         source_units=band_units,
         kelvin_converted=kelvin,
         units_decision=units_reason,
-        valid_fraction=float(finite.mean()),
+        valid_fraction=valid_fraction,
         rolled_longitude=rolled,
         flipped_northup=flipped,
         metadata={
@@ -393,5 +483,10 @@ def read_native_sst(path: Path, variable: str = ERDDAP_VAR) -> SSTNativeField:
             "source_units": str(band_units or ""),
             "kelvin_converted": bool(kelvin),
             "units_decision": units_reason,
+            # Both fractions are recorded so the coastal dilation is auditable
+            # from a published sidecar instead of inferred.
+            "source_valid_fraction": round(source_valid_fraction, 6),
+            "valid_fraction": round(valid_fraction, 6),
+            "coastal_fringe_source_cells": int(fringe_cells),
         },
     )

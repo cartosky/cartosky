@@ -199,6 +199,125 @@ def test_probe_returns_none_when_nothing_answers(monkeypatch: pytest.MonkeyPatch
 
 
 # ---------------------------------------------------------------------------
+# Coastal fringe fill (pre-warp edge handling)
+# ---------------------------------------------------------------------------
+
+def _coast_grid() -> np.ndarray:
+    """A 12-column strip: ocean on the left, a wide NaN 'landmass' on the right.
+
+    Columns 0-2 are ocean, 3-11 are NaN. With a 3-cell reach, columns 3-5 are the
+    coastal fringe and columns 6-11 are 'deep inland' that must stay NaN.
+    """
+    grid = np.full((5, 12), np.nan, dtype=np.float32)
+    grid[:, 0] = 10.0
+    grid[:, 1] = 12.0
+    grid[:, 2] = 14.0
+    return grid
+
+
+def test_fringe_fill_extends_valid_data_into_the_coastal_band() -> None:
+    filled = sst_fetch.fill_coastal_fringe(_coast_grid(), radius_cells=3)
+    # The three cells adjacent to the ocean edge are now covered...
+    assert np.isfinite(filled[:, 3]).all()
+    assert np.isfinite(filled[:, 4]).all()
+    assert np.isfinite(filled[:, 5]).all()
+    # ...and nothing beyond the reach is.
+    assert np.isnan(filled[:, 6:]).all()
+
+
+def test_fringe_fill_leaves_deep_interior_nan_alone() -> None:
+    """A NaN region far from any valid cell must never acquire a value."""
+    grid = np.full((9, 9), np.nan, dtype=np.float32)
+    grid[0, 0] = 20.0  # one lonely ocean cell in the corner
+    filled = sst_fetch.fill_coastal_fringe(grid, radius_cells=3)
+    # Reach is 3 cells (Chebyshev distance) from the seed, nothing further.
+    assert np.isfinite(filled[3, 3])
+    assert np.isnan(filled[8, 8])
+    assert np.isnan(filled[4, 4])
+
+
+def test_fringe_fill_values_track_local_neighbours_not_a_global_constant() -> None:
+    """Filled cells must carry the LOCAL coastal value, not one flooded constant.
+
+    A laterally uniform edge correctly extends as a plateau, so the discriminating
+    case is a coast with an along-shore gradient: each filled cell has to follow
+    the ocean beside it.
+    """
+    grid = np.full((5, 8), np.nan, dtype=np.float32)
+    along_shore = np.array([2.0, 8.0, 14.0, 20.0, 26.0], dtype=np.float32)
+    grid[:, 0] = along_shore
+    grid[:, 1] = along_shore
+
+    filled = sst_fetch.fill_coastal_fringe(grid, radius_cells=3)
+    fringe = filled[:, 2]
+
+    # Not a constant flood: the fringe varies along the shore...
+    assert len(np.unique(fringe)) > 1
+    # ...monotonically, in the same direction as the coast beside it...
+    assert np.all(np.diff(fringe) > 0)
+    # ...each cell far nearer its own neighbour than the field's global mean...
+    global_mean = float(np.nanmean(grid))
+    for row in (0, 4):
+        assert abs(fringe[row] - along_shore[row]) < abs(fringe[row] - global_mean)
+    # ...and every filled value stays inside the source's physical envelope.
+    finite = filled[np.isfinite(filled)]
+    assert finite.min() >= float(along_shore.min())
+    assert finite.max() <= float(along_shore.max())
+
+
+def test_fringe_fill_extends_a_uniform_edge_as_a_plateau() -> None:
+    """The complement: with no along-shore variation the edge value carries out."""
+    filled = sst_fetch.fill_coastal_fringe(_coast_grid(), radius_cells=3)
+    for column in (3, 4, 5):
+        assert filled[2, column] == pytest.approx(14.0, abs=1e-4)
+
+
+def test_fringe_fill_preserves_existing_values_and_does_not_mutate_input() -> None:
+    grid = _coast_grid()
+    original = grid.copy()
+    filled = sst_fetch.fill_coastal_fringe(grid, radius_cells=3)
+    np.testing.assert_array_equal(grid, original, err_msg="input was mutated")
+    # Real ocean cells are untouched.
+    np.testing.assert_allclose(filled[:, :3], original[:, :3])
+
+
+def test_fringe_fill_does_not_reach_an_enclosed_masked_lake() -> None:
+    """Great Lakes behaviour: enclosed water with no valid cell in reach stays empty.
+
+    Not special-cased anywhere — dilation only spreads *from* finite cells, and a
+    lake the producer masked out is surrounded by masked land.
+    """
+    grid = np.full((7, 20), np.nan, dtype=np.float32)
+    grid[:, 0] = 15.0            # ocean on the far west
+    lake = (slice(2, 5), slice(12, 16))  # enclosed, >3 cells from any ocean cell
+    filled = sst_fetch.fill_coastal_fringe(grid, radius_cells=3)
+    assert np.isnan(filled[lake]).all()
+
+
+def test_fringe_fill_radius_zero_is_a_passthrough() -> None:
+    grid = _coast_grid()
+    filled = sst_fetch.fill_coastal_fringe(grid, radius_cells=0)
+    np.testing.assert_array_equal(np.isnan(filled), np.isnan(grid))
+
+
+@pytest.mark.parametrize("grid", [np.full((4, 4), np.nan, dtype=np.float32), np.full((4, 4), 8.0, dtype=np.float32)])
+def test_fringe_fill_handles_degenerate_fields(grid: np.ndarray) -> None:
+    filled = sst_fetch.fill_coastal_fringe(grid, radius_cells=3)
+    np.testing.assert_array_equal(np.isnan(filled), np.isnan(grid))
+
+
+def test_fringe_reach_grows_with_radius() -> None:
+    covered = [
+        int(np.isfinite(sst_fetch.fill_coastal_fringe(_coast_grid(), radius_cells=r)).sum())
+        for r in (0, 1, 2, 3)
+    ]
+    assert covered == sorted(covered)
+    assert covered[0] < covered[-1]
+    # The shipped default is what the na 9 km target cell needs.
+    assert sst_fetch.SST_COASTAL_FRINGE_SOURCE_CELLS == 3
+
+
+# ---------------------------------------------------------------------------
 # Download path ordering
 # ---------------------------------------------------------------------------
 
