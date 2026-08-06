@@ -26,12 +26,18 @@ rm -f "$OUT_MBTILES" "$LEGACY_OUT_MBTILES" "$LEGACY_V3_OUT_MBTILES" "$LEGACY_V3_
 
 COUNTRY_URL="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_boundary_lines_land.geojson"
 COAST_URL="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_coastline.geojson"
+# Polygon counterpart of ne_10m_coastline, from the SAME Natural Earth 10m
+# physical family — the coastline lines are the boundary of these polygons, so a
+# land-polygon mask edge coincides with the drawn coastline instead of shearing
+# away from it. Do not swap this for a different resolution or vendor.
+LAND_URL="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_land.geojson"
 LAKES_URL="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_lakes.geojson"
 STATES_ZIP_URL="https://www2.census.gov/geo/tiger/GENZ2023/shp/cb_2023_us_state_5m.zip"
 COUNTIES_ZIP_URL="https://www2.census.gov/geo/tiger/GENZ2023/shp/cb_2023_us_county_5m.zip"
 
 curl -L "$COUNTRY_URL" -o "$SOURCE_DIR/country_lines.geojson"
 curl -L "$COAST_URL" -o "$SOURCE_DIR/coastline.geojson"
+curl -L "$LAND_URL" -o "$SOURCE_DIR/land.geojson"
 curl -L "$LAKES_URL" -o "$SOURCE_DIR/lakes.geojson"
 curl -L "$STATES_ZIP_URL" -o "$SOURCE_DIR/states.zip"
 curl -L "$COUNTIES_ZIP_URL" -o "$SOURCE_DIR/counties.zip"
@@ -80,6 +86,24 @@ mapshaper "$BUILD_DIR/county_lines_raw_nonnull.geojson" -snap interval=0.00003 -
 mapshaper "$SOURCE_DIR/lakes.geojson" -snap interval=0.00005 -clean -filter 'name=="Lake Superior" || name=="Lake Michigan" || name=="Lake Huron" || name=="Lake Erie" || name=="Lake Ontario" || name_en=="Lake Superior" || name_en=="Lake Michigan" || name_en=="Lake Huron" || name_en=="Lake Erie" || name_en=="Lake Ontario"' -each 'kind="great_lake_polygon"' -filter-fields kind,name,name_en -o format=geojson "$BUILD_DIR/great_lake_polygons.geojson"
 mapshaper "$BUILD_DIR/great_lake_polygons.geojson" -snap interval=0.00005 -clean -lines -each 'kind="great_lake_shoreline"' -filter-fields kind -o format=geojson "$BUILD_DIR/great_lake_shoreline.geojson"
 
+# Land polygons, used by the frontend as an above-the-grid mask so water-only
+# rasters (SST) render with a real coastline instead of a texel staircase.
+#
+# The Great Lakes are ERASED out of the land polygons on purpose. Natural Earth
+# 10m land does NOT cut them out (verified: Superior/Michigan/Erie interior
+# points test inside ne_10m_land), so an un-erased mask would paint the lakes
+# land-coloured while the existing great_lake_shoreline line still drew around
+# them. Erasing exactly the same five lakes the hydro layer already carries
+# keeps both masks consistent and leaves the frontend lake layer untouched
+# (LAKE_MASK_LAYER_ID ends up above the grid in the runtime layer order, so the
+# lakes read as water either way — the erase keeps the land mask honest).
+# Must run after great_lake_polygons.geojson exists.
+mapshaper "$SOURCE_DIR/land.geojson" \
+  -snap interval=0.00005 -clean \
+  -erase source="$BUILD_DIR/great_lake_polygons.geojson" \
+  -each 'kind="land_polygon"' -filter-fields kind \
+  -o format=geojson "$BUILD_DIR/land_polygons.geojson"
+
 # Use split zoom tiers so state boundaries remain visible at continental zooms
 # without forcing county linework into the same low-zoom regime.
 tippecanoe -f -o "$TMP_DIR/boundary_country_low.mbtiles" -l boundaries -Z0 -z6 --buffer=6 --detect-shared-borders --no-feature-limit --no-tile-size-limit "$BUILD_DIR/country_lines.geojson"
@@ -95,6 +119,12 @@ tippecanoe -f -o "$TMP_DIR/hydro_shoreline.mbtiles" -l hydro -Z0 -z10 --buffer=4
 tippecanoe -f -o "$TMP_DIR/hydro_coastline_low.mbtiles" -l hydro -Z0 -z6 --buffer=6 --no-feature-limit --no-tile-size-limit "$BUILD_DIR/coastline_lines.geojson"
 tippecanoe -f -o "$TMP_DIR/hydro_coastline_high.mbtiles" -l hydro -Z7 -z10 --buffer=6 --simplification=2 --no-feature-limit --no-tile-size-limit "$BUILD_DIR/coastline_lines.geojson"
 
+# Land mask: intentionally mirrors the coastline passes exactly (same zoom
+# tiers, buffer, simplification, and no-limit flags). Any divergence here shows
+# up as the mask edge shearing away from the drawn coastline.
+tippecanoe -f -o "$TMP_DIR/hydro_land_low.mbtiles" -l hydro -Z0 -z6 --buffer=6 --no-feature-limit --no-tile-size-limit "$BUILD_DIR/land_polygons.geojson"
+tippecanoe -f -o "$TMP_DIR/hydro_land_high.mbtiles" -l hydro -Z7 -z10 --buffer=6 --simplification=2 --no-feature-limit --no-tile-size-limit "$BUILD_DIR/land_polygons.geojson"
+
 tile-join -f -o "$OUT_MBTILES" \
   "$TMP_DIR/boundary_country_low.mbtiles" \
   "$TMP_DIR/boundary_country_high.mbtiles" \
@@ -104,9 +134,11 @@ tile-join -f -o "$OUT_MBTILES" \
   "$TMP_DIR/hydro_polygon.mbtiles" \
   "$TMP_DIR/hydro_shoreline.mbtiles" \
   "$TMP_DIR/hydro_coastline_low.mbtiles" \
-  "$TMP_DIR/hydro_coastline_high.mbtiles"
+  "$TMP_DIR/hydro_coastline_high.mbtiles" \
+  "$TMP_DIR/hydro_land_low.mbtiles" \
+  "$TMP_DIR/hydro_land_high.mbtiles"
 
-VECTOR_LAYERS='[{"id":"boundaries","description":"country/state linework","fields":{"kind":"String","admin_level":"Number"},"minzoom":0,"maxzoom":10},{"id":"counties","description":"county linework","fields":{"kind":"String","admin_level":"Number"},"minzoom":5,"maxzoom":10},{"id":"hydro","description":"coastline and Great Lakes polygon/shoreline","fields":{"kind":"String"},"minzoom":0,"maxzoom":10}]'
+VECTOR_LAYERS='[{"id":"boundaries","description":"country/state linework","fields":{"kind":"String","admin_level":"Number"},"minzoom":0,"maxzoom":10},{"id":"counties","description":"county linework","fields":{"kind":"String","admin_level":"Number"},"minzoom":5,"maxzoom":10},{"id":"hydro","description":"coastline, land mask polygons, and Great Lakes polygon/shoreline","fields":{"kind":"String"},"minzoom":0,"maxzoom":10}]'
 sqlite3 "$OUT_MBTILES" "INSERT OR REPLACE INTO metadata(name,value) VALUES('name','CartoSky Boundaries v2');"
 sqlite3 "$OUT_MBTILES" "INSERT OR REPLACE INTO metadata(name,value) VALUES('id','cartosky-boundaries-v2');"
 sqlite3 "$OUT_MBTILES" "INSERT OR REPLACE INTO metadata(name,value) VALUES('description','Canonical boundary + hydro tileset for CartoSky');"

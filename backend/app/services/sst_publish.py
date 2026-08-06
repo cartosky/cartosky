@@ -19,12 +19,19 @@ Unlike MRMS this publishes into **two domains** from one source read:
 
 Both domains share one run id, so the two trees stay in lockstep.
 
-Coastlines: the native field arrives with its ocean edge already dilated a few
-source cells inland (``sst_fetch.fill_coastal_fringe``), because a bilinear warp
-onto a coarser grid otherwise retreats from the coast by up to a full target cell
-and the viewer draws that hard NaN edge as stair-step blocks. Warped valid
-fractions are correspondingly a little higher than the raw source, and sampling
-just inshore returns a neighbour-weighted nearest-ocean value rather than nothing.
+Coastlines are handled in two halves, because the grid alone cannot draw one:
+
+* **here**, each frame's ocean edge is dilated inland with
+  ``sst_fetch.fill_coastal_fringe`` before the warp, by a per-domain reach
+  (:data:`SST_COASTAL_FRINGE_CELLS_BY_DOMAIN`) — a bilinear warp onto a coarser
+  grid otherwise *retreats* from the coast by up to a full target cell;
+* **in the viewer**, ``display_prep.clip_to_water`` (registered for ``sst`` in
+  ``grid_display_prep``) makes the map draw a vector land-polygon mask directly
+  above the grid layer, so the visible data edge is the real coastline instead of
+  the grid's texel staircase, and the deliberate under-land bleed stays hidden.
+
+Consequences: warped valid fractions run well above the raw source, and sampling
+inshore returns a neighbour-weighted nearest-ocean value rather than nothing.
 """
 
 from __future__ import annotations
@@ -64,6 +71,7 @@ from .grid import (
 )
 from .observed_bundle_health import build_observed_bundle_health
 from .publish_utils import write_json_atomic
+from .sst_fetch import fill_coastal_fringe
 from .run_ids import format_run_id
 
 logger = logging.getLogger(__name__)
@@ -465,6 +473,35 @@ def _publish_domain(
 # Frame writes
 # ---------------------------------------------------------------------------
 
+#: Coastal fringe reach in **native 0.05° source cells** (~5.5 km each), per
+#: target domain. The dilation has to cover at least one target cell or the
+#: bilinear warp retreats from the coast and the data edge renders as a texel
+#: staircase; going comfortably past one cell also lets the viewer's vector land
+#: mask (``display_prep.clip_to_water``) trim a clean coastline out of it instead
+#: of exposing a ragged one.
+#:
+#:   na     — 9 km target cell  (~1.6 source cells) -> 6 cells ~= 33 km
+#:   global — 0.25° target cell (~5   source cells) -> 8 cells ~= 44 km
+#:
+#: Everything past the coastline is hidden by the mask, so these are sized for
+#: coverage, not for restraint — but they are still bounded, so inland NaN and
+#: enclosed masked water (the Great Lakes) stay empty.
+SST_COASTAL_FRINGE_CELLS_BY_DOMAIN: dict[str, int] = {
+    SST_CANONICAL_REGION_ID: 6,
+    SST_GLOBAL_REGION_ID: 8,
+}
+
+
+def coastal_fringe_cells_for_domain(domain: str) -> int:
+    """Fringe reach for a domain, defaulting to the canonical domain's value."""
+    return int(
+        SST_COASTAL_FRINGE_CELLS_BY_DOMAIN.get(
+            str(domain).strip().lower(),
+            SST_COASTAL_FRINGE_CELLS_BY_DOMAIN[SST_CANONICAL_REGION_ID],
+        )
+    )
+
+
 def _write_frame(
     *,
     data_root: Path,
@@ -475,8 +512,18 @@ def _write_frame(
     build_grid_artifacts: bool,
 ) -> bool:
     grid = get_target_grid(SST_MODEL_ID, domain)
+
+    # Dilate the ocean edge into the land NaN fringe BEFORE the warp, sized for
+    # this domain's target cell. Done per domain (not once at read time) because
+    # the two grids need different reaches.
+    source_values = np.asarray(frame.values, dtype=np.float32)
+    source_valid_fraction = float(np.isfinite(source_values).mean())
+    fringe_cells = coastal_fringe_cells_for_domain(domain)
+    source_values = fill_coastal_fringe(source_values, radius_cells=fringe_cells)
+    filled_valid_fraction = float(np.isfinite(source_values).mean())
+
     values, _ = warp_to_target_grid(
-        np.asarray(frame.values, dtype=np.float32),
+        source_values,
         frame.source_crs,
         frame.source_transform,
         model=SST_MODEL_ID,
@@ -521,6 +568,12 @@ def _write_frame(
         sidecar["source_filename"] = frame.source_filename
     source_metadata = dict(frame.metadata) if frame.metadata else {}
     source_metadata["actual_valid_time"] = valid_time.strftime(_TIME_FORMAT)
+    # Per-domain coastal dilation, recorded so it is auditable from a published
+    # sidecar rather than inferred from the ramp.
+    source_metadata["coastal_fringe_source_cells"] = fringe_cells
+    source_metadata["source_valid_fraction"] = round(source_valid_fraction, 6)
+    source_metadata["fringe_filled_valid_fraction"] = round(filled_valid_fraction, 6)
+    source_metadata["warped_valid_fraction"] = round(float(np.isfinite(values).mean()), 6)
     sidecar["source_metadata"] = source_metadata
     write_json_atomic(stage_var_dir / f"fh{int(forecast_hour):03d}.json", sidecar)
 

@@ -147,6 +147,8 @@ frontend/tests/unit/*
 !frontend/tests/unit/permalink-projection.test.ts
 # Globe v1.1 (hover intent + space background). Named files only, as above.
 !frontend/tests/unit/hover-intent.test.ts
+# SST coastline clip: land-mask layer contract (degradation + ordering).
+!frontend/tests/unit/land-mask-layer.test.ts
 
 !frontend/tests/e2e/
 frontend/tests/e2e/*

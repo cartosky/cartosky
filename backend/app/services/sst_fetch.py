@@ -30,10 +30,13 @@ reference code rather than importing it — the script is a confined spike):
 Values leave this module as float32 **°C** with fill masked to NaN, on an
 EPSG:4326 north-up transform. There is no °F path.
 
-The ocean edge is dilated a few source cells inland by
-:func:`fill_coastal_fringe` before anything warps it, so the coarser target grids
-do not retreat from the coastline. Accepted consequence: hover/sampling just
-inshore returns a neighbour-weighted nearest-ocean value instead of "no data".
+:func:`fill_coastal_fringe` lives here (a native-grid operation) but is *applied*
+per target grid by ``sst_publish``, because the reach a coarser grid needs to stop
+retreating from the coast differs between the 9 km and 0.25° domains. Accepted
+consequence: hover/sampling just inshore returns a neighbour-weighted
+nearest-ocean value instead of "no data", and the rendered data edge is trimmed
+back to the real coastline by the viewer's vector land mask
+(``display_prep.clip_to_water``).
 
 Availability is probed through the ERDDAP time axis
 (``.json?time[last]`` — a few hundred bytes) so the poller never downloads
@@ -333,13 +336,11 @@ def detect_kelvin(units: str | None, values: np.ndarray) -> tuple[bool, str]:
     return median > 100.0, f"magnitude fallback (median {median:.2f}, units={units!r})"
 
 
-#: Coastal fringe reach in **source** cells at the native 0.05° grid (~5.5 km per
-#: cell), so 3 cells ≈ 16 km. Sized against the target cells the field is warped
-#: onto: the na grid is 9 km (~1.6 source cells), so 3 cells covers a full target
-#: cell with margin and the coastline can no longer retreat. Deliberately small —
-#: this is a coastline cosmetic, not an interpolation product, and every extra
-#: cell pushes synthetic ocean values further under land.
-SST_COASTAL_FRINGE_SOURCE_CELLS = 3
+#: The *reach* is chosen per target grid by the publish path
+#: (``sst_publish.SST_COASTAL_FRINGE_CELLS_BY_DOMAIN``), because a 9 km grid and
+#: a 0.25° grid need different amounts of dilation to stop retreating from the
+#: coast. This is only the fallback for a direct call.
+SST_COASTAL_FRINGE_SOURCE_CELLS = 6
 
 
 def fill_coastal_fringe(
@@ -401,12 +402,7 @@ def fill_coastal_fringe(
     return out
 
 
-def read_native_sst(
-    path: Path,
-    variable: str = ERDDAP_VAR,
-    *,
-    fill_fringe: bool = True,
-) -> SSTNativeField:
+def read_native_sst(path: Path, variable: str = ERDDAP_VAR) -> SSTNativeField:
     """Read one SST granule to float32 °C on a north-up EPSG:4326 transform.
 
     GDAL's netCDF driver applies neither scale/offset nor the fill mask, so this
@@ -414,11 +410,10 @@ def read_native_sst(
     Kelvin when :func:`detect_kelvin` says so, flips a south-up array north-up,
     and rolls a 0..360 longitude layout to -180..180.
 
-    Finally :func:`fill_coastal_fringe` dilates the ocean edge by a few source
-    cells so the downstream bilinear warp does not retreat from the coastline.
-    That happens **once per fetched day**, here rather than in the publish path,
-    so both target grids share one fill. ``fill_fringe=False`` returns the raw
-    masked field (used by the coastline eyeball comparison).
+    The field returned here is the **raw masked** ocean field. Coastal fringe
+    dilation is applied later, per target grid, in ``sst_publish._write_frame``:
+    the reach depends on the target cell size, so a single shared fill would be
+    wrong for one of the two domains.
     """
     import rasterio  # local import: keeps module import cheap for probe-only use
     from rasterio.transform import from_origin
@@ -462,11 +457,6 @@ def read_native_sst(
         west = left
 
     values = np.ascontiguousarray(values, dtype=np.float32)
-    source_valid_fraction = float(np.isfinite(values).mean())
-
-    fringe_cells = SST_COASTAL_FRINGE_SOURCE_CELLS if fill_fringe else 0
-    if fringe_cells:
-        values = fill_coastal_fringe(values, radius_cells=fringe_cells)
     valid_fraction = float(np.isfinite(values).mean())
 
     return SSTNativeField(
@@ -483,10 +473,6 @@ def read_native_sst(
             "source_units": str(band_units or ""),
             "kelvin_converted": bool(kelvin),
             "units_decision": units_reason,
-            # Both fractions are recorded so the coastal dilation is auditable
-            # from a published sidecar instead of inferred.
-            "source_valid_fraction": round(source_valid_fraction, 6),
-            "valid_fraction": round(valid_fraction, 6),
-            "coastal_fringe_source_cells": int(fringe_cells),
+            "source_valid_fraction": round(valid_fraction, 6),
         },
     )

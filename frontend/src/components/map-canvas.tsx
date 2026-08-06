@@ -160,6 +160,19 @@ const STATE_BOUNDARY_LAYER_ID = "twf-state-boundaries";
 const COUNTRY_BOUNDARY_LAYER_ID = "twf-country-boundaries";
 const COUNTY_BOUNDARY_LAYER_ID = "twf-county-boundaries";
 const LAKE_MASK_LAYER_ID = "twf-lake-mask";
+/**
+ * Land-polygon fill drawn immediately ABOVE the grid WebGL layer for water-only
+ * variables (manifest `display_prep.clip_to_water`, i.e. SST). The grid's own
+ * data edge is a 9 km/0.25° texel staircase that meanders around the true
+ * coastline, and SST is deliberately dilated a little under land so the warp does
+ * not retreat from the shore — this mask turns both into a clean coastline.
+ *
+ * Hidden by default and only shown for variables that ask for it, so every other
+ * variable is untouched. Degrades to current behaviour when the deployed
+ * boundaries tileset has no `land_polygon` features: the layer simply renders
+ * nothing.
+ */
+const LAND_MASK_LAYER_ID = "twf-land-mask";
 const LAKE_SHORELINE_LAYER_ID = "twf-lake-shoreline";
 const ROADS_SOURCE_ID = "twf-roads";
 const ROAD_MAJOR_HALO_LAYER_ID = "twf-road-major-halo";
@@ -916,6 +929,18 @@ function getLakeFillColor(basemapMode: BasemapMode): string {
   return basemapMode === "dark" ? "#2C353C" : "#d4dadc";
 }
 
+/**
+ * Land colour of the CARTO raster basemap we draw over
+ * (`light_nolabels` / `dark_nolabels`). The land mask has to be indistinguishable
+ * from the basemap underneath it, otherwise the mask itself becomes visible as a
+ * differently-toned landmass. Sampled from the basemap tiles; note the dark tone
+ * is picked to match AFTER `getBasemapPaintSettings("dark")` raster-brightness is
+ * applied to the tiles, not the raw tile colour.
+ */
+function getLandFillColor(basemapMode: BasemapMode): string {
+  return basemapMode === "dark" ? "#2a2a2a" : "#fafaf8";
+}
+
 function getBasemapPaintSettings(basemapMode: BasemapMode): {
   "raster-brightness-min": number;
   "raster-brightness-max": number;
@@ -1190,6 +1215,7 @@ export function buildMapStyle(
   const mapBackgroundColor = getMapBackgroundColor(basemapMode);
   const boundaryLineColor = getBoundaryLineColor(basemapMode);
   const lakeFillColor = getLakeFillColor(basemapMode);
+  const landFillColor = getLandFillColor(basemapMode);
   const basemapPaint = getBasemapPaintSettings(basemapMode);
 
   return {
@@ -1316,6 +1342,24 @@ export function buildMapStyle(
         paint: {
           "fill-color": lakeFillColor,
           "fill-opacity": 1,
+        },
+      },
+      {
+        // See LAND_MASK_LAYER_ID. Declared hidden; the layer-ordering effect
+        // moves it directly above the grid layer and the grid effect shows it
+        // only for variables whose manifest sets display_prep.clip_to_water.
+        id: LAND_MASK_LAYER_ID,
+        type: "fill",
+        source: STATE_BOUNDARY_SOURCE_ID,
+        "source-layer": "hydro",
+        filter: ["==", "kind", "land_polygon"],
+        layout: {
+          visibility: "none",
+        },
+        paint: {
+          "fill-color": landFillColor,
+          "fill-opacity": 1,
+          "fill-antialias": true,
         },
       },
       {
@@ -2294,6 +2338,14 @@ export function MapCanvas({
       }
     }
 
+    // Water-only variables (SST) clip their grid to the vector land mask so the
+    // rendered edge is a real coastline. Every other variable leaves it hidden.
+    setLayerVisibility(
+      map,
+      LAND_MASK_LAYER_ID,
+      Boolean(gridActive && gridManifest?.display_prep?.clip_to_water),
+    );
+
     controller.ensureAttached(map, gridOverlayBeforeLayerId(map));
     controller.update({
       active: Boolean(gridActive && gridManifest && frameUrl),
@@ -2557,6 +2609,12 @@ export function MapCanvas({
     }
     if (map.getLayer(GRID_WEBGL_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
       map.moveLayer(GRID_WEBGL_LAYER_ID, COASTLINE_LAYER_ID);
+    }
+    // Must follow the grid move and precede every other move-before-coastline
+    // below: that leaves the mask directly above the grid, with contours,
+    // vectors, coastline, roads and labels all above the mask.
+    if (map.getLayer(LAND_MASK_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
+      map.moveLayer(LAND_MASK_LAYER_ID, COASTLINE_LAYER_ID);
     }
     for (const layerId of RASTER_RGB_LAYER_IDS) {
       if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {

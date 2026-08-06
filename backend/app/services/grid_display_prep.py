@@ -27,6 +27,12 @@ class GridDisplayPrepConfig:
     # Use for sparse fields whose nodata means "no signal" (radar echo
     # edges), not for dense fields whose nodata is the domain boundary.
     render_edge_fade: bool = False
+    # Render hint (values untouched): the viewer draws a vector land polygon
+    # mask immediately above this variable's grid layer, so the rendered data
+    # edge is the true coastline instead of the grid's own texel staircase.
+    # Only meaningful for water-only fields (SST), whose coverage stops at the
+    # shore and which are deliberately dilated slightly under land upstream.
+    clip_to_water: bool = False
 
 
 _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = {
@@ -142,6 +148,20 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         preserve_zero_support=True,
         support_min_value=0.1,
         support_coverage_threshold=0.15,
+    ),
+    # SST is water-only: no upscale, no smoothing (the bilinear warp is already
+    # smooth), just the render hint that the viewer should clip the grid to the
+    # vector land mask so the coastline is a real coastline and the under-land
+    # fringe bleed stays hidden.
+    #
+    # clamp_negative MUST stay False: real sea water reaches about -2 C, and the
+    # default True would silently rewrite every sub-zero pixel to 0.0.
+    ("sst", "sst"): GridDisplayPrepConfig(
+        id="sst_clip_to_water_v1",
+        upscale_factor=1,
+        smooth_sigma=None,
+        clamp_negative=False,
+        clip_to_water=True,
     ),
     ("hrrr", "vi_smoke"): GridDisplayPrepConfig(
         id="hrrr_vi_smoke_display_v1",
@@ -382,6 +402,8 @@ def prepare_grid_display_values(
     )
     if render_categorical_nearest:
         prep_meta["categorical_nearest"] = True
+    if config.clip_to_water:
+        prep_meta["clip_to_water"] = True
     if config.render_edge_fade:
         prep_meta["edge_fade"] = True
         # 0.0 dBZ sits below the reflectivity color floor (5 dBZ), matching

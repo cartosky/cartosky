@@ -361,6 +361,76 @@ def test_global_domain_publish_mirrors_the_scheduler_layout(
     assert (tmp_path / "staging" / "sst" / "domains" / "global" / result.run_id).is_dir()
 
 
+def test_coastal_fringe_reach_is_per_target_domain() -> None:
+    """A 9 km cell and a 0.25° cell need different dilation; one constant cannot
+    serve both."""
+    assert sst_publish.SST_COASTAL_FRINGE_CELLS_BY_DOMAIN == {"na": 6, "global": 8}
+    assert sst_publish.coastal_fringe_cells_for_domain("na") == 6
+    assert sst_publish.coastal_fringe_cells_for_domain("global") == 8
+    # Global's target cell is the coarser of the two, so it must reach further.
+    assert (
+        sst_publish.coastal_fringe_cells_for_domain("global")
+        > sst_publish.coastal_fringe_cells_for_domain("na")
+    )
+    # Unknown domain falls back to canonical rather than to zero (no fill).
+    assert sst_publish.coastal_fringe_cells_for_domain("nonesuch") == 6
+
+
+def test_published_manifest_carries_the_clip_to_water_render_hint(
+    tmp_path: Path, small_grids: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The frontend land-mask layer keys off manifest.display_prep.clip_to_water,
+    the same channel grid-webgl already reads edge_fade from."""
+    monkeypatch.delenv(FLAG, raising=False)
+    result = sst_publish.publish_sst_bundle(
+        data_root=tmp_path, frames=[_frame(_day(2026, 8, 4), 12.0)]
+    )
+    grid_manifest = json.loads(
+        (
+            tmp_path / "published" / "sst" / result.run_id / "sst" / "grid" / "manifest.json"
+        ).read_text()
+    )
+    display_prep = grid_manifest["display_prep"]
+    assert display_prep["clip_to_water"] is True
+    assert display_prep["id"] == "sst_clip_to_water_v1"
+    # No geometry-changing prep: the binary stays on the target grid as-is.
+    assert display_prep["upscale_factor"] == 1
+    assert display_prep["smooth_sigma"] == 0.0
+    assert "edge_fade" not in display_prep
+
+
+def test_sub_zero_sst_survives_display_prep(tmp_path: Path, small_grids: None) -> None:
+    """Polar water reaches about -2 C. GridDisplayPrepConfig.clamp_negative
+    defaults True, which would rewrite every sub-zero pixel to 0.0 — the sst
+    entry must switch it off."""
+    from app.services.grid_display_prep import prepare_grid_display_values
+
+    values = np.array([[-1.8, -0.5, 0.0], [4.0, np.nan, 21.0]], dtype=np.float32)
+    prepared, prep_meta = prepare_grid_display_values(model="sst", var="sst", values=values)
+
+    assert prep_meta is not None and prep_meta["clip_to_water"] is True
+    np.testing.assert_allclose(prepared[0, :2], [-1.8, -0.5], rtol=1e-6)
+    assert np.isnan(prepared[1, 1])
+
+    # And it survives the full pack/decode round trip rather than only in memory.
+    result = sst_publish.publish_sst_bundle(
+        data_root=tmp_path,
+        frames=[
+            sst_publish.SSTBundleFrame(
+                valid_time=_day(2026, 8, 4),
+                values=values,
+                source_transform=_STUB_TRANSFORM,
+            )
+        ],
+    )
+    grid_dir = tmp_path / "published" / "sst" / result.run_id / "sst" / "grid"
+    meta = json.loads((grid_dir / "manifest.json").read_text())["grid"]
+    encoded = np.frombuffer((grid_dir / "fh000.l0.u16.bin").read_bytes(), dtype="<u2")
+    decoded = encoded.astype(np.float64) * meta["scale"] + meta["offset"]
+    assert decoded[0] == pytest.approx(-1.8, abs=0.01)
+    assert decoded[1] == pytest.approx(-0.5, abs=0.01)
+
+
 def test_publish_requires_a_fresh_frame(tmp_path: Path, small_grids: None) -> None:
     with pytest.raises(ValueError):
         sst_publish.publish_sst_bundle(data_root=tmp_path, frames=[])

@@ -271,6 +271,12 @@ export type GridManifestDisplayPrep = {
   categorical_nearest?: boolean | null;
   edge_fade?: boolean | null;
   edge_fill_value?: number | null;
+  /**
+   * Water-only field (SST): draw the vector land-polygon mask immediately above
+   * this variable's grid layer, so the visible data edge is the real coastline
+   * instead of the grid's texel staircase.
+   */
+  clip_to_water?: boolean | null;
 };
 
 export type GridManifestCompositeLayer = {

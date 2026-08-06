@@ -313,8 +313,21 @@ def test_fringe_reach_grows_with_radius() -> None:
     ]
     assert covered == sorted(covered)
     assert covered[0] < covered[-1]
-    # The shipped default is what the na 9 km target cell needs.
-    assert sst_fetch.SST_COASTAL_FRINGE_SOURCE_CELLS == 3
+
+
+def test_read_native_sst_no_longer_fills_the_fringe_itself() -> None:
+    """The fill moved to the per-domain publish path; the reader stays raw.
+
+    Guards against a shared single-reach fill creeping back in — the two target
+    grids need different reaches, so one fill at read time is wrong for one of
+    them.
+    """
+    import inspect
+
+    signature = inspect.signature(sst_fetch.read_native_sst)
+    assert "fill_fringe" not in signature.parameters
+    source = inspect.getsource(sst_fetch.read_native_sst)
+    assert "fill_coastal_fringe" not in source
 
 
 # ---------------------------------------------------------------------------

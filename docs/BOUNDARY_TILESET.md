@@ -19,7 +19,17 @@ Expected source layers:
 
 - `boundaries` with `kind` in `country|state`
 - `counties` with `kind` in `county`
-- `hydro` with `kind` in `coastline|great_lake_polygon|great_lake_shoreline`
+- `hydro` with `kind` in `coastline|land_polygon|great_lake_polygon|great_lake_shoreline`
+
+`land_polygon` is the Natural Earth 10m **land** polygon set — the polygon
+counterpart of the `coastline` lines, from the same NE 10m physical family so the
+two edges coincide. The frontend uses it as a fill mask drawn immediately *above*
+the grid WebGL layer for water-only variables (`display_prep.clip_to_water`, i.e.
+SST), which turns the grid's texel staircase into a real coastline and hides the
+deliberate under-land fringe bleed. The Great Lakes are erased out of it during
+the build (NE 10m land does not cut them out), so it never conflicts with
+`great_lake_polygon` — which the runtime layer order actually places *above*
+the grid layer — and the lakes keep reading as water when the mask is active.
 
 ## Build script
 
@@ -46,6 +56,9 @@ Implemented in the build script via separate tippecanoe passes and `tile-join`:
 - County boundaries high detail: `z8-z10`
 - Great Lakes polygons: `z3-z8`
 - Great Lakes shoreline: `z0-z10`
+- Land mask polygons: `z0-z6` + `z7-z10` (deliberately identical tiers, buffer
+  and simplification to the coastline passes — any divergence makes the mask edge
+  shear away from the drawn coastline)
 
 ## Simplification and artifact controls
 
