@@ -343,9 +343,9 @@ def test_gfs_ptype_intensity_uses_synoptic_mslp_center_tuning() -> None:
     assert hints["contour_key"] == "mslp"
     assert hints["contour_conversion"] == "pressure_pa_to_hpa"
     assert hints["center_radius_km"] == "900"
-    assert hints["center_min_delta"] == "8"
-    assert hints["center_min_separation_km"] == "1000"
-    assert hints["center_max_count"] == "18"
+    assert hints["center_min_delta"] == "4"
+    assert hints["center_min_separation_km"] == "600"
+    assert hints["center_max_count"] == "32"
     assert hints["center_skip_edge"] == "true"
 
 

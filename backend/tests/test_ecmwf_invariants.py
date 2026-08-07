@@ -360,9 +360,9 @@ def test_ecmwf_buildable_var_set_and_defaults_invariants() -> None:
     assert ptype_intensity_spec.selectors.hints["contour_key"] == "mslp"
     assert ptype_intensity_spec.selectors.hints["contour_conversion"] == "pressure_pa_to_hpa"
     assert ptype_intensity_spec.selectors.hints["center_radius_km"] == "900"
-    assert ptype_intensity_spec.selectors.hints["center_min_delta"] == "8"
-    assert ptype_intensity_spec.selectors.hints["center_min_separation_km"] == "1000"
-    assert ptype_intensity_spec.selectors.hints["center_max_count"] == "18"
+    assert ptype_intensity_spec.selectors.hints["center_min_delta"] == "4"
+    assert ptype_intensity_spec.selectors.hints["center_min_separation_km"] == "600"
+    assert ptype_intensity_spec.selectors.hints["center_max_count"] == "32"
     assert ptype_intensity_spec.selectors.hints["center_skip_edge"] == "true"
 
     msl_spec = ECMWF_MODEL.get_var("msl")

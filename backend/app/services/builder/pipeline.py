@@ -405,6 +405,16 @@ def _build_contour_metadata_for_variable(
     return metadata, contour_path
 
 
+def _pressure_centers_enabled(model: str, ensemble_view: str | None) -> bool:
+    normalized_model = str(model or "").strip().lower()
+    normalized_view = str(ensemble_view or "").strip().lower()
+    if normalized_model in {"gefs", "eps"}:
+        # Ensemble models get centers on mean-view frames only; member and
+        # stats frames build in members.py/stats.py and never reach this hook.
+        return normalized_view == "mean"
+    return not normalized_view
+
+
 def _center_kind_from_contour_key(contour_key: str) -> str | None:
     normalized = str(contour_key or "").strip().lower()
     if normalized == "mslp" or "pressure" in normalized:
@@ -439,7 +449,7 @@ def _build_pressure_center_metadata_for_variable(
     fetch_ctx: FetchContext | None,
     ensemble_view: str | None = None,
 ) -> dict[str, Any] | None:
-    if str(model or "").strip().lower() in {"gefs", "eps"} or str(ensemble_view or "").strip():
+    if not _pressure_centers_enabled(model, ensemble_view):
         return None
 
     selectors = getattr(var_spec_model, "selectors", None)

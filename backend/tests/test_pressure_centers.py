@@ -74,3 +74,17 @@ def test_detect_pressure_centers_suppresses_nearby_duplicate_highs() -> None:
     highs = [center for center in centers if center["type"] == "H"]
     assert len(highs) == 1
     assert highs[0]["value"] == 1030
+
+def test_pressure_centers_enabled_gate() -> None:
+    from app.services.builder.pipeline import _pressure_centers_enabled
+
+    # Deterministic models: enabled only without an ensemble view.
+    assert _pressure_centers_enabled("gfs", None) is True
+    assert _pressure_centers_enabled("gfs", "mean") is False
+
+    # Ensemble models: mean-view frames only.
+    assert _pressure_centers_enabled("gefs", "mean") is True
+    assert _pressure_centers_enabled("eps", "MEAN") is True
+    assert _pressure_centers_enabled("gefs", None) is False
+    assert _pressure_centers_enabled("gefs", "members") is False
+    assert _pressure_centers_enabled("eps", "") is False
