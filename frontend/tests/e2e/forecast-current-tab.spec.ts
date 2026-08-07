@@ -216,6 +216,14 @@ test.describe("Forecast current tab", () => {
     await page.goto("/forecast?lat=43.55&lon=-96.73&name=Sioux%20Falls%2C%20SD");
     await page.getByRole("tab", { name: "7-day" }).click();
 
+    const expectCombinedForecastChart = async () => {
+      const chartPanel = page.locator("[data-forecast-hourly-chart]");
+      await expect(chartPanel).toHaveCount(1);
+      await expect(chartPanel.getByText("Temperature · Next 24 Hours", { exact: true })).toBeVisible();
+      await expect(chartPanel.locator("svg path")).toHaveCount(4);
+    };
+    await expectCombinedForecastChart();
+
     await expect(page.getByText("75°", { exact: true })).toBeVisible();
     await expect(page.getByText("97°", { exact: true })).toBeVisible();
     await expect(page.getByText("93°", { exact: true })).toBeVisible();
@@ -239,6 +247,7 @@ test.describe("Forecast current tab", () => {
     expect(sevenDayHighBox!.x).toBeLessThan(sevenDayLowBox!.x);
 
     await page.getByRole("tab", { name: "Extended" }).click();
+    await expectCombinedForecastChart();
     const extendedRow = page.getByRole("button").filter({ hasText: "Mon" }).last();
     const extendedHighBox = await extendedRow.getByText("94°", { exact: true }).boundingBox();
     const extendedLowBox = await extendedRow.getByText("73°", { exact: true }).boundingBox();

@@ -863,6 +863,44 @@ function HourlyChart({ hourly }: { hourly: HourlyEntry[] }) {
   );
 }
 
+function upcomingHourlyEntries(hourly: HourlyEntry[], timeZone: string | null): HourlyEntry[] {
+  const nowKey = currentHourKey(timeZone);
+  const filtered = hourly.filter(e => e.time && e.time.slice(0, 13) >= nowKey);
+  return filtered.length ? filtered : hourly;
+}
+
+function HourlyChartPanel({ hourly, timeZone }: { hourly: HourlyEntry[]; timeZone: string | null }) {
+  const upcoming = upcomingHourlyEntries(hourly, timeZone);
+  if (!upcoming.length) return null;
+
+  const chartEntries = upcoming.slice(0, 24);
+  const timeIdx = [0, 6, 12, 18, chartEntries.length - 1].filter((v, i, a) => a.indexOf(v) === i);
+
+  return (
+    <div data-forecast-hourly-chart className="rounded-xl bg-white/[0.03] p-4 md:p-5">
+      <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.20em] text-white/40">
+        Temperature · Next 24 Hours
+      </p>
+      <HourlyChart hourly={upcoming} />
+      <div className="relative mt-1.5 h-5">
+        {timeIdx.map(i => {
+          const pct = chartEntries.length > 1 ? (i / (chartEntries.length - 1)) * 100 : 0;
+          const align = i === 0 ? "" : i >= chartEntries.length - 1 ? "-translate-x-full" : "-translate-x-1/2";
+          return (
+            <span
+              key={i}
+              className={`absolute top-0 text-[10px] text-white/35 ${align}`}
+              style={{ left: `${pct}%` }}
+            >
+              {formatHour(chartEntries[i].time)}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Daily Temp Chart (Extended tab) ──────────────────────────────────
 
 function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
@@ -1617,34 +1655,10 @@ function HourlyTab({ hourly, timeZone }: { hourly: HourlyEntry[]; timeZone: stri
   if (!hourly.length) {
     return <div className="py-16 text-center text-[13px] text-white/35">No hourly data available.</div>;
   }
-  const nowKey = currentHourKey(timeZone);
-  const filtered = hourly.filter(e => e.time && e.time.slice(0, 13) >= nowKey);
-  const upcoming = filtered.length ? filtered : hourly;
-  const chartEntries = upcoming.slice(0, 24);
-  const timeIdx = [0, 6, 12, 18, chartEntries.length - 1].filter((v, i, a) => a.indexOf(v) === i);
+  const upcoming = upcomingHourlyEntries(hourly, timeZone);
   return (
     <div className="space-y-5">
-      <div className="rounded-xl bg-white/[0.03] p-4 md:p-5">
-        <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.20em] text-white/40">
-          Temperature · Next 24 Hours
-        </p>
-        <HourlyChart hourly={upcoming} />
-        <div className="relative h-5 mt-1.5">
-          {timeIdx.map(i => {
-            const pct = chartEntries.length > 1 ? (i / (chartEntries.length - 1)) * 100 : 0;
-            const align = i === 0 ? "" : i >= chartEntries.length - 1 ? "-translate-x-full" : "-translate-x-1/2";
-            return (
-              <span
-                key={i}
-                className={`absolute top-0 text-[10px] text-white/35 ${align}`}
-                style={{ left: `${pct}%` }}
-              >
-                {formatHour(chartEntries[i].time)}
-              </span>
-            );
-          })}
-        </div>
-      </div>
+      <HourlyChartPanel hourly={hourly} timeZone={timeZone} />
       <HourlyStrip hourly={upcoming} />
     </div>
   );
@@ -1784,14 +1798,17 @@ function TextPeriodsDetail({ periods }: { periods: TextForecastPeriod[] }) {
   );
 }
 
-function SevenDayTab({ daily, textForecast }: {
+function SevenDayTab({ daily, hourly, timeZone, textForecast }: {
   daily: DailyEntry[];
+  hourly: HourlyEntry[];
+  timeZone: string | null;
   textForecast: ForecastPayload["official_text_forecast"];
 }) {
   const nwsDaily = textForecast ? nwsDailyRows(textForecast.periods) : null;
   const rows = nwsDaily?.rows.length ? nwsDaily.rows : daily;
   return (
     <div className="space-y-8">
+      <HourlyChartPanel hourly={hourly} timeZone={timeZone} />
       <DailyRangeRows
         daily={rows}
         limit={7}
@@ -1809,11 +1826,17 @@ function SevenDayTab({ daily, textForecast }: {
 
 // ── Extended Tab ──────────────────────────────────────────────────────
 
-function ExtendedTab({ daily, attribution }: { daily: DailyEntry[]; attribution: string | null }) {
+function ExtendedTab({ daily, hourly, timeZone, attribution }: {
+  daily: DailyEntry[];
+  hourly: HourlyEntry[];
+  timeZone: string | null;
+  attribution: string | null;
+}) {
   if (!daily.length) return null;
 
   return (
     <div className="space-y-6">
+      <HourlyChartPanel hourly={hourly} timeZone={timeZone} />
       <div className="rounded-xl bg-white/[0.03] p-4 md:p-5">
         <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.20em] text-white/40">
           Temperature · 15-Day Outlook
@@ -2681,8 +2704,8 @@ export default function Forecast() {
         >
           {activeTab === "current"    && <CurrentTab forecast={f} checkingAlerts={f.source_status?.nws === "pending"} />}
           {activeTab === "hourly"     && <HourlyTab hourly={f.hourly} timeZone={f.location.timezone} />}
-          {activeTab === "7day"       && <SevenDayTab daily={f.daily} textForecast={f.official_text_forecast} />}
-          {activeTab === "extended"   && <ExtendedTab daily={f.daily} attribution={f.attribution.daily} />}
+          {activeTab === "7day"       && <SevenDayTab daily={f.daily} hourly={f.hourly} timeZone={f.location.timezone} textForecast={f.official_text_forecast} />}
+          {activeTab === "extended"   && <ExtendedTab daily={f.daily} hourly={f.hourly} timeZone={f.location.timezone} attribution={f.attribution.daily} />}
           {activeTab === "models"     && (
             <ModelsTabContent
               lat={f.location.latitude}

@@ -143,7 +143,7 @@ describe("nino region layer", () => {
   });
 
   it("stays hidden in the base style for every variable, SST included", () => {
-    for (const variable of ["tmp2m", "reflectivity", "precip_total", "sst", "sst_anom"]) {
+    for (const variable of ["tmp2m", "reflectivity", "precip_total", "sst", "sst_anom", "sst_trend_7d"]) {
       const style = buildMapStyle(null, null, "light", 1, variable);
       expect(layerById(style, NINO_LINE_LAYER_ID).layout?.visibility).toBe("none");
       expect(layerById(style, NINO_LABEL_LAYER_ID).layout?.visibility).toBe("none");
@@ -151,9 +151,10 @@ describe("nino region layer", () => {
   });
 
   it("gates visibility on an explicit SST id allowlist", () => {
-    expect([...NINO_OVERLAY_VARIABLE_IDS]).toEqual(["sst", "sst_anom"]);
+    expect([...NINO_OVERLAY_VARIABLE_IDS]).toEqual(["sst", "sst_anom", "sst_trend_7d"]);
     expect(isNinoOverlayVariable("sst")).toBe(true);
     expect(isNinoOverlayVariable("sst_anom")).toBe(true);
+    expect(isNinoOverlayVariable("sst_trend_7d")).toBe(true);
     for (const variable of ["tmp2m", "tmp850_anom", "reflectivity", "sst_foo", "", undefined, null]) {
       expect(isNinoOverlayVariable(variable)).toBe(false);
     }

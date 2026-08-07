@@ -84,7 +84,7 @@ export function buildNinoRegionsGeoJson(regions: readonly NinoRegion[] = [NINO_3
  * manifest's `clip_to_water` flag: the box is SST semantics (ENSO reference),
  * not ocean-mask semantics, so a future water-only variable does not inherit it.
  */
-export const NINO_OVERLAY_VARIABLE_IDS = ["sst", "sst_anom"] as const;
+export const NINO_OVERLAY_VARIABLE_IDS = ["sst", "sst_anom", "sst_trend_7d"] as const;
 
 export function isNinoOverlayVariable(variable?: string | null): boolean {
   return Boolean(variable && (NINO_OVERLAY_VARIABLE_IDS as readonly string[]).includes(variable));
