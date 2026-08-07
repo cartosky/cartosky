@@ -126,6 +126,12 @@ def _log_frame_memory_checkpoint(stage: str, **details: Any) -> None:
 HOVER_VALUE_DOWNSAMPLE_FACTOR = 1
 CANONICAL_COVERAGE = "conus"
 
+# Contour GeoJSON payload trimming. 4 decimal degrees is ~11 m, far below the
+# 3 km-25 km grids the contours come from. The simplify tolerance is expressed
+# as a fraction of the warped pixel size so it stays grid-relative.
+_CONTOUR_COORDINATE_PRECISION = 4
+_CONTOUR_SIMPLIFY_PIXEL_FRACTION = 0.05
+
 
 def _derived_output_matches_target_grid(
     *,
@@ -1188,6 +1194,7 @@ def build_iso_contour_geojson(
                 raise ValueError("build_iso_contour_geojson requires level or levels")
             contour_levels = [float(level)]
 
+        raw_geojson_path = tmp_dir_path / "contours.geojson"
         contour_cmd = [
             gdal_contour_bin,
             "-a",
@@ -1197,9 +1204,34 @@ def build_iso_contour_geojson(
         ]
         for contour_level in contour_levels:
             contour_cmd.extend(["-fl", str(contour_level)])
-        contour_cmd.extend([str(tmp_path), str(out_geojson_path)])
+        contour_cmd.extend([str(tmp_path), str(raw_geojson_path)])
         subprocess.run(
             contour_cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        # Shrink the payload the viewer fetches per frame: drop coordinate
+        # decimals the grid cannot resolve, and thin the near-collinear
+        # vertices gdal_contour emits at every grid-cell crossing. The
+        # simplify tolerance is a fraction of the warped pixel size, so it
+        # scales with the source grid instead of assuming a resolution.
+        with rasterio.open(tmp_path) as warped_ds:
+            pixel_size = abs(float(warped_ds.transform.a))
+        simplify_tolerance = pixel_size * _CONTOUR_SIMPLIFY_PIXEL_FRACTION
+        subprocess.run(
+            [
+                _gdal("ogr2ogr"),
+                "-f",
+                "GeoJSON",
+                "-simplify",
+                str(simplify_tolerance),
+                "-lco",
+                f"COORDINATE_PRECISION={_CONTOUR_COORDINATE_PRECISION}",
+                str(out_geojson_path),
+                str(raw_geojson_path),
+            ],
             check=True,
             capture_output=True,
             text=True,

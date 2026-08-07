@@ -156,6 +156,8 @@ frontend/tests/unit/*
 # SST share-overlay freshness-tag suppression + inline "New" badge registry.
 !frontend/tests/unit/share-overlay-observed-status.test.ts
 !frontend/tests/unit/new-feature-variable-badges.test.ts
+# Contour scrub smoothness: fh-masked selection-key comparison.
+!frontend/tests/unit/contour-selection.test.ts
 
 !frontend/tests/e2e/
 frontend/tests/e2e/*

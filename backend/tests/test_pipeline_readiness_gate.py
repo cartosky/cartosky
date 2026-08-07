@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import tempfile
 from datetime import datetime
@@ -259,6 +260,26 @@ def test_build_frame_tmp2m_skips_dead_contour_generation(monkeypatch, tmp_path: 
     assert "contours" not in sidecar
 
 
+def _fake_contour_cli_run(cmd, check, capture_output, text):
+    """Stand in for the gdalwarp → gdal_contour → ogr2ogr chain.
+
+    `gdalwarp` copies the real source GTiff the pipeline wrote, so the warped
+    raster keeps a readable transform; `ogr2ogr` takes its destination before
+    its source, unlike the other two.
+    """
+    del check, capture_output, text
+    command_name = Path(cmd[0]).name
+    if command_name == "gdalwarp":
+        shutil.copyfile(cmd[-2], cmd[-1])
+    elif command_name == "gdal_contour":
+        Path(cmd[-1]).write_text('{"type":"FeatureCollection","features":[]}')
+    elif command_name == "ogr2ogr":
+        shutil.copyfile(cmd[-1], cmd[-2])
+    else:
+        raise AssertionError(f"unexpected command: {cmd}")
+    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+
 def test_build_iso_contour_geojson_uses_output_parent_for_scratch(monkeypatch, tmp_path: Path) -> None:
     output_path = tmp_path / "staging" / "nam" / "20260531_00z" / "vort500" / "contours" / "fh016_height_500mb.geojson"
     temp_dir_calls: list[Path] = []
@@ -272,20 +293,9 @@ def test_build_iso_contour_geojson_uses_output_parent_for_scratch(monkeypatch, t
     def _fake_gdal(binary_name: str) -> str:
         return binary_name
 
-    def _fake_run(cmd, check, capture_output, text):
-        del check, capture_output, text
-        command_name = Path(cmd[0]).name
-        if command_name == "gdalwarp":
-            Path(cmd[-1]).write_bytes(b"warped")
-        elif command_name == "gdal_contour":
-            Path(cmd[-1]).write_text('{"type":"FeatureCollection","features":[]}')
-        else:
-            raise AssertionError(f"unexpected command: {cmd}")
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
     monkeypatch.setattr(pipeline_module.tempfile, "TemporaryDirectory", _recording_temp_dir)
     monkeypatch.setattr(pipeline_module, "_gdal", _fake_gdal)
-    monkeypatch.setattr(pipeline_module.subprocess, "run", _fake_run)
+    monkeypatch.setattr(pipeline_module.subprocess, "run", _fake_contour_cli_run)
 
     pipeline_module.build_iso_contour_geojson(
         value_data=np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
@@ -296,3 +306,42 @@ def test_build_iso_contour_geojson_uses_output_parent_for_scratch(monkeypatch, t
 
     assert output_path.exists()
     assert temp_dir_calls == [output_path.parent]
+
+
+def test_build_iso_contour_geojson_trims_coordinates(monkeypatch, tmp_path: Path) -> None:
+    """The GeoJSON the viewer fetches is written with limited coordinate
+    precision and a grid-relative simplify tolerance."""
+    output_path = tmp_path / "contours" / "fh016_height_500mb.geojson"
+    commands: list[list[str]] = []
+
+    def _fake_gdal(binary_name: str) -> str:
+        return binary_name
+
+    def _recording_run(cmd, check, capture_output, text):
+        commands.append([str(item) for item in cmd])
+        return _fake_contour_cli_run(cmd, check, capture_output, text)
+
+    monkeypatch.setattr(pipeline_module, "_gdal", _fake_gdal)
+    monkeypatch.setattr(pipeline_module.subprocess, "run", _recording_run)
+
+    pixel_size = 0.25
+    pipeline_module.build_iso_contour_geojson(
+        value_data=np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+        value_transform=from_origin(-130.0, 50.0, pixel_size, pixel_size),
+        value_crs="EPSG:4326",
+        out_geojson_path=output_path,
+        levels=[2.0, 3.0],
+    )
+
+    ogr_cmd = next(cmd for cmd in commands if Path(cmd[0]).name == "ogr2ogr")
+    assert "-lco" in ogr_cmd
+    assert ogr_cmd[ogr_cmd.index("-lco") + 1] == "COORDINATE_PRECISION=4"
+    assert "-simplify" in ogr_cmd
+    tolerance = float(ogr_cmd[ogr_cmd.index("-simplify") + 1])
+    # Grid-relative and far below half a grid cell, so contours stay visually
+    # identical to the source grid at any zoom.
+    assert 0.0 < tolerance < pixel_size / 2
+    assert tolerance == pytest.approx(pixel_size * pipeline_module._CONTOUR_SIMPLIFY_PIXEL_FRACTION)
+    # The final artifact is written by ogr2ogr, not straight out of gdal_contour.
+    assert ogr_cmd[-2] == str(output_path)
+    assert json.loads(output_path.read_text())["type"] == "FeatureCollection"

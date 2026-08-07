@@ -25,6 +25,8 @@ import {
 import { resolveCityFrameSamplingOutcome, type CityFrameSamplingPayload } from "@/lib/city-label-sampling";
 import { productFetch, type GridManifestResponse, type PressureCenter } from "@/lib/api";
 import { API_ORIGIN, MAP_VIEW_DEFAULTS, TILES_BASE } from "@/lib/config";
+import { parseContourResponse } from "@/lib/contour_parse";
+import { isSameContourSelection } from "@/lib/contour-selection";
 import {
   SCRUB_FAR_END_FORWARD_FH,
   SCRUB_FAR_END_FORWARD_FH_MOBILE,
@@ -1871,7 +1873,7 @@ export function MapCanvas({
         if (!response.ok) {
           throw new Error(`Contour prefetch failed: ${response.status}`);
         }
-        return (await response.json()) as GeoJSON.FeatureCollection;
+        return parseContourResponse(response);
       })
       .then((payload) => {
         rememberContourPayload(normalizedUrl, payload);
@@ -2400,7 +2402,11 @@ export function MapCanvas({
       }
       promoteContourPrefetchUrl(normalizedContourUrl);
       void requestContourWarmFetch(normalizedContourUrl);
-      if (contourSource && typeof contourSource.setData === "function") {
+      if (
+        contourSource
+        && typeof contourSource.setData === "function"
+        && !isSameContourSelection(activeContourUrlRef.current, normalizedContourUrl)
+      ) {
         activeContourUrlRef.current = "";
         activeContourPayloadRef.current = null;
         setLayerVisibility(map, CONTOUR_LAYER_ID, false);
@@ -3234,11 +3240,17 @@ export function MapCanvas({
     contourAbortRef.current?.abort();
     contourAbortRef.current = null;
 
-    activeContourUrlRef.current = "";
-    activeContourPayloadRef.current = null;
-    setLayerVisibility(map, CONTOUR_LAYER_ID, false);
-    setLayerVisibility(map, CONTOUR_LABEL_LAYER_ID, false);
-    source.setData(EMPTY_FEATURE_COLLECTION as any);
+    // Blanking on every cache miss is what makes fast scrubbing flicker. A miss
+    // on another forecast hour of the same selection keeps the drawn contours up
+    // until the new payload lands; anything else (different model/run/variable/
+    // domain) still clears immediately so stale lines never sit over a new field.
+    if (!isSameContourSelection(activeContourUrlRef.current, normalizedUrl)) {
+      activeContourUrlRef.current = "";
+      activeContourPayloadRef.current = null;
+      setLayerVisibility(map, CONTOUR_LAYER_ID, false);
+      setLayerVisibility(map, CONTOUR_LABEL_LAYER_ID, false);
+      source.setData(EMPTY_FEATURE_COLLECTION as any);
+    }
 
     const controller = new AbortController();
     contourAbortRef.current = controller;
@@ -3253,7 +3265,9 @@ export function MapCanvas({
         if (!response.ok) {
           throw new Error(`Contour request failed: ${response.status}`);
         }
-        const payload = (await response.json()) as GeoJSON.FeatureCollection;
+        // Parse runs in the contour worker; the metric still spans fetch+parse
+        // exactly as it did when the parse was inline.
+        const payload = await parseContourResponse(response);
         trackNetworkFetchDuration({
           metric_name: "contour_fetch_duration",
           started_at_ms: startedAtMs,
@@ -3277,6 +3291,20 @@ export function MapCanvas({
           return;
         }
         console.warn("[map] contour fetch failed", { contourGeoJsonUrl: normalizedUrl, error });
+        // The hold above is only a bridge to the incoming payload. If that
+        // payload never arrives, clear rather than leave a previous forecast
+        // hour's contours sitting over this one indefinitely (share/GIF capture
+        // would bake them in). Skip when a newer request has taken over.
+        if (contourRequestTokenRef.current !== requestToken) {
+          return;
+        }
+        if (activeContourUrlRef.current && activeContourUrlRef.current !== normalizedUrl) {
+          activeContourUrlRef.current = "";
+          activeContourPayloadRef.current = null;
+          setLayerVisibility(map, CONTOUR_LAYER_ID, false);
+          setLayerVisibility(map, CONTOUR_LABEL_LAYER_ID, false);
+          source.setData(EMPTY_FEATURE_COLLECTION as any);
+        }
       })
       .finally(() => {
         contourPrefetchInFlightRef.current.delete(normalizedUrl);
@@ -3353,7 +3381,7 @@ export function MapCanvas({
           if (!response.ok) {
             throw new Error(`Contour prefetch failed: ${response.status}`);
           }
-          const payload = (await response.json()) as GeoJSON.FeatureCollection;
+          const payload = await parseContourResponse(response);
           if (controller.signal.aborted) {
             return;
           }
