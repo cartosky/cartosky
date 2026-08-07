@@ -353,14 +353,14 @@ export function defaultBasemapModeForSelection(model: string, variable: string):
   return "light";
 }
 
-const HRRR_SMOKE_POINT_LABELS_VARIABLES = new Set(["vi_smoke", "smoke_sfc"]);
+const HRRR_POINT_LABELS_DEFAULT_OFF_VARIABLES = new Set(["vi_smoke", "smoke_sfc", "ltng"]);
 
-export function isHrrrSmokePointLabelsSelection(model: string, variable: string): boolean {
-  return model === "hrrr" && HRRR_SMOKE_POINT_LABELS_VARIABLES.has(variable);
+export function isHrrrPointLabelsDefaultOffSelection(model: string, variable: string): boolean {
+  return model === "hrrr" && HRRR_POINT_LABELS_DEFAULT_OFF_VARIABLES.has(variable);
 }
 
 export function defaultPointLabelsEnabledForSelection(model: string, variable: string): boolean {
-  return !isHrrrSmokePointLabelsSelection(model, variable);
+  return !isHrrrPointLabelsDefaultOffSelection(model, variable);
 }
 
 // The NWS warnings overlay only applies to radar-derived MRMS variables, not the precip ones.

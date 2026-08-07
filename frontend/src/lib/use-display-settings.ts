@@ -15,7 +15,7 @@ import {
   writeNwsWarningsPreference,
   writePointLabelsPreference,
   writeZoomControlsPreference,
-  isHrrrSmokePointLabelsSelection,
+  isHrrrPointLabelsDefaultOffSelection,
 } from "@/lib/app-utils";
 import type { ViewerLayoutMode } from "@/lib/viewer-layout";
 
@@ -77,9 +77,9 @@ export function useDisplaySettings(
 
   // Resolve null → layout default. Explicit true/false is always honoured.
   const isMobileLayout = viewerLayoutMode === "mobile";
-  const smokeSelectionActive = isHrrrSmokePointLabelsSelection(model, variable);
+  const selectionSpecificPointLabelsPreference = isHrrrPointLabelsDefaultOffSelection(model, variable);
   const pointLabelsDefault = defaultPointLabelsEnabledForSelection(model, variable);
-  const pointLabelsEnabled = smokeSelectionActive
+  const pointLabelsEnabled = selectionSpecificPointLabelsPreference
     ? (hrrrSmokePointLabelsPreference ?? pointLabelsDefault)
     : pointLabelsPreference;
   const zoomControlsVisible = zoomPreference ?? (isDesktopViewerLayout ? true : false);
@@ -87,7 +87,7 @@ export function useDisplaySettings(
   const legendVisible = legendPreference ?? legendDefault;
 
   const setPointLabelsEnabled: React.Dispatch<React.SetStateAction<boolean>> = (value) => {
-    if (smokeSelectionActive) {
+    if (selectionSpecificPointLabelsPreference) {
       setHrrrSmokePointLabelsPreference((current) => {
         const effective = current ?? pointLabelsDefault;
         return typeof value === "function" ? value(effective) : value;
