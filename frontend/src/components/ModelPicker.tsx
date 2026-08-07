@@ -4,9 +4,11 @@ import { useNavigate } from "react-router-dom";
 import { ChevronDown, LockKeyhole, Search, Star, X } from "lucide-react";
 
 import type { GroupedOption } from "@/lib/app-utils";
+import { NewFeatureBadgeInline } from "@/components/ui/NewFeatureBadge";
 import { VIEWER_FIELD_TRIGGER_CHEVRON_CLASSNAME, viewerFieldTriggerClassName } from "@/components/ui/viewer-field-trigger";
 import { captureProductAnalyticsEvent } from "@/lib/analytics";
 import { useEntitlements } from "@/lib/entitlements";
+import { NEW_MODEL_BADGES, newFeatureForId } from "@/lib/new-features";
 import { useModelFavorites } from "@/lib/use-model-favorites";
 import { cn } from "@/lib/utils";
 
@@ -374,6 +376,7 @@ export function ModelPicker({
             const favorited = favoriteSet.has(option.value);
             const lockedReason = entitlements.getLockedReason(option.value);
             const locked = Boolean(lockedReason);
+            const newFeature = newFeatureForId(NEW_MODEL_BADGES, option.value);
             return (
               <div
                 key={option.value}
@@ -428,6 +431,10 @@ export function ModelPicker({
                       {categoryLabel}
                     </span>
                   ) : null}
+                  {/* Last in the row: the "New" pill owns the right
+                      edge, so it reads as an announcement rather than
+                      another metadata chip (stats/coverage/category). */}
+                  {newFeature ? <NewFeatureBadgeInline feature={newFeature} /> : null}
                 </button>
               </div>
             );
