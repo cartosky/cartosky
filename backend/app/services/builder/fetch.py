@@ -145,6 +145,14 @@ ENV_GRIB_DISK_CACHE_LOCK = (
     "TWF_V3_GRIB_DISK_CACHE_LOCK",
     "TWF_V3_DISK_CACHE_LOCK",
 )
+ENV_FETCH_DISK_FAST_PATH = (
+    "CARTOSKY_FETCH_DISK_FAST_PATH",
+    "TWF_FETCH_DISK_FAST_PATH",
+)
+ENV_DECODED_CACHE_MB = (
+    "CARTOSKY_DECODED_CACHE_MB",
+    "TWF_DECODED_CACHE_MB",
+)
 DEFAULT_GRIB_DISK_LOCK_TIMEOUT_SECONDS = 8.0
 DEFAULT_GRIB_DISK_LOCK_POLL_SECONDS = 0.1
 DEFAULT_IDX_NEGATIVE_INITIAL_TTL_SECONDS = 20.0
@@ -169,6 +177,14 @@ DEFAULT_FULL_GRIB_FALLBACK_MAX_BYTES = 1024 * 1024 * 1024
 DEFAULT_EPS_DIRECT_MEAN_LATE_PROBE_LEAD_HOURS = 24
 DEFAULT_EPS_DIRECT_MEAN_TERMINAL_RETRY_SECONDS = 300.0
 DEFAULT_EPS_RUN_CACHE_MAX_ENTRIES = 64
+# Resolved subset paths remembered per (model, product, run, priority, fh, pattern)
+# so a repeat fetch of the same field can hit disk without reconstructing Herbie.
+DEFAULT_SUBSET_PATH_MEMO_MAX_ENTRIES = 4096
+# Per-process byte cap for the decoded-GRIB LRU. ~12 scheduler processes each pin
+# their own cache for the life of the process, so the fleet worst case is 12x this
+# value (~3 GiB). Raise per-model via CARTOSKY_DECODED_CACHE_MB if the
+# decoded_grib_cache_evicted counter shows churn.
+DEFAULT_DECODED_CACHE_MB = 256
 _GRIB_DISK_CACHE_LOCK_WAITS = 0
 _EPS_FULL_FILE_CACHE_CLEANUP_LOCK = threading.Lock()
 _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS = 0.0
@@ -439,6 +455,20 @@ _INVENTORY_INFLIGHT: dict[str, threading.Event] = {}
 _EPS_DIRECT_MEAN_CACHE_LOCK = threading.Lock()
 _EPS_DIRECT_MEAN_NEGATIVE_CACHE: OrderedDict[tuple[str, str, str, int], _EpsDirectMeanNegativeEntry] = OrderedDict()
 _EPS_STATISTICS_INVENTORY_CACHE: OrderedDict[tuple[str, str, str, int, str], Any] = OrderedDict()
+
+# Subset paths already resolved in this process, keyed by
+# (model_id, product, run_id, priority, fh, search_pattern) — the same identity
+# the subset filename hash uses. A hit lets fetch_variable stat the cached file
+# without paying the Herbie constructor and the remote .idx precheck.
+_SUBSET_PATH_MEMO: OrderedDict[tuple[str, str, str, str, int, str, str], tuple[Path, dict[str, Any]]] = OrderedDict()
+_SUBSET_PATH_MEMO_LOCK = threading.Lock()
+
+# Decoded GRIB rasters keyed by (resolved path, st_mtime_ns, st_size). The path
+# already encodes model/product/run/fh/pattern/priority; mtime+size invalidate
+# the entry whenever the subset is re-downloaded.
+_DECODED_GRIB_CACHE: OrderedDict[tuple[str, int, int], tuple[np.ndarray, Any, Any]] = OrderedDict()
+_DECODED_GRIB_CACHE_LOCK = threading.Lock()
+_DECODED_GRIB_CACHE_BYTES = 0
 
 _FETCH_RUNTIME_COUNTERS: dict[str, int] = {}
 _FETCH_RUNTIME_TIMERS_MS: dict[str, _TimerAggregate] = {}
@@ -2425,13 +2455,93 @@ def _read_rasterio_dataset(src: Any) -> tuple[np.ndarray, rasterio.crs.CRS, rast
     return data, src.crs, src.transform
 
 
+def _decoded_cache_max_bytes() -> int:
+    """Byte cap for the process-local decoded-GRIB LRU (0 disables it)."""
+    raw = _env_value(ENV_DECODED_CACHE_MB)
+    megabytes = DEFAULT_DECODED_CACHE_MB
+    if raw:
+        try:
+            megabytes = int(raw)
+        except ValueError:
+            megabytes = DEFAULT_DECODED_CACHE_MB
+    return max(0, megabytes) * 1024 * 1024
+
+
+def _decoded_cache_key(source: Path | str) -> tuple[str, int, int] | None:
+    try:
+        path = Path(source).resolve()
+        stat_result = path.stat()
+    except (OSError, TypeError, ValueError):
+        return None
+    return (str(path), int(stat_result.st_mtime_ns), int(stat_result.st_size))
+
+
+def _decoded_cache_get(
+    key: tuple[str, int, int],
+) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine] | None:
+    with _DECODED_GRIB_CACHE_LOCK:
+        entry = _DECODED_GRIB_CACHE.get(key)
+        if entry is None:
+            return None
+        _DECODED_GRIB_CACHE.move_to_end(key)
+        return entry
+
+
+def _decoded_cache_put(
+    key: tuple[str, int, int],
+    value: tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine],
+    max_bytes: int,
+) -> None:
+    global _DECODED_GRIB_CACHE_BYTES
+    data = value[0]
+    entry_bytes = int(getattr(data, "nbytes", 0))
+    if entry_bytes <= 0 or entry_bytes > max_bytes:
+        return
+    try:
+        data.flags.writeable = False
+    except (AttributeError, ValueError):
+        # A view over foreign memory cannot be frozen; skip caching rather than
+        # hand out an array a caller could mutate underneath other readers.
+        return
+    with _DECODED_GRIB_CACHE_LOCK:
+        existing = _DECODED_GRIB_CACHE.pop(key, None)
+        if existing is not None:
+            _DECODED_GRIB_CACHE_BYTES -= int(getattr(existing[0], "nbytes", 0))
+        _DECODED_GRIB_CACHE[key] = value
+        _DECODED_GRIB_CACHE_BYTES += entry_bytes
+        evicted = 0
+        while _DECODED_GRIB_CACHE_BYTES > max_bytes and len(_DECODED_GRIB_CACHE) > 1:
+            _evicted_key, evicted_value = _DECODED_GRIB_CACHE.popitem(last=False)
+            _DECODED_GRIB_CACHE_BYTES -= int(getattr(evicted_value[0], "nbytes", 0))
+            evicted += 1
+        _DECODED_GRIB_CACHE_BYTES = max(0, _DECODED_GRIB_CACHE_BYTES)
+    if evicted:
+        _metric_increment("decoded_grib_cache_evicted", evicted)
+
+
 def _read_grib_raster(source: Path | str | bytes) -> tuple[np.ndarray, rasterio.crs.CRS, rasterio.transform.Affine]:
     if isinstance(source, bytes):
         with rasterio.io.MemoryFile(source) as memfile:
             with memfile.open() as src:
                 return _read_rasterio_dataset(src)
+
+    max_bytes = _decoded_cache_max_bytes()
+    cache_key = _decoded_cache_key(source) if max_bytes > 0 else None
+    if cache_key is not None:
+        cached = _decoded_cache_get(cache_key)
+        if cached is not None:
+            _metric_increment("decoded_grib_cache_hit")
+            return cached
+        _metric_increment("decoded_grib_cache_miss")
+
+    # Decode outside the cache lock: a rare duplicate decode under a race is
+    # cheaper than serializing every reader behind one rasterio open.
     with rasterio.open(source) as src:
-        return _read_rasterio_dataset(src)
+        result = _read_rasterio_dataset(src)
+
+    if cache_key is not None:
+        _decoded_cache_put(cache_key, result, max_bytes)
+    return result
 
 
 def _aggregation_subset_path(base_path: Path, token: str) -> Path:
@@ -3346,6 +3456,7 @@ def reset_herbie_runtime_caches_for_tests() -> None:
     """Reset process-local Herbie availability caches (tests only)."""
     global _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS, _RANGE_HTTP_SESSION
     global _RANGE_THROTTLE_CONSECUTIVE, _RANGE_THROTTLE_COOLDOWN_UNTIL
+    global _DECODED_GRIB_CACHE_BYTES
     with _IDX_NEGATIVE_CACHE_LOCK:
         _IDX_NEGATIVE_CACHE.clear()
         _IDX_NEGATIVE_LOG_SUPPRESS.clear()
@@ -3364,6 +3475,11 @@ def reset_herbie_runtime_caches_for_tests() -> None:
         _FETCH_RUNTIME_TIMERS_MS.clear()
     with _EPS_FULL_FILE_CACHE_CLEANUP_LOCK:
         _EPS_FULL_FILE_CACHE_LAST_CLEANUP_TS = 0.0
+    with _SUBSET_PATH_MEMO_LOCK:
+        _SUBSET_PATH_MEMO.clear()
+    with _DECODED_GRIB_CACHE_LOCK:
+        _DECODED_GRIB_CACHE.clear()
+        _DECODED_GRIB_CACHE_BYTES = 0
     with _RANGE_HTTP_SESSION_LOCK:
         range_http_session = _RANGE_HTTP_SESSION
         _RANGE_HTTP_SESSION = None
@@ -3751,6 +3867,78 @@ def _log_disk_lock_wait_event() -> None:
     waits = _GRIB_DISK_CACHE_LOCK_WAITS
     if waits <= 5 or waits % 25 == 0:
         logger.info("grib_disk_cache lock_waits=%d", waits)
+
+
+def _disk_fast_path_enabled() -> bool:
+    return _bool_from_env(ENV_FETCH_DISK_FAST_PATH, True)
+
+
+def _herbie_kwargs_digest(herbie_kwargs: dict[str, Any] | None) -> str:
+    """Stable digest of the Herbie kwargs not already named in the memo key.
+
+    ``H.get_localFilePath()`` folds these into the subset filename — e.g. GEFS
+    passes ``member="mean"`` for some views and an integer member for others, and
+    the RTMA poller passes ``save_dir`` — so two fetches that differ only in these
+    kwargs resolve to different files and must never share a memo entry.
+    """
+    items = [
+        (str(key), str(value))
+        for key, value in (herbie_kwargs or {}).items()
+        if str(key) != "priority"
+    ]
+    if not items:
+        return ""
+    payload = "|".join(f"{key}={value}" for key, value in sorted(items))
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def _subset_memo_key(
+    *,
+    model_id: str,
+    product: str,
+    run_date: datetime,
+    priority: str,
+    fh: int,
+    search_pattern: str,
+    kwargs_digest: str,
+) -> tuple[str, str, str, str, int, str, str]:
+    return (
+        str(model_id),
+        str(product),
+        _run_id_from_date(run_date),
+        _priority_normalized(priority),
+        int(fh),
+        str(search_pattern),
+        str(kwargs_digest),
+    )
+
+
+def _remember_subset_path(
+    key: tuple[str, str, str, str, int, str, str],
+    path: Path,
+    meta: dict[str, Any],
+) -> None:
+    with _SUBSET_PATH_MEMO_LOCK:
+        _SUBSET_PATH_MEMO[key] = (Path(path), dict(meta))
+        _SUBSET_PATH_MEMO.move_to_end(key)
+        while len(_SUBSET_PATH_MEMO) > DEFAULT_SUBSET_PATH_MEMO_MAX_ENTRIES:
+            _SUBSET_PATH_MEMO.popitem(last=False)
+
+
+def _recall_subset_path(
+    key: tuple[str, str, str, str, int, str, str],
+) -> tuple[Path, dict[str, Any]] | None:
+    with _SUBSET_PATH_MEMO_LOCK:
+        entry = _SUBSET_PATH_MEMO.get(key)
+        if entry is None:
+            return None
+        _SUBSET_PATH_MEMO.move_to_end(key)
+        return entry[0], dict(entry[1])
+
+
+def _forget_subset_path(key: tuple[str, str, str, str, int, str, str]) -> None:
+    with _SUBSET_PATH_MEMO_LOCK:
+        _SUBSET_PATH_MEMO.pop(key, None)
 
 
 def _subset_file_status(path: Path) -> tuple[bool, int]:
@@ -4748,9 +4936,51 @@ def fetch_variable(
             )
         )
 
+    # Disk-first fast path: a subset this process already resolved is reused
+    # straight from disk, skipping the Herbie constructor and the remote .idx
+    # precheck. Candidate priorities are probed in the same preference order the
+    # download loop uses, because the subset path (and its filename hash) is
+    # priority-specific. Anything invalid on disk falls through to the normal
+    # path unchanged.
+    memo_kwargs_digest = _herbie_kwargs_digest(raw_herbie_kwargs)
+    if _disk_fast_path_enabled():
+        for fast_priority in priority_list:
+            fast_key = _subset_memo_key(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                priority=fast_priority,
+                fh=fh,
+                search_pattern=search_pattern,
+                kwargs_digest=memo_kwargs_digest,
+            )
+            recalled = _recall_subset_path(fast_key)
+            if recalled is None:
+                continue
+            candidate_path, candidate_meta = recalled
+            with _subset_download_lock(candidate_path):
+                cached_ok, cached_size = _subset_file_status(candidate_path)
+            if not cached_ok:
+                _forget_subset_path(fast_key)
+                continue
+            grib_path = candidate_path
+            grib_priority = fast_priority
+            selected_meta = candidate_meta
+            _metric_increment("subset_disk_fast_path_hit")
+            logger.info(
+                "Reusing cached GRIB: %s (%s fh%03d %s; priority=%s; fast_path=true; size=%d)",
+                grib_path.name,
+                model_id,
+                fh,
+                search_pattern,
+                fast_priority,
+                cached_size,
+            )
+            break
+
     priority_sequence = list(priority_list)
     priority_idx = 0
-    while priority_idx < len(priority_sequence):
+    while grib_path is None and priority_idx < len(priority_sequence):
         priority = priority_sequence[priority_idx]
         priority_cache_key = _idx_negative_key(
             model_id=model_id,
@@ -5156,6 +5386,23 @@ def fetch_variable(
             )
             priority_sequence = _fallback_to_nomads_sequence(priority_sequence, current_index=priority_idx)
         priority_idx += 1
+
+    if grib_path is not None and grib_priority:
+        # Remember the resolved path (and its inventory meta) so the next fetch
+        # of this exact field can take the disk-first fast path above.
+        _remember_subset_path(
+            _subset_memo_key(
+                model_id=model_id,
+                product=product,
+                run_date=run_date,
+                priority=grib_priority,
+                fh=fh,
+                search_pattern=search_pattern,
+                kwargs_digest=memo_kwargs_digest,
+            ),
+            grib_path,
+            selected_meta,
+        )
 
     if grib_path is None:
         if prs_fallback_triggered:
