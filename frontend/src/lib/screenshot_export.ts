@@ -18,7 +18,13 @@ export type ScreenshotExportState = {
   viewportWidth?: number;
   viewportHeight?: number;
   isMobile: boolean;
+  /** Display label ("SST", "MRMS Radar") — what the overlay prints. */
   model: string;
+  /**
+   * Canonical model id ("sst", "mrms"). Display labels are user-facing and can
+   * be renamed, so per-model overlay rules key on this instead.
+   */
+  modelId?: string | null;
   run: string;
   /**
    * Optional replacement for the default `{run} {model}` prefix on overlay
@@ -276,7 +282,12 @@ function defaultOverlayLines(state: ScreenshotExportState, legend?: LegendPayloa
     // time can legitimately differ by an hour+ on accumulation products and
     // two adjacent unlabeled timestamps read as a contradiction.
     const observedLabel = formatObservedValidTime(state.validTimeISO) ?? formatObservedCompactTime(state.validTimeISO) ?? "Observed time n/a";
-    const statusSuffix = state.sourceStatusLabel ? ` • ${state.sourceStatusLabel}` : "";
+    // SST is a daily product whose newest frame is legitimately ~30-54h behind
+    // real time, so the live viewer's freshness tag ("Live"/"Delayed") is
+    // misleading once the image leaves the viewer and loses that context. The
+    // frame's own valid time is the honest signal in a shared still.
+    const suppressStatus = state.modelId === "sst";
+    const statusSuffix = state.sourceStatusLabel && !suppressStatus ? ` • ${state.sourceStatusLabel}` : "";
     return [`${model} • ${observedLabel}${statusSuffix}`, variableLabel];
   }
   // Line 1: {run} {model} • {frame label} • {local valid time}, line 2: variable.

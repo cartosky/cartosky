@@ -6041,6 +6041,7 @@ export default function App() {
       viewportWidth,
       viewportHeight,
       model: selectedModelLabel || model || "Model",
+      modelId: model || null,
       run: selectedRunLabel || run || "Run",
       variable: {
         key: variable || "variable",

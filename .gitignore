@@ -153,6 +153,9 @@ frontend/tests/unit/*
 !frontend/tests/unit/nino-region-layer.test.ts
 # City label mode resolution (sst = no city labels at all).
 !frontend/tests/unit/city-label-mode.test.ts
+# SST share-overlay freshness-tag suppression + inline "New" badge registry.
+!frontend/tests/unit/share-overlay-observed-status.test.ts
+!frontend/tests/unit/new-feature-variable-badges.test.ts
 
 !frontend/tests/e2e/
 frontend/tests/e2e/*

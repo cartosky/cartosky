@@ -3,7 +3,9 @@ import { createPortal } from "react-dom";
 import { ChevronDown, Search, Star, X } from "lucide-react";
 
 import type { LegendPayload } from "@/components/map-legend";
+import { NewFeatureBadgeInline } from "@/components/ui/NewFeatureBadge";
 import { VIEWER_FIELD_TRIGGER_CHEVRON_CLASSNAME, viewerFieldTriggerClassName } from "@/components/ui/viewer-field-trigger";
+import { NEW_VARIABLE_BADGES, newFeatureForId } from "@/lib/new-features";
 import { useVariableFavorites } from "@/lib/use-variable-favorites";
 import { cn } from "@/lib/utils";
 
@@ -588,6 +590,7 @@ export function VariablePicker({
                   const favorited = favoriteSet.has(option.value);
                   const categoryLabel = CATEGORY_LABELS.get(normalizeGroup(option.group) ?? "SURFACE") ?? "Other";
                   const anomalyOption = isAnomalyOption(option);
+                  const newFeature = newFeatureForId(NEW_VARIABLE_BADGES, option.value);
                   const showAnomalyHeading = !hasSearch
                     && activeCategory !== "FAVORITES"
                     && anomalyOption
@@ -657,6 +660,10 @@ export function VariablePicker({
                               {categoryLabel}
                             </span>
                           ) : null}
+                          {/* Last in the row: the "New" pill owns the right
+                              edge, so it reads as an announcement rather than
+                              another metadata chip (stats/coverage/category). */}
+                          {newFeature ? <NewFeatureBadgeInline feature={newFeature} /> : null}
                         </button>
                       </div>
                     </Fragment>
