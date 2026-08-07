@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { Popover, PopoverContent, PopoverTrigger } from "@radix-ui/react-popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverPortal,
+  PopoverTrigger,
+} from "@radix-ui/react-popover";
 import { ChevronDown } from "lucide-react";
-import { VIEWER_FIELD_TRIGGER_CHEVRON_CLASSNAME, viewerFieldTriggerClassName } from "@/components/ui/viewer-field-trigger";
+import {
+  VIEWER_FIELD_TRIGGER_CHEVRON_CLASSNAME,
+  viewerFieldTriggerClassName,
+} from "@/components/ui/viewer-field-trigger";
 import { cn } from "@/lib/utils";
 
 export type StatisticOption = {
@@ -16,7 +24,8 @@ function classifyStatKey(key: string): StatKind {
   if (!key || key === "mean") return "mean";
   // Both directions (stats design §4.1): prob_gt_* exceedance and
   // prob_lt_* non-exceedance (B2 temperature cold rungs).
-  if (key.startsWith("prob_gt_") || key.startsWith("prob_lt_")) return "probability";
+  if (key.startsWith("prob_gt_") || key.startsWith("prob_lt_"))
+    return "probability";
   return "percentile";
 }
 
@@ -44,7 +53,11 @@ export function StatisticPicker({
   const [open, setOpen] = useState(false);
 
   const grouped = useMemo(() => {
-    const byKind: Record<StatKind, StatisticOption[]> = { mean: [], percentile: [], probability: [] };
+    const byKind: Record<StatKind, StatisticOption[]> = {
+      mean: [],
+      percentile: [],
+      probability: [],
+    };
     for (const option of options) {
       byKind[classifyStatKey(option.value)].push(option);
     }
@@ -65,7 +78,9 @@ export function StatisticPicker({
     return null;
   }
 
-  const selectedLabel = options.find((option) => option.value === (value || "mean"))?.label ?? "Mean";
+  const selectedLabel =
+    options.find((option) => option.value === (value || "mean"))?.label ??
+    "Mean";
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -76,65 +91,76 @@ export function StatisticPicker({
           className={viewerFieldTriggerClassName({ open, className: minWidth })}
         >
           <span className="whitespace-nowrap">{selectedLabel}</span>
-          <ChevronDown className={cn(VIEWER_FIELD_TRIGGER_CHEVRON_CLASSNAME, open ? "rotate-180" : "")} />
+          <ChevronDown
+            className={cn(
+              VIEWER_FIELD_TRIGGER_CHEVRON_CLASSNAME,
+              open ? "rotate-180" : "",
+            )}
+          />
         </button>
       </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        sideOffset={8}
-        className="z-[90] w-[240px] overflow-hidden rounded-xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.92] p-2 text-white shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
-      >
-        <div className="flex gap-1 rounded-lg bg-white/[0.04] p-1">
-          {availableTabs.map((tab) => (
-            <button
-              key={tab.kind}
-              type="button"
-              onClick={() => {
-                if (tab.kind === "mean") {
-                  onValueChange("mean");
-                  setOpen(false);
-                  return;
-                }
-                setActiveTab(tab.kind);
-              }}
-              className={cn(
-                "flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors min-h-8 pointer-coarse:min-h-11",
-                activeTab === tab.kind
-                  ? "bg-cyan-300/[0.14] text-cyan-100"
-                  : "text-white/56 hover:bg-white/[0.06] hover:text-white/82",
-              )}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-        {activeTab !== "mean" ? (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {grouped[activeTab].map((option) => {
-              const selected = option.value === value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => {
-                    onValueChange(option.value);
+      {/* Portal to body: rendered inline, the panel sits inside the rail's
+          overflow-hidden + backdrop-filter stacking context, which Safari's
+          compositor refuses to paint (opacity 1, zero pixels). The portalled
+          selects (ui/select.tsx) are the pattern Safari renders correctly. */}
+      <PopoverPortal>
+        <PopoverContent
+          align="start"
+          sideOffset={8}
+          className="z-[90] w-[240px] overflow-hidden rounded-xl border border-[#1a3a5c]/60 bg-[#04101e]/[0.92] p-2 text-white shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(100,180,255,0.08)] backdrop-blur-md"
+        >
+          <div className="flex gap-1 rounded-lg bg-white/[0.04] p-1">
+            {availableTabs.map((tab) => (
+              <button
+                key={tab.kind}
+                type="button"
+                onClick={() => {
+                  if (tab.kind === "mean") {
+                    onValueChange("mean");
                     setOpen(false);
-                  }}
-                  className={cn(
-                    "min-h-8 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors pointer-coarse:min-h-11",
-                    selected
-                      ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-100"
-                      : "border-white/[0.09] bg-white/[0.03] text-white/72 hover:border-white/18 hover:bg-white/[0.07] hover:text-white",
-                  )}
-                  title={option.longLabel ?? option.label}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
+                    return;
+                  }
+                  setActiveTab(tab.kind);
+                }}
+                className={cn(
+                  "flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-colors min-h-8 pointer-coarse:min-h-11",
+                  activeTab === tab.kind
+                    ? "bg-cyan-300/[0.14] text-cyan-100"
+                    : "text-white/56 hover:bg-white/[0.06] hover:text-white/82",
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-        ) : null}
-      </PopoverContent>
+          {activeTab !== "mean" ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {grouped[activeTab].map((option) => {
+                const selected = option.value === value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => {
+                      onValueChange(option.value);
+                      setOpen(false);
+                    }}
+                    className={cn(
+                      "min-h-8 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors pointer-coarse:min-h-11",
+                      selected
+                        ? "border-cyan-300/30 bg-cyan-300/[0.14] text-cyan-100"
+                        : "border-white/[0.09] bg-white/[0.03] text-white/72 hover:border-white/18 hover:bg-white/[0.07] hover:text-white",
+                    )}
+                    title={option.longLabel ?? option.label}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </PopoverContent>
+      </PopoverPortal>
     </Popover>
   );
 }
