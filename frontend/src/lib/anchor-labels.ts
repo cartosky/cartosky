@@ -54,6 +54,9 @@ export type AnchorDisplayRule = {
 const DEFAULT_ANCHOR_DISPLAY_RULE: AnchorDisplayRule = Object.freeze({ mode: "always" });
 
 const CITY_NAME_ONLY_MODELS = new Set(["goes-east", "nws_hazards", "spc", "cpc"]);
+// Models with NO city labels at all — not values, not name-only chips. SST is
+// ocean-only, so every land city samples to nothing and renders a "…" chip.
+const CITY_LABELS_OFF_MODELS = new Set(["sst"]);
 const MRMS_VALUE_LABEL_VARS = new Set([
   "mrms_recent_precip_6h",
   "mrms_recent_precip_24h",
@@ -112,6 +115,9 @@ export function resolveCityLabelMode(params: {
   const normalizedVariable = String(params.variable ?? "").trim().toLowerCase();
 
   if (!normalizedModel || !normalizedVariable) {
+    return "off";
+  }
+  if (CITY_LABELS_OFF_MODELS.has(normalizedModel)) {
     return "off";
   }
   if (normalizedModel === "mrms") {

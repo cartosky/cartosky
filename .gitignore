@@ -151,6 +151,8 @@ frontend/tests/unit/*
 !frontend/tests/unit/land-mask-layer.test.ts
 # Niño 3.4 reference box (SST-only static overlay).
 !frontend/tests/unit/nino-region-layer.test.ts
+# City label mode resolution (sst = no city labels at all).
+!frontend/tests/unit/city-label-mode.test.ts
 
 !frontend/tests/e2e/
 frontend/tests/e2e/*
