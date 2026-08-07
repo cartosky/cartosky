@@ -714,6 +714,37 @@ def test_a_persistent_promote_failure_stops_the_pass(
     assert second.steps_ingested == 0, "no new ingest while a promote is outstanding"
 
 
+def test_swallowed_domain_publish_failure_must_not_mark_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: ``_publish_run_snapshot_for(strict_canonical=False)`` used to
+    catch domain publish exceptions and return normally. The sub-loop then called
+    ``record_published``, clearing ``pending_promotions`` with frames still only
+    in staging — permanent gaps, no retry, and failover skipped the "complete"
+    pair. Failures inside the shared publish path must propagate."""
+    original = scheduler_module._publish_domain
+
+    def _fail_global(*, domain: str, reason: str, **kwargs):
+        if domain == "global" and reason.endswith("fh003"):
+            raise OSError("simulated ENOSPC during domain publish")
+        return original(domain=domain, reason=reason, **kwargs)
+
+    monkeypatch.setattr(scheduler_module, "_publish_domain", _fail_global)
+
+    result = _run_pass(tmp_path, FakeSource(max_fh=3))
+
+    entry = _state(tmp_path).pair("tmp2m", "global")
+    assert 3 in entry.staged_fhs
+    assert 3 not in entry.published_fhs
+    assert entry.ready_through_fh == 0
+    assert result.promotion_retries_pending == 1
+    assert _state(tmp_path).pending_promotions() == {3: {"global"}}
+    published = (
+        scheduler_module._published_model_root(tmp_path, "ecmwf", "global") / RUN_ID
+    )
+    assert not (published / "tmp2m" / "fh003.json").exists()
+
+
 # ---------------------------------------------------------------------------
 # Purge must be all-or-nothing (design §6: never mix sources in one series)
 # ---------------------------------------------------------------------------
