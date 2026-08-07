@@ -43,6 +43,7 @@ import {
 import { applyGlobeCameraConstrain, isCursorOnGlobe, isLngLatVisibleOnGlobe } from "@/lib/globe-map";
 import { HoverIntent } from "@/lib/hover-intent";
 import { startNetworkTimer, trackNetworkFetchDuration } from "@/lib/network-diagnostics";
+import { buildNinoRegionsGeoJson, isNinoOverlayVariable } from "@/lib/nino-regions";
 import type { SampleTooltipState } from "@/lib/use-sample-tooltip";
 import { cn } from "@/lib/utils";
 
@@ -173,6 +174,15 @@ const LAKE_MASK_LAYER_ID = "twf-lake-mask";
  * nothing.
  */
 const LAND_MASK_LAYER_ID = "twf-land-mask";
+/**
+ * Static ENSO reference box (Niño 3.4), shown only while an SST variable is
+ * displayed. Outline + label only, never a fill — a fill would tint the anomaly
+ * colours it is drawn over. Hidden by default like the land mask; the grid effect
+ * turns it on for NINO_OVERLAY_VARIABLE_IDS.
+ */
+const NINO_REGION_SOURCE_ID = "twf-nino-regions";
+const NINO_REGION_LINE_LAYER_ID = "twf-nino-region-line";
+const NINO_REGION_LABEL_LAYER_ID = "twf-nino-region-label";
 const LAKE_SHORELINE_LAYER_ID = "twf-lake-shoreline";
 const ROADS_SOURCE_ID = "twf-roads";
 const ROAD_MAJOR_HALO_LAYER_ID = "twf-road-major-halo";
@@ -941,6 +951,19 @@ function getLandFillColor(basemapMode: BasemapMode): string {
   return basemapMode === "dark" ? "#2a2a2a" : "#fafaf8";
 }
 
+/**
+ * Niño-box ink. Subtle on purpose: it is a reference annotation drawn on top of
+ * SST anomaly colours, so it has to be legible without competing with the data.
+ * Slate on the light basemap, light grey on the dark one.
+ */
+function getNinoRegionLineColor(basemapMode: BasemapMode): string {
+  return basemapMode === "dark" ? "#cbd5e1" : "#475569";
+}
+
+function getNinoRegionHaloColor(basemapMode: BasemapMode): string {
+  return basemapMode === "dark" ? "rgba(15,23,42,0.85)" : "rgba(255,255,255,0.88)";
+}
+
 function getBasemapPaintSettings(basemapMode: BasemapMode): {
   "raster-brightness-min": number;
   "raster-brightness-max": number;
@@ -1216,6 +1239,8 @@ export function buildMapStyle(
   const boundaryLineColor = getBoundaryLineColor(basemapMode);
   const lakeFillColor = getLakeFillColor(basemapMode);
   const landFillColor = getLandFillColor(basemapMode);
+  const ninoLineColor = getNinoRegionLineColor(basemapMode);
+  const ninoHaloColor = getNinoRegionHaloColor(basemapMode);
   const basemapPaint = getBasemapPaintSettings(basemapMode);
 
   return {
@@ -1234,6 +1259,10 @@ export function buildMapStyle(
       [ROADS_SOURCE_ID]: {
         type: "vector",
         url: ROADS_VECTOR_TILES_URL,
+      },
+      [NINO_REGION_SOURCE_ID]: {
+        type: "geojson",
+        data: buildNinoRegionsGeoJson(),
       },
       [CONTOUR_SOURCE_ID]: {
         type: "geojson",
@@ -1360,6 +1389,48 @@ export function buildMapStyle(
           "fill-color": landFillColor,
           "fill-opacity": 1,
           "fill-antialias": true,
+        },
+      },
+      {
+        // See NINO_REGION_SOURCE_ID. Dashed outline only — no fill layer exists
+        // for this source, so the box can never tint the SST anomaly colours.
+        id: NINO_REGION_LINE_LAYER_ID,
+        type: "line",
+        source: NINO_REGION_SOURCE_ID,
+        filter: ["==", ["get", "kind"], "outline"],
+        layout: {
+          visibility: "none",
+          "line-join": "round",
+          "line-cap": "butt",
+        },
+        paint: {
+          "line-color": ninoLineColor,
+          "line-opacity": 0.85,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 1, 1, 4, 1.25, 7, 1.5],
+          "line-dasharray": [4, 3],
+        },
+      },
+      {
+        // Label anchored to the box's north edge (see buildNinoRegionsGeoJson) and
+        // offset upward, so the text never sits over the data inside the box.
+        id: NINO_REGION_LABEL_LAYER_ID,
+        type: "symbol",
+        source: NINO_REGION_SOURCE_ID,
+        filter: ["==", ["get", "kind"], "label"],
+        layout: {
+          visibility: "none",
+          "text-field": ["get", "label"],
+          "text-size": 11.5,
+          "text-font": ["Noto Sans Regular"],
+          "text-anchor": "bottom",
+          "text-offset": [0, -0.4],
+          "text-padding": 2,
+          "text-allow-overlap": false,
+        },
+        paint: {
+          "text-color": ninoLineColor,
+          "text-halo-color": ninoHaloColor,
+          "text-halo-width": 1.5,
         },
       },
       {
@@ -2346,6 +2417,11 @@ export function MapCanvas({
       Boolean(gridActive && gridManifest?.display_prep?.clip_to_water),
     );
 
+    // Static ENSO reference box: SST variables only, by explicit id.
+    const ninoVisible = Boolean(gridActive && isNinoOverlayVariable(variable));
+    setLayerVisibility(map, NINO_REGION_LINE_LAYER_ID, ninoVisible);
+    setLayerVisibility(map, NINO_REGION_LABEL_LAYER_ID, ninoVisible);
+
     controller.ensureAttached(map, gridOverlayBeforeLayerId(map));
     controller.update({
       active: Boolean(gridActive && gridManifest && frameUrl),
@@ -2615,6 +2691,13 @@ export function MapCanvas({
     // vectors, coastline, roads and labels all above the mask.
     if (map.getLayer(LAND_MASK_LAYER_ID) && map.getLayer(COASTLINE_LAYER_ID)) {
       map.moveLayer(LAND_MASK_LAYER_ID, COASTLINE_LAYER_ID);
+    }
+    // Directly after the mask move, so the Niño box sits above both the grid and
+    // the land mask; still below coastline/roads/labels, which it must never cover.
+    for (const layerId of [NINO_REGION_LINE_LAYER_ID, NINO_REGION_LABEL_LAYER_ID]) {
+      if (map.getLayer(layerId)) {
+        map.moveLayer(layerId, COASTLINE_LAYER_ID);
+      }
     }
     for (const layerId of RASTER_RGB_LAYER_IDS) {
       if (map.getLayer(layerId) && map.getLayer(COASTLINE_LAYER_ID)) {

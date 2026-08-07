@@ -149,6 +149,8 @@ frontend/tests/unit/*
 !frontend/tests/unit/hover-intent.test.ts
 # SST coastline clip: land-mask layer contract (degradation + ordering).
 !frontend/tests/unit/land-mask-layer.test.ts
+# Niño 3.4 reference box (SST-only static overlay).
+!frontend/tests/unit/nino-region-layer.test.ts
 
 !frontend/tests/e2e/
 frontend/tests/e2e/*
