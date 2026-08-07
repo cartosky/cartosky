@@ -117,6 +117,14 @@ ENV_PROGRESS_PUBLISH_MIN_NEW_FRAMES = (
     "TWF_V3_PROGRESS_PUBLISH_MIN_NEW_FRAMES",
 )
 ENV_SCHEDULER_FH_LOOKAHEAD = "CARTOSKY_SCHEDULER_FH_LOOKAHEAD"
+# A target parked by a non-transient build failure becomes eligible again after
+# this many catch-up rounds, for at most this many retries per run pass. One
+# flaky failure must not strand a variable 150+ forecast hours behind the pack.
+ENV_SCHEDULER_BLOCKED_RETRY_ROUNDS = "CARTOSKY_SCHEDULER_BLOCKED_RETRY_ROUNDS"
+ENV_SCHEDULER_BLOCKED_RETRY_MAX = "CARTOSKY_SCHEDULER_BLOCKED_RETRY_MAX"
+# Targets whose frontier lags the pack leader get their lookahead multiplied by
+# this factor so they can close the gap instead of trailing forever.
+ENV_SCHEDULER_LAG_BOOST = "CARTOSKY_SCHEDULER_LAG_BOOST"
 ENV_LOOP_WEBP_QUALITY = ("CARTOSKY_LOOP_WEBP_QUALITY", "CARTOSKY_V3_LOOP_WEBP_QUALITY", "TWF_V3_LOOP_WEBP_QUALITY")
 ENV_LOOP_WEBP_MAX_DIM = ("CARTOSKY_LOOP_WEBP_MAX_DIM", "CARTOSKY_V3_LOOP_WEBP_MAX_DIM", "TWF_V3_LOOP_WEBP_MAX_DIM")
 ENV_LOOP_WEBP_TIER1_QUALITY = (
@@ -169,6 +177,13 @@ DEFAULT_LOOP_PREGENERATE_WORKERS = 4
 DEFAULT_LOOP_PREWARM_FRAME_COUNT = 8
 DEFAULT_PROGRESS_PUBLISH_MIN_NEW_FRAMES = 4
 DEFAULT_SCHEDULER_FH_LOOKAHEAD = 4
+DEFAULT_SCHEDULER_BLOCKED_RETRY_ROUNDS = 3
+DEFAULT_SCHEDULER_BLOCKED_RETRY_MAX = 3
+DEFAULT_SCHEDULER_LAG_BOOST = 3
+# Boosted laggards may not grow a round without bound: the whole round is capped
+# at base_lookahead * eligible_targets * this factor, i.e. at most twice the work
+# an unboosted round would have submitted.
+SCHEDULER_ROUND_JOB_CAP_FACTOR = 2
 DEFAULT_LOOP_WEBP_QUALITY = 82
 DEFAULT_LOOP_WEBP_MAX_DIM = 2300
 DEFAULT_LOOP_WEBP_TIER1_QUALITY = 86
@@ -789,6 +804,21 @@ def _sidecar_quality(
         if item
     ]
     return normalized_quality, flags
+
+
+def _typical_fh_step(fhs: Iterable[int]) -> int:
+    """Median spacing of a target's own forecast-hour list.
+
+    GFS mixes 3h (short range) and 6h (long range) steps, HRRR is hourly, and
+    global models differ again, so the lag threshold is derived per target
+    instead of hardcoding an interval.
+    """
+
+    ordered = sorted({int(fh) for fh in fhs})
+    diffs = sorted(b - a for a, b in zip(ordered, ordered[1:]) if b > a)
+    if not diffs:
+        return 1
+    return max(1, diffs[len(diffs) // 2])
 
 
 def _collect_slr_rebuild_candidates(
@@ -2768,6 +2798,29 @@ def _process_run(
         DEFAULT_SCHEDULER_FH_LOOKAHEAD,
         min_value=1,
     )
+    blocked_retry_cooldown_rounds = _int_from_env(
+        ENV_SCHEDULER_BLOCKED_RETRY_ROUNDS,
+        DEFAULT_SCHEDULER_BLOCKED_RETRY_ROUNDS,
+        min_value=1,
+    )
+    blocked_retry_max = _int_from_env(
+        ENV_SCHEDULER_BLOCKED_RETRY_MAX,
+        DEFAULT_SCHEDULER_BLOCKED_RETRY_MAX,
+        min_value=0,
+    )
+    # The lag boost is safe only because the default catch-up path runs one
+    # frame at a time per target (see the per-target queue below), which keeps
+    # cumulative variables walking their on-disk checkpoint chain in order. The
+    # derived-bundle path submits every frame of a round at once, so a deeper
+    # window there would make accumulation vars slower, not faster.
+    lag_boost_factor = (
+        1
+        if derive_bundle_enabled
+        else _int_from_env(ENV_SCHEDULER_LAG_BOOST, DEFAULT_SCHEDULER_LAG_BOOST, min_value=1)
+    )
+    blocked_round_by_target: dict[tuple[str, str], int] = {}
+    blocked_retries_by_target: dict[tuple[str, str], int] = {}
+    blocked_parked_logged: set[tuple[str, str]] = set()
     loop_prewarm_var = _resolve_loop_prewarm_var(plugin, vars_to_build, primary_vars)
     loop_prewarm_fhs = _resolve_loop_prewarm_fhs(
         plugin,
@@ -2807,6 +2860,62 @@ def _process_run(
             reason,
         )
         destroy_fetch_context(shared_fetch_ctx)
+
+    def _mark_target_blocked(region: str, var_id: str) -> None:
+        key = (str(region), str(var_id))
+        blocked_targets.add(key)
+        blocked_round_by_target[key] = rounds
+
+    def _clear_target_block(region: str, var_id: str) -> None:
+        key = (str(region), str(var_id))
+        blocked_targets.discard(key)
+        if key not in blocked_round_by_target and key not in blocked_retries_by_target:
+            return
+        blocked_round_by_target.pop(key, None)
+        blocked_retries_by_target.pop(key, None)
+        blocked_parked_logged.discard(key)
+        logger.info(
+            "Catch-up unparked target: run=%s model=%s target=%s/%s",
+            run_id,
+            model_id,
+            key[0],
+            key[1],
+        )
+
+    def _retry_blocked_target(region: str, var_id: str) -> bool:
+        """Re-admit a parked target once its cooldown has elapsed."""
+
+        key = (str(region), str(var_id))
+        retries = int(blocked_retries_by_target.get(key, 0))
+        if retries >= blocked_retry_max:
+            if key not in blocked_parked_logged:
+                blocked_parked_logged.add(key)
+                logger.info(
+                    "Catch-up target permanently parked: run=%s model=%s target=%s/%s retries=%d/%d",
+                    run_id,
+                    model_id,
+                    key[0],
+                    key[1],
+                    retries,
+                    blocked_retry_max,
+                )
+            return False
+        blocked_round = int(blocked_round_by_target.get(key, rounds))
+        if (rounds - blocked_round) < blocked_retry_cooldown_rounds:
+            return False
+        blocked_retries_by_target[key] = retries + 1
+        blocked_targets.discard(key)
+        logger.info(
+            "Catch-up retrying blocked target: run=%s model=%s target=%s/%s retry=%d/%d cooldown_rounds=%d",
+            run_id,
+            model_id,
+            key[0],
+            key[1],
+            retries + 1,
+            blocked_retry_max,
+            blocked_retry_cooldown_rounds,
+        )
+        return True
 
     def _log_process_cache_stats(*, stage: str) -> None:
         logger.info(
@@ -3096,7 +3205,7 @@ def _process_run(
                         round_transient_failures += 1
                         logger.warning("Build transiently unavailable: %s %s/%s fh%03d", run_id, region, var_id, fh)
                     else:
-                        blocked_targets.add((region, var_id))
+                        _mark_target_blocked(region, var_id)
                         logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
                 for region, shared_fetch_ctx in sorted(shared_fetch_ctx_by_region.items()):
                     logger.info(
@@ -3143,7 +3252,7 @@ def _process_run(
                             round_transient_failures += 1
                             logger.warning("Build transiently unavailable: %s %s/%s fh%03d", run_id, region, var_id, fh)
                         else:
-                            blocked_targets.add((region, var_id))
+                            _mark_target_blocked(region, var_id)
                             logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
 
             if not published_once and _should_promote(data_root, model_id, run_id, primary_vars, promotion_fhs):
@@ -3152,13 +3261,21 @@ def _process_run(
                 built_ok_at_last_publish = built_ok
             continue
 
-        next_missing: list[BuildTarget] = []
+        # Frontier collection is lag-aware: every eligible target is scanned up
+        # to the boosted depth, then targets that are keeping pace with the pack
+        # leader are trimmed back to the base lookahead. Deeper depth only ever
+        # lengthens a target's own serialized fh queue below (one build in
+        # flight per target), so it adds no concurrent FetchContexts and cannot
+        # break the incremental accumulation checkpoint chain.
+        max_lookahead = fh_lookahead * lag_boost_factor
+        frontier_by_target: dict[tuple[str, str], int] = {}
+        collected_by_target: dict[tuple[str, str], list[int]] = {}
         for (region, var_id), fhs in fhs_by_target.items():
-            if (region, var_id) in blocked_targets:
-                continue
             if (region, var_id) in transient_targets:
                 continue
-            collected = 0
+            if (region, var_id) in blocked_targets and not _retry_blocked_target(region, var_id):
+                continue
+            collected: list[int] = []
             frontier_started = False
             for fh in sorted(set(fhs)):
                 frame_exists = _frame_artifacts_exist(data_root, model_id, run_id, var_id, fh, region=region)
@@ -3166,12 +3283,66 @@ def _process_run(
                     if frame_exists:
                         continue
                     frontier_started = True
+                    frontier_by_target[(region, var_id)] = int(fh)
                 elif frame_exists:
                     break
-                next_missing.append((region, var_id, fh))
-                collected += 1
-                if collected >= fh_lookahead:
+                collected.append(int(fh))
+                if len(collected) >= max_lookahead:
                     break
+            if collected:
+                collected_by_target[(region, var_id)] = collected
+
+        boosted_targets: list[tuple[str, str]] = []
+        if collected_by_target:
+            # The lag reference is the MEDIAN frontier, not the max. Some models
+            # schedule single-frame long-lead targets (GFS precip_16d_anom is
+            # fh384 only), and a max reference would let one such target pin the
+            # pack leader at fh384 forever, marking every real variable a
+            # laggard and boosting every round. A median ignores those outliers
+            # while still moving with the genuine pack.
+            round_frontiers = sorted(frontier_by_target[key] for key in collected_by_target)
+            reference_frontier = round_frontiers[len(round_frontiers) // 2]
+            for key, collected in collected_by_target.items():
+                lag = reference_frontier - frontier_by_target[key]
+                lag_threshold = 2 * _typical_fh_step(fhs_by_target[key])
+                if lag > lag_threshold and len(collected) > fh_lookahead:
+                    boosted_targets.append(key)
+                else:
+                    del collected[fh_lookahead:]
+
+            # Bound one round's total work; shed the boost from the least
+            # laggy (highest frontier) targets first.
+            round_job_cap = fh_lookahead * len(collected_by_target) * SCHEDULER_ROUND_JOB_CAP_FACTOR
+            round_jobs = sum(len(collected) for collected in collected_by_target.values())
+            for key in sorted(boosted_targets, key=lambda item: frontier_by_target[item], reverse=True):
+                collected = collected_by_target[key]
+                while round_jobs > round_job_cap and len(collected) > fh_lookahead:
+                    collected.pop()
+                    round_jobs -= 1
+                if round_jobs <= round_job_cap:
+                    break
+
+            if boosted_targets:
+                logger.info(
+                    "Catch-up lag boost: run=%s model=%s median_fh=%03d base_lookahead=%d boost=%d cap=%d jobs=%d targets=%s",
+                    run_id,
+                    model_id,
+                    reference_frontier,
+                    fh_lookahead,
+                    lag_boost_factor,
+                    round_job_cap,
+                    round_jobs,
+                    sorted(
+                        f"{key[0]}/{key[1]}@fh{frontier_by_target[key]:03d}x{len(collected_by_target[key])}"
+                        for key in boosted_targets
+                    ),
+                )
+
+        next_missing: list[BuildTarget] = [
+            (region, var_id, fh)
+            for (region, var_id), collected in collected_by_target.items()
+            for fh in collected
+        ]
 
         rebuild_round = False
         round_work: list[BuildTarget]
@@ -3375,6 +3546,7 @@ def _process_run(
                             if ok:
                                 built_ok += 1
                                 round_successes += 1
+                                _clear_target_block(region, var_id)
                                 if is_rebuild_job:
                                     quality, quality_flags = _sidecar_quality(
                                         data_root,
@@ -3413,7 +3585,7 @@ def _process_run(
                                     transient_targets.add((region, var_id))
                                     logger.warning("Build transiently unavailable: %s %s/%s fh%03d", run_id, region, var_id, fh)
                                 else:
-                                    blocked_targets.add((region, var_id))
+                                    _mark_target_blocked(region, var_id)
                                     logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
 
                             if queue_key in blocked_targets or queue_key in transient_targets:
@@ -3451,6 +3623,7 @@ def _process_run(
                     if ok:
                         built_ok += 1
                         round_successes += 1
+                        _clear_target_block(region, var_id)
                         if is_rebuild_job:
                             quality, quality_flags = _sidecar_quality(
                                 data_root,
@@ -3489,7 +3662,7 @@ def _process_run(
                             transient_targets.add((region, var_id))
                             logger.warning("Build transiently unavailable: %s %s/%s fh%03d", run_id, region, var_id, fh)
                         else:
-                            blocked_targets.add((region, var_id))
+                            _mark_target_blocked(region, var_id)
                             logger.warning("Build skipped/failed: %s %s/%s fh%03d", run_id, region, var_id, fh)
 
                 fetch_ctx_key = future_to_fetch_ctx_key.pop(future, None)

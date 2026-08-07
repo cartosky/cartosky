@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import sys
+import time
 import types
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2365,3 +2366,356 @@ def test_process_run_abandons_rebuilds_when_superseded(
     )
 
     assert attempted == []
+
+
+# ---------------------------------------------------------------------------
+# Fairness: blocked-target retry with cooldown, and lag-aware frontier depth.
+# ---------------------------------------------------------------------------
+
+
+class _TwelveHourPlugin(_FakePlugin):
+    def scheduled_fhs_for_var(self, var_key: str, cycle_hour: int) -> list[int]:
+        del var_key, cycle_hour
+        return list(range(12))
+
+
+def _run_fairness_catchup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    vars_to_build: list[str],
+    build_one,
+    built: set[tuple[str, int]],
+    workers: int = 1,
+    plugin: object | None = None,
+) -> None:
+    def fake_frame_artifacts_exist(
+        data_root: Path,
+        model: str,
+        run: str,
+        var_id: str,
+        fh: int,
+        *,
+        region: str = scheduler_module.CANONICAL_COVERAGE,
+    ) -> bool:
+        del data_root, model, run, region
+        return (var_id, fh) in built
+
+    monkeypatch.setattr(scheduler_module, "_frame_artifacts_exist", fake_frame_artifacts_exist)
+    monkeypatch.setattr(scheduler_module, "_build_one", build_one)
+    monkeypatch.setattr(scheduler_module, "_should_promote", lambda *args, **kwargs: False)
+    monkeypatch.setattr(scheduler_module, "_enforce_run_retention", lambda *args, **kwargs: None)
+
+    scheduler_module._process_run(
+        plugin=plugin if plugin is not None else _TwelveHourPlugin(),
+        model_id="hrrr",
+        vars_to_build=vars_to_build,
+        primary_vars=vars_to_build[:1],
+        run_dt=datetime(2026, 2, 27, 12, tzinfo=timezone.utc),
+        data_root=tmp_path,
+        workers=workers,
+        keep_runs=2,
+        loop_pregenerate_enabled=False,
+        loop_cache_root=tmp_path / "loop-cache",
+        loop_workers=1,
+        loop_tier0_quality=82,
+        loop_tier0_max_dim=2300,
+        loop_tier0_fixed_w=2300,
+        loop_tier1_quality=86,
+        loop_tier1_max_dim=2400,
+        loop_tier1_fixed_w=2400,
+        rebuild_existing=False,
+    )
+
+
+def test_blocked_target_is_retried_after_cooldown_and_unparked_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    built: set[tuple[str, int]] = set()
+    attempted: list[tuple[str, int]] = []
+
+    def fake_build_one(*, var_id: str, fh: int, region: str, **kwargs) -> tuple[str, str, int, bool, int, str]:
+        del kwargs
+        attempted.append((var_id, fh))
+        # wind10m fails exactly once (one flaky failure), then builds fine.
+        if var_id == "wind10m" and len([a for a in attempted if a[0] == "wind10m"]) == 1:
+            return region, var_id, fh, False, 5, scheduler_module.BUILD_STATUS_FAILED
+        built.add((var_id, fh))
+        return region, var_id, fh, True, 5, scheduler_module.BUILD_STATUS_OK
+
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_FH_LOOKAHEAD", "1")
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_LAG_BOOST", "1")
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_BLOCKED_RETRY_ROUNDS", "2")
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_BLOCKED_RETRY_MAX", "3")
+
+    with caplog.at_level("INFO"):
+        _run_fairness_catchup(
+            monkeypatch,
+            tmp_path,
+            vars_to_build=["tmp2m", "wind10m"],
+            build_one=fake_build_one,
+            built=built,
+        )
+
+    assert "Catch-up retrying blocked target" in caplog.text
+    assert "Catch-up unparked target" in caplog.text
+    # The flaky failure cost the laggard a few rounds, not the whole run.
+    assert (("wind10m", 0)) in built
+    assert max(fh for var_id, fh in built if var_id == "wind10m") >= 8
+
+
+def test_blocked_target_is_permanently_parked_after_max_retries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    built: set[tuple[str, int]] = set()
+    attempted: list[tuple[str, int]] = []
+
+    def fake_build_one(*, var_id: str, fh: int, region: str, **kwargs) -> tuple[str, str, int, bool, int, str]:
+        del kwargs
+        attempted.append((var_id, fh))
+        if var_id == "wind10m":
+            return region, var_id, fh, False, 5, scheduler_module.BUILD_STATUS_FAILED
+        built.add((var_id, fh))
+        return region, var_id, fh, True, 5, scheduler_module.BUILD_STATUS_OK
+
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_FH_LOOKAHEAD", "1")
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_LAG_BOOST", "1")
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_BLOCKED_RETRY_ROUNDS", "1")
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_BLOCKED_RETRY_MAX", "2")
+
+    with caplog.at_level("INFO"):
+        _run_fairness_catchup(
+            monkeypatch,
+            tmp_path,
+            vars_to_build=["tmp2m", "wind10m"],
+            build_one=fake_build_one,
+            built=built,
+        )
+
+    # One initial attempt plus exactly max-retries re-admissions.
+    assert [a for a in attempted if a[0] == "wind10m"] == [("wind10m", 0)] * 3
+    assert "Catch-up target permanently parked" in caplog.text
+    # The pack still finished.
+    assert len([a for a in attempted if a[0] == "tmp2m"]) == 12
+
+
+def test_lagging_target_gets_deeper_lookahead_than_pack_leader(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # tmp2m is already at fh9; wind10m has not started.
+    built: set[tuple[str, int]] = {("tmp2m", fh) for fh in range(9)}
+    attempted: list[tuple[str, int]] = []
+
+    def fake_build_one(*, var_id: str, fh: int, region: str, **kwargs) -> tuple[str, str, int, bool, int, str]:
+        del kwargs
+        attempted.append((var_id, fh))
+        built.add((var_id, fh))
+        return region, var_id, fh, True, 5, scheduler_module.BUILD_STATUS_OK
+
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_FH_LOOKAHEAD", "2")
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_LAG_BOOST", "3")
+
+    with caplog.at_level("INFO"):
+        _run_fairness_catchup(
+            monkeypatch,
+            tmp_path,
+            vars_to_build=["tmp2m", "wind10m"],
+            build_one=fake_build_one,
+            built=built,
+        )
+
+    # Round 1: leader keeps the base depth of 2, the laggard gets 2 * 3 = 6.
+    first_round = attempted[:8]
+    assert sorted(fh for var_id, fh in first_round if var_id == "tmp2m") == [9, 10]
+    assert sorted(fh for var_id, fh in first_round if var_id == "wind10m") == [0, 1, 2, 3, 4, 5]
+    assert "catchup_round=1 pending=8" in caplog.text
+    assert "Catch-up lag boost" in caplog.text
+
+
+def test_round_job_count_is_capped_when_many_targets_lag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    leaders = ["tmp2m", "rh2m", "vis", "cape"]
+    laggards = ["wind10m", "dp2m", "gust", "refc"]
+    built: set[tuple[str, int]] = {(var_id, fh) for var_id in leaders for fh in range(9)}
+
+    def fake_build_one(*, var_id: str, fh: int, region: str, **kwargs) -> tuple[str, str, int, bool, int, str]:
+        del kwargs
+        built.add((var_id, fh))
+        return region, var_id, fh, True, 5, scheduler_module.BUILD_STATUS_OK
+
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_FH_LOOKAHEAD", "2")
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_LAG_BOOST", "5")
+
+    with caplog.at_level("INFO"):
+        _run_fairness_catchup(
+            monkeypatch,
+            tmp_path,
+            vars_to_build=[*leaders, *laggards],
+            build_one=fake_build_one,
+            built=built,
+        )
+
+    # Median frontier is fh9, so all four laggards boost. Unbounded that is
+    # 4 * 2 (leaders) + 4 * 10 (laggards) = 48 jobs; the cap is
+    # base_lookahead * targets * SCHEDULER_ROUND_JOB_CAP_FACTOR = 2 * 8 * 2 = 32.
+    assert "catchup_round=1 pending=32" in caplog.text
+
+
+def test_boosted_accumulation_target_builds_fhs_one_at_a_time_in_order(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A boosted cumulative variable must still walk its checkpoint chain.
+
+    Deeper lookahead only lengthens the target's own serialized fh queue, so
+    fh N never starts before fh N-1 has landed on disk.
+    """
+
+    import threading
+
+    accum_var = "snowfall_kuchera_total"
+    built: set[tuple[str, int]] = {("tmp2m", fh) for fh in range(9)}
+    order_by_var: dict[str, list[int]] = {}
+    in_flight_by_var: dict[str, int] = {}
+    max_in_flight_by_var: dict[str, int] = {}
+    lock = threading.Lock()
+
+    def fake_build_one(*, var_id: str, fh: int, region: str, **kwargs) -> tuple[str, str, int, bool, int, str]:
+        del kwargs
+        with lock:
+            order_by_var.setdefault(var_id, []).append(fh)
+            current = in_flight_by_var.get(var_id, 0) + 1
+            in_flight_by_var[var_id] = current
+            max_in_flight_by_var[var_id] = max(max_in_flight_by_var.get(var_id, 0), current)
+            # fh N must find fh N-1 already on disk.
+            prior_present = fh == 0 or (var_id, fh - 1) in built
+        time.sleep(0.01)
+        with lock:
+            in_flight_by_var[var_id] -= 1
+            built.add((var_id, fh))
+        assert prior_present, f"{var_id} fh{fh} started before its prior checkpoint"
+        return region, var_id, fh, True, 5, scheduler_module.BUILD_STATUS_OK
+
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_FH_LOOKAHEAD", "2")
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_LAG_BOOST", "3")
+
+    _run_fairness_catchup(
+        monkeypatch,
+        tmp_path,
+        vars_to_build=["tmp2m", accum_var],
+        build_one=fake_build_one,
+        built=built,
+        workers=4,
+    )
+
+    assert max_in_flight_by_var[accum_var] == 1
+    assert order_by_var[accum_var] == list(range(12))
+
+
+# GFS forecast-hour geometry: 3h out to fh120, then 6h out to fh384.
+_GFS_SHAPED_FHS = [*range(0, 121, 3), *range(126, 385, 6)]
+
+
+class _GfsShapedPlugin(_FakePlugin):
+    """GFS-shaped fh lists, including the long-lead precip anomaly targets.
+
+    ``precip_16d_anom`` has min_fh == max_fh == 384 (a single-frame target) and
+    ``precip_10d_anom`` does not start until fh240 -- both sit far ahead of the
+    pack from the very first round.
+    """
+
+    def scheduled_fhs_for_var(self, var_key: str, cycle_hour: int) -> list[int]:
+        del cycle_hour
+        if var_key == "precip_16d_anom":
+            return [384]
+        if var_key == "precip_10d_anom":
+            return [fh for fh in _GFS_SHAPED_FHS if fh >= 240]
+        return list(_GFS_SHAPED_FHS)
+
+
+_GFS_SHAPED_VARS = ["tmp2m", "wind10m", "dp2m", "refc", "precip_10d_anom", "precip_16d_anom"]
+
+
+def test_single_frame_long_lead_target_does_not_boost_an_even_pack(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A max-frontier reference would pin the leader at fh384 forever.
+
+    ``precip_16d_anom`` is scheduled only at fh384, so under a max reference
+    every other variable reads as ~384 hours behind and every round boosts.
+    The median reference ignores the outlier.
+    """
+
+    built: set[tuple[str, int]] = set()
+
+    def fake_build_one(*, var_id: str, fh: int, region: str, **kwargs) -> tuple[str, str, int, bool, int, str]:
+        del kwargs
+        built.add((var_id, fh))
+        return region, var_id, fh, True, 5, scheduler_module.BUILD_STATUS_OK
+
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_FH_LOOKAHEAD", "4")
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_LAG_BOOST", "3")
+
+    with caplog.at_level("INFO"):
+        _run_fairness_catchup(
+            monkeypatch,
+            tmp_path,
+            vars_to_build=_GFS_SHAPED_VARS,
+            build_one=fake_build_one,
+            built=built,
+            plugin=_GfsShapedPlugin(),
+        )
+
+    assert "Catch-up lag boost" not in caplog.text
+    # Round 1 stayed at the base lookahead: 4 full-length vars * 4, plus 4 for
+    # precip_10d_anom and the single precip_16d_anom frame.
+    assert "catchup_round=1 pending=21" in caplog.text
+
+
+def test_genuine_straggler_still_boosts_against_the_median_frontier(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Same GFS-shaped layout, but wind10m never started while the rest of the
+    # pack reached fh120 -- the fh090-vs-fh252 prod symptom.
+    built: set[tuple[str, int]] = {
+        (var_id, fh)
+        for var_id in ("tmp2m", "dp2m", "refc")
+        for fh in _GFS_SHAPED_FHS
+        if fh <= 120
+    }
+
+    def fake_build_one(*, var_id: str, fh: int, region: str, **kwargs) -> tuple[str, str, int, bool, int, str]:
+        del kwargs
+        built.add((var_id, fh))
+        return region, var_id, fh, True, 5, scheduler_module.BUILD_STATUS_OK
+
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_FH_LOOKAHEAD", "4")
+    monkeypatch.setenv("CARTOSKY_SCHEDULER_LAG_BOOST", "3")
+
+    with caplog.at_level("INFO"):
+        _run_fairness_catchup(
+            monkeypatch,
+            tmp_path,
+            vars_to_build=_GFS_SHAPED_VARS,
+            build_one=fake_build_one,
+            built=built,
+            plugin=_GfsShapedPlugin(),
+        )
+
+    # Median frontier is fh126; only wind10m (fh000) lags it by more than
+    # 2 * its own 6h typical step, so only wind10m gets 4 * 3 = 12 frames.
+    assert "median_fh=126" in caplog.text
+    assert "targets=['conus/wind10m@fh000x12']" in caplog.text
