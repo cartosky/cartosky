@@ -901,9 +901,9 @@ function HourlyChartPanel({ hourly, timeZone }: { hourly: HourlyEntry[]; timeZon
   );
 }
 
-// ── Daily Temp Chart (Extended tab) ──────────────────────────────────
+// ── Daily Forecast Chart ─────────────────────────────────────────────
 
-function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
+function DailyForecastChart({ daily }: { daily: DailyEntry[] }) {
   if (!daily.length) return null;
 
   const allTemps = daily.flatMap(e => [e.high_f, e.low_f]).filter((v): v is number => v !== null);
@@ -917,13 +917,15 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
   const range = maxT - minT;
 
   const VW = 460;
-  const VH = 110;
+  const VH = 145;
   const CHART_T = 18;
-  const CHART_B = 88;
+  const TEMP_B = 88;
+  const PRECIP_T = 108;
+  const PRECIP_B = 135;
 
   const n = daily.length;
   const xAt = (i: number) => n <= 1 ? VW / 2 : (i / (n - 1)) * VW;
-  const yAt = (t: number) => CHART_T + (1 - (t - minT) / range) * (CHART_B - CHART_T);
+  const yAt = (t: number) => CHART_T + (1 - (t - minT) / range) * (TEMP_B - CHART_T);
 
   function bezierPath(pts: { x: number; y: number }[]) {
     return pts.reduce((d, p, i) => {
@@ -941,6 +943,13 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
   const lowPath  = bezierPath(lowPts);
   const lowRevPath = bezierPath([...lowPts].reverse()).replace(/^M/, "L");
   const bandPath = `${highPath} ${lowRevPath} Z`;
+  const precipPts = daily.map((e, i) => ({
+    x: xAt(i),
+    y: PRECIP_B - ((e.pop_pct ?? 0) / 100) * (PRECIP_B - PRECIP_T),
+  }));
+  const precipLinePath = bezierPath(precipPts);
+  const precipAreaPath = `${precipLinePath} L ${VW} ${PRECIP_B} L 0 ${PRECIP_B} Z`;
+  const hasPrecip = daily.some(e => (e.pop_pct ?? 0) > 0);
 
   const step = n > 10 ? 2 : 1;
   const labelIdxs = [...new Set([0, ...daily.map((_, i) => i).filter(i => i % step === 0), n - 1])].sort((a, b) => a - b);
@@ -966,7 +975,13 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
   const hHighY = hEntry ? yAt(hEntry.high_f ?? rawMax) : 0;
   const hLowY  = hEntry ? yAt(hEntry.low_f  ?? rawMin) : 0;
   const hAnchor = hoverIdx !== null && hoverIdx <= 1 ? "start" : hoverIdx !== null && hoverIdx >= n - 2 ? "end" : "middle";
-  const tooltipX = hAnchor === "start" ? hX : hAnchor === "end" ? hX - 64 : hX - 32;
+  const showHoverPrecip = (hEntry?.pop_pct ?? 0) > 0;
+  const tooltipText = hEntry
+    ? `${formatDayLabel(hEntry.date, hoverIdx ?? 0)} · ${hEntry.high_f ?? "--"}° / ${hEntry.low_f ?? "--"}°`
+      + (showHoverPrecip ? ` · 💧${hEntry.pop_pct}%` : "")
+    : "";
+  const tipW = 64 + (showHoverPrecip ? 44 : 0);
+  const tooltipX = hAnchor === "start" ? hX : hAnchor === "end" ? hX - tipW : hX - tipW / 2;
 
   return (
     <svg ref={svgRef} viewBox={`0 0 ${VW} ${VH}`} className="h-auto w-full cursor-crosshair"
@@ -976,6 +991,10 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
           <stop offset="0%" stopColor="rgba(103,232,249,0.22)" />
           <stop offset="100%" stopColor="rgba(103,232,249,0.04)" />
         </linearGradient>
+        <linearGradient id="dPrecipGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgba(52,211,153,0.45)" />
+          <stop offset="100%" stopColor="rgba(52,211,153,0.08)" />
+        </linearGradient>
       </defs>
 
       <path d={bandPath} fill="url(#dBandGrad)" />
@@ -984,7 +1003,28 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
       <path d={lowPath} fill="none" stroke="rgba(103,232,249,0.30)"
         strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round" />
 
-      {hoverIdx === null && (
+      {hasPrecip && (
+        <>
+          <line x1={0} y1={TEMP_B} x2={VW} y2={TEMP_B}
+            stroke="rgba(255,255,255,0.07)" strokeWidth={1} />
+          <text
+            x={0}
+            y={TEMP_B + 8}
+            fontSize={4.8}
+            fontWeight="500"
+            fill="rgba(255,255,255,0.40)"
+            letterSpacing="0.20em"
+            textAnchor="start"
+          >
+            PRECIP CHANCE
+          </text>
+          <path d={precipAreaPath} fill="url(#dPrecipGrad)" />
+          <path d={precipLinePath} fill="none" stroke="rgba(52,211,153,0.70)"
+            strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      )}
+
+      {!hasPrecip && hoverIdx === null && (
         <line x1={0} x2={VW} y1={VH - 12} y2={VH - 12}
           stroke="rgba(255,255,255,0.07)" strokeWidth={0.5} />
       )}
@@ -1021,15 +1061,28 @@ function DailyTempChart({ daily }: { daily: DailyEntry[] }) {
             stroke="rgba(255,255,255,0.18)" strokeWidth={1} strokeDasharray="3 3" />
           <circle cx={hX} cy={hHighY} r={3} fill="rgba(103,232,249,1)" />
           <circle cx={hX} cy={hLowY}  r={3} fill="rgba(103,232,249,0.4)" />
-          <rect x={tooltipX} y={hHighY - 24} width={64} height={18} rx={3}
+          <rect x={tooltipX} y={hHighY - 24} width={tipW} height={18} rx={3}
             fill="rgba(7,17,31,0.88)" />
-          <text x={tooltipX + 32} y={hHighY - 11} textAnchor="middle"
+          <text x={tooltipX + tipW / 2} y={hHighY - 11} textAnchor="middle"
             fontSize={9.5} fontWeight="500" fill="rgba(255,255,255,0.90)">
-            {formatDayLabel(hEntry.date, hoverIdx)} · {hEntry.high_f ?? "--"}° / {hEntry.low_f ?? "--"}°
+            {tooltipText}
           </text>
         </g>
       )}
     </svg>
+  );
+}
+
+function DailyChartPanel({ daily, title }: { daily: DailyEntry[]; title: string }) {
+  if (!daily.length) return null;
+
+  return (
+    <div data-forecast-daily-chart className="rounded-xl bg-white/[0.03] p-4 md:p-5">
+      <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.20em] text-white/40">
+        {title}
+      </p>
+      <DailyForecastChart daily={daily} />
+    </div>
   );
 }
 
@@ -1798,17 +1851,20 @@ function TextPeriodsDetail({ periods }: { periods: TextForecastPeriod[] }) {
   );
 }
 
-function SevenDayTab({ daily, hourly, timeZone, textForecast }: {
+function SevenDayTab({ daily, textForecast }: {
   daily: DailyEntry[];
-  hourly: HourlyEntry[];
-  timeZone: string | null;
   textForecast: ForecastPayload["official_text_forecast"];
 }) {
   const nwsDaily = textForecast ? nwsDailyRows(textForecast.periods) : null;
   const rows = nwsDaily?.rows.length ? nwsDaily.rows : daily;
+  const dailyByDate = new Map(daily.map(entry => [entry.date, entry]));
+  const chartDaily = rows.map(entry => ({
+    ...entry,
+    pop_pct: entry.pop_pct ?? dailyByDate.get(entry.date)?.pop_pct ?? null,
+  }));
   return (
     <div className="space-y-8">
-      <HourlyChartPanel hourly={hourly} timeZone={timeZone} />
+      <DailyChartPanel daily={chartDaily.slice(0, 7)} title="Temperature · 7-Day Outlook" />
       <DailyRangeRows
         daily={rows}
         limit={7}
@@ -1826,26 +1882,16 @@ function SevenDayTab({ daily, hourly, timeZone, textForecast }: {
 
 // ── Extended Tab ──────────────────────────────────────────────────────
 
-function ExtendedTab({ daily, hourly, timeZone, attribution }: {
+function ExtendedTab({ daily, attribution }: {
   daily: DailyEntry[];
-  hourly: HourlyEntry[];
-  timeZone: string | null;
   attribution: string | null;
 }) {
   if (!daily.length) return null;
 
   return (
     <div className="space-y-6">
-      <HourlyChartPanel hourly={hourly} timeZone={timeZone} />
-      <div className="rounded-xl bg-white/[0.03] p-4 md:p-5">
-        <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.20em] text-white/40">
-          Temperature · 15-Day Outlook
-        </p>
-        <DailyTempChart daily={daily} />
-      </div>
-      <div>
+      <DailyChartPanel daily={daily} title="Temperature · 15-Day Outlook" />
       <DailyRangeRows daily={daily} expandable />
-      </div>
     </div>
   );
 }
@@ -2704,8 +2750,8 @@ export default function Forecast() {
         >
           {activeTab === "current"    && <CurrentTab forecast={f} checkingAlerts={f.source_status?.nws === "pending"} />}
           {activeTab === "hourly"     && <HourlyTab hourly={f.hourly} timeZone={f.location.timezone} />}
-          {activeTab === "7day"       && <SevenDayTab daily={f.daily} hourly={f.hourly} timeZone={f.location.timezone} textForecast={f.official_text_forecast} />}
-          {activeTab === "extended"   && <ExtendedTab daily={f.daily} hourly={f.hourly} timeZone={f.location.timezone} attribution={f.attribution.daily} />}
+          {activeTab === "7day"       && <SevenDayTab daily={f.daily} textForecast={f.official_text_forecast} />}
+          {activeTab === "extended"   && <ExtendedTab daily={f.daily} attribution={f.attribution.daily} />}
           {activeTab === "models"     && (
             <ModelsTabContent
               lat={f.location.latitude}
