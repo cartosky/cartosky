@@ -829,10 +829,21 @@ def _pre_encode_gate_allows(
 
 
 def _promote_run(*, data_root: Path, run_id: str, domain: str) -> None:
+    """Promote a staged SST run into the published tree.
+
+    Uses the same two-rename swap as ``scheduler._promote_run``: the live
+    published run dir is renamed aside, never ``rmtree``'d in place. Anomaly
+    catch-up amends the *same* ``run_id`` on every late-anomaly cycle, so an
+    in-place rmtree would open a multi-second 404 window for every reader and —
+    if the subsequent move failed — leave ``LATEST.json`` pointing at a missing
+    run with no automatic restore.
+    """
     stage_run = staging_run_root(data_root, run_id, domain)
     if not stage_run.is_dir():
         raise ValueError(f"Cannot promote missing SST staging run dir: {stage_run}")
 
+    # tmp / trash / final are siblings inside this one directory, so the
+    # two-rename swap stays atomic (single-directory renames) per domain.
     published_model = published_model_root(data_root, domain)
     published_model.mkdir(parents=True, exist_ok=True)
     published_run = published_model / run_id
@@ -840,10 +851,27 @@ def _promote_run(*, data_root: Path, run_id: str, domain: str) -> None:
 
     if tmp_run.exists():
         shutil.rmtree(tmp_run, ignore_errors=True)
+    if tmp_run.exists():
+        raise ValueError(f"Cannot clear temporary SST promotion dir: {tmp_run}")
+
     shutil.copytree(stage_run, tmp_run, copy_function=os.link)
+
+    trash_run = published_model / f".{run_id}.trash"
+    if trash_run.exists():
+        shutil.rmtree(trash_run, ignore_errors=True)
+    if trash_run.exists():
+        raise ValueError(f"Cannot clear stale SST promotion trash dir: {trash_run}")
+
     if published_run.exists():
-        shutil.rmtree(published_run, ignore_errors=True)
-    shutil.move(str(tmp_run), str(published_run))
+        os.rename(published_run, trash_run)
+    try:
+        os.rename(tmp_run, published_run)
+    except OSError:
+        # Put the previous published run back before surfacing the failure.
+        if trash_run.exists() and not published_run.exists():
+            os.rename(trash_run, published_run)
+        raise
+    shutil.rmtree(trash_run, ignore_errors=True)
 
 
 def _published_grid_meta_exists(run_root: Path, var_id: str, fh: int) -> bool:
