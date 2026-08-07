@@ -603,3 +603,68 @@ def test_a_frame_must_carry_at_least_one_field() -> None:
 def test_publish_requires_a_fresh_frame(tmp_path: Path, small_grids: None) -> None:
     with pytest.raises(ValueError):
         sst_publish.publish_sst_bundle(data_root=tmp_path, frames=[])
+
+
+# ---------------------------------------------------------------------------
+# Promote atomicity — anomaly catch-up amends the same run_id
+# ---------------------------------------------------------------------------
+
+def test_sst_promote_replaces_existing_run_via_rename_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live published run dir must be renamed aside, never rmtree'd in
+    place — anomaly catch-up republishes the same run_id, and an in-place
+    rmtree opened a 404 window (and could strand LATEST on a missing run)."""
+    run_id = "20260804_12z"
+    domain = "na"
+    stage = sst_publish.staging_run_root(tmp_path, run_id, domain)
+    (stage / "sst").mkdir(parents=True)
+    (stage / "sst" / "fh000.json").write_text('{"v":"new"}')
+
+    published = sst_publish.published_run_root(tmp_path, run_id, domain)
+    (published / "sst").mkdir(parents=True)
+    (published / "sst" / "fh000.json").write_text('{"v":"old"}')
+
+    rmtree_targets: list[Path] = []
+    real_rmtree = sst_publish.shutil.rmtree
+
+    def _recording_rmtree(path, *args, **kwargs):
+        rmtree_targets.append(Path(path))
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(sst_publish.shutil, "rmtree", _recording_rmtree)
+
+    sst_publish._promote_run(data_root=tmp_path, run_id=run_id, domain=domain)
+
+    assert (published / "sst" / "fh000.json").read_text() == '{"v":"new"}'
+    assert published not in rmtree_targets
+    leftovers = [p.name for p in published.parent.iterdir() if p.name.startswith(".")]
+    assert leftovers == []
+
+
+def test_sst_promote_restores_previous_run_when_swap_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = "20260804_12z"
+    domain = "na"
+    stage = sst_publish.staging_run_root(tmp_path, run_id, domain)
+    (stage / "sst").mkdir(parents=True)
+    (stage / "sst" / "fh000.json").write_text('{"v":"new"}')
+
+    published = sst_publish.published_run_root(tmp_path, run_id, domain)
+    (published / "sst").mkdir(parents=True)
+    (published / "sst" / "fh000.json").write_text('{"v":"old"}')
+
+    real_rename = sst_publish.os.rename
+
+    def _failing_rename(src, dst):
+        if Path(src).name == f".{run_id}.tmp":
+            raise OSError("simulated rename failure")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(sst_publish.os, "rename", _failing_rename)
+
+    with pytest.raises(OSError, match="simulated rename failure"):
+        sst_publish._promote_run(data_root=tmp_path, run_id=run_id, domain=domain)
+
+    assert (published / "sst" / "fh000.json").read_text() == '{"v":"old"}'
