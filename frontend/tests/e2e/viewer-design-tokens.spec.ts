@@ -163,8 +163,8 @@ const DESKTOP_SURFACES: Surface[] = [
     teardown: escapeTeardown,
   },
   {
-    // New in Phase 6: the `•••` menu absorbed Feedback, Compare, Replay tour,
-    // Keyboard shortcuts, Attribution and the sign-in/account entry.
+    // New in Phase 6: the `•••` menu became the home for the remaining
+    // top-bar overflow actions.
     name: 'overflow-menu',
     setup: async (page) => {
       await page.getByTestId('viewer-overflow-trigger').click();

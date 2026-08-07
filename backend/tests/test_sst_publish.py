@@ -479,17 +479,20 @@ def test_sst_anom_capability_and_packing() -> None:
 def test_sst_anom_ramp_is_diverging_half_degree_celsius() -> None:
     spec = get_color_map_spec("sst_anom")
     assert spec["units"] == "C"
-    assert spec["range"] == (-5.0, 5.0)
+    assert spec["range"] == (-6.0, 6.0)
     assert spec["transparent_below_min"] is False
     assert "°F" not in spec["legend_title"]
     levels = spec["levels"]
-    assert levels[0] == -5.0 and levels[-1] == 5.0
-    assert len(levels) == 21
-    assert all(abs((b - a) - 0.5) < 1e-9 for a, b in zip(levels, levels[1:]))
+    assert levels[0] == -6.0 and levels[-1] == 6.0
+    assert len(levels) == 37
+    # Non-uniform step widths across the ladder — steps tighten near zero.
+    steps = {round(b - a, 9) for a, b in zip(levels, levels[1:])}
+    assert steps == {0.2, 0.4, 0.5, 0.6, 0.8}
     # One colour per bin, and the ramp really diverges: cool end blue-dominant,
     # warm end red-dominant, centre near-neutral.
     colors = spec["colors"]
     assert len(colors) == len(levels) - 1
+    assert len(colors) == 36
 
     def rgb(value: str) -> tuple[int, int, int]:
         return tuple(int(value[i : i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]

@@ -705,6 +705,24 @@ PRECIP_ANOM_IN_COLORS = [
 PRECIP_ANOM_IN_LEGEND_STOPS = list(zip(PRECIP_ANOM_IN_LEVELS[:-1], PRECIP_ANOM_IN_COLORS))
 PRECIP_ANOM_IN_RANGE = (-5.5, 5.5)
 
+
+def anomaly_sanity_range(
+    range_pair: tuple[float, float], factor: float = 5.0
+) -> tuple[float, float]:
+    """Fail-closed plausibility envelope for an anomaly ladder.
+
+    Anomaly colormaps are discrete, which exempts them from the builder's
+    ±20% physical-range check (ladders legitimately saturate past their
+    display range), so a wrong-unit upstream field — e.g. Kelvin magnitudes
+    on a °C anomaly — would otherwise publish silently. The envelope is
+    symmetric at ``factor`` times the ladder's largest absolute endpoint:
+    deliberately generous so real extremes far beyond the display ladder
+    pass, and only unit-scale errors fail.
+    """
+    amplitude = max(abs(float(range_pair[0])), abs(float(range_pair[1])))
+    half_width = amplitude * float(factor)
+    return (-half_width, half_width)
+
 # Total precipitation (inches)
 precip_colors = [
     "#c0c0c0", "#909090", "#606060",
@@ -1076,23 +1094,27 @@ SST_COLOR_ANCHORS = [
 SST_RANGE = (-2.0, 35.0)
 
 # Diverging SST anomaly ramp, °C ONLY. Same shape as the other anomaly ladders
-# (discrete `levels` edges + one colour per bin + zipped legend stops): 0.5 °C
-# steps across +-5 °C, blue -> white -> red, with the two bins touching zero left
-# near-white so a neutral ocean reads as neutral. Values outside +-5 °C clamp to
-# the end colours for display; the packing envelope is far wider so nothing is
-# lost on disk.
+# (discrete `levels` edges + one colour per bin + zipped legend stops):
+# non-uniform steps (0.2/0.4/0.5/0.6/0.8 °C) across +-6 °C, blue -> white -> red,
+# with the two bins touching zero tinted near-white (not pure white) so a
+# neutral ocean reads as neutral. Values outside +-6 °C clamp to the end
+# colours for display; the packing envelope is far wider so nothing is lost
+# on disk.
 SST_ANOM_C_LEVELS = [
-    -5.0, -4.5, -4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5,
-    0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0,
+    -6, -5.5, -5, -4.2, -3.6, -3.2, -2.8, -2.4, -2, -1.8, -1.6, -1.4, -1.2, -1.0,
+    -0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2,
+    2.4, 2.8, 3.2, 3.6, 4.2, 5, 5.5, 6,
 ]
 SST_ANOM_C_COLORS = [
-    "#0b3773", "#114483", "#185294", "#1e5fa4", "#276eb0", "#327cb8",
-    "#3d8cbf", "#66a8ce", "#aed0e5", "#e4eef4", "#fae9df", "#f3bca8",
-    "#e07f6c", "#d05447", "#c43c3c", "#b82431", "#a9152a", "#960f26",
-    "#830924", "#700320",
+    "#0f009e", "#1206ab", "#1413b3", "#161eba", "#1928c4", "#1b33cc",
+    "#1e3dd3", "#2147dc", "#2452e5", "#2a6de9", "#2f80eb", "#4492ee",
+    "#66acf3", "#7dbef6", "#93d0f8", "#aae1fb", "#c1f4ff", "#eef4f8",
+    "#fdf6ec", "#fef9a0", "#fce695", "#fbd28c", "#f9bf81", "#f8ac76",
+    "#f7986b", "#f6855f", "#f47155", "#f35e4b", "#eb453c", "#dd3a34",
+    "#d0322d", "#c22824", "#b51e1c", "#a71314", "#9a090a", "#7f0000",
 ]
 SST_ANOM_C_LEGEND_STOPS = list(zip(SST_ANOM_C_LEVELS[:-1], SST_ANOM_C_COLORS))
-SST_ANOM_C_RANGE = (-5.0, 5.0)
+SST_ANOM_C_RANGE = (-6.0, 6.0)
 
 VORT500_LEGEND_STOPS = [
     (0.5, "#ffffff"),
@@ -1446,6 +1468,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "Surface Temperature Anomaly",
         "legend_title": "Surface Temperature Anomaly (°F)",
         "legend_stops": TMP2M_ANOM_F_LEGEND_STOPS,
+        "sanity_range": anomaly_sanity_range(TMP2M_ANOM_F_RANGE),
         "transparent_below_min": False,
     },
     "tmp850_anom": {
@@ -1457,6 +1480,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "850mb Temperature Anomaly",
         "legend_title": "850mb Temperature Anomaly (°C)",
         "legend_stops": TMP850_ANOM_C_LEGEND_STOPS,
+        "sanity_range": anomaly_sanity_range(TMP850_ANOM_C_RANGE),
         "transparent_below_min": False,
     },
     "hgt500_anom": {
@@ -1468,6 +1492,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "500mb Height Anomaly",
         "legend_title": "500mb Height Anomaly (m)",
         "legend_stops": HGT500_ANOM_M_LEGEND_STOPS,
+        "sanity_range": anomaly_sanity_range(HGT500_ANOM_M_RANGE),
         "display_resampling_override": "bilinear",
         "transparent_below_min": False,
     },
@@ -1480,6 +1505,13 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "Precip Anomaly",
         "legend_title": "Precip Anomaly (in)",
         "legend_stops": PRECIP_ANOM_IN_LEGEND_STOPS,
+        # 30× rather than the default 5×: multi-week accumulation departures
+        # legitimately dwarf the ±5.5 in display ladder (a stalled-TC or
+        # monsoon-burst precip_16d_anom cell can exceed 100 in), and one
+        # out-of-envelope pixel rejects the whole frame. ±165 in still trips
+        # on Kelvin/Pa-scale garbage and on inch/mm confusion during any
+        # major event.
+        "sanity_range": anomaly_sanity_range(PRECIP_ANOM_IN_RANGE, factor=30.0),
         "display_resampling_override": "bilinear",
         "transparent_below_min": False,
     },
@@ -1530,6 +1562,7 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "display_name": "Sea Surface Temp Anomaly",
         "legend_title": "Sea Surface Temp Anomaly (°C)",
         "legend_stops": SST_ANOM_C_LEGEND_STOPS,
+        "sanity_range": anomaly_sanity_range(SST_ANOM_C_RANGE),
         # A zero anomaly is meaningful signal, not "nothing here" — never let the
         # renderer treat the low end of the ramp as transparent.
         "transparent_below_min": False,

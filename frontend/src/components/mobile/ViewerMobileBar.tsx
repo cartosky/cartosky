@@ -7,7 +7,6 @@ import {
   Info,
   MessageSquareText,
   MoreHorizontal,
-  PlayCircle,
   Share2,
   TrendingUp,
   UserRound,
@@ -25,10 +24,10 @@ import { useViewerToolbar } from "@/lib/viewer-toolbar-context";
  * and the overflow menu.
  *
  * Decision 3: Share moves here, labeled, out of the bottom controls row. The
- * `•••` overflow carries Send feedback, Compare, Replay tour, Attribution and
- * Sign in — deliberately NOT Keyboard shortcuts: the keyboard-centric
- * ShortcutSheet is meaningless on touch. That is the one §6.1-vs-mobile
- * divergence and it is recorded in the plan.
+ * `•••` overflow carries Send feedback, Compare, Attribution and Sign in —
+ * deliberately NOT Keyboard shortcuts: the keyboard-centric ShortcutSheet is
+ * meaningless on touch. That is the one §6.1-vs-mobile divergence and it is
+ * recorded in the plan.
  *
  * Every target is 44 px inside the 52 px bar; nothing here owns viewer state.
  */
@@ -191,10 +190,6 @@ export function ViewerMobileBar() {
               <NewFeatureBadge feature="sounding" className="right-2 translate-x-0" />
             </button>
           ) : null}
-          <button type="button" role="menuitem" className={BAR_MENU_ITEM_CLASSNAME} onClick={runItem(() => toolbar?.onReplayTour?.())}>
-            <PlayCircle className="h-4 w-4 text-white/54" />
-            Replay tour
-          </button>
           <button type="button" role="menuitem" className={BAR_MENU_ITEM_CLASSNAME} onClick={runItem(() => setAttributionOpen(true))}>
             <Info className="h-4 w-4 text-white/54" />
             Attribution

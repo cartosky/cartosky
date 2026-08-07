@@ -398,7 +398,6 @@ test.describe('§8 State A — mobile bar', () => {
       'Compare',
       // Skew-T Phase 3: the sounding item lives in the overflow on mobile but is
       // hidden entirely when the active model has no stacks (this fixture is non-HRRR).
-      'Replay tour',
       'Attribution',
       'Sign in',
     ]);

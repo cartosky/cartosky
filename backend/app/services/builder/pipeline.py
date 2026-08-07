@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import subprocess
 import tempfile
@@ -768,6 +769,37 @@ def _check_value_array_sanity(
                     vmin, vmax, spec_min, spec_max, label,
                 )
                 # Warning only, not a hard fail
+
+        # Plausibility envelope: discrete-kind specs skip the ±20% range check
+        # above (ladders legitimately saturate past their display range), which
+        # leaves anomaly variables with no unit-error protection at all — a
+        # Kelvin-magnitude field on a °C anomaly ladder would publish silently.
+        # A spec may declare ``sanity_range``: a generous outer envelope that
+        # real extremes never leave but wrong-unit upstream fields do.
+        # Violations fail closed.
+        sanity_range = var_spec.get("sanity_range")
+        if sanity_range is not None:
+            # A malformed envelope is a spec-authoring error; surface it loudly
+            # and fail closed rather than crashing the build or (worse, e.g.
+            # a NaN endpoint) silently disabling the guard.
+            try:
+                sane_min, sane_max = float(sanity_range[0]), float(sanity_range[1])
+                if not (math.isfinite(sane_min) and math.isfinite(sane_max)) or sane_min >= sane_max:
+                    raise ValueError(f"invalid envelope [{sane_min}, {sane_max}]")
+            except (TypeError, ValueError, KeyError, IndexError) as exc:
+                logger.error(
+                    "%s malformed sanity_range %r in spec — rejecting frame (%s): %s",
+                    gate_name, sanity_range, label, exc,
+                )
+                ok = False
+            else:
+                if vmin < sane_min or vmax > sane_max:
+                    logger.error(
+                        "%s value range [%.1f, %.1f] outside plausibility envelope "
+                        "[%.1f, %.1f] — likely wrong-unit upstream field (%s)",
+                        gate_name, vmin, vmax, sane_min, sane_max, label,
+                    )
+                    ok = False
 
     if ok:
         logger.info("%s PASS: %s", pass_name or gate_name, label)
