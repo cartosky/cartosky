@@ -603,6 +603,187 @@ def test_a_frame_must_carry_at_least_one_field() -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 — sst_trend_7d
+# ---------------------------------------------------------------------------
+
+def test_sst_trend_capability_and_packing() -> None:
+    capability = SST_MODEL.get_var_capability("sst_trend_7d")
+    assert capability is not None
+    assert capability.units == "C"
+    assert capability.color_map_id == "sst_trend_7d"
+    assert capability.group == "Ocean"
+    assert list(capability.supported_build_regions) == ["na", "global"]
+    assert grid_code_supported("sst", "sst_trend_7d")
+    assert _PACKING_BY_MODEL_VAR[("sst", "sst_trend_7d")] == {
+        "dtype": "uint16",
+        "scale": 0.01,
+        "offset": -30.0,
+        "nodata": 65535,
+        "units": "C",
+    }
+    # Signed round trip across the real observed envelope (-7.07 .. +10.10 C).
+    packing = _PACKING_BY_MODEL_VAR[("sst", "sst_trend_7d")]
+    scale, offset, nodata = packing["scale"], packing["offset"], packing["nodata"]
+    for celsius in (-7.07, -1.84, -0.05, 0.0, 0.27, 2.24, 10.10):
+        code = int(round((celsius - offset) / scale))
+        assert 0 <= code < nodata
+        assert abs((code * scale + offset) - celsius) <= scale / 2.0 + 1e-9
+
+
+def test_sst_trend_ramp_is_uniform_quarter_degree_diverging() -> None:
+    spec = get_color_map_spec("sst_trend_7d")
+    assert spec["units"] == "C"
+    assert spec["range"] == (-3.0, 3.0)
+    assert spec["transparent_below_min"] is False
+    assert "°F" not in spec["legend_title"]
+    assert spec["legend_title"] == "SST 7-Day Change (°C)"
+
+    levels = spec["levels"]
+    assert levels[0] == -3.0 and levels[-1] == 3.0
+    assert len(levels) == 25
+    # Uniform 0.25 C steps, unlike the +-6 anomaly ladder's non-uniform tiers.
+    assert {round(b - a, 9) for a, b in zip(levels, levels[1:])} == {0.25}
+
+    colors = spec["colors"]
+    assert len(colors) == len(levels) - 1 == 24
+
+    def rgb(value: str) -> tuple[int, int, int]:
+        return tuple(int(value[i : i + 2], 16) for i in (1, 3, 5))  # type: ignore[return-value]
+
+    cool_r, _, cool_b = rgb(colors[0])
+    warm_r, _, warm_b = rgb(colors[-1])
+    assert cool_b > cool_r  # cool end blue-dominant
+    assert warm_r > warm_b  # warm end red-dominant
+    # The two bins touching zero are TINTED, never pure white, so a
+    # near-stationary ocean still shows which way it is drifting.
+    below_zero, above_zero = colors[11], colors[12]
+    assert below_zero.lower() != "#ffffff"
+    assert above_zero.lower() != "#ffffff"
+    assert rgb(below_zero)[2] > rgb(below_zero)[0]  # still cool-tinted
+    assert rgb(above_zero)[0] > rgb(above_zero)[2]  # still warm-tinted
+
+    # Fail-closed envelope (the discrete-ladder convention): real extremes pass,
+    # a Kelvin-scale unit error does not.
+    lo, hi = spec["sanity_range"]
+    assert (lo, hi) == (-15.0, 15.0)
+    assert lo <= -7.07 and hi >= 10.10
+    assert not (lo <= 280.0 <= hi)
+
+
+def test_negative_trends_survive_display_prep(tmp_path: Path, small_grids: None) -> None:
+    """54% of a real trend field is negative; clamp_negative=True would erase
+    every cooling ocean."""
+    from app.services.grid_display_prep import prepare_grid_display_values
+
+    values = np.array([[-3.2, -0.85, -0.05], [0.0, np.nan, 1.4]], dtype=np.float32)
+    prepared, prep_meta = prepare_grid_display_values(
+        model="sst", var="sst_trend_7d", values=values
+    )
+    assert prep_meta is not None
+    assert prep_meta["clip_to_water"] is True
+    assert prep_meta["id"] == "sst_trend_7d_clip_to_water_v1"
+    np.testing.assert_allclose(prepared[0], [-3.2, -0.85, -0.05], rtol=1e-6)
+
+    result = sst_publish.publish_sst_bundle(
+        data_root=tmp_path,
+        frames=[
+            sst_publish.SSTBundleFrame(
+                valid_time=_day(2026, 8, 4),
+                source_transform=_STUB_TRANSFORM,
+                values=_frame(_day(2026, 8, 4), 12.0).values,
+                trend_values=values,
+            )
+        ],
+    )
+    grid_dir = tmp_path / "published" / "sst" / result.run_id / "sst_trend_7d" / "grid"
+    meta = json.loads((grid_dir / "manifest.json").read_text())["grid"]
+    encoded = np.frombuffer((grid_dir / "fh000.l0.u16.bin").read_bytes(), dtype="<u2")
+    decoded = encoded.astype(np.float64) * meta["scale"] + meta["offset"]
+    assert decoded[0] == pytest.approx(-3.2, abs=0.01)
+    assert decoded[1] == pytest.approx(-0.85, abs=0.01)
+    assert decoded[2] == pytest.approx(-0.05, abs=0.01)
+
+
+def test_publish_writes_all_three_variables_side_by_side(
+    tmp_path: Path, small_grids: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(FLAG, raising=False)
+    day = _day(2026, 8, 4)
+    frame = sst_publish.SSTBundleFrame(
+        valid_time=day,
+        source_transform=_STUB_TRANSFORM,
+        values=_frame(day, 12.0).values,
+        anomaly_values=_anom_frame(day, 1.0).anomaly_values,
+        trend_values=np.array([[-0.8, -0.2, 0.1], [0.6, np.nan, 1.4]], dtype=np.float32),
+    )
+    result = sst_publish.publish_sst_bundle(data_root=tmp_path, frames=[frame])
+
+    assert result.variable_frame_counts == {
+        "na": {"sst": 1, "sst_anom": 1, "sst_trend_7d": 1}
+    }
+    run_root = tmp_path / "published" / "sst" / result.run_id
+    for var_id in ("sst", "sst_anom", "sst_trend_7d"):
+        assert (run_root / var_id / "fh000.json").is_file()
+        assert (run_root / var_id / "grid" / "fh000.l0.u16.bin").is_file()
+        prep = json.loads((run_root / var_id / "grid" / "manifest.json").read_text())["display_prep"]
+        assert prep["clip_to_water"] is True
+
+    manifest = json.loads((tmp_path / "manifests" / "sst" / f"{result.run_id}.json").read_text())
+    assert sorted(manifest["variables"]) == ["sst", "sst_anom", "sst_trend_7d"]
+    # Long form matches the VarSpec name, same convention as sst / sst_anom;
+    # the short "SST 7-Day Change" label lives in the frontend UI override.
+    assert manifest["variables"]["sst_trend_7d"]["display_name"] == "Sea Surface Temperature 7-Day Change"
+    for entry in manifest["variables"].values():
+        assert entry["units"] == "°C"
+        assert entry["frames"] == [{"fh": 0, "valid_time": "2026-08-04T12:00:00Z"}]
+
+
+def test_trend_only_frame_reuses_published_sst_and_anomaly_by_hardlink(
+    tmp_path: Path, small_grids: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A late trend amends the run without re-encoding sst OR sst_anom."""
+    monkeypatch.delenv(FLAG, raising=False)
+    day = _day(2026, 8, 4)
+
+    first = sst_publish.publish_sst_bundle(
+        data_root=tmp_path, frames=[_anom_frame(day, 1.0, with_sst=True)]
+    )
+    assert first.variable_frame_counts == {"na": {"sst": 1, "sst_anom": 1}}
+    origins = {
+        var_id: tmp_path / "published" / "sst" / first.run_id / var_id / "grid" / "fh000.l0.u16.bin"
+        for var_id in ("sst", "sst_anom")
+    }
+
+    second = sst_publish.publish_sst_bundle(
+        data_root=tmp_path,
+        frames=[
+            sst_publish.SSTBundleFrame(
+                valid_time=day,
+                source_transform=_STUB_TRANSFORM,
+                trend_values=np.array([[-0.8, -0.2, 0.1], [0.6, np.nan, 1.4]], dtype=np.float32),
+            )
+        ],
+        run_valid_time=day,
+    )
+    assert second.run_id == first.run_id
+    assert second.variable_frame_counts == {
+        "na": {"sst": 1, "sst_anom": 1, "sst_trend_7d": 1}
+    }
+
+    run_root = tmp_path / "published" / "sst" / second.run_id
+    for var_id, origin in origins.items():
+        carried = run_root / var_id / "grid" / "fh000.l0.u16.bin"
+        assert carried.samefile(origin), f"{var_id} was re-encoded instead of hardlinked"
+    assert (run_root / "sst_trend_7d" / "grid" / "fh000.l0.u16.bin").is_file()
+
+
+def test_supplemental_variable_list_excludes_the_primary() -> None:
+    assert sst_publish.SST_PUBLISH_VARIABLES == ("sst", "sst_anom", "sst_trend_7d")
+    assert sst_publish.SST_SUPPLEMENTAL_VARIABLES == ("sst_anom", "sst_trend_7d")
+    assert "sst" not in sst_publish.SST_SUPPLEMENTAL_VARIABLES
+
+
 def test_publish_requires_a_fresh_frame(tmp_path: Path, small_grids: None) -> None:
     with pytest.raises(ValueError):
         sst_publish.publish_sst_bundle(data_root=tmp_path, frames=[])

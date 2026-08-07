@@ -1091,16 +1091,18 @@ function DailyRangeRows({
         const lowPct = low != null ? ((low - globalMin) / span) * 100 : null;
         const highPct = high != null ? ((high - globalMin) / span) * 100 : null;
         const hasRange = lowPct != null && highPct != null;
-        const leftPct = lowPct ?? highPct ?? 0;
-        const widthPct = hasRange ? highPct - lowPct : 0;
+        const lowPositionPct = lowPct != null ? 100 - lowPct : null;
+        const highPositionPct = highPct != null ? 100 - highPct : null;
+        const leftPct = highPositionPct ?? lowPositionPct ?? 0;
+        const widthPct = hasRange ? lowPositionPct! - highPositionPct! : 0;
         const pop = entry.pop_pct ?? 0;
         const isOpen = expanded.has(i);
-        const lowLabelStyle = leftPct < 5
+        const highLabelStyle = (highPositionPct ?? 0) < 5
           ? { top: "0px", left: 0, transform: "none" as const }
-          : { top: "0px", left: `${leftPct}%`, transform: "translateX(-50%)" as const };
-        const highLabelStyle = (highPct ?? 0) > 95
+          : { top: "0px", left: `${highPositionPct ?? leftPct}%`, transform: "translateX(-50%)" as const };
+        const lowLabelStyle = (lowPositionPct ?? 0) > 95
           ? { top: "0px", right: 0, left: "auto", transform: "none" as const }
-          : { top: "0px", left: `${highPct ?? leftPct}%`, transform: "translateX(-50%)" as const };
+          : { top: "0px", left: `${lowPositionPct ?? leftPct}%`, transform: "translateX(-50%)" as const };
         const row = (
           <div className="grid grid-cols-[44px_34px_1fr_40px] items-center gap-3 py-3">
             <div className="text-[13px] font-medium text-white/65">
@@ -1165,8 +1167,8 @@ function DailyRangeRows({
         <div />
         <div />
         <div className="flex items-center justify-between text-[11px] font-medium text-white/42">
-          <span>{`< ${globalMin}° week low`}</span>
-          <span>{`${globalMax}° week high >`}</span>
+          <span>{`< ${globalMax}° week high`}</span>
+          <span>{`${globalMin}° week low >`}</span>
         </div>
         <div className="text-right text-[11px] font-medium text-cyan-200/55">PoP</div>
       </div>

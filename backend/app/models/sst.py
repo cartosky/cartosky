@@ -32,8 +32,10 @@ from .base import (
 SST_MODEL_ID = "sst"
 SST_VARIABLE_ID = "sst"
 SST_ANOM_VARIABLE_ID = "sst_anom"
+SST_TREND_VARIABLE_ID = "sst_trend_7d"
 SST_COLOR_MAP_ID = "sst"
 SST_ANOM_COLOR_MAP_ID = "sst_anom"
+SST_TREND_COLOR_MAP_ID = "sst_trend_7d"
 SST_CANONICAL_REGION_ID = "na"
 SST_GLOBAL_REGION_ID = "global"
 
@@ -59,6 +61,10 @@ class SSTPlugin(BaseModelPlugin):
             "sst_anomaly": "sst_anom",
             "sea_surface_temperature_anomaly": "sst_anom",
             "ssta": "sst_anom",
+            "sst_trend_7d": "sst_trend_7d",
+            "sst_trend": "sst_trend_7d",
+            "trend": "sst_trend_7d",
+            "sst_trend_7day": "sst_trend_7d",
         }
         return aliases.get(normalized, normalized)
 
@@ -127,22 +133,48 @@ SST_VARS: dict[str, VarSpec] = {
         kind="continuous",
         units="C",
     ),
+    # NOAA Coral Reef Watch 5 km daily 7-day SST trend: the °C change over the
+    # trailing week, so a delta like the anomaly and never unit-converted. The
+    # granule's own units attribute is ``degrees_Celsius_per_week``; the "7-Day"
+    # in the name carries the window, so the display unit is plain °C.
+    #
+    # STAR-only: the CoastWatch ERDDAP has no 7-day-trend twin (verified live
+    # 2026-08-07 — it carries exactly six CRW datasets and none is the trend).
+    SST_TREND_VARIABLE_ID: VarSpec(
+        id=SST_TREND_VARIABLE_ID,
+        name="Sea Surface Temperature 7-Day Change",
+        selectors=VarSelectors(
+            hints={
+                "upstream_product": "NOAA Coral Reef Watch 5km daily 7-day SST trend v3.1",
+                "upstream_transport": "noaa_star_archive_netcdf",
+                "upstream_fallback": "none (no ERDDAP twin exists)",
+                "display_units": "C",
+                "accumulation_window_days": "7",
+            }
+        ),
+        primary=True,
+        kind="continuous",
+        units="C",
+    ),
 }
 
 
 _SST_VAR_COLOR_MAPS: dict[str, str] = {
     SST_VARIABLE_ID: SST_COLOR_MAP_ID,
     SST_ANOM_VARIABLE_ID: SST_ANOM_COLOR_MAP_ID,
+    SST_TREND_VARIABLE_ID: SST_TREND_COLOR_MAP_ID,
 }
 
 _SST_VAR_GROUPS: dict[str, str] = {
     SST_VARIABLE_ID: "Ocean",
     SST_ANOM_VARIABLE_ID: "Ocean",
+    SST_TREND_VARIABLE_ID: "Ocean",
 }
 
 _SST_VAR_BUILD_REGIONS: dict[str, tuple[str, ...]] = {
     SST_VARIABLE_ID: SST_BUILD_REGIONS,
     SST_ANOM_VARIABLE_ID: SST_BUILD_REGIONS,
+    SST_TREND_VARIABLE_ID: SST_BUILD_REGIONS,
 }
 
 

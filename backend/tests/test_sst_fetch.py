@@ -322,6 +322,111 @@ def test_degrees_celsius_spelling_is_recognised_without_the_magnitude_fallback()
 
 
 # ---------------------------------------------------------------------------
+# 7-day trend (Phase 3): STAR-only, delta semantics
+# ---------------------------------------------------------------------------
+
+def test_trend_paths_are_star_only_because_no_erddap_twin_exists() -> None:
+    """Verified live 2026-08-07: the CoastWatch ERDDAP publishes six CRW datasets
+    and none is the 7-day trend, so this path list is deliberately one entry."""
+    paths = sst_fetch.trend_paths_for_day(datetime(2026, 8, 4, tzinfo=timezone.utc))
+    assert len(paths) == 1
+    assert paths[0]["label"] == "star-nesdis-crw-sst-trend-7d"
+    assert paths[0]["variable"] == "trend"
+    assert paths[0]["url"] == (
+        "https://www.star.nesdis.noaa.gov/pub/socd/mecb/crw/data/5km/v3.1_op/nc/"
+        "v1.0/daily/sst-trend-7d/2026/ct5km_sst-trend-7d_v3.1_20260804.nc"
+    )
+    assert not any("erddap" in entry["label"] for entry in paths)
+
+
+def test_supplemental_source_registry_covers_both_delta_products() -> None:
+    assert set(sst_fetch.SUPPLEMENTAL_SOURCES) == {"sst_anom", "sst_trend_7d"}
+    for var_id, source in sst_fetch.SUPPLEMENTAL_SOURCES.items():
+        # Every supplemental is a delta: none may opt into Kelvin detection.
+        assert source["field_kind"] != "sst", var_id
+    assert sst_fetch.SUPPLEMENTAL_SOURCES["sst_trend_7d"]["variable"] == "trend"
+
+
+def test_unknown_supplemental_is_rejected_rather_than_guessed() -> None:
+    with pytest.raises(sst_fetch.SSTFetchError, match="No SST supplemental upstream"):
+        sst_fetch.probe_supplemental_available("sst_nonesuch", datetime(2026, 8, 4, tzinfo=timezone.utc))
+
+
+def test_trend_probe_is_a_head_on_star(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    def fake_head(url: str, **kwargs: object) -> _FakeResponse:
+        seen.append(url)
+        assert kwargs["headers"]["User-Agent"] == "CartoSky-SST/1.0"
+        return _FakeResponse(200)
+
+    def fail_get(*args: object, **kwargs: object) -> _FakeResponse:
+        raise AssertionError("the trend probe must not download 57 MB")
+
+    monkeypatch.setattr(sst_fetch.requests, "head", fake_head)
+    monkeypatch.setattr(sst_fetch.requests, "get", fail_get)
+
+    assert (
+        sst_fetch.probe_supplemental_available(
+            "sst_trend_7d", datetime(2026, 8, 4, tzinfo=timezone.utc)
+        )
+        is True
+    )
+    assert "ct5km_sst-trend-7d_v3.1_20260804.nc" in seen[0]
+
+
+def test_trend_read_never_unit_converts_despite_per_week_units(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The granule's units attribute is ``degrees_Celsius_per_week`` — not a token
+    ``detect_kelvin`` recognises. A delta field must never reach that code path at
+    all, so even Kelvin-magnitude values pass through untouched."""
+
+    class _FakeDataset:
+        width, height = 4, 2
+        scales = (1.0,)
+        offsets = (0.0,)
+        nodatavals = (None,)
+        transform = from_origin(-180.0, 90.0, 0.05, 0.05)
+        bounds = SimpleNamespace(left=-180.0, right=180.0, top=90.0, bottom=-90.0)
+
+        def read(self, _band: int) -> np.ndarray:
+            return np.array([[280.0, 290.0, 300.0, 310.0], [-0.8, 0.3, 0.0, 1.1]])
+
+        def tags(self, _band: int | None = None) -> dict[str, str]:
+            return {"units": "degrees_Celsius_per_week"}
+
+        def __enter__(self) -> "_FakeDataset":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+    import rasterio
+
+    monkeypatch.setattr(rasterio, "open", lambda *a, **k: _FakeDataset())
+
+    field = sst_fetch.read_native_supplemental("sst_trend_7d", Path("/nonexistent.nc"))
+    assert field.kelvin_converted is False
+    assert "never Kelvin-converted" in field.units_decision
+    # Distinct token per product so sidecar audit trails distinguish the trend
+    # from the anomaly; any non-"sst" kind opts out of Kelvin detection.
+    assert field.metadata["field_kind"] == "trend"
+    assert field.values.max() == pytest.approx(310.0)
+    assert field.values.min() == pytest.approx(-0.8)
+
+
+def test_only_absolute_sst_opts_into_kelvin_detection() -> None:
+    """Structural guard: a new delta product is safe by default, not
+    safe-if-you-remember, because detection is opt-IN on field_kind == "sst"."""
+    import inspect
+
+    source = inspect.getsource(sst_fetch._read_native_field)
+    assert 'if field_kind != "sst":' in source
+    assert "detect_kelvin" in source.split('if field_kind != "sst":')[1]
+
+
+# ---------------------------------------------------------------------------
 # Coastal fringe fill (pre-warp edge handling)
 # ---------------------------------------------------------------------------
 

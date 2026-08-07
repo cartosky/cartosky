@@ -665,6 +665,7 @@ const VARIABLE_UI_OVERRIDES: Record<string, VariableUiOverride> = {
   active: { label: "Active Hazards", group: "OBSERVATIONS", order: 0 },
   sst: { label: "Sea Surface Temp", group: "OCEAN", order: 0 },
   sst_anom: { label: "SST Anomaly", group: "OCEAN", order: 0.5 },
+  sst_trend_7d: { label: "SST 7-Day Change", group: "OCEAN", order: 1 },
 };
 
 const FIXED_LEGEND_TITLE_IDS = new Set([

@@ -150,7 +150,11 @@ test.describe('§9 mobile geometry at rest', () => {
     // leaving the track to consume the full row after the play button.
     const track = await boxOf(page, 'timeline-track');
     expect(track.width).toBeGreaterThanOrEqual(280);
-    expect(track.x + track.width).toBeGreaterThanOrEqual(VIEWPORT.width - 10);
+    expect(track.x + track.width).toBeLessThanOrEqual(VIEWPORT.width - 32);
+
+    const thumb = await boxOf(page, 'timeline-thumb');
+    expect(thumb.x + thumb.width / 2).toBeLessThanOrEqual(VIEWPORT.width - 32);
+    expect(thumb.x + thumb.width).toBeLessThanOrEqual(VIEWPORT.width - 8);
 
     expect(map.height / VIEWPORT.height, `map fraction ${map.height / VIEWPORT.height}`)
       .toBeGreaterThanOrEqual(MAP_FLOOR_FRACTION);

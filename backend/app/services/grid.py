@@ -1103,6 +1103,16 @@ _PACKING_BY_MODEL_VAR: dict[tuple[str, str], dict[str, Any]] = {
         "nodata": 65535,
         "units": "C",
     },
+    # SST 7-day trend — °C change over the trailing week, ~54% of values negative.
+    # Same envelope as the anomaly (observed -7.1..+10.1 C) so the same
+    # offset/scale pair covers it with margin.
+    ("sst", "sst_trend_7d"): {
+        "dtype": GRID_DTYPE_UINT16,
+        "scale": 0.01,
+        "offset": -30.0,
+        "nodata": 65535,
+        "units": "C",
+    },
     ("goes-east", "ir13"): {
         "dtype": GRID_DTYPE_UINT16,
         "scale": 0.01,

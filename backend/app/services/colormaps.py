@@ -1116,6 +1116,32 @@ SST_ANOM_C_COLORS = [
 SST_ANOM_C_LEGEND_STOPS = list(zip(SST_ANOM_C_LEVELS[:-1], SST_ANOM_C_COLORS))
 SST_ANOM_C_RANGE = (-6.0, 6.0)
 
+# Diverging SST 7-day-change ramp, °C ONLY — sibling of the anomaly ladder
+# (blue -> tinted near-white centre -> red, discrete bins, never pure white at
+# zero), but sized to the trend's much tighter distribution.
+#
+# Range and step measured on the real 2026-08-04 granule: median -0.05 °C,
+# p1 -1.84, p99 +2.24, and 99.44% of values within ±3 °C. So ±3 captures
+# essentially the whole field without saturating. Steps stay UNIFORM at 0.25 °C
+# (24 bins) rather than tightening near zero the way the ±6 anomaly ladder does:
+# at this much narrower range a uniform step already gives real resolution in the
+# ±0.5 °C core where 71% of the data sits, and a uniform ladder is far easier to
+# read off the legend. Values beyond ±3 clamp for display; the packing envelope
+# is far wider so nothing is lost on disk.
+SST_TREND_7D_C_LEVELS = [
+    -3.0, -2.75, -2.5, -2.25, -2.0, -1.75, -1.5, -1.25,
+    -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75,
+    1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0,
+]
+SST_TREND_7D_C_COLORS = [
+    "#0b3672", "#10417f", "#154c8d", "#1a579a", "#1f63a8", "#286fb0",
+    "#317bb7", "#3a88bd", "#4996c5", "#84b9d8", "#bfdbea", "#e7f0f4",
+    "#faebe3", "#f8ccb8", "#e89885", "#d86552", "#cd4e44", "#c33a3b",
+    "#b92632", "#ad162a", "#9e1228", "#8e0c25", "#7e0823", "#6f0220",
+]
+SST_TREND_7D_C_LEGEND_STOPS = list(zip(SST_TREND_7D_C_LEVELS[:-1], SST_TREND_7D_C_COLORS))
+SST_TREND_7D_C_RANGE = (-3.0, 3.0)
+
 VORT500_LEGEND_STOPS = [
     (0.5, "#ffffff"),
     (1.0, "#dddddd"),
@@ -1565,6 +1591,23 @@ COLOR_MAP_SPECS: dict[str, dict] = {
         "sanity_range": anomaly_sanity_range(SST_ANOM_C_RANGE),
         # A zero anomaly is meaningful signal, not "nothing here" — never let the
         # renderer treat the low end of the ramp as transparent.
+        "transparent_below_min": False,
+    },
+    "sst_trend_7d": {
+        "type": "discrete",
+        "units": "C",
+        "range": SST_TREND_7D_C_RANGE,
+        "levels": SST_TREND_7D_C_LEVELS,
+        "colors": SST_TREND_7D_C_COLORS,
+        "display_name": "SST 7-Day Change",
+        "legend_title": "SST 7-Day Change (°C)",
+        "legend_stops": SST_TREND_7D_C_LEGEND_STOPS,
+        # Discrete ladders are exempt from the builder's ±20% physical-range
+        # check, so without this a wrong-unit upstream (Kelvin magnitudes on a °C
+        # delta) would publish silently. ±15 °C passes the real observed extremes
+        # (-7.1..+10.1) and fails anything on a unit-scale error.
+        "sanity_range": anomaly_sanity_range(SST_TREND_7D_C_RANGE),
+        # A zero trend is meaningful signal ("this ocean is steady"), not absence.
         "transparent_below_min": False,
     },
     "vort500": {

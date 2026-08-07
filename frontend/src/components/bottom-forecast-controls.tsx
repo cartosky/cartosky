@@ -755,7 +755,7 @@ export const BottomForecastControls = memo(function BottomForecastControls({
               so it lives in the sheet's Source section. Share, Compare,
               Feedback and the controls button moved to the 52 px bar. */}
           {!isDesktopLayout ? (
-            <div className="relative z-10 flex h-full items-center gap-2 px-2">
+            <div className="relative z-10 flex h-full items-center gap-2 px-2 pr-8">
               <button
                 type="button"
                 data-testid="timeline-play-button"

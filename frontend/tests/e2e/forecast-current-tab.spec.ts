@@ -224,12 +224,27 @@ test.describe("Forecast current tab", () => {
     await expect(sundayRow).not.toContainText("--°");
     await sundayRow.click();
     await expect(page.getByText("Clear tonight, with a low around 75.")).toBeVisible();
-    await page.getByRole("button").filter({ hasText: "Mon" }).click();
+    const mondayRow = page.getByRole("button").filter({ hasText: "Mon" });
+    await mondayRow.click();
     await expect(page.getByText("Sunny, with a high near 97.")).toBeVisible();
     const tuesdayRow = page.getByRole("button").filter({ hasText: "Tue" });
     await expect(tuesdayRow).not.toContainText("--°");
     await tuesdayRow.click();
     await expect(page.getByText("Mostly sunny, with a high near 93.")).toBeVisible();
+
+    const sevenDayHighBox = await mondayRow.getByText("97°", { exact: true }).boundingBox();
+    const sevenDayLowBox = await mondayRow.getByText("70°", { exact: true }).boundingBox();
+    expect(sevenDayHighBox).not.toBeNull();
+    expect(sevenDayLowBox).not.toBeNull();
+    expect(sevenDayHighBox!.x).toBeLessThan(sevenDayLowBox!.x);
+
+    await page.getByRole("tab", { name: "Extended" }).click();
+    const extendedRow = page.getByRole("button").filter({ hasText: "Mon" }).last();
+    const extendedHighBox = await extendedRow.getByText("94°", { exact: true }).boundingBox();
+    const extendedLowBox = await extendedRow.getByText("73°", { exact: true }).boundingBox();
+    expect(extendedHighBox).not.toBeNull();
+    expect(extendedLowBox).not.toBeNull();
+    expect(extendedHighBox!.x).toBeLessThan(extendedLowBox!.x);
   });
 
   test("lands on Today and moves current conditions out of Hourly", async ({ page }) => {

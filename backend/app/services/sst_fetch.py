@@ -16,8 +16,15 @@ priority **inverted** relative to absolute SST and on purpose:
 * **fallback** — ERDDAP ``noaacrwsstanomalyDaily``; different infrastructure, so
   one being down does not imply the other.
 
-Anomaly values are °C **deltas** and are never Kelvin-converted — enforced by
-``field_kind="anom"`` in the reader, not by a caller-supplied flag.
+**SST 7-day change** (``sst_trend_7d``) — NOAA Coral Reef Watch 5 km daily
+7-day trend, **STAR-only**: the CoastWatch ERDDAP has no twin (verified live
+2026-08-07, see :data:`_STAR_CRW_SST_TREND_7D`). Granule is ~57 MB because it
+bundles ``student_t_test`` and ``mask`` alongside ``trend``; only ``trend`` is
+read.
+
+Supplemental (non-absolute) values are °C **deltas** and are never
+Kelvin-converted. That is enforced structurally: only ``field_kind="sst"`` opts
+into Kelvin detection, so a newly added delta product is safe by default.
 
 **ERDDAP is effectively the sole reliable path for recent days.** The NCEI
 archive is patchy near the present: HEAD probes on 2026-08-06 found 08-05,
@@ -103,6 +110,26 @@ ERDDAP_ANOM_DATASET = "noaacrwsstanomalyDaily"
 _STAR_CRW_SSTA = (
     "https://www.star.nesdis.noaa.gov/pub/socd/mecb/crw/data/5km/v3.1_op/nc/"
     "v1.0/daily/ssta/{Y}/ct5km_ssta_v3.1_{ymd}.nc"
+)
+
+# ── SST 7-day trend (Phase 3): NOAA Coral Reef Watch 5 km daily ──
+#
+# **STAR-only, and that is a finding rather than an oversight.** Verified live
+# 2026-08-07: the CoastWatch ERDDAP publishes exactly six CRW datasets
+# (noaacrwsstDaily, noaacrwsstanomalyDaily, noaacrwsstanomalybaselineDaily,
+# noaacrwdhwDaily, noaacrwhotspotDaily, noaacrwbaa7dDaily) and **none** is the
+# 7-day trend; a site-wide search for a "trend" dataset returns only an unrelated
+# Arctic sea-ice/snow product. So this variable has a one-entry path list. If a
+# twin ever appears, add it to :func:`trend_paths_for_day` and nothing else needs
+# to change.
+#
+# The granule is also much larger than the anomaly's: **~57 MB**, not ~11 MB,
+# because it bundles ``trend`` with ``student_t_test`` and ``mask``. Only
+# ``trend`` is read.
+TREND_VAR = "trend"
+_STAR_CRW_SST_TREND_7D = (
+    "https://www.star.nesdis.noaa.gov/pub/socd/mecb/crw/data/5km/v3.1_op/nc/"
+    "v1.0/daily/sst-trend-7d/{Y}/ct5km_sst-trend-7d_v3.1_{ymd}.nc"
 )
 
 #: Upstream stamps every daily frame at 12:00Z.
@@ -221,6 +248,51 @@ def anomaly_paths_for_day(day: datetime) -> list[dict[str, str]]:
     ]
 
 
+def star_trend_url(day: datetime) -> str:
+    normalized = normalize_day(day)
+    return _STAR_CRW_SST_TREND_7D.format(
+        Y=normalized.strftime("%Y"), ymd=normalized.strftime("%Y%m%d")
+    )
+
+
+def trend_paths_for_day(day: datetime) -> list[dict[str, str]]:
+    """Trend fetch paths — STAR only; no ERDDAP twin exists (see module docstring)."""
+    return [
+        {"label": "star-nesdis-crw-sst-trend-7d", "url": star_trend_url(day), "variable": TREND_VAR},
+    ]
+
+
+#: The supplemental (non-primary) variables this module can fetch, and how.
+#: Any ``field_kind`` other than ``"sst"`` marks a delta field: never
+#: unit-converted (the reader opts INTO Kelvin detection on ``"sst"`` only).
+#: The token itself is recorded in sidecars/units_decision, so each product
+#: gets a distinct one to keep the audit trail honest. Adding another CRW
+#: delta product is one entry here plus a catalog/ramp/packing entry.
+SUPPLEMENTAL_SOURCES: dict[str, dict[str, Any]] = {
+    "sst_anom": {
+        "paths_for_day": anomaly_paths_for_day,
+        "probe_url": star_anomaly_url,
+        "variable": ANOM_VAR,
+        "field_kind": "anom",
+        "prefix": "sst_anom",
+    },
+    "sst_trend_7d": {
+        "paths_for_day": trend_paths_for_day,
+        "probe_url": star_trend_url,
+        "variable": TREND_VAR,
+        "field_kind": "trend",
+        "prefix": "sst_trend_7d",
+    },
+}
+
+
+def _supplemental_source(var_id: str) -> dict[str, Any]:
+    source = SUPPLEMENTAL_SOURCES.get(var_id)
+    if source is None:
+        raise SSTFetchError(f"No SST supplemental upstream registered for {var_id!r}")
+    return source
+
+
 # ---------------------------------------------------------------------------
 # Availability probe
 # ---------------------------------------------------------------------------
@@ -324,25 +396,62 @@ def _download(url: str, dest: Path, *, timeout: tuple[float, float]) -> tuple[bo
     return False, last_error
 
 
+def probe_supplemental_available(
+    var_id: str,
+    day: datetime,
+    *,
+    timeout: tuple[float, float] = DEFAULT_PROBE_TIMEOUT,
+) -> bool:
+    """Whether a supplemental CRW product exists upstream for ``day``. Never raises.
+
+    A plain HEAD on the STAR granule, which is why STAR being primary is such a
+    good fit for these variables: availability costs one header round trip, so the
+    poller can ask "is it out yet?" per day without touching a byte of payload —
+    and for the trend that saves ~57 MB per probe. ``False`` means "not yet" and
+    is always a skip, never an error.
+    """
+    url = _supplemental_source(var_id)["probe_url"](day)
+    try:
+        response = requests.head(url, timeout=timeout, headers=HTTP_HEADERS, allow_redirects=True)
+    except requests.RequestException as exc:
+        logger.warning("SST %s probe failed (%s): %r", var_id, url, exc)
+        return False
+    return response.status_code == 200
+
+
+def fetch_supplemental_day(
+    var_id: str,
+    day: datetime,
+    *,
+    download_dir: Path,
+    timeout: tuple[float, float] = DEFAULT_TIMEOUT,
+) -> SSTSourceFile:
+    """Download one day of a supplemental CRW product, trying its paths in order."""
+    source = _supplemental_source(var_id)
+    return _fetch_day(
+        day,
+        paths=source["paths_for_day"](normalize_day(day)),
+        prefix=source["prefix"],
+        download_dir=download_dir,
+        timeout=timeout,
+    )
+
+
+def read_native_supplemental(var_id: str, path: Path, variable: str | None = None) -> SSTNativeField:
+    """Read one supplemental granule as a °C delta field (never unit-converted)."""
+    source = _supplemental_source(var_id)
+    return _read_native_field(
+        path, variable or source["variable"], field_kind=source["field_kind"]
+    )
+
+
 def probe_anomaly_available(
     day: datetime,
     *,
     timeout: tuple[float, float] = DEFAULT_PROBE_TIMEOUT,
 ) -> bool:
-    """Whether the CRW anomaly exists upstream for ``day``. Never raises.
-
-    A plain HEAD on the STAR granule, which is why STAR being primary is such a
-    good fit for this variable: availability costs one header round trip, so the
-    poller can ask "is the anomaly out yet?" per day without touching a byte of
-    payload. ``False`` means "not yet" and is always a skip, never an error.
-    """
-    url = star_anomaly_url(day)
-    try:
-        response = requests.head(url, timeout=timeout, headers=HTTP_HEADERS, allow_redirects=True)
-    except requests.RequestException as exc:
-        logger.warning("SST anomaly probe failed (%s): %r", url, exc)
-        return False
-    return response.status_code == 200
+    """Anomaly-specific alias for :func:`probe_supplemental_available`."""
+    return probe_supplemental_available("sst_anom", day, timeout=timeout)
 
 
 def fetch_sst_anomaly_day(
@@ -352,12 +461,8 @@ def fetch_sst_anomaly_day(
     timeout: tuple[float, float] = DEFAULT_TIMEOUT,
 ) -> SSTSourceFile:
     """Download one day of CRW anomaly: STAR archive first, then ERDDAP."""
-    return _fetch_day(
-        day,
-        paths=anomaly_paths_for_day(normalize_day(day)),
-        prefix="sst_anom",
-        download_dir=download_dir,
-        timeout=timeout,
+    return fetch_supplemental_day(
+        "sst_anom", day, download_dir=download_dir, timeout=timeout
     )
 
 
@@ -579,11 +684,14 @@ def _read_native_field(path: Path, variable: str, *, field_kind: str) -> SSTNati
     if nodata is not None:
         values[raw == nodata] = np.nan
 
-    if field_kind == "anom":
-        # Already a °C delta. No detection, no conversion, no magnitude fallback
-        # that could mistake a large positive anomaly field for Kelvin.
+    if field_kind != "sst":
+        # Any non-absolute field is a °C DELTA (anomaly, 7-day trend, ...): no
+        # detection, no conversion, and deliberately no magnitude fallback that
+        # could mistake a large positive delta field for Kelvin. Only field_kind
+        # "sst" opts INTO Kelvin detection, so a new delta product is safe by
+        # default rather than safe-if-you-remember.
         kelvin = False
-        units_reason = "anomaly field — °C deltas, never Kelvin-converted"
+        units_reason = f"{field_kind} field — °C deltas, never Kelvin-converted"
     else:
         kelvin, units_reason = detect_kelvin(band_units, values)
         if kelvin:

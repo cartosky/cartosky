@@ -74,42 +74,66 @@ def _anom_values() -> np.ndarray:
     return np.array([[-1.5, -0.5, 0.5], [1.5, np.nan, 2.5]], dtype=np.float32)
 
 
+def _trend_values() -> np.ndarray:
+    # A 7-day change: signed, and mostly small.
+    return np.array([[-0.8, -0.2, 0.1], [0.6, np.nan, 1.4]], dtype=np.float32)
+
+
+_SUPPLEMENTAL_PAYLOADS = {
+    "sst_anom": (_anom_values, "anomaly_values", "anomaly_source_url", "anomaly_source_filename"),
+    "sst_trend_7d": (_trend_values, "trend_values", "trend_source_url", "trend_source_filename"),
+}
+
+
 def _install_fake_upstream(
     monkeypatch: pytest.MonkeyPatch,
     *,
     newest: datetime | None,
     available_days: set[int] | None = None,
     anomaly_days: set[int] | None = None,
+    trend_days: set[int] | None = None,
 ) -> dict[str, list[datetime]]:
-    """Stub probe + per-day fetch for BOTH variables.
+    """Stub probe + per-day fetch for ALL THREE variables.
 
-    ``anomaly_days`` is the set of day-of-month values whose CRW anomaly upstream
-    has published; ``None`` means "every day the SST has". Returns
-    ``{"sst": [...], "sst_anom": [...]}`` of days actually fetched, so a test can
-    assert that an already-published SST day is never re-downloaded.
+    ``anomaly_days`` / ``trend_days`` are the day-of-month values whose CRW product
+    upstream has published; ``None`` means "every day the SST has". Returns
+    ``{"sst": [...], "sst_anom": [...], "sst_trend_7d": [...]}`` of days actually
+    fetched, so a test can assert that an already-published day is never
+    re-downloaded, per variable.
     """
-    fetched: dict[str, list[datetime]] = {"sst": [], "sst_anom": []}
+    fetched: dict[str, list[datetime]] = {
+        "sst": [],
+        "sst_anom": [],
+        "sst_trend_7d": [],
+    }
+    available_by_var = {"sst_anom": anomaly_days, "sst_trend_7d": trend_days}
 
     monkeypatch.setattr(
         sst_poller.sst_fetch, "probe_latest_available_day", lambda **kwargs: newest  # noqa: ARG005
     )
 
-    def anomaly_ready(day: datetime) -> bool:
-        return anomaly_days is None or day.day in anomaly_days
-
-    def fake_anomaly_frame(
-        day: datetime, *, download_dir: Path, timeout: tuple[float, float], probe_timeout: tuple[float, float]
+    def fake_supplemental_frame(
+        var_id: str,
+        day: datetime,
+        *,
+        download_dir: Path,
+        timeout: tuple[float, float],
+        probe_timeout: tuple[float, float],
     ):
         del download_dir, timeout, probe_timeout
-        if not anomaly_ready(day):
+        allowed = available_by_var[var_id]
+        if allowed is not None and day.day not in allowed:
             return None
-        fetched["sst_anom"].append(day)
+        fetched[var_id].append(day)
+        values_fn, values_kw, url_kw, filename_kw = _SUPPLEMENTAL_PAYLOADS[var_id]
         return sst_publish.SSTBundleFrame(
             valid_time=day,
             source_transform=_STUB_TRANSFORM,
-            anomaly_values=_anom_values(),
-            anomaly_source_url=f"https://example.invalid/anom/{day:%Y%m%d}.nc",
-            anomaly_source_filename=f"ssta_{day:%Y%m%d}.nc",
+            **{
+                values_kw: values_fn(),
+                url_kw: f"https://example.invalid/{var_id}/{day:%Y%m%d}.nc",
+                filename_kw: f"{var_id}_{day:%Y%m%d}.nc",
+            },
         )
 
     def fake_frame(
@@ -118,32 +142,38 @@ def _install_fake_upstream(
         download_dir: Path,
         timeout: tuple[float, float],
         probe_timeout: tuple[float, float],
-        with_anomaly: bool,
+        with_supplementals: tuple[str, ...] = (),
     ):
         del download_dir, timeout, probe_timeout
         if available_days is not None and day.day not in available_days:
             raise sst_fetch.SSTFetchError(f"no upstream path for {day:%Y%m%d}")
         fetched["sst"].append(day)
-        anomaly = (
-            fake_anomaly_frame(
-                day, download_dir=Path("."), timeout=(1.0, 1.0), probe_timeout=(1.0, 1.0)
+        extra: dict[str, object] = {}
+        for var_id in with_supplementals:
+            supplemental = fake_supplemental_frame(
+                var_id,
+                day,
+                download_dir=Path("."),
+                timeout=(1.0, 1.0),
+                probe_timeout=(1.0, 1.0),
             )
-            if with_anomaly
-            else None
-        )
+            if supplemental is None:
+                continue
+            _, values_kw, url_kw, filename_kw = _SUPPLEMENTAL_PAYLOADS[var_id]
+            extra[values_kw] = getattr(supplemental, values_kw)
+            extra[url_kw] = getattr(supplemental, url_kw)
+            extra[filename_kw] = getattr(supplemental, filename_kw)
         return sst_publish.SSTBundleFrame(
             valid_time=day,
             values=_sst_values(),
             source_transform=_STUB_TRANSFORM,
             source_url=f"https://example.invalid/{day:%Y%m%d}.nc",
             source_filename=f"{day:%Y%m%d}.nc",
-            anomaly_values=None if anomaly is None else anomaly.anomaly_values,
-            anomaly_source_url=None if anomaly is None else anomaly.anomaly_source_url,
-            anomaly_source_filename=None if anomaly is None else anomaly.anomaly_source_filename,
+            **extra,
         )
 
     monkeypatch.setattr(sst_poller, "_build_frame_for_day", fake_frame)
-    monkeypatch.setattr(sst_poller, "_build_anomaly_frame_for_day", fake_anomaly_frame)
+    monkeypatch.setattr(sst_poller, "_build_supplemental_frame_for_day", fake_supplemental_frame)
     return fetched
 
 
@@ -478,7 +508,8 @@ def test_anomaly_missing_forever_never_blocks_sst(
     _install_fake_upstream(monkeypatch, newest=_day(6), anomaly_days=set())
     idle = sst_poller.run_once(config)
     assert idle.action == "noop"
-    assert "anomaly pending" in idle.message
+    # The message names the specific pending variable, not just "anomaly".
+    assert "sst_anom pending" in idle.message
     # And a --once smoke test still reports success.
     _install_fake_upstream(monkeypatch, newest=_day(6), anomaly_days=set())
     assert sst_poller.run_poller(config, once=True) == 0
@@ -565,15 +596,15 @@ def test_a_day_is_head_probed_at_most_once_per_cycle(
     tmp_path: Path, stubbed_publish: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """P2-3: pass 2 must not re-probe a day pass 1 already found missing."""
-    probes: list[datetime] = []
+    probes: list[tuple[str, datetime]] = []
 
-    def counting_probe(day: datetime, **kwargs: object) -> bool:
+    def counting_probe(var_id: str, day: datetime, **kwargs: object) -> bool:
         del kwargs
-        probes.append(day)
+        probes.append((var_id, day))
         return False  # upstream never has it
 
     monkeypatch.setattr(sst_poller.sst_fetch, "probe_latest_available_day", lambda **k: _day(4))  # noqa: ARG005
-    monkeypatch.setattr(sst_poller.sst_fetch, "probe_anomaly_available", counting_probe)
+    monkeypatch.setattr(sst_poller.sst_fetch, "probe_supplemental_available", counting_probe)
 
     def real_frame(
         day: datetime,
@@ -581,30 +612,30 @@ def test_a_day_is_head_probed_at_most_once_per_cycle(
         download_dir: Path,
         timeout: tuple[float, float],
         probe_timeout: tuple[float, float],
-        with_anomaly: bool,
+        with_supplementals: tuple[str, ...] = (),
     ):
-        # Exercise the real anomaly-probe branch, stubbing only the SST download.
-        anomaly = (
-            sst_poller._build_anomaly_frame_for_day(
-                day, download_dir=download_dir, timeout=timeout, probe_timeout=probe_timeout
+        # Exercise the real supplemental-probe branch, stubbing only the SST download.
+        for var_id in with_supplementals:
+            sst_poller._build_supplemental_frame_for_day(
+                var_id,
+                day,
+                download_dir=download_dir,
+                timeout=timeout,
+                probe_timeout=probe_timeout,
             )
-            if with_anomaly
-            else None
-        )
         return sst_publish.SSTBundleFrame(
-            valid_time=day,
-            values=_sst_values(),
-            source_transform=_STUB_TRANSFORM,
-            anomaly_values=None if anomaly is None else anomaly.anomaly_values,
+            valid_time=day, values=_sst_values(), source_transform=_STUB_TRANSFORM
         )
 
     monkeypatch.setattr(sst_poller, "_build_frame_for_day", real_frame)
 
     sst_poller.run_once(_config(tmp_path, bundle_frame_count=3))
 
-    # Three days in the window, so three probes — not six.
-    assert sorted(probes) == [_day(2), _day(3), _day(4)]
-    assert len(probes) == len(set(probes)) == 3
+    # Three days x two supplemental variables = six probes, each exactly once —
+    # pass 2 must not re-probe what pass 1 already found missing.
+    assert len(probes) == len(set(probes)) == 6
+    for var_id in ("sst_anom", "sst_trend_7d"):
+        assert sorted(d for v, d in probes if v == var_id) == [_day(2), _day(3), _day(4)]
 
 
 def test_anomaly_catch_up_is_bounded_to_the_bundle_window(
@@ -619,6 +650,132 @@ def test_anomaly_catch_up_is_bounded_to_the_bundle_window(
     sst_poller.run_once(config)
     # Window is 2 days (Aug 5-6); the older backfilled days are not revisited.
     assert fetched["sst_anom"] == [_day(5), _day(6)]
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — sst_trend_7d, same semantics as the anomaly
+# ---------------------------------------------------------------------------
+
+def test_all_three_variables_publish_together_when_upstream_has_them(
+    tmp_path: Path, stubbed_publish: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetched = _install_fake_upstream(monkeypatch, newest=_day(4))
+    assert sst_poller.run_once(_config(tmp_path, bundle_frame_count=3)).action == "published"
+
+    assert fetched["sst"] == [_day(2), _day(3), _day(4)]
+    assert fetched["sst_anom"] == [_day(2), _day(3), _day(4)]
+    assert fetched["sst_trend_7d"] == [_day(2), _day(3), _day(4)]
+
+    manifest = _manifest(tmp_path, "20260804_12z")
+    assert sorted(manifest["variables"]) == ["sst", "sst_anom", "sst_trend_7d"]
+    for var_id in ("sst", "sst_anom", "sst_trend_7d"):
+        assert _valid_times(manifest, var_id) == _valid_times(manifest, "sst")
+        assert manifest["variables"][var_id]["available_frames"] == 3
+
+
+def test_trend_lagging_sst_is_backfilled_without_refetching_sst_or_anomaly(
+    tmp_path: Path, stubbed_publish: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The trend runs on its own CRW schedule; a late trend must never re-pull the
+    57 MB of other products already on disk."""
+    config = _config(tmp_path, bundle_frame_count=3)
+
+    # Cycle 1: SST + anomaly available, trend not out yet.
+    fetched = _install_fake_upstream(monkeypatch, newest=_day(4), trend_days=set())
+    assert sst_poller.run_once(config).action == "published"
+    assert fetched["sst_trend_7d"] == []
+    manifest = _manifest(tmp_path, "20260804_12z")
+    assert sorted(manifest["variables"]) == ["sst", "sst_anom"]
+
+    # Cycle 2: trend now available, upstream SST has NOT moved.
+    fetched = _install_fake_upstream(monkeypatch, newest=_day(4))
+    result = sst_poller.run_once(config)
+
+    assert result.action == "published"
+    assert result.published_run_ids == ("20260804_12z",)
+    # Neither the SST nor the anomaly was re-downloaded.
+    assert fetched["sst"] == []
+    assert fetched["sst_anom"] == []
+    assert fetched["sst_trend_7d"] == [_day(2), _day(3), _day(4)]
+
+    manifest = _manifest(tmp_path, "20260804_12z")
+    assert sorted(manifest["variables"]) == ["sst", "sst_anom", "sst_trend_7d"]
+    assert _valid_times(manifest, "sst_trend_7d") == _valid_times(manifest, "sst")
+
+
+def test_one_supplemental_lagging_does_not_hold_back_the_other(
+    tmp_path: Path, stubbed_publish: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Independent per-variable bookkeeping: the anomaly ships while the trend is
+    still pending, and vice versa."""
+    _install_fake_upstream(monkeypatch, newest=_day(4), trend_days={2, 3}, anomaly_days={4})
+    sst_poller.run_once(_config(tmp_path, bundle_frame_count=3))
+
+    manifest = _manifest(tmp_path, "20260804_12z")
+    assert manifest["variables"]["sst"]["available_frames"] == 3
+    # Each supplemental reports its OWN availability against the same window.
+    assert _valid_times(manifest, "sst_anom") == ["2026-08-04T12:00:00Z"]
+    assert manifest["variables"]["sst_anom"]["expected_frames"] == 3
+    assert _valid_times(manifest, "sst_trend_7d") == [
+        "2026-08-02T12:00:00Z",
+        "2026-08-03T12:00:00Z",
+    ]
+    assert manifest["variables"]["sst_trend_7d"]["expected_frames"] == 3
+
+
+def test_trend_missing_forever_never_blocks_sst_or_anomaly(
+    tmp_path: Path, stubbed_publish: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path, bundle_frame_count=3)
+    for cycle_newest in (_day(4), _day(5), _day(6)):
+        fetched = _install_fake_upstream(monkeypatch, newest=cycle_newest, trend_days=set())
+        assert sst_poller.run_once(config).action == "published"
+        assert fetched["sst_trend_7d"] == []
+
+    manifest = _manifest(tmp_path, "20260806_12z")
+    assert sorted(manifest["variables"]) == ["sst", "sst_anom"]
+    assert manifest["variables"]["sst_anom"]["available_frames"] == 3
+
+    _install_fake_upstream(monkeypatch, newest=_day(6), trend_days=set())
+    idle = sst_poller.run_once(config)
+    assert idle.action == "noop"
+    assert "sst_trend_7d pending" in idle.message
+    _install_fake_upstream(monkeypatch, newest=_day(6), trend_days=set())
+    assert sst_poller.run_poller(config, once=True) == 0
+
+
+def test_skewed_domains_converge_all_supplementals_in_a_single_cycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P2-1's per-domain exclusion must hold PER VARIABLE across all three."""
+    monkeypatch.setattr(sst_publish, "get_target_grid", _stub_grid)
+    monkeypatch.setattr(
+        sst_publish,
+        "warp_to_target_grid",
+        lambda values, *args, **kwargs: (np.asarray(values, dtype=np.float32), _STUB_TRANSFORM),
+    )
+    config = _config(tmp_path, bundle_frame_count=3)
+
+    # na holds SST only; global has nothing.
+    monkeypatch.delenv("CARTOSKY_GLOBAL_DOMAIN_MODELS", raising=False)
+    _install_fake_upstream(
+        monkeypatch, newest=_day(4), anomaly_days=set(), trend_days=set()
+    )
+    assert sst_poller.run_once(config).action == "published"
+    assert sorted(_manifest(tmp_path, "20260804_12z")["variables"]) == ["sst"]
+
+    # Repair: global on, and BOTH supplementals now available upstream.
+    monkeypatch.setenv("CARTOSKY_GLOBAL_DOMAIN_MODELS", "sst")
+    _install_fake_upstream(monkeypatch, newest=_day(4))
+    assert sst_poller.run_once(config).action == "published"
+
+    for domain in ("na", "global"):
+        manifest = _manifest(tmp_path, "20260804_12z", domain)
+        assert sorted(manifest["variables"]) == ["sst", "sst_anom", "sst_trend_7d"], domain
+        for var_id in ("sst_anom", "sst_trend_7d"):
+            assert _valid_times(manifest, var_id) == _valid_times(manifest, "sst"), (
+                f"{domain}/{var_id} lagged a cycle behind"
+            )
 
 
 def _fail_publish_for_domain(monkeypatch: pytest.MonkeyPatch, failing_domain: str) -> None:

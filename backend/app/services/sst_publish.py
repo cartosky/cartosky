@@ -53,6 +53,8 @@ from ..config import grid_build_enabled
 from ..models.sst import (
     SST_ANOM_COLOR_MAP_ID,
     SST_ANOM_VARIABLE_ID,
+    SST_TREND_COLOR_MAP_ID,
+    SST_TREND_VARIABLE_ID,
     SST_CANONICAL_REGION_ID,
     SST_COLOR_MAP_ID,
     SST_GLOBAL_REGION_ID,
@@ -87,16 +89,48 @@ _TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 #: Variables a run can carry, primary first. ``sst`` is the layer's reason to
 #: exist; ``sst_anom`` is optional per day because CRW publishes it on its own
 #: schedule and may lag the absolute field.
-SST_PUBLISH_VARIABLES: tuple[str, ...] = (SST_VARIABLE_ID, SST_ANOM_VARIABLE_ID)
+SST_PUBLISH_VARIABLES: tuple[str, ...] = (
+    SST_VARIABLE_ID,
+    SST_ANOM_VARIABLE_ID,
+    SST_TREND_VARIABLE_ID,
+)
+
+#: Everything except the primary. These are fetched on their own upstream
+#: schedules and may lag the absolute field, so they are always optional per day
+#: and never gate an SST publish.
+SST_SUPPLEMENTAL_VARIABLES: tuple[str, ...] = tuple(
+    var_id for var_id in SST_PUBLISH_VARIABLES if var_id != SST_VARIABLE_ID
+)
 
 _COLOR_MAP_BY_VARIABLE: dict[str, str] = {
     SST_VARIABLE_ID: SST_COLOR_MAP_ID,
     SST_ANOM_VARIABLE_ID: SST_ANOM_COLOR_MAP_ID,
+    SST_TREND_VARIABLE_ID: SST_TREND_COLOR_MAP_ID,
 }
 
 _DISPLAY_NAME_BY_VARIABLE: dict[str, str] = {
     SST_VARIABLE_ID: "Sea Surface Temperature",
     SST_ANOM_VARIABLE_ID: "Sea Surface Temperature Anomaly",
+    SST_TREND_VARIABLE_ID: "Sea Surface Temperature 7-Day Change",
+}
+
+#: var_id -> the SSTBundleFrame attributes carrying that variable's payload.
+#: Table-driven so a per-variable accessor stays one getattr instead of growing a
+#: branch per variable, while the constructor keeps its explicit keyword fields.
+_FRAME_FIELD_ATTRS: dict[str, tuple[str, str, str, str]] = {
+    SST_VARIABLE_ID: ("values", "source_url", "source_filename", "metadata"),
+    SST_ANOM_VARIABLE_ID: (
+        "anomaly_values",
+        "anomaly_source_url",
+        "anomaly_source_filename",
+        "anomaly_metadata",
+    ),
+    SST_TREND_VARIABLE_ID: (
+        "trend_values",
+        "trend_source_url",
+        "trend_source_filename",
+        "trend_metadata",
+    ),
 }
 
 
@@ -114,35 +148,38 @@ class SSTBundleFrame:
     source_transform: Affine
     values: np.ndarray | None = None
     anomaly_values: np.ndarray | None = None
+    trend_values: np.ndarray | None = None
     source_crs: Any = "EPSG:4326"
     source_url: str | None = None
     source_filename: str | None = None
     anomaly_source_url: str | None = None
     anomaly_source_filename: str | None = None
+    trend_source_url: str | None = None
+    trend_source_filename: str | None = None
     quality: str = "full"
     quality_flags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     anomaly_metadata: dict[str, Any] = field(default_factory=dict)
+    trend_metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.values is None and self.anomaly_values is None:
+        if all(self.field_for(var_id) is None for var_id in SST_PUBLISH_VARIABLES):
             raise ValueError(
-                "SSTBundleFrame carries no field: supply values, anomaly_values, or both"
+                "SSTBundleFrame carries no field: supply values, anomaly_values, "
+                "trend_values, or any combination"
             )
 
     def field_for(self, var_id: str) -> np.ndarray | None:
-        return self.values if var_id == SST_VARIABLE_ID else self.anomaly_values
+        return getattr(self, _FRAME_FIELD_ATTRS[var_id][0])
 
     def source_url_for(self, var_id: str) -> str | None:
-        return self.source_url if var_id == SST_VARIABLE_ID else self.anomaly_source_url
+        return getattr(self, _FRAME_FIELD_ATTRS[var_id][1])
 
     def source_filename_for(self, var_id: str) -> str | None:
-        return (
-            self.source_filename if var_id == SST_VARIABLE_ID else self.anomaly_source_filename
-        )
+        return getattr(self, _FRAME_FIELD_ATTRS[var_id][2])
 
     def metadata_for(self, var_id: str) -> dict[str, Any]:
-        return dict(self.metadata if var_id == SST_VARIABLE_ID else self.anomaly_metadata)
+        return dict(getattr(self, _FRAME_FIELD_ATTRS[var_id][3]))
 
 
 @dataclass(frozen=True)

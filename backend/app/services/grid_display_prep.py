@@ -175,6 +175,18 @@ _GRID_DISPLAY_PREP_BY_MODEL_VAR: dict[tuple[str, str], GridDisplayPrepConfig] = 
         clamp_negative=False,
         clip_to_water=True,
     ),
+    # SST 7-day trend — same water-only clip as sst/sst_anom.
+    #
+    # clamp_negative MUST stay False: a trend is a signed rate and 54% of the real
+    # field is negative (measured on the 2026-08-04 granule), so the default True
+    # would erase every cooling ocean.
+    ("sst", "sst_trend_7d"): GridDisplayPrepConfig(
+        id="sst_trend_7d_clip_to_water_v1",
+        upscale_factor=1,
+        smooth_sigma=None,
+        clamp_negative=False,
+        clip_to_water=True,
+    ),
     ("hrrr", "vi_smoke"): GridDisplayPrepConfig(
         id="hrrr_vi_smoke_display_v1",
         upscale_factor=3,
