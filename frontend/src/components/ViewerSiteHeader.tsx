@@ -491,10 +491,11 @@ export function RegionUtilitySelect({
     () => options.filter((opt) => CONUS_SUBREGION_IDS.has(opt.value)),
     [options],
   );
-  const globalRegionOptions = useMemo(
-    () => options.filter((opt) => GLOBAL_REGION_IDS.has(opt.value)),
-    [options],
-  );
+  const globalRegionOptions = useMemo(() => {
+    const globals = options.filter((opt) => GLOBAL_REGION_IDS.has(opt.value));
+    // World reads as the catch-all, so it closes the section.
+    return [...globals.filter((opt) => opt.value !== "world"), ...globals.filter((opt) => opt.value === "world")];
+  }, [options]);
   const topLevelRegionOptions = useMemo(
     () => options.filter((opt) => !CONUS_SUBREGION_IDS.has(opt.value) && !GLOBAL_REGION_IDS.has(opt.value)),
     [options],
