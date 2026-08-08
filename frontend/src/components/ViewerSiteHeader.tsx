@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useUser } from "@clerk/react";
 import {
   Check,
+  ChevronRight,
   MapPin,
   MapPinSearch,
   Search,
@@ -51,6 +52,30 @@ type ViewerFavoriteLocation = LocationSearchResult & {
 const VIEWER_LOCATION_FAVORITES_STORAGE_KEY = "cartosky_viewer_location_favorites_v1";
 const VIEWER_LOCATION_FAVORITES_METADATA_KEY = "viewerLocationFavorites";
 const MAX_VIEWER_LOCATION_FAVORITES = 5;
+
+// Region-list grouping for RegionUtilitySelect. CONUS sub-regions collapse
+// under CONUS; global camera presets render in their own "Global" section.
+// Ids in neither set (na, conus, future additions) stay in the top-level list,
+// in the order the coverage filter emitted them.
+const CONUS_SUBREGION_IDS = new Set([
+  "pnw",
+  "north_central",
+  "midwest",
+  "northeast",
+  "southeast",
+  "south_great_plains",
+  "southwest",
+]);
+const GLOBAL_REGION_IDS = new Set([
+  "world",
+  "europe",
+  "africa",
+  "india",
+  "asia",
+  "australia",
+  "south_america",
+  "pacific",
+]);
 
 const DESKTOP_TOPBAR_POPOVER_OFFSET = 10;
 const DESKTOP_TOPBAR_POPOVER_FALLBACK_TOP = 74;
@@ -462,6 +487,25 @@ export function RegionUtilitySelect({
   const activeSearch = query.trim().length > 0;
   const currentLocationIsFavorite = currentLocation ? isFavorite(currentLocation) : false;
 
+  const conusSubregionOptions = useMemo(
+    () => options.filter((opt) => CONUS_SUBREGION_IDS.has(opt.value)),
+    [options],
+  );
+  const globalRegionOptions = useMemo(
+    () => options.filter((opt) => GLOBAL_REGION_IDS.has(opt.value)),
+    [options],
+  );
+  const topLevelRegionOptions = useMemo(
+    () => options.filter((opt) => !CONUS_SUBREGION_IDS.has(opt.value) && !GLOBAL_REGION_IDS.has(opt.value)),
+    [options],
+  );
+  const [conusExpanded, setConusExpanded] = useState(() => CONUS_SUBREGION_IDS.has(value));
+  useEffect(() => {
+    if (CONUS_SUBREGION_IDS.has(value)) {
+      setConusExpanded(true);
+    }
+  }, [value]);
+
   const setOpenState = useCallback((nextOpen: boolean) => {
     setOpen(nextOpen);
     onOpenChange?.(nextOpen);
@@ -720,6 +764,51 @@ export function RegionUtilitySelect({
     return pieces.length > 0 ? pieces.join(" • ") : null;
   }
 
+  function renderRegionOption(opt: Option, indent = false) {
+    const selected = opt.value === value;
+    return (
+      <button
+        key={opt.value}
+        type="button"
+        onClick={() => {
+          onValueChange(opt.value);
+          setOpenState(false);
+          clearInlineError();
+        }}
+        className={cn(
+          "relative flex w-full items-center rounded-md py-1.5 pr-2 text-left text-xs font-medium text-white/86 outline-none transition-colors hover:bg-cyan-300/15 hover:text-cyan-50 min-h-8 pointer-coarse:min-h-11",
+          indent ? "pl-12" : "pl-8",
+          inlinePanel && "min-h-11",
+          selected && "bg-cyan-300/14 text-cyan-50"
+        )}
+      >
+        <span className={cn("absolute flex h-3.5 w-3.5 items-center justify-center text-cyan-200", indent ? "left-6" : "left-2")}>
+          {selected ? <Check className="h-4 w-4" /> : null}
+        </span>
+        {opt.label}
+      </button>
+    );
+  }
+
+  const conusSubregionGroup = conusSubregionOptions.length > 0 ? (
+    <>
+      <button
+        type="button"
+        onClick={() => setConusExpanded((prev) => !prev)}
+        aria-expanded={conusExpanded}
+        data-testid="conus-subregions-toggle"
+        className={cn(
+          "relative flex w-full items-center rounded-md py-1.5 pl-8 pr-2 text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-white/48 outline-none transition-colors hover:bg-white/8 hover:text-white/72 min-h-8 pointer-coarse:min-h-11",
+          inlinePanel && "min-h-11"
+        )}
+      >
+        <ChevronRight className={cn("absolute left-2 h-3.5 w-3.5 transition-transform", conusExpanded && "rotate-90")} />
+        CONUS regions
+      </button>
+      {conusExpanded ? conusSubregionOptions.map((opt) => renderRegionOption(opt, true)) : null}
+    </>
+  ) : null;
+
   const locationPanel = (
     <div
       ref={panelRef}
@@ -843,31 +932,24 @@ export function RegionUtilitySelect({
               Region
             </div>
             <div className="space-y-0.5">
-              {options.map((opt) => {
-                const selected = opt.value === value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => {
-                      onValueChange(opt.value);
-                      setOpenState(false);
-                      clearInlineError();
-                    }}
-                    className={cn(
-                      "relative flex w-full items-center rounded-md py-1.5 pl-8 pr-2 text-left text-xs font-medium text-white/86 outline-none transition-colors hover:bg-cyan-300/15 hover:text-cyan-50 min-h-8 pointer-coarse:min-h-11",
-                      inlinePanel && "min-h-11",
-                      selected && "bg-cyan-300/14 text-cyan-50"
-                    )}
-                  >
-                    <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center text-cyan-200">
-                      {selected ? <Check className="h-4 w-4" /> : null}
-                    </span>
-                    {opt.label}
-                  </button>
-                );
-              })}
+              {topLevelRegionOptions.map((opt) => (
+                <Fragment key={opt.value}>
+                  {renderRegionOption(opt)}
+                  {opt.value === "conus" ? conusSubregionGroup : null}
+                </Fragment>
+              ))}
+              {!topLevelRegionOptions.some((opt) => opt.value === "conus") ? conusSubregionGroup : null}
             </div>
+            {globalRegionOptions.length > 0 ? (
+              <>
+                <div className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/52">
+                  Global
+                </div>
+                <div className="space-y-0.5">
+                  {globalRegionOptions.map((opt) => renderRegionOption(opt))}
+                </div>
+              </>
+            ) : null}
           </>
         ) : (
             <div className="space-y-0.5">

@@ -92,4 +92,69 @@ REGION_PRESETS: dict[str, dict] = {
         "minZoom": 0,
         "maxZoom": 14,
     },
+    # Global camera presets. Like "world", these are CAMERA presets only —
+    # their bboxes fall outside the canonical (conus/na) coverage bboxes, so
+    # the frontend coverage filter surfaces them exactly when a non-canonical
+    # data domain (e.g. global) is active. minZoom is 0 for the same permalink
+    # reason as "world": several of these need sub-z2 to fit on phone widths.
+    "europe": {
+        "label": "Europe",
+        "bbox": [-25.0, 34.0, 45.0, 72.0],
+        "defaultCenter": [10.0, 53.0],
+        "defaultZoom": 3.2,
+        "minZoom": 0,
+        "maxZoom": 14,
+    },
+    "africa": {
+        "label": "Africa",
+        "bbox": [-20.0, -36.0, 52.0, 38.0],
+        "defaultCenter": [16.0, 1.0],
+        "defaultZoom": 2.6,
+        "minZoom": 0,
+        "maxZoom": 14,
+    },
+    "india": {
+        "label": "India",
+        "bbox": [60.0, 4.0, 100.0, 38.0],
+        "defaultCenter": [80.0, 21.0],
+        "defaultZoom": 3.8,
+        "minZoom": 0,
+        "maxZoom": 14,
+    },
+    "asia": {
+        "label": "Asia",
+        "bbox": [40.0, 0.0, 150.0, 62.0],
+        "defaultCenter": [95.0, 32.0],
+        "defaultZoom": 2.4,
+        "minZoom": 0,
+        "maxZoom": 14,
+    },
+    "australia": {
+        "label": "Australia",
+        "bbox": [110.0, -48.0, 156.0, -8.0],
+        "defaultCenter": [133.0, -27.0],
+        "defaultZoom": 3.4,
+        "minZoom": 0,
+        "maxZoom": 14,
+    },
+    "south_america": {
+        "label": "South America",
+        "bbox": [-85.0, -57.0, -32.0, 14.0],
+        "defaultCenter": [-58.0, -22.0],
+        "defaultZoom": 2.7,
+        "minZoom": 0,
+        "maxZoom": 14,
+    },
+    # 180°-centered Pacific camera. east > 180 is intentional: MapLibre
+    # fitBounds accepts un-normalized longitudes and world copies are on, so
+    # the fit lands centered on the antimeridian instead of wrapping to a
+    # degenerate reversed span.
+    "pacific": {
+        "label": "Pacific",
+        "bbox": [115.0, -50.0, 245.0, 60.0],
+        "defaultCenter": [180.0, 5.0],
+        "defaultZoom": 1.8,
+        "minZoom": 0,
+        "maxZoom": 14,
+    },
 }
